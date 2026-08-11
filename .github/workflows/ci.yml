@@ -1,0 +1,95 @@
+# ตรวจทุก push และทุก pull request
+#
+# มีสองงานที่ตอบคนละคำถาม และต้องมีทั้งคู่:
+#
+#   tests        — โค้ดยังทำสิ่งที่ตั้งใจไว้ไหม (เร็ว รันทุกครั้ง)
+#   install-test — ติดตั้งบนเครื่องเปล่าแล้วได้ระบบที่ใช้งานได้จริงไหม (ช้ากว่า แต่จับสิ่งที่
+#                  ชุดทดสอบไม่มีทางเห็น) · บั๊กที่ตัวติดตั้งลืม chown config.php จนติดตั้งเสร็จ
+#                  แล้วเข้า panel ไม่ได้เลย ผ่านชุดทดสอบ 540 ข้อไปได้สบาย ๆ และถูกจับด้วยงานนี้
+#
+# ใช้เฉพาะ actions/checkout ซึ่งเป็นของ GitHub เอง — เจตนาเดียวกับที่โปรเจกต์ไม่ใช้ Composer
+# และไม่ดึงอะไรจาก CDN คือไม่เพิ่มของที่ควบคุมไม่ได้เข้ามาในเส้นทางที่รันโค้ดของเรา
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: ชุดทดสอบ
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ติดตั้ง PHP และเครื่องมือที่เทสต์เรียกใช้จริง
+        run: |
+          sudo apt-get update -qq
+          # สามตัวท้ายไม่ใช่ของแถม — เทสต์เรียกโปรแกรมพวกนี้ที่ path จริงเพื่อพิสูจน์ว่า
+          # ค่าคงที่ในโค้ดชี้ถูกที่ · ขาดตัวไหนก็แดงตัวนั้น (ยืนยันแล้วในคอนเทนเนอร์เปล่า):
+          #   bind9-utils      → named-checkzone (เทสต์ DNS 7 ข้อ)
+          #   openssh-server   → sshd และ /etc/ssh/sshd_config (เทสต์ SFTP)
+          #   systemd          → /usr/bin/systemctl (SftpAccessManager::reloadSshd)
+          # runner ของ GitHub มีสามตัวนี้อยู่แล้ว การระบุไว้ทำให้ย้ายไปรันที่อื่นได้ด้วย
+          sudo apt-get install -y --no-install-recommends \
+            php-cli php-sqlite3 php-mbstring php-curl php-zip php-xml \
+            bind9-utils openssh-server systemd
+
+      - name: ยืนยันว่าส่วนขยายของ PHP ครบตามที่ระบบต้องการ
+        run: |
+          php -v
+          for ext in pdo_sqlite sqlite3 sodium posix pcntl sockets openssl \
+                     mbstring json filter fileinfo curl zip; do
+            php -m | grep -qix "$ext" || { echo "ขาดส่วนขยาย: $ext"; exit 1; }
+          done
+
+      # เทสต์บางกลุ่มใช้ฐานข้อมูลจริงผ่าน App::boot() — ไม่มีขั้นนี้จะได้
+      # "no such table: users" · โหมด portable ไม่ต้องใช้ root และไม่แตะระบบของ runner
+      - name: เตรียมฐานข้อมูลและ config แบบ portable
+        run: ./install.sh --mode=sandbox --portable
+
+      - name: รันชุดทดสอบ
+        run: php tests/run.php
+
+  install-test:
+    name: ติดตั้งบนเครื่องเปล่า (${{ matrix.base }})
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - base: debian:12
+            php_pkg: php
+          - base: ubuntu:24.04
+            php_pkg: php
+          # 22.04 ส่ง PHP 8.1 มาเป็นค่าเริ่มต้นซึ่งเก่ากว่าที่โค้ดต้องการ (ใช้ readonly class)
+          # ผู้ดูแลจริงแก้ด้วย ppa:ondrej/php ขั้นตอนนี้จึงสะท้อนการติดตั้งจริง
+          - base: ubuntu:22.04
+            php_pkg: php8.3
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # build นี้รัน install.sh ตัวจริงในโหมด production บนระบบที่ยังไม่มีอะไรเลย
+      # แล้วต่อด้วย verify-install ซึ่งตรวจผลลัพธ์จากมุมของผู้ดูแลที่เพิ่งติดตั้งเสร็จ
+      # ถ้าขั้นใดล้ม build ล้มทันที
+      - name: ติดตั้งและตรวจผล
+        run: |
+          docker build -f docker/Dockerfile.install-test \
+            --build-arg BASE=${{ matrix.base }} \
+            --build-arg PHP_PKG=${{ matrix.php_pkg }} \
+            -t phpcp:ci .
+
+      # เกณฑ์รับงานปลายทาง: สร้างบัญชีโฮสติ้ง → สร้างเว็บ → ออกใบรับรอง → บังคับ HTTPS
+      # → เรียกเว็บได้จริง 200 จาก PHP → .env ถูกปฏิเสธ → open_basedir กันการอ่านไฟล์ระบบ
+      # → PHP รันด้วย uid ของลูกค้า → หน้า panel และ API ตอบได้
+      - name: เกณฑ์รับงานปลายทาง
+        run: docker run --rm phpcp:ci bash /usr/local/src/phpcp/docker/acceptance.sh
