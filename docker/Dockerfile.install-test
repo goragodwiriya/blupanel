@@ -1,0 +1,56 @@
+# ทดสอบ "ติดตั้งสะอาดบนเครื่องเปล่า" — เกณฑ์รับงานเฟส 5
+#
+#   docker build -f docker/Dockerfile.install-test --build-arg BASE=debian:12       -t phpcp:it-deb12 .
+#   docker build -f docker/Dockerfile.install-test --build-arg BASE=ubuntu:24.04    -t phpcp:it-u2404 .
+#   docker build -f docker/Dockerfile.install-test --build-arg BASE=ubuntu:22.04    -t phpcp:it-u2204 .
+#
+# ต่างจาก docker/Dockerfile (โหมด sandbox) ตรงที่อิมเมจนี้รัน install.sh ตัวจริง
+# ในโหมด production บนระบบที่ยังไม่มีอะไรเลย — ถ้าตัวติดตั้งพัง build จะล้มทันที
+# ไม่ต้องรอให้คนไปเจอเองบนเครื่องจริง
+#
+# ข้อจำกัดที่ยอมรับ: คอนเทนเนอร์ไม่มี systemd ตัวติดตั้งจึงข้ามขั้น enable service
+# (ซึ่งมันเตือนไว้ชัดเจนอยู่แล้ว) ส่วนที่เหลือคือของจริงทั้งหมด — ผู้ใช้ระบบ สิทธิ์ไฟล์
+# config tree ของ panel และ configtest ของ Apache/FPM
+
+ARG BASE=debian:12
+FROM ${BASE}
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# postinst ของแพ็กเกจบริการจะพยายามสตาร์ตตัวเองระหว่างติดตั้ง ซึ่งทำไม่ได้ในคอนเทนเนอร์
+RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod +x /usr/sbin/policy-rc.d
+
+# Ubuntu 22.04 ส่ง PHP 8.1 มาเป็นค่าเริ่มต้น ซึ่งเก่ากว่าที่ระบบต้องการ (8.2 ขึ้นไป
+# เพราะใช้ readonly class) — ผู้ดูแลจริงแก้ด้วยการเพิ่ม ppa:ondrej/php
+# ซึ่งเป็นแหล่งมาตรฐานที่ใช้กันทั่วไป ขั้นตอนนี้จึงสะท้อนการติดตั้งจริง
+# ค่าเริ่มต้นใช้แพ็กเกจ php ของดิสทริบิวชันเอง — 22.04 ต้องระบุเป็น php8.3 จาก ondrej
+ARG PHP_PKG=php
+
+RUN . /etc/os-release && if [ "$VERSION_ID" = "22.04" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends software-properties-common \
+        && add-apt-repository -y ppa:ondrej/php \
+        && add-apt-repository -y ppa:ondrej/apache2; \
+    fi
+
+# สิ่งที่ผู้ดูแลต้องมีอยู่แล้วบนเซิร์ฟเวอร์ ตามที่ docs/INSTALL.md ระบุ
+# ตั้งใจไม่ติดตั้งอะไรเกินจากรายการนี้ เพื่อให้เห็นชัดว่าตัวติดตั้งต้องการอะไรจริง ๆ
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl procps hostname \
+        apache2 \
+        ${PHP_PKG}-cli ${PHP_PKG}-fpm ${PHP_PKG}-sqlite3 ${PHP_PKG}-mbstring ${PHP_PKG}-curl ${PHP_PKG}-zip ${PHP_PKG}-mysql \
+        mariadb-server \
+        certbot ufw openssl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY . /usr/local/src/phpcp
+WORKDIR /usr/local/src/phpcp
+
+# นี่คือการทดสอบจริง — ถ้า install.sh คืนค่าไม่เป็น 0 หรือ configtest ไม่ผ่าน build จะล้ม
+RUN chmod +x install.sh bin/phpcp bin/phpcp-agentd \
+    && ./install.sh --mode=production --port=8443 2>&1 | tee /var/log/phpcp-install.log
+
+# ตรวจซ้ำว่าสิ่งที่ควรมีหลังติดตั้งมีครบจริง ไม่ใช่แค่สคริปต์จบด้วยรหัส 0
+COPY docker/verify-install.sh /usr/local/bin/verify-install
+RUN chmod +x /usr/local/bin/verify-install && /usr/local/bin/verify-install
+
+CMD ["/bin/bash"]

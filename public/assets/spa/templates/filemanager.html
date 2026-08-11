@@ -1,0 +1,97 @@
+<!--
+  ตัวจัดการไฟล์เต็มจอ — เปิดในแท็บของตัวเอง ไม่มีเมนูข้างและแถบบนของ panel
+
+  **ทำไมไม่มี `data-component="sidebar"`:** ตัวจัดการไฟล์กินพื้นที่จอทั้งหมดโดยธรรมชาติ
+  (แถบโฟลเดอร์ซ้าย + รายการไฟล์ + แถบสถานะ) การมีเมนูของ panel ซ้อนอีกชั้นทำให้เหลือ
+  ที่แสดงชื่อไฟล์ไม่พอ · เมนู "File Manager" ใน panel จึงเปิดหน้านี้เป็นแท็บใหม่ (ui.js)
+  และหน้านี้มีปุ่มกลับ panel ของตัวเอง
+
+  **ทำไมรายการไฟล์ไม่ใช่ `data-table` ของเฟรมเวิร์ก:** TableManager ทำ "ตารางข้อมูล"
+  ได้ครบ แต่สิ่งที่หน้านี้ต้องการคือ "ตัวจัดการไฟล์" ซึ่งต่างกันที่พฤติกรรมทั้งชุด —
+  เลือกหลายรายการด้วย Shift/Ctrl · คลิกขวา · ลากไฟล์มาวาง · สลับเป็นมุมมองไอคอน ·
+  คีย์ลัด (F2, Delete, Ctrl+C/X/V) · คลิปบอร์ดข้ามโฟลเดอร์ · ทั้งหมดนี้ไม่มีทางประกาศ
+  ด้วยแอตทริบิวต์ได้ · โครงนิ่งอยู่ในไฟล์นี้ ส่วนรายการถูกวาดใน js/filemanager.js
+  ด้วย `createElement` + `textContent` ล้วน (ชื่อไฟล์เป็นค่าที่ผู้ใช้ตั้งเอง — ห้าม innerHTML)
+-->
+<div class="fm" data-script="pageFileManager">
+  <header class="fm-toolbar">
+    <div class="fm-toolbar-row">
+      <a class="btn icon-arrow-left fm-back" href="/app" data-route="/" data-i18n>Panel</a>
+
+      <span class="form-control icon-folder fm-scope">
+        <select data-fm-root aria-label="File scope"></select>
+      </span>
+
+      <!--
+        ปุ่มที่มีแต่ไอคอนต้องมีชื่อให้เครื่องอ่านหน้าจอเรียก · `data-tip` เก็บข้อความ
+        อังกฤษไว้ให้ `pageFileManager` แปลแล้วใส่เป็นทั้ง `title` และ `aria-label`
+        — Now.js แปลได้เฉพาะข้อความในแท็ก (`data-i18n`) ไม่ได้แปลแอตทริบิวต์
+      -->
+      <button type="button" class="btn icon-up" data-fm-up data-tip="Up one level"></button>
+      <button type="button" class="btn icon-refresh" data-fm-reload data-tip="Refresh"></button>
+
+      <span class="form-control icon-search fm-find">
+        <input type="search" data-fm-search data-tip="Search in this folder">
+      </span>
+
+      <span class="fm-views">
+        <button type="button" class="btn icon-listview" data-fm-view="list" data-tip="List view"></button>
+        <button type="button" class="btn icon-thumbnail" data-fm-view="grid" data-tip="Grid view"></button>
+      </span>
+    </div>
+
+    <nav class="fm-crumbs" data-fm-crumbs aria-label="Breadcrumb"></nav>
+
+    <!--
+      แถบคำสั่ง — ปุ่มที่ต้องมีรายการถูกเลือกก่อนจะถูกปิดการใช้งานจาก JS ตามสิ่งที่เลือกอยู่
+      ปุ่มที่เปลี่ยนแปลงไฟล์ทั้งแถบถูกซ่อนเมื่อผู้ใช้ไม่มีสิทธิ์ file.manage
+    -->
+    <div class="fm-commands" data-fm-commands>
+      <button type="button" class="btn btn-primary icon-create-folder" data-fm-do="mkdir" data-fm-need="write" data-i18n>New folder</button>
+      <button type="button" class="btn icon-new" data-fm-do="touch" data-fm-need="write" data-i18n>New file</button>
+      <button type="button" class="btn icon-upload" data-fm-do="upload" data-fm-need="write" data-i18n>Upload</button>
+      <span class="fm-sep"></span>
+      <button type="button" class="btn icon-download" data-fm-do="download" data-fm-need="one-file" data-i18n>Download</button>
+      <button type="button" class="btn icon-edit" data-fm-do="rename" data-fm-need="one" data-i18n>Rename</button>
+      <button type="button" class="btn icon-copy" data-fm-do="copy" data-fm-need="any" data-i18n>Copy</button>
+      <button type="button" class="btn icon-cut" data-fm-do="cut" data-fm-need="any" data-i18n>Cut</button>
+      <button type="button" class="btn icon-import" data-fm-do="paste" data-fm-need="clipboard" data-i18n>Paste</button>
+      <span class="fm-sep"></span>
+      <button type="button" class="btn icon-zip" data-fm-do="zip" data-fm-need="any" data-i18n>Compress</button>
+      <button type="button" class="btn icon-unzip" data-fm-do="unzip" data-fm-need="archive" data-i18n>Extract</button>
+      <button type="button" class="btn icon-lock" data-fm-do="chmod" data-fm-need="one" data-i18n>Permissions</button>
+      <button type="button" class="btn icon-info" data-fm-do="info" data-fm-need="one" data-i18n>Properties</button>
+      <span class="fm-sep"></span>
+      <button type="button" class="btn btn-danger icon-delete" data-fm-do="delete" data-fm-need="any" data-i18n>Delete</button>
+    </div>
+  </header>
+
+  <div class="fm-body">
+    <aside class="fm-tree" data-fm-tree aria-label="Folders"></aside>
+    <section class="fm-pane" data-fm-pane tabindex="0" aria-label="Files"></section>
+  </div>
+
+  <footer class="fm-status">
+    <span data-fm-count></span>
+    <span data-fm-pager class="fm-pager"></span>
+    <span data-fm-disk class="fm-disk"></span>
+  </footer>
+
+  <!-- กล่องซ้อน: ใช้ตัวเดียวสำหรับทุกคำสั่ง เนื้อในถูกประกอบตอนเปิด -->
+  <div class="fm-modal" data-fm-modal hidden>
+    <div class="fm-modal-card" role="dialog" aria-modal="true">
+      <header class="fm-modal-head">
+        <h2 data-fm-modal-title></h2>
+        <button type="button" class="btn icon-invalid" data-fm-modal-close data-tip="Close"></button>
+      </header>
+      <div class="fm-modal-body" data-fm-modal-body></div>
+      <footer class="fm-modal-foot" data-fm-modal-foot></footer>
+    </div>
+  </div>
+
+  <ul class="fm-context" data-fm-context hidden></ul>
+
+  <div class="fm-drop" data-fm-drop hidden>
+    <span data-i18n>Drop files here to upload</span>
+  </div>
+</div>

@@ -1,0 +1,28 @@
+# ทดสอบ PHP Server Control Panel ในโหมด sandbox
+#
+#   docker compose up --build          # ครั้งแรกจะพิมพ์รหัสผ่านชั่วคราวออกมา
+#   docker compose logs phpcp | head   # ดูรหัสผ่านย้อนหลัง
+#   docker compose down                # หยุด (ข้อมูลยังอยู่ใน volume)
+#   docker compose down -v             # ล้างทั้งหมดเริ่มใหม่
+
+services:
+  phpcp:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: phpcp:sandbox
+    container_name: phpcp-sandbox
+    # ผูกกับ localhost เท่านั้น — dev server ของ PHP ไม่ได้ออกแบบมาให้เปิดสู่อินเทอร์เน็ต
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      PHPCP_PORT: "8080"
+      PHPCP_ADMIN: "admin"
+    volumes:
+      - phpcp-etc:/opt/phpcp/etc
+      - phpcp-var:/opt/phpcp/var
+    restart: unless-stopped
+
+volumes:
+  phpcp-etc:
+  phpcp-var:

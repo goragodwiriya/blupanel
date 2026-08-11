@@ -1,0 +1,127 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <main class="content" data-component="api" data-endpoint="/api/v2/session">
+    <div class="card-groups">
+      <header>
+        <div>
+          <h1 class="icon-clock" data-i18n>Cron Jobs</h1>
+          <p data-i18n>Scheduled commands per website</p>
+        </div>
+        <div class="header-actions" data-if="permissions['cron.manage']">
+          <button type="button" class="btn btn-primary icon-plus"
+                  data-action="click.prevent:toggleClass"
+                  data-toggle-target="[data-create-panel]" data-toggle-class="is-open"
+                  data-i18n>Add cron job</button>
+        </div>
+      </header>
+      <!-- แผงสร้าง — ซ่อนไว้จนกดปุ่ม เพราะหน้านี้ใช้ดูรายการเป็นหลัก -->
+      <div class="content-body collapsible" data-create-panel>
+        <h2 data-i18n>Add cron job</h2>
+        <form data-form="cronCreate"
+              action="/api/v2/cron-jobs"
+              method="post"
+              data-ajax-submit="true"
+              data-validate="true"
+              data-reset="true">
+          <fieldset>
+            <!--
+              เลือกเว็บไซต์จากรายการจริง ไม่ใช่ให้กรอกเลข id เอง — รายการมาจาก
+              endpoint ของมันเอง ผ่าน ApiComponent ที่ครอบ <select> ไว้
+            -->
+            <div data-component="api" data-endpoint="/api/v2/sites">
+              <label for="nc_site" data-i18n>Website</label>
+              <span class="form-control icon-website">
+                <select id="nc_site" name="site_id" required data-for="site in data">
+                  <template>
+                    <option data-attr="value:site.id" data-text="site.domain"></option>
+                  </template>
+                </select>
+              </span>
+            </div>
+            <div>
+              <label for="nc_name" data-i18n>Name</label>
+              <span class="form-control icon-edit">
+                <input type="text" id="nc_name" name="name" required maxlength="100" autocomplete="off">
+              </span>
+            </div>
+            <div>
+              <label for="nc_schedule" data-i18n>Schedule</label>
+              <span class="form-control icon-clock">
+                <input type="text" id="nc_schedule" name="schedule" required maxlength="100" placeholder="0 3 * * *" autocomplete="off">
+              </span>
+              <div class="comment" data-i18n>Five fields in cron format: minute hour day month weekday</div>
+            </div>
+            <div>
+              <label for="nc_command" data-i18n>Command</label>
+              <span class="form-control icon-keyboard">
+                <input type="text" id="nc_command" name="command" required maxlength="500" autocomplete="off">
+              </span>
+            </div>
+          </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-save" data-i18n>Add cron job</button>
+          </fieldset>
+        </form>
+      </div>
+
+      <div class="content-body">
+        <div class="tablebody">
+          <table class="table border fullwidth"
+                 data-table="cronJobs"
+                 data-source="/api/v2/cron-jobs"
+                 data-default-sort="name asc"
+                 data-page-size="25"
+                 data-row-actions='{
+                   "open": {
+                     "title": "Manage",
+                     "className": "btn btn-sm btn-success icon-edit",
+                     "method": "get",
+                     "url": "/app/cron-job?id={id}"
+                   },
+                   "disable": {
+                     "title": "Disable",
+                     "className": "btn btn-sm icon-ban",
+                     "method": "patch",
+                     "url": "/api/v2/cron-jobs/{id}",
+                     "params": {"enabled": false},
+                     "condition": "${can_manage && enabled}"
+                   },
+                   "enable": {
+                     "title": "Enable",
+                     "className": "btn btn-sm icon-refresh",
+                     "method": "patch",
+                     "url": "/api/v2/cron-jobs/{id}",
+                     "params": {"enabled": true},
+                     "condition": "${can_manage && !enabled}"
+                   },
+                   "delete": {
+                     "title": "Delete",
+                     "className": "btn btn-sm btn-danger icon-delete",
+                     "method": "delete",
+                     "url": "/api/v2/cron-jobs/{id}",
+                     "condition": "${can_manage}",
+                     "confirm": "Delete this cron job?"
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="name" data-i18n>{LNG_Name}</th>
+                <th data-field="site_domain" data-empty-text="—" data-i18n>{LNG_Website}</th>
+                <th data-field="schedule_label" data-i18n>{LNG_Schedule}</th>
+                <th data-field="command" data-cell-class="mono" data-i18n>{LNG_Command}</th>
+                <th data-field="enabled" class="center" data-cell-class="center"
+                    data-format="boolean" data-true-text="{LNG_Yes}" data-false-text="{LNG_No}" data-i18n>{LNG_Enabled}</th>
+                <th data-field="last_run_at" class="center" data-cell-class="center"
+                    data-format="datetime" data-empty-text="—" data-i18n>{LNG_Last run}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>

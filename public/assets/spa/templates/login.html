@@ -1,0 +1,31 @@
+<div class="auth-container" data-script="pageLogin">
+  <div class="auth-card">
+    <div class="auth-header">
+      <h1 data-i18n>Sign in</h1>
+      <p data-i18n>Sign in to manage this server</p>
+    </div>
+
+    <form novalidate>
+      <fieldset>
+        <div>
+          <label for="username" data-i18n>Username</label>
+          <span class="form-control icon-user">
+            <input type="text" id="username" name="username" maxlength="50" required autofocus
+                   autocomplete="username" data-persist="local" data-persist-key="phpcp_login_user"
+                   data-persist-ttl-days="30">
+          </span>
+        </div>
+        <div>
+          <label for="password" data-i18n>Password</label>
+          <span class="form-control icon-lock">
+            <input type="password" id="password" name="password" required autocomplete="current-password">
+          </span>
+        </div>
+      </fieldset>
+
+      <fieldset class="center">
+        <button type="submit" class="btn btn-primary fullwidth large icon-signin" data-i18n>Sign in</button>
+      </fieldset>
+    </form>
+  </div>
+</div>

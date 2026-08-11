@@ -1,0 +1,55 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <main class="content" data-component="api" data-endpoint="/api/v2/session">
+    <div class="card-groups">
+      <header>
+        <div>
+          <h1 class="icon-link" data-i18n>Domains</h1>
+          <p data-i18n>All domains on this server and their DNS records</p>
+        </div>
+        <!--
+          สิทธิ์ระดับเครื่อง (dns.manage) แยกจาก domain.manage ที่ใช้แก้เรกคอร์ดทีละโดเมน
+          โดยตั้งใจ — ปุ่มนี้เขียนทับ named.conf.local ทั้งไฟล์และกระทบ zone ของลูกค้า
+          ทุกรายพร้อมกัน (PLAN-V2 เฟส E3)
+        -->
+        <div class="header-actions" data-if="permissions['dns.manage']">
+          <button type="button" class="btn icon-refresh" data-action="click.prevent:requestApi"
+                  data-api-url="/api/v2/dns/reload" data-api-method="post"
+                  data-confirm="Rewrite every domain's zone file and reload BIND9 now?"
+                  data-notify-success="true" data-i18n>Resync all zones</button>
+        </div>
+      </header>
+      <div class="content-body">
+        <div class="tablebody">
+          <table class="table border fullwidth"
+                 data-table="domains"
+                 data-source="/api/v2/domains"
+                 data-default-sort="domain asc"
+                 data-search-columns="domain"
+                 data-page-size="25"
+                 data-row-actions='{
+                   "records": {
+                     "title": "DNS records",
+                     "className": "btn btn-primary icon-list",
+                     "method": "get",
+                     "url": "/app/domain?id={id}"
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="domain" data-sort="domain" data-cell-class="mono" data-i18n>{LNG_Domain}</th>
+                <th data-field="type" data-sort="type" data-cell-class="center" data-i18n>{LNG_Type}</th>
+                <th data-field="site_domain" data-sort="site_domain" data-i18n>{LNG_Website}</th>
+                <th data-field="created_at" data-sort="created_at" data-format="datetime" class="center" data-cell-class="center" data-empty-text="—" data-i18n>{LNG_Created}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>

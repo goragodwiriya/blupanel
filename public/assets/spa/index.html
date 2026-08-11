@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="th">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>BluPanel</title>
+
+  <!--
+    ไม่มี <meta name="csrf-token"> ที่นี่โดยตั้งใจ — shell เป็นไฟล์นิ่งที่ PHP ส่งต่อ
+    ตามที่มันเป็น ไม่มีการแทนค่าใด ๆ ลงไป · token มาจาก GET /api/v2/session ตอน bootstrap
+    แล้วอัปเดตเองจาก header X-CSRF-Token ของทุกคำตอบ (PLAN-V2 §4.4)
+
+    ทุกไฟล์ที่โหลดที่นี่เป็น origin เดียวกันทั้งหมด ไม่มี CDN เลยแม้แต่ตัวเดียว —
+    CSP ของ panel เป็น default-src 'none' และ font-src 'self' อยู่แล้ว
+  -->
+  <!-- มีไอคอนเป็นไฟล์จริงเพื่อไม่ให้เบราว์เซอร์ยิงหา /favicon.ico แล้วได้หน้า 404 ทุกครั้งที่เปิดแอป -->
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+
+  <link rel="stylesheet" href="/assets/spa/vendor/now/now.core.min.css">
+  <link rel="stylesheet" href="/assets/spa/vendor/now/icons.css">
+  <link rel="stylesheet" href="/assets/spa/css/app.css">
+  <!-- โหลดตลอดแม้จะใช้หน้าเดียว: shell มีไฟล์เดียวสำหรับทุกเส้นทาง การโหลดตามหน้า
+       ต้องเพิ่ม <link> ตอนรันซึ่งทำให้หน้ากะพริบก่อนสไตล์มาถึง · ไฟล์นี้ ~11 KB -->
+  <link rel="stylesheet" href="/assets/spa/css/filemanager.css">
+</head>
+
+<body>
+  <main id="main" role="main"></main>
+
+  <!-- แกนของเฟรมเวิร์ก: core ต้องมาก่อนเสมอ เพราะเป็นตัวประกาศ window.Now และ manager ทั้งหมด -->
+  <script src="/assets/spa/vendor/now/now.core.min.js"></script>
+  <script src="/assets/spa/vendor/now/now.table.min.js"></script>
+  <script src="/assets/spa/vendor/now/now.graph.min.js"></script>
+
+  <!--
+    api.js ต้องมาก่อน auth.js และ main.js เพราะมันแปะอะแดปเตอร์เข้ากับ ApiService/HttpClient
+    ตั้งแต่ตอน parse — ถ้าโหลดทีหลัง คำขอแรกของแอปจะออกไปโดยไม่ผ่านตัวแปลง envelope
+  -->
+  <script src="/assets/spa/js/api.js"></script>
+  <script src="/assets/spa/js/auth.js"></script>
+  <script src="/assets/spa/js/formatters.js"></script>
+  <script src="/assets/spa/js/ui.js"></script>
+  <script src="/assets/spa/js/pages.js"></script>
+  <script src="/assets/spa/js/filemanager.js"></script>
+  <script src="/assets/spa/js/main.js"></script>
+</body>
+
+</html>

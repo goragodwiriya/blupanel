@@ -1,0 +1,83 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <!--
+    รายการเว็บไซต์ — ไฟล์นี้มีแต่ตาราง ฟอร์มสร้างอยู่ที่ site-create.html
+    ApiComponent ชั้นนอกโหลด /api/v2/session มาให้ `permissions[...]` ใช้งานได้
+  -->
+  <main class="content" data-component="api" data-endpoint="/api/v2/session">
+    <div class="card-groups">
+      <header>
+        <div>
+          <h1 class="icon-website" data-i18n>Websites</h1>
+          <p data-i18n>One website = one system user + one FPM pool</p>
+        </div>
+        <div class="header-actions" data-if="permissions['site.create']">
+          <a class="btn btn-primary icon-plus" href="/app/site-create" data-route="/site-create" data-i18n>Add website</a>
+        </div>
+      </header>
+      <div class="content-body">
+        <div class="tablebody">
+          <table class="table border fullwidth" data-table="sites" data-source="/api/v2/sites" data-default-sort="primary_domain asc" data-page-size="25" data-row-actions='{
+                    "link": {
+                     "title": "Open",
+                     "className": "btn btn-brown icon-link",
+                     "method": "get",
+                     "target": "_blank",
+                     "url": "http://{domain}"
+                   },
+                   "open": {
+                     "title": "Manage",
+                     "className": "btn btn-success icon-edit",
+                     "method": "get",
+                     "url": "/app/site?id={id}"
+                   },
+                   "suspend": {
+                     "title": "Suspend",
+                     "className": "btn btn-warning icon-ban",
+                     "method": "put",
+                     "url": "/api/v2/sites/{id}/suspension",
+                     "params": {"suspended": true},
+                     "condition": "${status !== \"suspended\"}",
+                     "confirm": "Suspending stops the website from serving visitors immediately."
+                   },
+                   "resume": {
+                     "title": "Resume",
+                     "className": "btn btn-warning icon-refresh",
+                     "method": "put",
+                     "url": "/api/v2/sites/{id}/suspension",
+                     "params": {"suspended": false},
+                     "condition": "${status === \"suspended\"}",
+                     "confirm": "Resume serving this website?"
+                   },
+                   "delete": {
+                     "title": "Delete",
+                     "className": "btn btn-danger icon-delete",
+                     "method": "delete",
+                     "url": "/api/v2/sites/{id}",
+                     "params": {"confirm_domain": "{domain}"},
+                     "confirm": "Deleting a website removes its files, databases and certificates. This cannot be undone."
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="domain" data-sort="primary_domain" data-cell-class="mono" data-i18n>{LNG_Domain}</th>
+                <th data-field="name" data-sort="name" data-i18n>{LNG_Name}</th>
+                <th data-field="php_version" data-sort="php_version" class="center" data-cell-class="center" data-i18n>{LNG_PHP version}</th>
+                <th data-field="system_user" data-cell-class="mono" data-i18n>{LNG_Owner}</th>
+                <th data-field="domain_count" class="center" data-cell-class="center" data-i18n>{LNG_Domains}</th>
+                <!-- API คืนไบต์ ตัวจัดรูปแบบมาตรฐานจึงใช้ได้ตรง ๆ ไม่ต้องมีตัวแปลงฝั่ง JS -->
+                <th data-field="disk_used" data-sort="disk_used" class="center" data-cell-class="center" data-format="bytes" data-i18n>{LNG_Disk used}</th>
+                <th data-field="status" data-sort="status" class="center" data-cell-class="center" data-filter="true" data-type="select" data-show-all="true" data-all-value=""
+                    data-template="<span class='pill pill-${status_tone}'>{LNG_${status}}</span>" data-i18n>{LNG_Status}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>

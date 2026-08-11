@@ -1,0 +1,58 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <main class="content">
+    <div class="card-groups">
+      <header>
+        <div>
+          <h1 class="icon-list" data-i18n>Logs</h1>
+          <p data-i18n>Read the tail of any log source this account may see</p>
+        </div>
+      </header>
+      <div class="content-body">
+        <div class="tablebody">
+          <form data-table-filter="logLines" class="table_nav">
+            <div>
+              <label for="log_source" data-i18n>Source</label>
+              <span class="form-control icon-list" data-component="api" data-endpoint="/api/v2/logs/sources">
+                <select id="log_source" name="source" data-for="src in data">
+                  <template>
+                    <option data-attr="value:src.key" data-text="src.label"></option>
+                  </template>
+                </select>
+              </span>
+            </div>
+            <div>
+              <label for="pageSize" data-i18n>Lines</label>
+              <span class="form-control">
+                <select name="pageSize">
+                  <option value="50" data-i18n>50 {LNG_entries}</option>
+                  <option value="100" data-i18n>100 {LNG_entries}</option>
+                  <option value="200" data-i18n>200 {LNG_entries}</option>
+                  <option value="500" data-i18n>500 {LNG_entries}</option>
+                  <option value="1000" data-i18n>1,000 {LNG_entries}</option>
+                  <option value="1500" data-i18n>1,500 {LNG_entries}</option>
+                  <option value="2000" data-i18n>2,000 {LNG_entries}</option>
+                </select>
+              </span>
+            </div>
+            <input type="search" name="q" placeholder="{LNG_Search}...">
+          </form>
+          <table class="table border fullwidth" data-table="logLines" data-source="/api/v2/logs">
+            <thead>
+              <tr>
+                <th data-field="n" data-cell-class="center" data-i18n>{LNG_Line}</th>
+                <th data-field="level" class="center" data-cell-class="center" data-template="<span class='pill pill-${level_tone}'>{LNG_${level_label}}</span>" data-i18n>
+                  {LNG_Level}</th>
+                <th data-field="text" data-cell-class="mono" data-i18n>{LNG_Message}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>

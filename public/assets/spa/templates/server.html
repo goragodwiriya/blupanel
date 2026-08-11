@@ -1,0 +1,105 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <main class="content" data-script="pageServer">
+    <div class="card-groups">
+      <header>
+        <div>
+          <h1 class="icon-cpu" data-i18n>Server Overview</h1>
+          <p data-i18n>Machine information and live resource usage</p>
+        </div>
+      </header>
+      <!--
+        ค่าก้อนแรกมาจาก GET /api/v2/metrics ผ่าน ApiComponent · หลังจากนั้น pageServer
+        เขียนทับช่องที่มี data-live-* ทุก 2 วินาทีจากสตรีม SSE ซึ่งประกาศแทนไม่ได้
+      -->
+      <div class="ggrid" data-component="api" data-endpoint="/api/v2/metrics">
+        <div class="block3 large6 stat-card">
+          <div class="stat-header icon-meter"><span data-i18n>CPU</span></div>
+          <div class="stat-value" data-live-cpu data-text="cpu.percent | fixed">—</div>
+          <div class="meter"><span data-live-cpu-meter data-style="width: {{cpu.percent}}%"></span></div>
+        </div>
+        <div class="block3 large6 stat-card">
+          <div class="stat-header icon-database"><span data-i18n>Memory</span></div>
+          <div class="stat-value" data-live-mem data-text="memory.used | bytes">—</div>
+          <div class="meter"><span data-live-mem-meter data-style="width: {{memory.percent}}%"></span></div>
+        </div>
+        <div class="block3 large6 stat-card">
+          <div class="stat-header icon-stack"><span data-i18n>Disk</span></div>
+          <div class="stat-value" data-live-disk data-text="disk.used | bytes">—</div>
+          <div class="meter"><span data-live-disk-meter data-style="width: {{disk.percent}}%"></span></div>
+        </div>
+        <div class="block3 large6 stat-card">
+          <div class="stat-header icon-clock"><span data-i18n>Uptime</span></div>
+          <div class="stat-value" data-text="uptime.seconds | duration">—</div>
+          <div class="stat-sub" data-text="hostname"></div>
+        </div>
+      </div>
+      <!--
+        กราฟย้อนหลัง — PLAN-V2 เฟส E6
+        ข้อมูลมาจาก /api/v2/metrics/history ซึ่งเก็บโดยงานตามเวลา metrics.record ทุกนาที
+        ปุ่มเลือกช่วงเป็น radio ธรรมดา — pageServer อ่านค่าแล้วโหลดกราฟใหม่
+      -->
+      <div class="content-body">
+        <div class="flex justify-between middle">
+          <h2 class="icon-meter" data-i18n>Resource history</h2>
+          <div class="btn-group" data-metrics-ranges>
+            <button type="button" class="btn small is-active" data-range="24h" data-i18n>24 hours</button>
+            <button type="button" class="btn small" data-range="7d" data-i18n>7 days</button>
+            <button type="button" class="btn small" data-range="30d" data-i18n>30 days</button>
+            <button type="button" class="btn small" data-range="1y" data-i18n>1 year</button>
+          </div>
+        </div>
+        <p class="comment" data-metrics-empty hidden data-i18n>No data yet — the collector runs every minute, so the first points appear shortly after installation.</p>
+        <!--
+          กราฟดึงข้อมูลเองผ่าน data-url — API ตอบรูป [{name, data:[{label,value}]}] ที่
+          GraphComponent อ่านได้ตรง ๆ จึงไม่ต้องมี JS แปลงข้อมูล (แบบเดียวกับตัวอย่าง
+          api/v1/quarterly-sales ของ adminframework) · pageServer แค่สลับ data-url
+          ตอนกดปุ่มเลือกช่วง ซึ่งเป็นสิ่งเดียวที่ประกาศด้วยแอตทริบิวต์ไม่ได้
+        -->
+        <div data-metrics-graph class="metrics-graph" data-component="graph" data-type="line" data-url="/api/v2/metrics/history?range=24h"></div>
+      </div>
+      <div class="content-body" data-component="api" data-endpoint="/api/v2/system/info">
+        <h2 class="icon-host" data-i18n>System information</h2>
+        <table class="table border fullwidth">
+          <tbody>
+            <tr>
+              <th data-i18n>Hostname</th>
+              <td class="mono" data-text="hostname"></td>
+            </tr>
+            <tr>
+              <th data-i18n>Operating system</th>
+              <td data-text="os"></td>
+            </tr>
+            <tr>
+              <th data-i18n>Kernel</th>
+              <td class="mono" data-text="kernel"></td>
+            </tr>
+            <tr>
+              <th data-i18n>Architecture</th>
+              <td class="mono" data-text="arch"></td>
+            </tr>
+            <tr>
+              <th data-i18n>CPU</th>
+              <td data-text="cpu_model"></td>
+            </tr>
+            <tr>
+              <th data-i18n>Cores</th>
+              <td data-text="cpu_cores"></td>
+            </tr>
+            <tr>
+              <th data-i18n>Timezone</th>
+              <td data-text="timezone"></td>
+            </tr>
+            <tr>
+              <th data-i18n>PHP</th>
+              <td class="mono" data-text="php_panel"></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+</div>

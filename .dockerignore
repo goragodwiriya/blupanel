@@ -1,0 +1,13 @@
+# ห้ามนำข้อมูลของเครื่องพัฒนาเข้าไปในอิมเมจเด็ดขาด
+# etc/config.php มี secret key และ var/ มีฐานข้อมูลกับรหัสผ่านผู้ดูแล
+etc/config.php
+var/
+
+.git/
+.gitignore
+node_modules/
+_index.html
+_reference/
+*.log
+*.sqlite
+*.db

@@ -1,0 +1,57 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Phpcp\Agent\Capability;
+
+use Phpcp\Agent\Capability;
+use Phpcp\Agent\Context;
+use Phpcp\Agent\Executor\Executor;
+use Phpcp\Domain\SettingsRepository;
+use Phpcp\Driver\Mail\MailManager;
+use Phpcp\Driver\Template;
+
+/**
+ * อ่านค่าตั้งที่แก้ได้จากหน้าเว็บ พร้อมสถานะจริงของเมลบนเครื่อง
+ *
+ * ค่าที่เป็นความลับถูกปิดบังก่อนส่งออกเสมอ — token ของบอทที่หลุดไปทาง HTML
+ * แปลว่าใครก็ส่งข้อความในนามระบบได้ และจะติดอยู่ในแคชของเบราว์เซอร์ไปอีกนาน
+ */
+final class SettingsGet implements Capability
+{
+    public static function name(): string
+    {
+        return 'settings.get';
+    }
+
+    public function permission(): string
+    {
+        return 'settings.view';
+    }
+
+    public function isMutating(): bool
+    {
+        return false;
+    }
+
+    public function summary(): string
+    {
+        return 'อ่านค่าตั้งของระบบ';
+    }
+
+    public function validate(array $args): array
+    {
+        return [];
+    }
+
+    public function run(array $args, Executor $executor, Context $context): array
+    {
+        $settings = new SettingsRepository($context->db);
+        $mail = new MailManager(new Template($context->config->paths->templates()));
+
+        return [
+            'values' => SettingsRepository::mask($settings->all()),
+            'mail_status' => $mail->status($executor),
+        ];
+    }
+}

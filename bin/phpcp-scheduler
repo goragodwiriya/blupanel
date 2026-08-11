@@ -1,0 +1,222 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * phpcp-scheduler — ตัวรันงานตามเวลาของ panel (PLAN-V2 เฟส A1)
+ *
+ * ถูกเรียกโดย phpcp-scheduler.timer ทุกนาที: อ่านตาราง scheduled_jobs
+ * หางานที่ถึงเวลาแล้ว แล้วสั่งผ่าน agent เหมือนที่ชั้นเว็บทำทุกประการ
+ *
+ * งานที่สำคัญที่สุดคือ `rollback.run` — กลไกคืนค่าอัตโนมัติของ SSH/firewall
+ * ถูกออกแบบมาเพื่อกรณีที่ผู้ดูแล "หลุดการเชื่อมต่อไปแล้ว" ซึ่งแปลว่าจะไม่มีคำขอ
+ * จากเบราว์เซอร์เข้ามากระตุ้นเลย ถ้าไม่มีตัวจับเวลาฝั่งเซิร์ฟเวอร์ กลไกนั้นก็ไม่มีอยู่จริง
+ *
+ * ใช้:
+ *   phpcp-scheduler                รันงานที่ถึงเวลาแล้วหนึ่งรอบ (systemd เรียกแบบนี้)
+ *   phpcp-scheduler --list         ดูงานทั้งหมดพร้อมผลรอบล่าสุด
+ *   phpcp-scheduler --run=ชื่องาน   บังคับรันทันทีโดยไม่สนตารางเวลา
+ *   phpcp-scheduler --quiet        ไม่พิมพ์อะไรถ้าไม่มีงานถึงเวลา
+ */
+
+/**
+ * ด่านตรวจเวอร์ชัน — ต้องอยู่ก่อน require ทุกบรรทัด
+ *
+ * เหตุผลเต็มอยู่ใน bin/phpcp: `php` ที่ผู้ดูแลพิมพ์เองอาจเป็นเวอร์ชันของดิสทริบิวชัน
+ * ที่เก่ากว่าที่โค้ดต้องการ ทำให้ตายด้วย parse error ที่อ่านไม่รู้เรื่อง
+ * โค้ดในบล็อกนี้ต้องเขียนด้วยไวยากรณ์ที่ PHP เก่าอ่านออกด้วย
+ */
+if (PHP_VERSION_ID < 80200) {
+    $candidates = ['/usr/bin/php8.5', '/usr/bin/php8.4', '/usr/bin/php8.3', '/usr/bin/php8.2'];
+
+    foreach ($candidates as $binary) {
+        if (!is_executable($binary)) {
+            continue;
+        }
+
+        if (realpath($binary) === realpath(PHP_BINARY)) {
+            continue;
+        }
+
+        $argv[0] = __FILE__;
+        pcntl_exec($binary, $argv);
+
+        $command = escapeshellarg($binary);
+        foreach ($argv as $arg) {
+            $command .= ' ' . escapeshellarg($arg);
+        }
+
+        passthru($command, $code);
+        exit($code);
+    }
+
+    fwrite(STDERR, sprintf(
+        "phpcp-scheduler ต้องการ PHP 8.2 ขึ้นไป แต่ %s เป็นเวอร์ชัน %s\n",
+        PHP_BINARY,
+        PHP_VERSION,
+    ));
+    exit(1);
+}
+
+require dirname(__DIR__) . '/bootstrap.php';
+
+use Phpcp\Agent\Actor;
+use Phpcp\Domain\AgentHealth;
+use Phpcp\Domain\Scheduler;
+use Phpcp\Domain\ScheduledJobRepository;
+use Phpcp\Kernel\App;
+use Phpcp\Kernel\Logger;
+
+if (PHP_SAPI !== 'cli') {
+    http_response_code(403);
+    exit("phpcp-scheduler ใช้ได้จากบรรทัดคำสั่งเท่านั้น\n");
+}
+
+$option = static function (array $argv, string $name): ?string {
+    foreach ($argv as $arg) {
+        if ($arg === $name) {
+            return '';
+        }
+        if (str_starts_with($arg, $name . '=')) {
+            return substr($arg, strlen($name) + 1);
+        }
+    }
+
+    return null;
+};
+
+try {
+    $app = App::boot();
+    $config = $app->config;
+
+    $jobs = new ScheduledJobRepository($app->db());
+
+    // --- แสดงรายการ ---------------------------------------------------------
+    if ($option($argv, '--list') !== null) {
+        // printf นับความกว้างเป็นไบต์ ตัวอักษรไทยตัวหนึ่งกิน 3 ไบต์ ตารางจึงเบี้ยวทั้งแถว
+        // ต้องเติมช่องว่างเองโดยนับเป็นตัวอักษร
+        $pad = static fn (string $text, int $width): string
+            => $text . str_repeat(' ', max(1, $width - mb_strlen($text)));
+
+        echo $pad('งาน', 16), $pad('ตารางเวลา', 16), $pad('สถานะล่าสุด', 14),
+             $pad('รันล่าสุด', 22), "ข้อผิดพลาด\n";
+
+        foreach ($jobs->all() as $job) {
+            echo $pad((string) $job['name'], 16),
+                 $pad((string) $job['schedule'], 16),
+                 $pad((int) $job['enabled'] === 1 ? (string) ($job['last_status'] ?? '—') : 'ปิดอยู่', 14),
+                 $pad(
+                     $job['last_run_at'] === null ? 'ยังไม่เคยรัน' : date('Y-m-d H:i:s', (int) $job['last_run_at']),
+                     22,
+                 ),
+                 (string) ($job['last_error'] ?? ''), "\n";
+        }
+
+        exit(0);
+    }
+
+    // --- เตรียมตัวสั่งงาน ----------------------------------------------------
+    $logger = new Logger(
+        $config->paths->logFile('scheduler'),
+        $config->string('log.level', 'info'),
+    );
+
+    $agent = $app->agent();
+
+    // ผู้สั่งงานเป็น "ระบบ" ไม่ใช่ผู้ใช้คนใด — audit log จะบันทึกไว้แบบนั้น
+    // และ agent คำนวณสิทธิ์จาก role ที่ส่งมาเองเสมอ ไม่เชื่อรายการสิทธิ์จากฝั่งนี้
+    $actor = Actor::system('scheduler');
+
+    $scheduler = new Scheduler(
+        $app->db(),
+        static fn (string $capability, array $args): array => $agent->data($capability, $args, $actor),
+        $logger,
+    );
+
+    // --- บังคับรันงานเดียว ---------------------------------------------------
+    $forced = $option($argv, '--run');
+    if ($forced !== null && $forced !== '') {
+        $result = $scheduler->runNow($forced);
+
+        printf("%s: %s (%s)\n", $result['name'], $result['status'], $result['message']);
+
+        exit($result['status'] === 'error' ? 1 : 0);
+    }
+
+    // --- รอบปกติ ------------------------------------------------------------
+    //
+    // ล็อกกันรอบซ้อนกัน: งานอย่าง disk.usage บนเครื่องที่มีเว็บเยอะอาจใช้เวลาเกินหนึ่งนาที
+    // ถ้าปล่อยให้รอบใหม่เริ่มทับ จะเกิดการสั่ง capability เดียวกันพร้อมกันหลายตัว
+    // และ last_run_at จะถูกเขียนสลับกันจนอ่านไม่ได้ว่าอะไรรันไปแล้วบ้าง
+    $config->paths->ensureDirectories();
+    $lockFile = $config->paths->run . '/scheduler.lock';
+    $lock = @fopen($lockFile, 'c');
+
+    if ($lock === false) {
+        fwrite(STDERR, "สร้างไฟล์ล็อกไม่ได้: {$lockFile}\n");
+        exit(1);
+    }
+
+    if (!flock($lock, LOCK_EX | LOCK_NB)) {
+        // ไม่ใช่ข้อผิดพลาด — รอบก่อนหน้ายังทำงานอยู่ รอบนี้ถอยออกมาเงียบ ๆ
+        exit(0);
+    }
+
+    $quiet = $option($argv, '--quiet') !== null;
+
+    // --- บันทึกสถานะ agent ก่อนสั่งงานใด ๆ ----------------------------------
+    //
+    // ต้องอยู่**ก่อน** runDue() เพราะทุกงานในตารางเดินผ่าน agent ทั้งหมด ถ้า agent ตาย
+    // งานทั้งชุดจะล้มเรียงกันแล้วบันทึกเป็น last_error เหมือน ๆ กัน ซึ่งไม่บอกสาเหตุ
+    //
+    // **บันทึกอย่างเดียว ไม่ส่งข้อความ** — โปรเซสนี้ถูกล็อกไว้ที่ AF_UNIX (ยิง Telegram
+    // ไม่ได้) และ NoNewPrivileges (เข้าคิวเมลไม่ได้) · การส่งข้อความเป็นหน้าที่ของ
+    // bin/phpcp-alert ที่ systemd เรียกผ่าน OnFailure= ดู AgentHealth ประกอบ
+    //
+    // ห้ามให้ความล้มเหลวตรงนี้หยุด scheduler — งานตามเวลาต้องเดินต่อเสมอ
+    try {
+        $health = (new AgentHealth($app->db(), $agent))->check();
+
+        if (!$health['available'] && !$quiet) {
+            fwrite(STDERR, "agent ไม่ตอบสนอง — งานตามเวลารอบนี้จะล้มทั้งหมด\n");
+        }
+    } catch (\Throwable $e) {
+        $logger->error('บันทึกสถานะ agent ไม่สำเร็จ: ' . $e->getMessage());
+    }
+
+    $results = $scheduler->runDue();
+
+    flock($lock, LOCK_UN);
+    fclose($lock);
+
+    if ($results === []) {
+        if (!$quiet) {
+            echo "ไม่มีงานที่ถึงเวลา\n";
+        }
+
+        exit(0);
+    }
+
+    $failed = 0;
+    foreach ($results as $result) {
+        if ($result['status'] === 'error') {
+            $failed++;
+        }
+
+        if (!$quiet || $result['status'] === 'error') {
+            printf(
+                "%-16s %-8s %s%s\n",
+                $result['name'],
+                $result['status'],
+                $result['message'],
+                $result['duration_ms'] > 0 ? ' (' . $result['duration_ms'] . ' ms)' : '',
+            );
+        }
+    }
+
+    exit($failed === 0 ? 0 : 1);
+} catch (\Throwable $e) {
+    fwrite(STDERR, 'phpcp-scheduler ล้มเหลว: ' . $e->getMessage() . "\n");
+    exit(1);
+}

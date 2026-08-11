@@ -1,0 +1,84 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <main class="content">
+    <div class="card-groups">
+      <header>
+        <div>
+          <h1 class="icon-website" data-i18n>Add website</h1>
+          <p data-i18n>One website = one system user + one FPM pool</p>
+        </div>
+        <div class="header-actions">
+          <a class="btn icon-arrow-left" href="/app/sites" data-route="/sites" data-i18n>Websites</a>
+        </div>
+      </header>
+      <div class="content-body">
+        <form data-form="siteCreate" data-validate="true" data-reset="true" action="/api/v2/sites" method="post" data-ajax-submit="true" data-load-api="/api/v2/sites/0"
+              autocomplete="off">
+          <fieldset>
+            <div>
+              <label for="new_owner_user_id" data-i18n>Owner</label>
+              <span class="form-control icon-user">
+                <select id="new_owner_user_id" name="owner_user_id" data-options-key="owner_user_id">
+                </select>
+              </span>
+            </div>
+            <div class="form-group">
+              <div class="width50">
+                <label for="new_domain" data-i18n>Domain</label>
+                <span class="form-control icon-website">
+                  <input type="text" id="new_domain" name="domain" required maxlength="253" placeholder="example.com" autocomplete="off">
+                </span>
+              </div>
+              <div class="width50">
+                <label for="new_name" data-i18n>Name</label>
+                <span class="form-control icon-edit">
+                  <input type="text" id="new_name" name="name" maxlength="100" autocomplete="off">
+                </span>
+              </div>
+            </div>
+            <!-- Domain Pointer เป็นฟีเจอร์ขั้นสูง — โผล่เฉพาะเมื่อ config ตั้ง sites.pointer_roots ไว้ -->
+            <div class="form-group" data-if="has_pointer_roots">
+              <div class="width50">
+                <label for="new_pointer_root" data-i18n>Parent folder</label>
+                <span class="form-control icon-folder">
+                  <select id="new_pointer_root" name="pointer_root" data-options-key="pointer_root">
+                  </select>
+                </span>
+              </div>
+              <div class="width50">
+                <label for="new_docroot" data-i18n>Document Root</label>
+                <span class="form-control icon-folder">
+                  <input type="text" id="new_docroot" name="docroot" maxlength="100" placeholder="my-project" autocomplete="off">
+                </span>
+                <div class="comment" id="result_new_docroot" data-i18n>Leave empty to use the default location</div>
+              </div>
+            </div>
+            <div class="form-group">
+              <div class="width50">
+                <label for="new_php" data-i18n>PHP version</label>
+                <span class="form-control icon-code">
+                  <select id="new_php" name="php_version" data-options-key="php_version">
+                  </select>
+                </span>
+              </div>
+              <div class="width50">
+                <label for="new_aliases" data-i18n>{LNG_Aliases}/{LNG_Domain Pointer}</label>
+                <span class="form-control icon-link">
+                  <input type="text" id="new_aliases" name="aliases" autocomplete="off" placeholder="www.example.com">
+                </span>
+                <div class="comment" id="result_new_aliases" data-i18n>Separate multiple names with a space or comma</div>
+              </div>
+            </div>
+          </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-save" data-i18n>Add website</button>
+            
+          </fieldset>
+        </form>
+      </div>
+    </div>
+  </main>
+</div>

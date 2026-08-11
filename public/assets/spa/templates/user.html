@@ -1,0 +1,336 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <main class="content" data-component="api" data-endpoint="/api/v2/session">
+    <div class="card-groups" data-component="api" data-endpoint="/api/v2/users/{id}" data-refresh-event="phpcp:reload">
+      <header>
+        <div>
+          <h1 class="icon-user" data-text="username">—</h1>
+          <p data-text="role_label"></p>
+        </div>
+        <div class="header-actions">
+          <a class="btn icon-arrow-left" href="/app/users" data-route="/users" data-i18n>Users</a>
+        </div>
+      </header>
+      <div class="ggrid">
+        <section class="block6">
+          <h2 class="icon-info" data-i18n>Overview</h2>
+          <table class="table border fullwidth">
+            <tbody>
+              <tr>
+                <th data-i18n>Username</th>
+                <td class="mono" data-text="username"></td>
+              </tr>
+              <tr>
+                <th data-i18n>Websites</th>
+                <td data-text="site_count"></td>
+              </tr>
+              <tr>
+                <th data-i18n>Last sign in</th>
+                <td data-text="last_login_at | datetime"></td>
+              </tr>
+              <tr>
+                <th data-i18n>Last IP</th>
+                <td class="mono" data-text="last_login_ip | dash"></td>
+              </tr>
+              <tr>
+                <th data-i18n>Created</th>
+                <td data-text="created_at | datetime"></td>
+              </tr>
+              <tr>
+                <th data-i18n>Expires</th>
+                <td data-text="expiry_at | datetime"></td>
+              </tr>
+              <tr>
+                <th data-i18n>Two-factor verification</th>
+                <td>
+                  <span class="pill pill-ok" data-show="two_factor_enabled === true" data-i18n>Enabled</span>
+                  <span class="pill pill-muted" data-show="two_factor_enabled === false" data-i18n>Disabled</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+        <section class="block6">
+          <h2 class="icon-meter" data-i18n>Quota</h2>
+          <!--
+            โควตาเป็น object ที่คีย์คือชนิดของทรัพยากร — `data-for` วนบนรายการที่
+            API ส่งมาโดยตรง จึงเพิ่มชนิดใหม่ฝั่งเซิร์ฟเวอร์ได้โดยไม่ต้องแก้หน้านี้
+          -->
+          <table class="table border fullwidth">
+            <thead>
+              <tr>
+                <th data-i18n>Resource</th>
+                <th data-i18n>Used</th>
+                <th data-i18n>Limit</th>
+              </tr>
+            </thead>
+            <!--
+              `item.toggle` = ชนิดที่ตัวเลขไม่มีความหมาย มีแค่ "ได้/ไม่ได้" (เช่น SFTP ที่
+              หนึ่งบัญชีโฮสติ้งมีได้บัญชีเดียวเสมอตั้งแต่เฟส E4) — แสดง "เปิด/ปิด" แทน
+              "0 / 5" ซึ่งสื่อผิด · เซิร์ฟเวอร์เป็นคนบอกว่าชนิดไหนเป็นสวิตช์ ไม่ใช่หน้าจอเดาเอง
+            -->
+            <tbody data-for="item in quota">
+              <template>
+                <tr>
+                  <td data-text="item.label"></td>
+                  <!--
+                    แยกเป็นหลาย <span> + data-i18n แทนการใส่ข้อความในนิพจน์ ternary —
+                    ข้อความที่เขียนตรง ๆ ในนิพจน์ไม่ผ่านตัวแปลภาษา จึงค้างเป็นภาษาเดียว
+                    แม้ผู้ใช้สลับเป็นอังกฤษ (ระบบแปลใช้ข้อความอังกฤษเป็นคีย์)
+                  -->
+                  <td class="center">
+                    <span data-if="item.toggle && item.in_use" data-i18n>In use</span>
+                    <span data-if="item.toggle && !item.in_use">—</span>
+                    <span data-if="!item.toggle" data-text="item.used"></span>
+                  </td>
+                  <td class="center">
+                    <span class="pill pill-ok" data-if="item.toggle && item.enabled" data-i18n>Allowed</span>
+                    <span class="pill pill-muted" data-if="item.toggle && !item.enabled" data-i18n>Not included</span>
+                    <span data-if="!item.toggle" data-text="item.unlimited ? '∞' : item.limit"></span>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+            <!--
+              พื้นที่ดิสก์วัดเป็น MB ไม่ใช่จำนวนชิ้น จึงไม่ได้มาจาก `quota` object ข้างบน
+              (PLAN-V2 เฟส E2) — เขียนแถวนี้ตรง ๆ แทนการยัดเข้าไปใน data-for เดียวกัน
+            -->
+            <tbody>
+              <tr>
+                <th data-i18n>Disk space</th>
+                <td class="center" data-text="disk_used_mb + ' MB'"></td>
+                <td class="center">
+                  <span data-if="disk_quota_unlimited" data-text="'∞'"></span>
+                  <span class="pill" data-if="!disk_quota_unlimited" data-class="pill-${disk_quota_tone}" data-text="disk_quota_mb + ' MB (' + disk_quota_percent + '%)'"></span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+      </div>
+      <!--
+        เว็บไซต์ที่ผูกกับบัญชีนี้ — มีเฉพาะบัญชีโฮสติ้ง (API ส่ง `sites` มาเฉพาะ webadmin)
+        การเชื่อมเดินผ่าน capability `customer.site_attach` ซึ่งตรวจโควตาให้ด้วย
+      -->
+      <div class="content-body" data-if="sites && permissions['customer.manage']">
+        <h2 class="icon-link" data-i18n>Websites</h2>
+        <div class="tablebody">
+          <form class="table_nav" data-form="userAttachSite" action="/api/v2/users/{id}/sites" method="post" data-ajax-submit="true" data-validate="true" data-reset="true">
+            <div data-component="api" data-endpoint="/api/v2/sites">
+              <label for="ua_site" data-i18n>Link a website</label>
+              <span class="form-control icon-website">
+                <select id="ua_site" name="site_ids" required data-for="site in data">
+                  <template>
+                    <option data-attr="value:site.id" data-text="site.domain"></option>
+                  </template>
+                </select>
+              </span>
+            </div>
+            <div>
+              <button type="submit" class="btn fullwidth icon-link" data-i18n>Link</button>
+            </div>
+          </form>
+          <table class="table border fullwidth">
+            <thead>
+              <tr>
+                <th data-i18n>Website</th>
+                <th data-i18n>Status</th>
+                <th data-i18n>Actions</th>
+              </tr>
+            </thead>
+            <tbody data-for="site in sites">
+              <template>
+                <tr>
+                  <td><a data-attr="href:'/app/site?id=' + site.id" data-text="site.name"></a></td>
+                  <td data-text="site.status"></td>
+                  <td>
+                    <button type="button" class="btn btn-sm btn-danger icon-minus" data-action="click.prevent:requestApi" data-api-method="delete"
+                            data-attr="data-api-url:'/api/v2/users/{id}/sites/' + site.id" data-confirm="Unlink this website from the account?" data-i18n>Unlink</button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="content-body" data-if="permissions['customer.manage']">
+        <h2 class="icon-profile" data-i18n>Account settings</h2>
+        <form data-form="userEdit" action="/api/v2/users/{id}" method="post" data-method="PATCH" data-ajax-submit="true">
+          <fieldset>
+            <div class="form-group">
+              <div class="width50">
+                <label for="ue_display" data-i18n>Name</label>
+                <span class="form-control icon-user">
+                  <input type="text" id="ue_display" name="display_name" maxlength="100" autocomplete="off" data-attr="value:display_name">
+                </span>
+              </div>
+              <div class="width50">
+                <label for="ue_email" data-i18n>Email</label>
+                <span class="form-control icon-email">
+                  <input type="email" id="ue_email" name="email" autocomplete="off" data-attr="value:email">
+                </span>
+              </div>
+            </div>
+            <div class="form-group">
+              <div class="width50">
+                <label for="ue_service" data-i18n>Service status</label>
+                <span class="form-control icon-star0">
+                  <select id="ue_service" name="service_status" data-attr="value:service_status">
+                    <option value="active">active</option>
+                    <option value="suspended">suspended</option>
+                    <option value="expired">expired</option>
+                  </select>
+                </span>
+                <div class="comment" data-i18n>Suspended or expired accounts cannot sign in</div>
+              </div>
+              <div class="width50">
+                <label for="ue_role" data-i18n>Role</label>
+                <span class="form-control icon-shield">
+                  <select id="ue_role" name="role" data-attr="value:role">
+                    <option value="webadmin">webadmin</option>
+                    <option value="sysadmin">sysadmin</option>
+                    <option value="superadmin">superadmin</option>
+                  </select>
+                </span>
+              </div>
+            </div>
+            <div class="form-group">
+              <div class="width50">
+                <label for="ue_expiry" data-i18n>Expires</label>
+                <span class="form-control icon-calendar">
+                  <input type="date" id="ue_expiry" name="expiry_at" data-attr="value:expiry_at">
+                </span>
+                <div class="comment" data-i18n>Leave blank for no expiry date</div>
+              </div>
+            </div>
+          </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
+          </fieldset>
+        </form>
+      </div>
+      <div class="content-body" data-if="permissions['customer.manage']">
+        <h2 class="icon-meter" data-i18n>Quota</h2>
+        <!--
+          โควตาส่งเป็นชุดเดียวทั้งหมดจึงเป็น PUT ไม่ใช่ PATCH (§4.1) · -1 = ไม่จำกัด
+        -->
+        <form data-form="userQuota" action="/api/v2/users/{id}/quota" method="post" data-method="PUT" data-ajax-submit="true" data-emit-event="phpcp:reload">
+          <fieldset>
+            <div class="form-group">
+              <div class="width33">
+                <label for="uq_domains" data-i18n>Domains</label>
+                <span class="form-control icon-number"><input type="number" id="uq_domains" name="quota_domains" min="-1" data-allow-negative="true" data-attr="value:quota.domains.limit"></span>
+              </div>
+              <div class="width33">
+                <label for="uq_subdomains" data-i18n>Subdomains</label>
+                <span class="form-control icon-number"><input type="number" id="uq_subdomains" name="quota_subdomains" min="-1" data-allow-negative="true" data-attr="value:quota.subdomains.limit"></span>
+              </div>
+              <div class="width33">
+                <label for="uq_databases" data-i18n>Databases</label>
+                <span class="form-control icon-number"><input type="number" id="uq_databases" name="quota_databases" min="-1" data-allow-negative="true" data-attr="value:quota.databases.limit"></span>
+              </div>
+            </div>
+            <div class="form-group">
+              <div class="width33">
+                <label for="uq_aliases" data-i18n>Domain aliases</label>
+                <span class="form-control icon-number"><input type="number" id="uq_aliases" name="quota_aliases" min="-1" data-allow-negative="true" data-attr="value:quota.aliases.limit"></span>
+              </div>
+              <div class="width33">
+                <label for="uq_emails" data-i18n>Email</label>
+                <span class="form-control icon-number"><input type="number" id="uq_emails" name="quota_emails" min="-1" data-allow-negative="true" data-attr="value:quota.emails.limit"></span>
+              </div>
+              <div class="width33">
+                <label for="uq_disk" data-i18n>Disk space (MB)</label>
+                <span class="form-control icon-number"><input type="number" id="uq_disk" name="disk_quota_mb" min="-1" data-allow-negative="true" data-attr="value:disk_quota_mb"></span>
+              </div>
+            </div>
+            <div class="comment" data-i18n>-1 means unlimited</div>
+            <!--
+              SFTP เป็นสวิตช์ ไม่ใช่จำนวน — หนึ่งบัญชีโฮสติ้งมีได้บัญชีเดียวเสมอ (เฟส E4)
+              ช่องนี้คุม "สิทธิ์ตามแพ็กเกจ" ส่วนการเปิดใช้งานจริงพร้อมรหัสผ่านอยู่ในส่วน
+              "SFTP access" ด้านล่าง
+
+              **ใช้ select ไม่ใช่ checkbox โดยเจตนา** — FormManager ส่ง checkbox ที่ไม่ติ๊ก
+              เป็นสตริงว่าง ซึ่ง `setQuota()` ข้ามไป (กฎ "ไม่ส่งมา = ไม่เปลี่ยน") ผลคือ
+              **ปิดสิทธิ์ไม่ได้เลย** · select ส่งค่าเสมอจึงไม่มีกรณีกำกวม
+            -->
+            <div class="form-group">
+              <div class="width33">
+                <label for="uq_ftp" data-i18n>SFTP</label>
+                <span class="form-control icon-folder">
+                  <select id="uq_ftp" name="quota_ftp_users" data-attr="value:quota.ftp_users.enabled ? '-1' : '0'">
+                    <option value="-1" data-i18n>Allowed in this package</option>
+                    <option value="0" data-i18n>Not included</option>
+                  </select>
+                </span>
+                <div class="comment" data-i18n>Setting this to "Not included" also blocks enabling SFTP below</div>
+              </div>
+            </div>
+          </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
+          </fieldset>
+        </form>
+      </div>
+      <!--
+        SFTP — PLAN-V2 เฟส E4 · หนึ่งบัญชีโฮสติ้ง = หนึ่ง login (ไม่มีบัญชีย่อยต่อเว็บ)
+        เห็นเฉพาะบัญชีโฮสติ้ง (`sites` มีเฉพาะ webadmin) และผู้ที่มีสิทธิ์จัดการลูกค้า
+      -->
+      <div class="content-body" data-if="sites && permissions['customer.manage']">
+        <h2 class="icon-folder" data-i18n>SFTP access</h2>
+        <!-- แพ็กเกจไม่รวม SFTP — ต่างจาก "รวมแต่ยังไม่ได้เปิด" จึงต้องบอกคนละแบบ -->
+        <fieldset class="notice notice-warning" data-if="!sftp_available">
+          <legend class="icon-warning" data-i18n>Not included in this package</legend>
+          <p data-i18n>The FTP/SFTP quota for this account is 0. Change it above to allow SFTP.</p>
+        </fieldset>
+        <div data-if="sftp_available">
+          <table class="table border fullwidth">
+            <tbody>
+              <tr>
+                <th data-i18n>Status</th>
+                <td>
+                  <span class="pill pill-ok" data-show="sftp_enabled === true" data-i18n>Enabled</span>
+                  <span class="pill pill-muted" data-show="sftp_enabled === false" data-i18n>Disabled</span>
+                </td>
+              </tr>
+              <tr data-if="sftp_enabled">
+                <th data-i18n>Username</th>
+                <td class="mono" data-text="username"></td>
+              </tr>
+              <tr data-if="sftp_enabled">
+                <th data-i18n>Enabled at</th>
+                <td data-text="sftp_enabled_at | datetime"></td>
+              </tr>
+            </tbody>
+          </table>
+          <!--
+            ฟอร์มเดียวใช้ทั้งเปิดครั้งแรกและเปลี่ยนรหัสผ่าน — เป็นการกระทำเดียวกันในทางเทคนิค
+            (PUT ตั้งค่าทั้งชุด ตาม §4.1) จึงไม่มีสองปุ่มที่ทำสิ่งเดียวกัน
+          -->
+          <form data-form="userSftp" action="/api/v2/users/{id}/sftp" method="post" data-method="PUT" data-ajax-submit="true" data-validate="true" data-reset="true"
+                data-emit-event="phpcp:reload">
+            <fieldset>
+              <legend data-text="sftp_enabled ? 'Change SFTP password' : 'Enable SFTP'"></legend>
+              <div>
+                <label for="usftp_password" data-i18n>Password</label>
+                <span class="form-control icon-lock">
+                  <input type="password" id="usftp_password" name="password" required minlength="12" autocomplete="new-password">
+                </span>
+                <div class="comment" data-i18n>At least 12 characters. Shown to the customer only once — the panel never stores it in readable form.</div>
+              </div>
+            </fieldset>
+            <fieldset class="submit">
+              <button type="submit" class="btn btn-primary icon-save" data-text="sftp_enabled ? 'Change password' : 'Enable SFTP'"></button>
+              <button type="button" class="btn btn-danger icon-ban" data-if="sftp_enabled" data-action="click.prevent:requestApi" data-api-url="/api/v2/users/{id}/sftp"
+                      data-api-method="delete" data-confirm="Disable SFTP for this account? Files and websites are not affected." data-emit-event="phpcp:reload" data-i18n>Disable
+                SFTP</button>
+            </fieldset>
+          </form>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>

@@ -1,0 +1,505 @@
+/* ธีมของ phpcp ทับบน Now.js — PLAN-V2 เฟส C1
+ *
+ * ทับให้น้อยที่สุดเท่าที่จำเป็น: Now.js มีตัวแปรสี ระยะ และคอมโพเนนต์พื้นฐานครบแล้ว
+ * ไฟล์นี้จึงมีแค่ (1) โครงหน้าจอที่ core ไม่ได้กำหนด (main-content / topbar / card)
+ * และ (2) ชิ้นส่วนเฉพาะของ panel (แถบเตือนโหมด, ป้ายสถานะ, ไฟแสดงสถานะ agent)
+ *
+ * ห้ามใส่ style ลงใน HTML โดยตรง — CSP ของ panel เป็น style-src 'self' ไม่มี
+ * 'unsafe-inline' แอตทริบิวต์ style= ในเทมเพลตจะถูกเบราว์เซอร์ทิ้งเงียบ ๆ
+ */
+:root {
+  --topbar-height: 64px;
+  --phpcp-radius: 12px;
+  --auth-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  --color-primary: #2f6feb;
+  --topbar-height: 78px;
+  --sidebar-color-text: var(--color-text);
+  --auth-bg: var(--color-background);
+  --bg_image: linear-gradient(135deg, var(--color-primary) 0%, var(--color-info) 100%);
+  --bg_image: url(/assets/spa/images/bg_image.webp);
+  --primary-gradient: linear-gradient(135deg, var(--color-primary) 0%, var(--color-purple) 100%);
+  --sidebar-color-background: #F9F9F9;
+  --header-color-background: var(--color-surface);
+  --header-color-text: var(--color-text);
+  --menu-highlight-bg: var(--color-primary);
+}
+body {
+  margin: 0;
+  background-color: var(--color-background);
+}
+.main-content {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  transition: margin-left 0.25s ease;
+}
+.content {
+  flex: 1;
+  padding: 1.5rem;
+  margin-top: var(--topbar-height);
+}
+.sidebar {
+  background: var(--sidebar-color-background);
+  color: var(--sidebar-color-text);
+  border-right: 1px solid var(--color-border);
+  overflow: hidden;
+}
+.sidebar-header {
+  padding: 1rem;
+  /* ใช้ตัวแปรของธีม ไม่ใช่ขาวโปร่งแสง — แถบเมนูของ panel เป็นพื้นสว่าง
+     เส้นขาวบนพื้นขาวจะมองไม่เห็นเลย (ค่าเดิมมาจากตัวอย่างที่แถบเมนูเป็นพื้นเข้ม) */
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.sidebar-header .logo {
+  width: 45px;
+  height: 45px;
+  background-size: cover;
+  display: flex;
+  background-image: url(/assets/spa/images/logo.svg);
+}
+.sidemenu-title span,
+.sidebar-header .logo-text,
+.topbar-left h1,
+.topbar-left p,
+.topbar-right .user-name {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.sidebar-header .logo-text {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+.logo-text em {
+  color: var(--color-primary);
+}
+.sidebar .sidemenu {
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* หักความสูงของส่วนหัวออก ไม่งั้นรายการล่างสุดถูกดันพ้นจอโดยเลื่อนไปไม่ถึง */
+  max-height: calc(100vh - var(--topbar-height));
+}
+.sidemenu-title {
+  padding: 1rem 1rem 0.25rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  opacity: 0.65;
+  pointer-events: none;
+}
+/* --------------------------------------------------------------------------
+   แถบบน
+   -------------------------------------------------------------------------- */
+.topbar {
+  position: fixed;
+  top: 0;
+  left: var(--menu-width);
+  right: 0;
+  height: var(--topbar-height);
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0 1.25rem;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border);
+  transition: left 0.25s ease;
+  backdrop-filter: blur(15px);
+}
+.topbar-left,
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.topbar .page-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.topbar-right .btn {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: inherit;
+}
+/* ไฟสถานะ agent — สีเดียวก็พอ แต่ต้องมี title กำกับเสมอเพื่อคนที่แยกสีไม่ได้ */
+.agent-dot {
+  color: var(--color-success);
+  font-size: 0.8rem;
+}
+.agent-dot.is-down {
+  color: var(--color-error);
+}
+/* --------------------------------------------------------------------------
+   แถบเตือนโหมด — ปิดไม่ได้ จึงต้องอ่านง่ายและไม่บังเนื้อหา
+   -------------------------------------------------------------------------- */
+.mode-banner {
+  position: sticky;
+  top: var(--topbar-height);
+  z-index: 800;
+  padding: 0.6rem 1rem;
+  background: var(--color-warning);
+  color: var(--color-black);
+  font-weight: 500;
+  text-align: center;
+}
+/* --------------------------------------------------------------------------
+   การ์ดและหัวข้อของหน้า
+   -------------------------------------------------------------------------- */
+.card-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.card-groups > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.card-groups h1 {
+  font-size: 2rem;
+  font-weight: 600;
+}
+.card-groups h1 [class*="status"] {
+  font-size: 1.25rem;
+}
+.card-groups header > div:first-child > p {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.card-groups h3,
+.card-groups h2,
+.card-groups h1 {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+}
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.content-body {
+  background: var(--card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--phpcp-radius);
+  padding: 1rem;
+}
+.ggrid section {
+  background: var(--card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--phpcp-radius);
+  padding: 1rem;
+}
+/* --------------------------------------------------------------------------
+   การ์ดตัวเลขบนแดชบอร์ด
+   -------------------------------------------------------------------------- */
+.stat-card {
+  background: var(--card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--phpcp-radius);
+  padding: 1rem 1.25rem;
+}
+.stat-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+.stat-value {
+  margin-top: 0.35rem;
+  font-size: 1.75rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.stat-sub {
+  margin-top: 0.15rem;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+/* แถบวัดสัดส่วน (CPU / RAM / ดิสก์) — ความกว้างตั้งจาก JS ผ่าน CSSOM ไม่ใช่ style= */
+.meter {
+  height: 6px;
+  margin-top: 0.5rem;
+  border-radius: 999px;
+  background: var(--color-surface-hover);
+  overflow: hidden;
+}
+.meter > span {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: var(--color-primary);
+}
+.meter.is-warn > span {
+  background: var(--color-warning);
+}
+.meter.is-crit > span {
+  background: var(--color-error);
+}
+/* --------------------------------------------------------------------------
+   ป้ายสถานะ
+   -------------------------------------------------------------------------- */
+.pill {
+  display: inline-block;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+  white-space: nowrap;
+}
+.pill-ok {
+  background: var(--color-success-light);
+  color: var(--color-success-hover);
+}
+.pill-warn {
+  background: var(--color-warning-light);
+  color: var(--color-warning-hover);
+}
+.pill-danger {
+  background: var(--color-error-light);
+  color: var(--color-error-hover);
+}
+.pill-muted {
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+}
+.mono {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85em;
+}
+/* --------------------------------------------------------------------------
+   หน้าเข้าสู่ระบบ
+   -------------------------------------------------------------------------- */
+.auth-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background-image: var(--bg_image);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+.auth-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--card-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--phpcp-radius);
+  padding: 2rem;
+  box-shadow: var(--card-shadow);
+}
+.auth-header {
+  text-align: center;
+  margin-bottom: 1.25rem;
+}
+.auth-header h1 {
+  margin: 0 0 0.35rem;
+  font-size: 1.4rem;
+}
+.auth-header p {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+/* --------------------------------------------------------------------------
+   ตัวแสดง log / zone file — ต้องเลื่อนในกล่องของตัวเอง ไม่ดันหน้าให้กว้างเกินจอ
+   -------------------------------------------------------------------------- */
+.log-view {
+  max-height: 60vh;
+  overflow: auto;
+  padding: 0.75rem;
+  border-radius: var(--phpcp-radius);
+  background: var(--color-surface-dark);
+  color: var(--color-light);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.tablebody {
+  overflow-x: auto;
+}
+/* --------------------------------------------------------------------------
+   จอกว้าง — เว้นที่ให้แผงเมนูซ้าย และรองรับปุ่มยุบเมนู
+   --------------------------------------------------------------------------
+   จุดตัดต้องเป็น 769px ให้ตรงกับ `--menu-breakpoint` ของ Now.js เป๊ะ ไม่งั้นจะมีช่วง
+   ความกว้างที่แผงเมนูโผล่มาแล้วแต่เนื้อหายังไม่ถอย (หรือกลับกัน) แล้วทับกัน
+   -------------------------------------------------------------------------- */
+@media (min-width: 769px) {
+  .main-content {
+    margin-left: var(--menu-width);
+  }
+  .sidemenu-close header {
+    left: var(--sidebar-collapsed-width);
+  }
+  .sidemenu-close .main-content {
+    margin-left: var(--sidebar-collapsed-width);
+  }
+  .sidemenu-close .sidebar-header {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+  .sidemenu-close .menu-toggle {
+    color: var(--color-text);
+  }
+  .sidemenu-close .logo-text {
+    display: none;
+  }
+}
+/* --------------------------------------------------------------------------
+   จอแคบ — แผงเมนูเลื่อนออกนอกจอ เนื้อหากินเต็มความกว้าง
+   -------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+  .main-content {
+    margin-left: 0;
+  }
+  .topbar {
+    left: 0;
+  }
+  .content {
+    padding: 1rem;
+  }
+}
+/* --------------------------------------------------------------------------
+   แผงที่พับเก็บได้ — เปิด/ปิดด้วย action `toggleClass` ของเฟรมเวิร์ก
+   ค่าเริ่มต้นคือปิด จึงไม่ต้องพึ่ง JS ตั้งค่าตอนโหลดหน้า
+   -------------------------------------------------------------------------- */
+.collapsible {
+  display: none;
+}
+.collapsible.is-open {
+  display: block;
+}
+/* --------------------------------------------------------------------------
+   แถบนับถอยหลังการคืนค่าอัตโนมัติ
+   --------------------------------------------------------------------------
+   สีเดียวกับแถบเตือนโหมด และอยู่เหนือทุกอย่างยกเว้นแถบบน — มันคือสิ่งที่ผู้ดูแล
+   ต้องเห็นก่อนทำอย่างอื่น ถ้าพลาดไปจะเสียค่าที่เพิ่งตั้งโดยไม่รู้ตัว
+   -------------------------------------------------------------------------- */
+.rollback-bar {
+  position: sticky;
+  top: var(--topbar-height);
+  z-index: 810;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.6rem 1rem;
+  background: var(--color-error);
+  color: var(--color-light);
+}
+.rollback-bar .rollback-text {
+  flex: 1;
+  min-width: 12rem;
+}
+.rollback-bar .rollback-clock {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 1.1rem;
+  font-weight: 600;
+  padding: 0.1rem 0.5rem;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.25);
+}
+/* ตัวแก้ไขไฟล์ — ต้องเห็นเนื้อหาได้เยอะและไม่ตัดบรรทัดจนโครงสร้างไฟล์เพี้ยน */
+textarea.mono {
+  width: 100%;
+  min-height: 60vh;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+  tab-size: 4;
+}
+/* --------------------------------------------------------------------------
+   ฟอร์ม
+   -------------------------------------------------------------------------- */
+form fieldset legend {
+  font-weight: 600;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--font-size-2xl);
+  display: flex;
+  gap: 5px;
+}
+form fieldset legend .btn {
+  margin-left: auto;
+  font-size: 1rem;
+  font-weight: normal;
+}
+.selectable {
+  text-align: center;
+  padding: 0.5rem;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--phpcp-radius);
+  background: var(--color-surface);
+  margin: 1rem 0;
+}
+/* --------------------------------------------------------------------------
+   กล่องแจ้งเตือนในฟอร์ม (เช่น รายการคำเตือนก่อนบันทึกค่า sshd/firewall)
+   ทับ "form fieldset legend" ทั่วไปด้วย selector ที่จำเพาะกว่า ไม่ต้องใช้ !important
+   -------------------------------------------------------------------------- */
+fieldset.notice {
+  border: 1px solid var(--color-border);
+  border-radius: var(--phpcp-radius);
+  padding: 0.75rem 1rem;
+  margin: 0 0 1rem;
+}
+fieldset.notice legend {
+  padding: 0 0.4rem;
+  border-bottom: none;
+}
+fieldset.notice ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+fieldset.notice-warning {
+  border-color: var(--color-warning);
+  background: var(--color-warning-light);
+}
+fieldset.notice-warning legend {
+  color: var(--color-warning-hover);
+}
+fieldset.notice-danger {
+  border-color: var(--color-error);
+  background: var(--color-error-light);
+}
+fieldset.notice-danger legend {
+  color: var(--color-error-hover);
+}
+/* --------------------------------------------------------------------------
+   กราฟทรัพยากรย้อนหลัง (PLAN-V2 เฟส E6)
+   GraphComponent วาด SVG ตามขนาดของกล่อง จึงต้องกำหนดความสูงให้ ไม่งั้นได้กล่องสูง 0
+   -------------------------------------------------------------------------- */
+.metrics-graph {
+  height: 320px;
+  margin-top: 0.75rem;
+}
+/* ปุ่มเลือกช่วงเวลา — ตัวที่เลือกอยู่ต้องเห็นชัดว่าต่างจากตัวอื่น */
+[data-metrics-ranges] .btn.is-active {
+  background: var(--color-primary);
+  color: var(--color-light);
+}

@@ -1,0 +1,355 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <!-- pageDetail เติม id จาก query string ลงใน {id} ของทุก data-endpoint/data-source/action -->
+  <main class="content" data-script="pageDetail" data-fallback="/sites">
+    <div class="card-groups" data-component="api" data-endpoint="/api/v2/sites/{id}" data-refresh-event="phpcp:reload">
+      <header>
+        <div>
+          <h1 class="icon-website" data-text="domain">—</h1>
+          <p data-text="name"></p>
+        </div>
+        <div class="header-actions">
+          <a class="btn icon-arrow-left" href="/app/sites" data-route="/sites" data-i18n>Websites</a>
+        </div>
+      </header>
+      <div class="ggrid">
+        <section class="block6">
+          <h2 data-i18n>Overview</h2>
+          <table class="table border fullwidth">
+            <tbody>
+              <tr>
+                <th data-i18n>Status</th>
+                <!-- สีของป้ายมาจาก API (`status_tone`) ไม่ใช่จากเงื่อนไขซ้อนกันในหน้าจอ -->
+                <td><span class="pill" data-class="pill-${status_tone}" data-text="status"></span></td>
+              </tr>
+              <tr>
+                <th data-i18n>Owner</th>
+                <td class="mono" data-text="system_user"></td>
+              </tr>
+              <tr>
+                <th data-i18n>Document root</th>
+                <td class="mono" data-text="docroot"></td>
+              </tr>
+              <tr>
+                <th data-i18n>Disk used</th>
+                <td data-text="disk_used | bytes"></td>
+              </tr>
+              <tr>
+                <th data-i18n>Created</th>
+                <td data-text="created_at | datetime"></td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+        <section class="block6">
+          <h2 data-i18n>PHP version</h2>
+          <form data-form="sitePhp" action="/api/v2/sites/{id}/php-version" method="post" data-method="PUT" data-ajax-submit="true">
+            <!--
+              ไม่ตั้งค่าเริ่มต้นให้ช่องนี้โดยตั้งใจ: คอมโพเนนต์ชั้นนอกตั้งค่าก่อนที่ชั้นใน
+              จะสร้าง option เสร็จ ค่าที่ตั้งไว้จึงหลุด แล้วเบราว์เซอร์เลือกตัวแรกให้แทน
+              ซึ่งแปลว่ากดบันทึกครั้งเดียวเว็บถูกลดเวอร์ชันโดยไม่ได้ตั้งใจ
+              บังคับให้เลือกเองเสมอ (required) และแสดงค่าปัจจุบันไว้ข้าง ๆ ให้เทียบได้
+            -->
+            <fieldset>
+              <div>
+                <label for="php_version">
+                  <span data-i18n>PHP version</span> (<span data-i18n>current</span>: <strong data-text="php_version"></strong>) </label>
+                <!--
+                  รายการเวอร์ชันมาจาก endpoint ของมันเอง — GET /api/v2/sites/{id} ไม่ได้
+                  ส่งตัวเลือกมาด้วย และไม่ควรต้องส่ง เพราะนั่นคือการผูก API เข้ากับฟอร์ม
+                  ตัวหนึ่ง · `data-for` วนสร้าง <option> จากคำตอบโดยตรง
+                -->
+                <span class="form-control icon-code" data-component="api" data-endpoint="/api/v2/php-versions">
+                  <select id="php_version" name="php_version" required data-for="php in data">
+                    <template>
+                      <option data-attr="value:php.version" data-text="php.version"></option>
+                    </template>
+                  </select>
+                </span>
+              </div>
+            </fieldset>
+            <fieldset class="submit">
+              <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
+            </fieldset>
+          </form>
+        </section>
+      </div>
+      <!--
+        คำสั่งที่มีผลกับทั้งเว็บไซต์ — แยกออกมาจากหัวหน้าจอเพราะเป็นการกระทำที่
+        ย้อนกลับยาก · ทุกปุ่มยิงไปที่ทรัพยากรตรง ๆ แล้วให้ `actions` ในคำตอบ
+        สั่งหน้าจอต่อเอง (แจ้งผล · โหลดใหม่ · กลับหน้ารายการ)
+      -->
+      <div class="content-body">
+        <h2 data-i18n>Actions</h2>
+        <div class="header-actions">
+          <button type="button" class="btn icon-ban" data-if="can['suspend'] && status !== 'suspended'" data-action="click.prevent:requestApi"
+                  data-api-url="/api/v2/sites/{id}/suspension" data-api-method="put" data-param-suspended="true"
+                  data-confirm="Suspending stops the website from serving visitors immediately." data-i18n>Suspend</button>
+          <button type="button" class="btn icon-refresh" data-if="can['suspend'] && status === 'suspended'" data-action="click.prevent:requestApi"
+                  data-api-url="/api/v2/sites/{id}/suspension" data-api-method="put" data-param-suspended="false" data-confirm="Resume serving this website?"
+                  data-i18n>Resume</button>
+          <!--
+            ลบเว็บไซต์ย้อนกลับไม่ได้ · API บังคับให้ส่งชื่อโดเมนมายืนยันอยู่แล้ว
+            `data-attr` เติมชื่อโดเมนจริงลง `data-param-confirm_domain` ให้ตอนเรนเดอร์
+          -->
+          <button type="button" class="btn btn-danger icon-delete" data-if="can['delete']" data-action="click.prevent:requestApi" data-api-url="/api/v2/sites/{id}"
+                  data-api-method="delete" data-attr="data-param-confirm_domain:domain"
+                  data-confirm="Deleting a website removes its files, databases and certificates. This cannot be undone." data-i18n>Delete website</button>
+        </div>
+      </div>
+      <!--
+        จำกัดอัตราคำขอ (เฟส E5) — บังคับใช้ด้วย fail2ban ที่อ่าน access log ของเว็บนี้
+
+        โหลดค่าจาก endpoint ของตัวเองด้วย data-load-api ไม่ใช่จากข้อมูลของหน้า
+        เพราะ `status` ต้องมาจาก fail2ban จริง ๆ ไม่ใช่จากสิ่งที่ฐานข้อมูลของ panel จำไว้
+      -->
+      <div class="content-body">
+        <h2 class="icon-shield" data-i18n>Request rate limit</h2>
+        <!--
+          คำเตือนต้องอยู่**เหนือ**ฟอร์ม ไม่ใช่ใต้ปุ่มบันทึก — ผู้ดูแลต้องรู้ก่อนกด
+          ว่าการแบนมีผลทั้งเครื่อง ไม่ใช่รู้ตอนที่ IP ของตัวเองถูกแบนไปแล้ว
+        -->
+        <div class="alert alert-warning" data-i18n>Bans apply to the whole server, not just this website — a banned IP cannot reach any other site hosted here either.</div>
+        <form data-form="siteRateLimit" action="/api/v2/sites/{id}/rate-limit" method="post" data-method="PUT"
+              data-ajax-submit="true" data-load-api="/api/v2/sites/{id}/rate-limit">
+          <fieldset>
+            <div>
+              <input type="checkbox" class="switch" id="rate_limit_enabled" name="enabled" data-checked="enabled">
+              <label for="rate_limit_enabled" data-i18n>Enable request rate limit</label>
+            </div>
+            <div class="form-group">
+              <div class="width30">
+                <label for="max_requests" data-i18n>Max requests</label>
+                <span class="form-control icon-number">
+                  <input type="number" id="max_requests" name="max_requests" min="10" max="100000" required data-attr="value:max_requests">
+                </span>
+              </div>
+              <div class="width30">
+                <label for="window_seconds" data-i18n>Within (seconds)</label>
+                <span class="form-control icon-clock">
+                  <input type="number" id="window_seconds" name="window_seconds" min="10" max="3600" required data-attr="value:window_seconds">
+                </span>
+              </div>
+              <div class="width30">
+                <label for="ban_seconds" data-i18n>Ban duration (seconds)</label>
+                <span class="form-control icon-ban">
+                  <input type="number" id="ban_seconds" name="ban_seconds" min="60" max="86400" required data-attr="value:ban_seconds">
+                </span>
+              </div>
+            </div>
+            <div>
+              <label for="ignore_ips" data-i18n>Never ban these IPs</label>
+              <span class="form-control icon-shield">
+                <input type="text" id="ignore_ips" name="ignore_ips" maxlength="2000" placeholder="203.0.113.5 198.51.100.0/24" data-attr="value:ignore_ips">
+              </span>
+              <div class="comment" data-i18n>Separate with spaces. CIDR ranges are allowed. Add your office IP and any uptime monitor here.</div>
+            </div>
+          </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
+          </fieldset>
+        </form>
+        <!--
+          สถานะจริงจาก fail2ban — ต่างจากค่าในฟอร์มที่เป็นสิ่งที่ "ตั้งไว้"
+          ส่วนตรงนี้คือสิ่งที่ "เป็นอยู่จริง" บนเครื่อง
+        -->
+        <div data-component="api" data-endpoint="/api/v2/sites/{id}/rate-limit" data-if="enabled">
+          <h3 data-i18n>Currently banned</h3>
+          <div class="tablebody">
+            <table class="table border fullwidth" data-table="bannedIps" data-source="/api/v2/sites/{id}/rate-limit/bans">
+              <thead>
+                <tr>
+                  <th data-field="ip" data-i18n>{LNG_IP address}</th>
+                  <th class="center" data-row-actions="
+                        <button type='button' class='btn btn-small icon-refresh' data-action='click.prevent:requestApi'
+                                data-api-url='/api/v2/sites/{id}/rate-limit/unban' data-api-method='post'
+                                data-param-ip='{ip}'>{LNG_Unban}</button>"
+                      data-i18n>{LNG_Action}</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="content-body">
+        <h2 data-i18n>Domains</h2>
+        <!--
+          data-row-actions ใช้ {row_id} ไม่ใช่ {id} โดยตั้งใจ — URL ของหน้านี้เองมี ?id=
+          (id ของเว็บไซต์) RouterManager.render (js/ui.js) แทนค่า {id} ทุกจุดในหน้าด้วย
+          id ของหน้าก่อนที่ TableManager จะได้เห็นเทมเพลตด้วยซ้ำ ถ้าใช้ {id} ตรงนี้
+          ปุ่ม "DNS records" ทุกแถวจะพาไปที่โดเมนแถวแรกเหมือนกันหมด
+        -->
+        <div class="tablebody">
+          <form class="table_nav" data-form="siteDomainAdd" action="/api/v2/sites/{id}/domains" method="post" data-ajax-submit="true" data-validate="true" data-reset="true">
+            <div>
+              <label for="new_host" data-i18n>Add domain</label>
+              <span class="form-control icon-link">
+                <input type="text" id="new_host" name="host" required maxlength="253" placeholder="sub.example.com {LNG_or} *.example.com" autocomplete="off">
+              </span>
+              <!--
+                คำเตือนต้องอยู่ตรงนี้ ไม่ใช่หลังกดเพิ่ม (เฟส E7) — `*.example.com` แปลว่า
+                subdomain ที่ยังไม่มีใครจดก็เข้าเว็บนี้ได้ ซึ่งเป็นการตัดสินใจด้านความปลอดภัย
+                ที่ผู้ดูแลต้องรู้ก่อนกด ไม่ใช่รู้ตอนที่มีคนใช้ชื่อที่ไม่ได้ตั้งใจเข้ามาแล้ว
+              -->
+              <div class="comment" data-i18n>Wildcard (*.example.com) accepts every subdomain that is not defined elsewhere, including ones nobody registered. It needs a DNS zone on this server and is verified through DNS, not HTTP.</div>
+            </div>
+            <div>
+              <label for="new_path" data-i18n>Path</label>
+              <span class="form-control icon-folder">
+                <input type="text" id="new_path" name="path" maxlength="253" placeholder="/shop {LNG_or leave blank If you want to use it as Alias}" autocomplete="off">
+              </span>
+            </div>
+            <div>
+              <button type="submit" class="btn btn-primary fullwidth icon-plus" data-i18n>Add</button>
+            </div>
+          </form>
+          <table class="table border fullwidth" data-table="siteDomains" data-attr="data:domains" data-row-actions='{
+                    "link": {
+                     "title": "Open",
+                     "className": "btn btn-brown icon-link",
+                     "method": "get",
+                     "target": "_blank",
+                     "url": "http://{domain}"
+                   },
+                   "dns": {
+                     "title": "DNS records",
+                     "className": "btn btn-warning icon-world",
+                     "method": "get",
+                     "url": "/app/domain?id={row_id}"
+                   },
+                   "delete": {
+                     "title": "Remove",
+                     "className": "btn btn-danger icon-delete",
+                     "method": "delete",
+                     "url": "/api/v2/sites/{site_id}/domains/{domain}",
+                     "condition": "${removable}",
+                     "confirm": "Remove this domain from the website?"
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="domain" data-cell-class="mono" data-i18n>{LNG_Domain}</th>
+                <th data-field="type" class="center" data-cell-class="center" data-i18n>{LNG_Type}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <!--
+        ทรัพยากรของเว็บนี้ — ทุกตารางกรองที่ฝั่งเซิร์ฟเวอร์ด้วย `site_id` ไม่ใช่ดึงมา
+        ทั้งหมดแล้วกรองทิ้งบนหน้าจอ · ข้อมูลของลูกค้ารายอื่นจึงไม่ถูกส่งออกมาตั้งแต่แรก
+      -->
+      <div class="content-body">
+        <h2 class="icon-lock" data-i18n>SSL Certificates</h2>
+        <div class="tablebody">
+          <table class="table border fullwidth" data-table="siteCertificates" data-source="/api/v2/certificates?site_id={id}" data-row-actions='{
+                   "renew": {
+                     "title": "Renew",
+                     "className": "btn btn-primary icon-refresh",
+                     "method": "post",
+                     "url": "/api/v2/certificates/{site_id}/renewal",
+                     "condition": "${can_manage && status !== \"none\"}",
+                     "confirm": "Renew the certificate for this website now?"
+                   },
+                   "delete": {
+                     "title": "Remove",
+                     "className": "btn btn-danger icon-delete",
+                     "method": "delete",
+                     "url": "/api/v2/certificates/{site_id}",
+                     "condition": "${can_manage && status !== \"none\"}",
+                     "confirm": "Remove this certificate? The website falls back to plain HTTP."
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="domain" data-cell-class="mono" data-i18n>{LNG_Domain}</th>
+                <th data-field="ssl_mode" class="center" data-cell-class="center" data-i18n>{LNG_Mode}</th>
+                <th data-field="status" class="center" data-cell-class="center" data-template="<span class='pill pill-${status_tone}'>{LNG_${status}}</span>" data-i18n>{LNG_Status}
+                </th>
+                <th data-field="expires_at" class="center" data-cell-class="center" data-format="date" data-empty-text="—" data-i18n>{LNG_Expires}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="content-body">
+        <h2 class="icon-database" data-i18n>Databases</h2>
+        <div class="tablebody">
+          <table class="table border fullwidth" data-table="siteDatabases" data-source="/api/v2/databases?site_id={id}" data-row-actions='{
+                   "delete": {
+                     "title": "Delete",
+                     "className": "btn btn-danger icon-delete",
+                     "method": "delete",
+                     "url": "/api/v2/databases/{name}",
+                     "params": {"confirm": "{name}"},
+                     "condition": "${managed}",
+                     "confirm": "Delete this database and everything in it? This cannot be undone."
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="name" data-cell-class="mono" data-i18n>{LNG_Name}</th>
+                <th data-field="size" class="center" data-cell-class="center" data-format="bytes" data-i18n>{LNG_Size}</th>
+                <th data-field="charset" class="center" data-cell-class="center" data-i18n>{LNG_Charset}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="content-body">
+        <h2 class="icon-clock" data-i18n>Cron Jobs</h2>
+        <div class="tablebody">
+          <!--
+            data-row-actions ใช้ {row_id} ไม่ใช่ {id} โดยตั้งใจ — ดูหมายเหตุเดียวกันที่
+            ตาราง siteDomains ด้านบน (URL ของหน้านี้เองมี ?id= เป็น id ของเว็บไซต์)
+          -->
+          <table class="table border fullwidth" data-table="siteCronJobs" data-source="/api/v2/cron-jobs?site_id={id}" data-row-actions='{
+                   "open": {
+                     "title": "Manage",
+                     "className": "btn btn-success icon-edit",
+                     "method": "get",
+                     "url": "/app/cron-job?id={row_id}"
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="name" data-i18n>{LNG_Name}</th>
+                <th data-field="schedule_label" data-i18n>{LNG_Schedule}</th>
+                <th data-field="command" data-cell-class="mono" data-i18n>{LNG_Command}</th>
+                <th data-field="enabled" class="center" data-cell-class="center" data-format="boolean" data-true-text="{LNG_Yes}" data-false-text="{LNG_No}" data-i18n>{LNG_Enabled}
+                </th>
+                <th data-field="last_run_at" class="center" data-cell-class="center" data-format="datetime" data-empty-text="—" data-i18n>{LNG_Last run}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="content-body">
+        <h2 class="icon-stack" data-i18n>Backups</h2>
+        <div class="tablebody">
+          <table class="table border fullwidth" data-table="siteBackups" data-source="/api/v2/backups?site_id={id}" data-default-sort="created_at desc">
+            <thead>
+              <tr>
+                <th data-field="name" data-i18n>{LNG_Name}</th>
+                <th data-field="type" class="center" data-cell-class="center" data-i18n>{LNG_Type}</th>
+                <th data-field="size_bytes" class="center" data-cell-class="center" data-format="bytes" data-i18n>{LNG_Size}</th>
+                <th data-field="status" class="center" data-cell-class="center" data-template="<span class='pill pill-${status_tone}'>{LNG_${status}}</span>" data-i18n>{LNG_Status}
+                </th>
+                <th data-field="created_at" class="center" data-cell-class="center" data-format="datetime" data-empty-text="—" data-i18n>{LNG_Created}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>

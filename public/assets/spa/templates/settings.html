@@ -1,0 +1,248 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <main class="content">
+    <div class="card-groups">
+      <header>
+        <div>
+          <h1 class="icon-cog" data-i18n>Settings</h1>
+          <p data-i18n>Panel settings and notification channels</p>
+        </div>
+      </header>
+      <div class="content-body">
+        <!--
+          FormManager ทำทั้งหมด: โหลดค่าเดิมจาก data-load-api · ผูกค่าลงช่องด้วย data-attr
+          · ส่งด้วยเมธอดที่ data-method กำหนด (v2 ใช้ PATCH สำหรับแก้บางส่วน) · แจ้งผลเอง
+          ไม่มี JS ประจำหน้าเลย
+
+          **คีย์ของค่าตั้งมีจุดอยู่ในชื่อ** (`notify.telegram.enabled`) จึงต้องอ้างด้วย
+          วงเล็บเหลี่ยม `values['...']` ไม่ใช่จุด ไม่งั้นตัวประเมินนิพจน์จะอ่านเป็นเส้นทางซ้อน
+          แล้วได้ค่าว่างโดยไม่มี error ให้เห็น
+        -->
+        <form data-form="settings" action="/api/v2/settings" method="post" data-method="PATCH" data-ajax-submit="true" data-load-api="/api/v2/settings">
+          <fieldset>
+            <legend class="icon-bell" data-i18n>Telegram notifications</legend>
+            <div>
+              <input type="checkbox" class="switch" id="notify_telegram_enabled" name="notify.telegram.enabled" data-checked="isOn(values['notify.telegram.enabled'])">
+              <label for="notify_telegram_enabled" data-i18n>Enable Telegram notifications</label>
+            </div>
+            <div class="form-group bottom">
+              <div class="width50">
+                <label for="notify_telegram_token" data-i18n>Bot token</label>
+                <span class="form-control icon-lock">
+                  <input type="text" id="notify_telegram_token" name="notify.telegram.token" autocomplete="off" data-attr="value:values['notify.telegram.token']">
+                </span>
+              </div>
+              <div class="width40">
+                <label for="notify_telegram_chat_id" data-i18n>Chat ID</label>
+                <span class="form-control icon-users">
+                  <input type="text" id="notify_telegram_chat_id" name="notify.telegram.chat_id" autocomplete="off" data-attr="value:values['notify.telegram.chat_id']">
+                </span>
+              </div>
+              <div>
+                <button type="button" id="test_telegram" class="btn fullwidth center icon-send" data-action="click.prevent:requestApi" data-api-url="/api/v2/settings/notification-test"
+                        data-api-method="post" data-param-channel="telegram" data-required-fields="notify_telegram_token,notify_telegram_chat_id" data-required-message="Please fill in" data-loading-text="Sending..."
+                        data-notify-success="true" data-i18n>Send test notification</button>
+              </div>
+            </div>
+            <div class="comment" data-i18n>Leave the masked value untouched to keep the current token</div>
+          </fieldset>
+          <!--
+            ปุ่มทดสอบทุกช่องทางยิงไปที่ endpoint เดียวกัน ต่างกันที่ `data-param-channel`
+            — ทดสอบทีละช่องเพราะผู้ดูแลต้องรู้ว่า "ช่องไหน" พัง ไม่ใช่รู้แค่ว่าบางช่องพัง
+            · ค่าที่ต้องกรอกถูกอ่านจากฐานข้อมูลฝั่งเซิร์ฟเวอร์ ไม่ใช่จากช่องกรอกในฟอร์ม
+            จึงต้อง **กดบันทึกก่อน** แล้วค่อยทดสอบ (ดูคำเตือนใต้ปุ่ม)
+          -->
+          <fieldset>
+            <legend class="icon-email" data-i18n>Email notifications</legend>
+            <div>
+              <input type="checkbox" class="switch" id="notify_email_enabled" name="notify.email.enabled" data-checked="isOn(values['notify.email.enabled'])">
+              <label for="notify_email_enabled" data-i18n>Enable email notifications</label>
+            </div>
+            <div class="form-group bottom">
+              <div class="width90">
+                <label for="notify_email_to" data-i18n>Recipient address</label>
+                <span class="form-control icon-email">
+                  <input type="email" id="notify_email_to" name="notify.email.to" autocomplete="off" data-attr="value:values['notify.email.to']">
+                </span>
+              </div>
+              <div>
+                <button type="button" class="btn fullwidth center icon-send" data-action="click.prevent:requestApi" data-api-url="/api/v2/settings/notification-test"
+                        data-api-method="post" data-param-channel="email" data-required-fields="notify_email_to" data-required-message="Please fill in" data-loading-text="Sending..."
+                        data-notify-success="true" data-i18n>Send test notification</button>
+              </div>
+            </div>
+            <div class="comment" data-i18n>Uses the outgoing mail settings below — save first, then send the test</div>
+          </fieldset>
+          <fieldset>
+            <legend class="icon-link" data-i18n>Webhook notifications</legend>
+            <div>
+              <input type="checkbox" class="switch" id="notify_webhook_enabled" name="notify.webhook.enabled" data-checked="isOn(values['notify.webhook.enabled'])">
+              <label for="notify_webhook_enabled" data-i18n>Enable webhook notifications</label>
+            </div>
+            <div>
+              <label for="notify_webhook_url" data-i18n>Webhook URL</label>
+              <span class="form-control icon-link">
+                <input type="text" id="notify_webhook_url" name="notify.webhook.url" autocomplete="off" placeholder="https://example.com/hooks/phpcp" data-attr="value:values['notify.webhook.url']">
+              </span>
+            </div>
+            <div class="form-group bottom">
+              <div class="width90">
+                <label for="notify_webhook_secret" data-i18n>Signing secret</label>
+                <span class="form-control icon-lock">
+                  <input type="text" id="notify_webhook_secret" name="notify.webhook.secret" autocomplete="off" data-attr="value:values['notify.webhook.secret']">
+                </span>
+              </div>
+              <div>
+                <button type="button" class="btn fullwidth center icon-send" data-action="click.prevent:requestApi" data-api-url="/api/v2/settings/notification-test"
+                        data-api-method="post" data-param-channel="webhook" data-required-fields="notify_webhook_url" data-required-message="Please fill in" data-loading-text="Sending..."
+                        data-notify-success="true" data-i18n>Send test notification</button>
+              </div>
+            </div>
+            <div class="comment" data-i18n>Must be https — the receiver verifies the X-Phpcp-Signature header with this secret</div>
+          </fieldset>
+          <fieldset>
+            <legend class="icon-bell" data-i18n>Notify on these events</legend>
+            <div>
+              <input type="checkbox" class="switch" id="notify_events_security" name="notify.events.security" data-checked="isOn(values['notify.events.security'])">
+              <label for="notify_events_security" data-i18n>Security</label>
+            </div>
+            <div>
+              <input type="checkbox" class="switch" id="notify_events_ssl" name="notify.events.ssl" data-checked="isOn(values['notify.events.ssl'])">
+              <label for="notify_events_ssl" data-i18n>SSL Certificates</label>
+            </div>
+            <div>
+              <input type="checkbox" class="switch" id="notify_events_service" name="notify.events.service" data-checked="isOn(values['notify.events.service'])">
+              <label for="notify_events_service" data-i18n>Services</label>
+            </div>
+            <div>
+              <input type="checkbox" class="switch" id="notify_events_backup" name="notify.events.backup" data-checked="isOn(values['notify.events.backup'])">
+              <label for="notify_events_backup" data-i18n>Backups</label>
+            </div>
+            <div>
+              <input type="checkbox" class="switch" id="notify_events_login" name="notify.events.login" data-checked="isOn(values['notify.events.login'])">
+              <label for="notify_events_login" data-i18n>Sign in</label>
+            </div>
+            <div>
+              <input type="checkbox" class="switch" id="notify_events_quota" name="notify.events.quota" data-checked="isOn(values['notify.events.quota'])">
+              <label for="notify_events_quota" data-i18n>Disk quota</label>
+            </div>
+            <div>
+              <input type="checkbox" class="switch" id="notify_events_alert" name="notify.events.alert" data-checked="isOn(values['notify.events.alert'])">
+              <label for="notify_events_alert" data-i18n>Server health thresholds</label>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend class="icon-email" data-i18n>Outgoing mail</legend>
+            <div>
+              <input type="checkbox" class="switch" id="mail_enabled" name="mail.enabled" data-checked="isOn(values['mail.enabled'])">
+              <label for="mail_enabled" data-i18n>Enable outgoing mail</label>
+            </div>
+            <div>
+              <label for="mail_from" data-i18n>From address</label>
+              <span class="form-control icon-email">
+                <input type="email" id="mail_from" name="mail.from" autocomplete="off" data-attr="value:values['mail.from']">
+              </span>
+            </div>
+            <div>
+              <label for="mail_relay_host" data-i18n>Relay host</label>
+              <span class="form-control icon-database">
+                <input type="text" id="mail_relay_host" name="mail.relay_host" autocomplete="off" data-attr="value:values['mail.relay_host']">
+              </span>
+            </div>
+            <div>
+              <label for="mail_relay_port" data-i18n>Relay port</label>
+              <span class="form-control icon-number">
+                <input type="number" id="mail_relay_port" name="mail.relay_port" autocomplete="off" min="1" max="65535" data-attr="value:values['mail.relay_port']">
+              </span>
+            </div>
+            <div>
+              <label for="mail_relay_user" data-i18n>Relay username</label>
+              <span class="form-control icon-user">
+                <input type="text" id="mail_relay_user" name="mail.relay_user" autocomplete="off" data-attr="value:values['mail.relay_user']">
+              </span>
+            </div>
+            <div>
+              <label for="mail_relay_password" data-i18n>Relay password</label>
+              <span class="form-control icon-lock">
+                <input type="password" id="mail_relay_password" name="mail.relay_password" autocomplete="off" data-attr="value:values['mail.relay_password']">
+              </span>
+            </div>
+            <div>
+              <input type="checkbox" class="switch" id="mail_relay_tls" name="mail.relay_tls" data-checked="isOn(values['mail.relay_tls'])">
+              <label for="mail_relay_tls" data-i18n>Use TLS</label>
+            </div>
+            <div class="form-group bottom">
+              <div class="width90">
+                <label for="to" data-i18n>Test email</label>
+                <span class="form-control icon-email">
+                  <input type="text" id="to" name="to" data-attr="value:mail" autocomplete="off" placeholder="Enter email address to send test email">
+                </span>
+              </div>
+              <div>
+                <button type="button" id="test_mail" class="btn fullwidth center icon-send" data-action="click.prevent:requestApi" data-api-url="/api/v2/settings/mail-test"
+                        data-api-method="post" data-param-to="{to}" data-required-fields="to" data-required-message="Please fill in test email" data-loading-text="Sending..."
+                        data-notify-success="true" data-i18n>Send test email</button>
+              </div>
+            </div>
+          </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
+          </fieldset>
+        </form>
+      </div>
+      <!--
+        เกณฑ์เตือนที่ยังค้างอยู่ — ตารางอ่านอย่างเดียว
+
+        จำเป็นเพราะระบบแจ้งเตือน**ตั้งใจให้เงียบ**เมื่อปัญหายังเหมือนเดิม (ดู AlertRules)
+        ผู้ดูแลที่เพิ่งเปิดเครื่องจึงไม่มีทางรู้ว่าดิสก์ยังเต็มอยู่ไหม ถ้าข้อความรอบล่าสุด
+        ถูกส่งไปตั้งแต่เมื่อวาน · ตารางว่าง = ตอนนี้ไม่มีอะไรผิดปกติ
+      -->
+      <div class="content-body">
+        <h2 class="icon-warning" data-i18n>Active alerts</h2>
+        <div class="tablebody">
+          <table class="table border fullwidth" data-table="activeAlerts" data-source="/api/v2/alerts" data-page-size="50">
+            <thead>
+              <tr>
+                <th data-field="label" data-i18n>{LNG_Name}</th>
+                <th data-field="level" class="center" data-cell-class="center"
+                    data-template="<span class='pill pill-${level_tone}'>{LNG_${level}}</span>"
+                    data-i18n>{LNG_Status}</th>
+                <th data-field="value" class="center" data-cell-class="center right" data-format="fixed:1" data-i18n>{LNG_Value}</th>
+                <th data-field="first_at" class="center" data-cell-class="center"
+                    data-format="datetime" data-empty-text="—" data-i18n>{LNG_Since}</th>
+                <th data-field="duration" class="center" data-cell-class="center" data-format="duration" data-i18n>{LNG_Duration}</th>
+                <th data-field="notified_at" class="center" data-cell-class="center"
+                    data-format="datetime" data-empty-text="—" data-i18n>{LNG_Last notified}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <!-- ชีพจรของตัวจับเวลา — ตารางอ่านอย่างเดียว ผูกกับ endpoint ตรง ๆ -->
+      <div class="content-body">
+        <h2 class="icon-tools" data-i18n>Scheduled jobs</h2>
+        <div class="tablebody">
+          <table class="table border fullwidth" data-table="scheduledJobs" data-source="/api/v2/scheduled-jobs" data-page-size="50">
+            <thead>
+              <tr>
+                <th data-field="name" data-i18n>{LNG_Name}</th>
+                <th data-field="schedule" class="center" data-cell-class="center mono" data-i18n>{LNG_Schedule}</th>
+                <th data-field="last_run_at" class="center" data-cell-class="center"
+                    data-format="datetime" data-empty-text="—" data-i18n>{LNG_Last run}</th>
+                <th data-field="last_status" class="center" data-cell-class="center"
+                    data-template="<span class='pill pill-${status_tone}'>{LNG_${status_label}}</span>"
+                    data-i18n>{LNG_Status}</th>
+                <th data-field="last_error" data-empty-text="—" data-i18n>{LNG_Detail}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>

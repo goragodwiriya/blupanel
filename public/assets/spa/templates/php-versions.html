@@ -1,0 +1,41 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <!-- หน้านี้เป็นข้อมูลอย่างเดียว ไม่มีปุ่มควบคุมโปรเซส FPM (การ start/stop อยู่ที่ services) -->
+  <main class="content">
+    <div class="card-groups">
+      <header>
+        <div>
+          <h1 class="icon-code" data-i18n>PHP</h1>
+          <p data-i18n>PHP versions installed on this server</p>
+        </div>
+      </header>
+
+      <div class="content-body">
+        <div class="tablebody">
+          <table class="table border fullwidth"
+                 data-table="phpVersions"
+                 data-source="/api/v2/php-versions"
+                 data-page-size="50">
+            <thead>
+              <tr>
+                <th data-field="version" data-cell-class="mono" data-i18n>{LNG_PHP version}</th>
+                <th data-field="fpm_status" class="center" data-cell-class="center"
+                    data-template="<span class='pill pill-${fpm_tone}'>{LNG_${fpm_status}}</span>"
+                    data-i18n>{LNG_FPM service}</th>
+                <th data-field="sites" class="center" data-cell-class="center" data-i18n>{LNG_Websites}</th>
+                <th data-field="supported" class="center" data-cell-class="center"
+                    data-template="<span class='pill pill-${supported_tone}'>{LNG_${supported_label}}</span>"
+                    data-i18n>{LNG_Support}</th>
+                <th data-field="extension_count" class="center" data-cell-class="center" data-i18n>{LNG_Extensions}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>

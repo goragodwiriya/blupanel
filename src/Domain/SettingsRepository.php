@@ -1,0 +1,193 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Phpcp\Domain;
+
+use Phpcp\Agent\ValidationError;
+use Phpcp\Kernel\Db;
+
+/**
+ * ค่าตั้งที่แก้ได้จากหน้าเว็บ — เก็บในตาราง `settings`
+ *
+ * แยกจาก `/etc/phpcp/config.php` โดยเจตนา สองที่นี้ทำคนละหน้าที่:
+ *
+ *   config.php  ค่าที่ต้องมีก่อน panel จะทำงานได้ (พอร์ต, secret key, layout)
+ *               ผู้ดูแลแก้ที่ไฟล์ ต้องรีสตาร์ตบริการ — และ web tier เขียนไม่ได้เลย
+ *
+ *   settings    ค่าที่เปลี่ยนได้ระหว่างใช้งานและไม่กระทบการบูต (การแจ้งเตือน, เมล)
+ *               แก้จากหน้าเว็บได้ มีผลทันที
+ *
+ * เหตุผลที่ไม่ยุบรวม: ถ้าให้หน้าเว็บเขียน config.php ได้ ก็เท่ากับให้ web tier
+ * เขียนไฟล์ที่ตัวเองอ่านตอนบูต — ช่องโหว่เดียวในหน้าตั้งค่าจะกลายเป็นการรันโค้ดทันที
+ * เพราะ config.php เป็นไฟล์ PHP ที่ถูก include
+ */
+final class SettingsRepository
+{
+    /**
+     * คีย์ที่ยอมให้เก็บ พร้อมชนิดของค่า
+     *
+     * allowlist ตายตัวเหมือนทะเบียน capability — คีย์ที่ไม่อยู่ในนี้ถูกปฏิเสธ
+     * ไม่ใช่เก็บไว้เฉย ๆ ป้องกันการยัดค่าแปลกปลอมเข้าฐานข้อมูลผ่านฟอร์มที่ถูกดัดแปลง
+     *
+     * @var array<string,string>
+     */
+    private const KEYS = [
+        // การแจ้งเตือนผ่าน Telegram
+        'notify.telegram.enabled' => 'bool',
+        'notify.telegram.token' => 'secret',
+        'notify.telegram.chat_id' => 'string',
+
+        // เลือกว่าเรื่องไหนควรแจ้ง — ไม่ใช่แจ้งทุกอย่างจนคนเลิกอ่าน
+        'notify.events.security' => 'bool',
+        'notify.events.ssl' => 'bool',
+        'notify.events.service' => 'bool',
+        'notify.events.backup' => 'bool',
+        'notify.events.login' => 'bool',
+        'notify.events.quota' => 'bool',
+        'notify.events.alert' => 'bool',
+
+        // แจ้งเตือนทางอีเมล — ใช้ Postfix ที่มีอยู่ · ผู้ส่งใช้ `mail.from` ร่วมกับเมลขาออก
+        'notify.email.enabled' => 'bool',
+        'notify.email.to' => 'string',
+
+        // แจ้งเตือนผ่าน webhook — ต่อเข้า Slack/Discord/ระบบ ticket ที่ผู้ดูแลใช้อยู่แล้ว
+        'notify.webhook.enabled' => 'bool',
+        'notify.webhook.url' => 'string',
+        // ใช้ลงลายเซ็น HMAC ให้ปลายทางตรวจว่าข้อความมาจากเครื่องนี้จริง
+        'notify.webhook.secret' => 'secret',
+
+        // เมลขาออก
+        'mail.enabled' => 'bool',
+        'mail.mode' => 'string',        // 'local' | 'relay'
+        'mail.from' => 'string',
+        'mail.relay_host' => 'string',
+        'mail.relay_port' => 'int',
+        'mail.relay_user' => 'string',
+        'mail.relay_password' => 'secret',
+        'mail.relay_tls' => 'bool',
+    ];
+
+    /** ค่าเริ่มต้นเมื่อยังไม่เคยตั้ง */
+    private const DEFAULTS = [
+        'notify.telegram.enabled' => '0',
+        'notify.telegram.token' => '',
+        'notify.telegram.chat_id' => '',
+        'notify.events.security' => '1',
+        'notify.events.ssl' => '1',
+        'notify.events.service' => '1',
+        'notify.events.backup' => '0',
+        'notify.events.login' => '1',
+        'notify.events.quota' => '1',
+        'notify.events.alert' => '1',
+        'notify.email.enabled' => '0',
+        'notify.email.to' => '',
+        'notify.webhook.enabled' => '0',
+        'notify.webhook.url' => '',
+        'notify.webhook.secret' => '',
+        'mail.enabled' => '0',
+        'mail.mode' => 'local',
+        'mail.from' => '',
+        'mail.relay_host' => '',
+        'mail.relay_port' => '587',
+        'mail.relay_user' => '',
+        'mail.relay_password' => '',
+        'mail.relay_tls' => '1',
+    ];
+
+    public function __construct(private readonly Db $db)
+    {
+    }
+
+    /** @return array<string,string> ค่าทั้งหมด รวมค่าเริ่มต้นของคีย์ที่ยังไม่เคยตั้ง */
+    public function all(): array
+    {
+        $values = self::DEFAULTS;
+
+        foreach ($this->db->all('SELECT key, value FROM settings') as $row) {
+            $key = (string) $row['key'];
+
+            // คีย์ที่ไม่รู้จักถูกข้าม ไม่ใช่ส่งต่อไปให้หน้าจอ — กันค่าเก่าที่เลิกใช้แล้ว
+            // หรือค่าที่ถูกยัดเข้าฐานข้อมูลจากทางอื่นโผล่ขึ้นมาบนหน้าเว็บ
+            if (isset(self::KEYS[$key])) {
+                $values[$key] = (string) $row['value'];
+            }
+        }
+
+        return $values;
+    }
+
+    public function get(string $key, string $default = ''): string
+    {
+        if (!isset(self::KEYS[$key])) {
+            throw new ValidationError("ไม่รู้จักค่าตั้ง {$key}");
+        }
+
+        $row = $this->db->first('SELECT value FROM settings WHERE key = :k', ['k' => $key]);
+
+        return $row === null ? (self::DEFAULTS[$key] ?? $default) : (string) $row['value'];
+    }
+
+    public function bool(string $key): bool
+    {
+        return $this->get($key) === '1';
+    }
+
+    public function int(string $key): int
+    {
+        return (int) $this->get($key);
+    }
+
+    /**
+     * บันทึกหลายค่าพร้อมกัน
+     *
+     * @param array<string,string> $values
+     */
+    public function save(array $values): void
+    {
+        foreach ($values as $key => $value) {
+            if (!isset(self::KEYS[$key])) {
+                throw new ValidationError("ไม่รู้จักค่าตั้ง {$key}");
+            }
+
+            $this->db->run(
+                'INSERT INTO settings (key, value, updated_at) VALUES (:k, :v, :t)
+                 ON CONFLICT(key) DO UPDATE SET value = :v, updated_at = :t',
+                ['k' => $key, 'v' => (string) $value, 't' => time()],
+            );
+        }
+    }
+
+    /** คีย์ที่เป็นความลับ — ห้ามส่งค่าจริงกลับไปแสดงบนหน้าจอ */
+    public static function isSecret(string $key): bool
+    {
+        return (self::KEYS[$key] ?? '') === 'secret';
+    }
+
+    /** @return array<string,string> */
+    public static function keys(): array
+    {
+        return self::KEYS;
+    }
+
+    /**
+     * ปิดบังค่าที่เป็นความลับก่อนส่งไปหน้าจอ
+     *
+     * ส่งเฉพาะ "มีค่าอยู่หรือไม่" ไม่ส่งตัวค่า — token ของบอทที่หลุดออกไปทาง HTML
+     * แปลว่าใครก็ส่งข้อความในนามระบบได้ และมันจะติดอยู่ในแคชของเบราว์เซอร์
+     * กับประวัติของ proxy ไปอีกนาน
+     *
+     * @param array<string,string> $values
+     * @return array<string,string>
+     */
+    public static function mask(array $values): array
+    {
+        foreach ($values as $key => $value) {
+            if (self::isSecret($key)) {
+                $values[$key] = $value === '' ? '' : '********';
+            }
+        }
+
+        return $values;
+    }
+}

@@ -1,0 +1,72 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * phpcp — เครื่องมือบรรทัดคำสั่งของ PHP Server Control Panel
+ *
+ * ต้องใช้ได้เสมอแม้หน้าเว็บจะเข้าไม่ได้ เพราะเป็นทางเดียวที่:
+ *   - รีเซ็ตรหัสผ่านและปิด 2FA ที่หายไป
+ *   - จัดการบริการของ panel เอง (UI ทำไม่ได้โดยเจตนา ตาม ARCHITECTURE §5.3)
+ *   - ตรวจและซ่อมการตั้งค่าที่ผิดพลาด
+ */
+
+/**
+ * ด่านตรวจเวอร์ชัน — ต้องอยู่ก่อน require ทุกบรรทัด
+ *
+ * โค้ดส่วนที่เหลือใช้ readonly class ซึ่งมีตั้งแต่ PHP 8.2 ถ้า `php` ของระบบเก่ากว่านั้น
+ * การ require จะตายด้วย parse error ที่อ่านไม่รู้เรื่องเลยว่าต้องแก้อะไร
+ *
+ * เกิดขึ้นจริงบน Ubuntu 22.04: ตัวติดตั้งเลือก php8.4 จาก ppa:ondrej/php มาใช้อย่างถูกต้อง
+ * แต่ `php` ที่ผู้ดูแลพิมพ์เองยังชี้ไปที่ 8.1 ของดิสทริบิวชัน — คำสั่งกู้ระบบอย่าง
+ * `phpcp user:passwd` จึงใช้ไม่ได้ในจังหวะที่ต้องใช้ที่สุด
+ *
+ * ไฟล์นี้จึงหาไบนารีที่ใหม่พอแล้วเรียกตัวเองซ้ำให้ ไม่ใช่แค่บอกว่าเวอร์ชันผิด
+ * โค้ดในบล็อกนี้ต้องเขียนด้วยไวยากรณ์ที่ PHP เก่าอ่านออกด้วย
+ */
+if (PHP_VERSION_ID < 80200) {
+    $candidates = ['/usr/bin/php8.5', '/usr/bin/php8.4', '/usr/bin/php8.3', '/usr/bin/php8.2'];
+
+    foreach ($candidates as $binary) {
+        if (!is_executable($binary)) {
+            continue;
+        }
+
+        // ป้องกันการวนไม่รู้จบถ้าไบนารีที่เจอกลับเป็นตัวเดิม
+        if (realpath($binary) === realpath(PHP_BINARY)) {
+            continue;
+        }
+
+        $argv[0] = __FILE__;
+        pcntl_exec($binary, $argv);   // ถ้าไม่มี pcntl จะตกไปที่ passthru ด้านล่าง
+
+        $command = escapeshellarg($binary);
+        foreach ($argv as $arg) {
+            $command .= ' ' . escapeshellarg($arg);
+        }
+
+        passthru($command, $code);
+        exit($code);
+    }
+
+    fwrite(STDERR, sprintf(
+        "phpcp ต้องการ PHP 8.2 ขึ้นไป แต่ %s เป็นเวอร์ชัน %s\n"
+        . "และหาไบนารีที่ใหม่พอบนเครื่องนี้ไม่เจอ\n\n"
+        . "Ubuntu 22.04: sudo add-apt-repository ppa:ondrej/php && sudo apt install php8.3-cli\n",
+        PHP_BINARY,
+        PHP_VERSION,
+    ));
+    exit(1);
+}
+
+require dirname(__DIR__) . '/bootstrap.php';
+
+use Phpcp\Cli\Application;
+
+if (PHP_SAPI !== 'cli') {
+    http_response_code(403);
+    exit("phpcp ใช้ได้จากบรรทัดคำสั่งเท่านั้น\n");
+}
+
+exit((new Application())->run($argv));

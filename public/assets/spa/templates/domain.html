@@ -1,0 +1,92 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <!--
+    permissions[...] มาจาก /api/v2/session — ฟอร์มเพิ่มเรกคอร์ดไม่ใช่แถวของตาราง
+    จึงอ่านเงื่อนไข data-row-actions ไม่ได้ ต้องพึ่งค่านี้แทน (ตารางเองใช้ can_manage
+    ต่อแถวจาก /api/v2/domains/{id}/dns-records)
+  -->
+  <main class="content" data-script="pageDetail" data-fallback="/domains">
+    <div class="card-groups" data-component="api" data-endpoint="/api/v2/session">
+      <header>
+        <div>
+          <h1 class="icon-list" data-i18n>DNS records</h1>
+          <p data-i18n>Records are written to the zone file for this domain</p>
+        </div>
+        <div class="header-actions">
+          <a class="btn icon-arrow-left" href="/app/domains" data-route="/domains" data-i18n>Domains</a>
+          <button type="button" class="btn icon-document" data-action="click.prevent:toggleClass" data-toggle-target="[data-zone-panel]" data-toggle-class="is-open" data-i18n>Zone
+            file</button>
+        </div>
+      </header>
+      <div class="content-body">
+        <!--
+          data-row-actions ใช้ {row_id} ไม่ใช่ {id} โดยตั้งใจ — URL ของหน้านี้เองมี
+          ?id= (id ของโดเมน) RouterManager.render (js/ui.js) แทนค่า {id} ทุกจุดในหน้า
+          ด้วย id ของหน้าก่อนที่ TableManager จะได้เห็นเทมเพลตด้วยซ้ำ ถ้าใช้ {id} ตรงนี้
+          ปุ่มลบทุกแถวจะยิงไปที่เรกคอร์ดเดียวกันหมด (เรกคอร์ดที่ id ตรงกับโดเมน)
+        -->
+        <div class="tablebody">
+          <table class="table border fullwidth" data-table="dnsRecords" data-source="/api/v2/domains/{id}/dns-records" data-page-size="100" data-row-actions='{
+                   "delete": {
+                     "title": "Delete",
+                     "className": "btn btn-sm btn-danger icon-delete",
+                     "method": "delete",
+                     "url": "/api/v2/dns-records/{row_id}",
+                     "condition": "${can_manage}",
+                     "confirm": "Delete this DNS record?"
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="type" data-cell-class="center" data-i18n>Type</th>
+                <th data-field="name" data-cell-class="mono" data-i18n>Name</th>
+                <th data-field="value" data-cell-class="mono" data-i18n>Value</th>
+                <th data-field="ttl" data-cell-class="center" data-i18n>TTL</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <form data-form="dnsRecordAdd" class="table_nav" action="/api/v2/domains/{id}/dns-records" method="post" data-ajax-submit="true" data-validate="true" data-reset="true"
+                data-if="permissions['domain.manage']">
+            <div>
+              <label for="rec_type" data-i18n>Type</label>
+              <span class="form-control">
+                <select id="rec_type" name="type" required>
+                  <option value="A">A</option>
+                  <option value="AAAA">AAAA</option>
+                  <option value="CNAME">CNAME</option>
+                  <option value="MX">MX</option>
+                  <option value="TXT">TXT</option>
+                  <option value="SRV">SRV</option>
+                  <option value="NS">NS</option>
+                  <option value="CAA">CAA</option>
+                </select>
+              </span>
+            </div>
+            <div>
+              <label for="rec_name" data-i18n>Name</label>
+              <span class="form-control"><input type="text" id="rec_name" name="name" required maxlength="253" autocomplete="off"></span>
+            </div>
+            <div>
+              <label for="rec_value" data-i18n>Value</label>
+              <span class="form-control"><input type="text" id="rec_value" name="value" required maxlength="512" autocomplete="off"></span>
+            </div>
+            <div>
+              <label for="rec_ttl" data-i18n>TTL</label>
+              <span class="form-control"><input type="number" id="rec_ttl" name="ttl" value="3600" min="60" max="604800"></span>
+            </div>
+            <button type="submit" class="btn btn-primary icon-plus" data-i18n>Add</button>
+          </form>
+        </div>
+      </div>
+      <!-- zone file ประกอบจากค่าที่ผู้ใช้กรอกทั้งหมด — data-text ผูกแบบข้อความเสมอ -->
+      <div class="content-body collapsible" data-zone-panel data-component="api" data-endpoint="/api/v2/domains/{id}/zone-file">
+        <h2 data-i18n>Zone file</h2>
+        <pre class="log-view" data-text="content"></pre>
+      </div>
+    </div>
+  </main>
+</div>

@@ -1,0 +1,4330 @@
+openapi: 3.1.0
+
+# สเปกของ REST API v2 — เขียนคู่กับโค้ด ไม่ใช่ตามหลัง (PLAN-V2 §B4)
+#
+# ขอบเขตปัจจุบัน: เฟส B1 (รากฐาน) · B2 (เซสชัน) · B3.1 (sites, domains, dns-records, php-versions)
+#              · B3.2 (certificates, databases, cron-jobs, backups)
+# ทรัพยากรที่เหลือตาม §4.6 จะทยอยเพิ่มในไฟล์นี้พร้อมกับโค้ดของมัน
+#
+# กฎที่ทุก endpoint ในไฟล์นี้ต้องทำตามโดยไม่มีข้อยกเว้น:
+#   - ตอบ application/json เสมอ แม้ในกรณีข้อผิดพลาดทุกชนิด (รวม 404/419/429/500)
+#   - ไม่มี HTML ไม่มี redirect ไม่มีการส่งผลลัพธ์ผ่าน query string
+#   - รหัสข้อผิดพลาดเป็น enum ตายตัว ฝั่งเรียกตัดสินใจจากรหัส ไม่ใช่จากข้อความ
+
+info:
+  title: phpcp Control Panel API
+  version: "2.0.0"
+  description: |
+    API ของ Control Panel สำหรับบริหาร PHP Web Hosting
+
+    **การยืนยันตัวตน** ใช้คุกกี้ session (HttpOnly + SameSite=Strict) ที่เซิร์ฟเวอร์ตั้งให้
+    ไม่ใช่ bearer token — จงใจไม่ย้าย token ไปเก็บใน JavaScript เพราะจะเป็นการถอยหลัง
+    จากสิ่งที่ระบบมีอยู่แล้ว (PLAN-V2 ข้อ N6)
+
+    **CSRF** ทุกคำขอที่เปลี่ยนข้อมูล (POST/PUT/PATCH/DELETE) ต้องส่ง header
+    `X-CSRF-Token` ที่ได้จาก `GET /session` · เซิร์ฟเวอร์ส่ง token ตัวใหม่กลับมาทาง
+    response header ชื่อเดียวกันทุกครั้งที่มันเปลี่ยน (ตอนล็อกอิน ยืนยัน 2FA
+    หรือตอน session id ถูกหมุนตามรอบ) ฝั่ง client ต้องเก็บค่าล่าสุดไว้ใช้เสมอ
+
+servers:
+  - url: https://localhost:8443/api/v2
+    description: panel ของเครื่องนี้ (พอร์ตเริ่มต้น 8443)
+
+tags:
+  - name: session
+    description: เข้าสู่ระบบ ออกจากระบบ และสถานะปัจจุบัน
+  - name: me
+    description: บัญชีของผู้ที่กำลังล็อกอินอยู่
+  - name: dashboard
+    description: ภาพรวมหน้าแรก
+  - name: sites
+    description: เว็บไซต์และโดเมนของแต่ละเว็บ
+  - name: domains
+    description: โดเมนทั้งระบบและ DNS record
+  - name: php
+    description: เวอร์ชัน PHP ที่ติดตั้งอยู่
+  - name: users
+    description: ผู้ใช้ panel
+  - name: customers
+    description: ลูกค้าที่ซื้อบริการ web hosting
+  - name: settings
+    description: ค่าตั้งของ panel และการแจ้งเตือน
+  - name: server
+    description: บริการ firewall SSH log ความปลอดภัย และตัวเลขของเครื่อง
+  - name: files
+    description: ตัวจัดการไฟล์
+  - name: certificates
+    description: ใบรับรอง SSL
+  - name: databases
+    description: ฐานข้อมูล MariaDB และผู้ใช้ฐานข้อมูล
+  - name: cron
+    description: งานอัตโนมัติต่อเว็บไซต์
+  - name: backups
+    description: ข้อมูลสำรองและการกู้คืน
+
+paths:
+  /session:
+    get:
+      tags: [session]
+      summary: สถานะปัจจุบันและ CSRF token
+      description: |
+        จุดเริ่มต้นของ SPA — เรียกได้โดยไม่ต้องล็อกอิน และตอบ 200 เสมอ
+        เพราะ "ยังไม่ล็อกอิน" เป็นสถานะหนึ่ง ไม่ใช่ข้อผิดพลาด
+      security: []
+      responses:
+        "200":
+          description: สถานะปัจจุบัน
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/SessionState" }
+
+    post:
+      tags: [session]
+      summary: เข้าสู่ระบบ
+      description: |
+        ตอบเหมือนกันทุกกรณีที่ล้มเหลว (ชื่อผู้ใช้ผิด/รหัสผ่านผิด/บัญชีถูกระงับ)
+        เพื่อไม่ให้ใช้ไล่หาว่าชื่อผู้ใช้ใดมีอยู่จริง
+
+        โควตาของเส้นทางนี้เข้มกว่าเส้นทางทั่วไป: 5 ครั้งรัวต่อ IP แล้วเติมกลับ
+        1 ครั้งต่อนาที · บัญชีที่ผิดหลายครั้งจะถูกล็อกชั่วคราวแยกอีกชั้นหนึ่ง
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string, maxLength: 32 }
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: เข้าสู่ระบบสำเร็จ — คุกกี้ session ถูกตั้งให้แล้ว
+          headers:
+            X-CSRF-Token:
+              schema: { type: string }
+              description: token ตัวใหม่ที่ผูกกับ session ที่เพิ่งสร้าง
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/SessionState" }
+        "401":
+          description: |
+            `UNAUTHENTICATED` = ข้อมูลไม่ถูกต้อง ·
+            `TWO_FACTOR_REQUIRED` = รหัสผ่านถูกแล้ว แต่ต้องยืนยัน 2FA ต่อที่ `/session/2fa`
+          $ref: "#/components/responses/Error"
+        "419": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+
+    delete:
+      tags: [session]
+      summary: ออกจากระบบ
+      description: ตอบ 204 เสมอแม้ไม่ได้ล็อกอินอยู่ — การออกจากระบบซ้ำไม่ใช่ข้อผิดพลาด
+      security: []
+      responses:
+        "204":
+          description: ออกจากระบบแล้ว (ไม่มีเนื้อหาตอบกลับ)
+        "419": { $ref: "#/components/responses/Error" }
+
+  /session/2fa:
+    post:
+      tags: [session]
+      summary: ยืนยันรหัส 2FA
+      description: |
+        ใช้ได้เฉพาะ session ที่ผ่านรหัสผ่านมาแล้วและกำลังรอยืนยัน
+        รับได้ทั้งรหัสจากแอป authenticator และรหัสสำรอง (รหัสสำรองใช้ได้ครั้งเดียว)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, description: "รหัส 6 หลัก หรือรหัสสำรอง" }
+      responses:
+        "200":
+          description: ยืนยันสำเร็จ — session ถูกยกระดับและ id ถูกหมุนใหม่
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/SessionState" }
+        "401": { $ref: "#/components/responses/Error" }
+        "419": { $ref: "#/components/responses/Error" }
+
+  /dashboard:
+    get:
+      tags: [dashboard]
+      summary: ทุกอย่างที่หน้าแรกต้องใช้ในคำขอเดียว
+      description: |
+        รวมตัวเลขทรัพยากรของเครื่อง สถานะบริการ จำนวนทรัพยากร และกิจกรรมล่าสุด
+
+        **ตอบ 200 แม้ agent จะล่ม** ซึ่งต่างจากเส้นทางอื่นของ v2 ที่จะตอบ 503 —
+        ตัวเลขจากฐานข้อมูลของ panel เองยังถูกต้องอยู่ และหน้าแรกต้องเปิดได้เสมอ
+        ในจังหวะที่ผู้ดูแลต้องการรู้ว่าเกิดอะไรขึ้น · ดูสถานะจริงที่ `data.agent.available`
+
+        ลูกค้า (webadmin) จะได้ `services` และ `activity` เป็นรายการว่าง และ `counts`
+        นับเฉพาะทรัพยากรของตัวเอง
+      responses:
+        "200":
+          description: ภาพรวม
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    required: [agent, metrics, services, counts, activity]
+                    properties:
+                      agent:
+                        type: object
+                        properties:
+                          available: { type: boolean }
+                          error: { type: string }
+                      metrics: { type: object, additionalProperties: true }
+                      services: { type: array, items: { type: object, additionalProperties: true } }
+                      counts:
+                        type: object
+                        additionalProperties: { type: integer }
+                      activity: { type: array, items: { type: object, additionalProperties: true } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /me:
+    get:
+      tags: [me]
+      summary: บัญชีของตัวเองพร้อมรายการสิทธิ์
+      responses:
+        "200":
+          description: ข้อมูลบัญชี
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/UserWithPermissions" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`PASSWORD_CHANGE_REQUIRED` — ต้องเปลี่ยนรหัสผ่านก่อนจึงจะใช้เส้นทางอื่นได้"
+          $ref: "#/components/responses/Error"
+
+  /me/password:
+    patch:
+      tags: [me]
+      summary: เปลี่ยนรหัสผ่านของตัวเอง
+      description: |
+        ตัด session อื่นทั้งหมดทิ้งหลังเปลี่ยนสำเร็จ เผื่อรหัสเดิมรั่วและมีคนสวมรอยอยู่
+        แล้วสร้าง session ใหม่ให้ผู้เรียกทันที ผู้เรียกจึงไม่หลุดออกจากระบบไปด้วย
+
+        เส้นทางนี้เปิดไว้เสมอแม้บัญชีจะถูกบังคับให้เปลี่ยนรหัสผ่านอยู่
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string, format: password }
+                new_password: { type: string, format: password, minLength: 12 }
+      responses:
+        "200":
+          description: เปลี่ยนแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      changed: { type: boolean }
+                      sessions_revoked: { type: integer, description: "จำนวน session อื่นที่ถูกตัด" }
+                      message: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "419": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`VALIDATION_ERROR` พร้อม `fields` ที่บอกว่าช่องไหนผิดเพราะอะไร"
+          $ref: "#/components/responses/Error"
+
+  /sites:
+    get:
+      tags: [sites]
+      summary: รายการเว็บไซต์
+      description: |
+        ผู้ดูแลเว็บไซต์ (webadmin) เห็นเฉพาะเว็บของตัวเอง — กรองที่ระดับ query
+        ข้อมูลของลูกค้ารายอื่นจึงไม่ถูกอ่านขึ้นมาตั้งแต่แรก ไม่ใช่กรองทีหลัง
+      parameters:
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PerPage" }
+        - name: q
+          in: query
+          schema: { type: string }
+          description: ค้นหาจากชื่อเว็บไซต์และโดเมนหลัก
+        - name: status
+          in: query
+          schema: { type: string, enum: [active, suspended] }
+        - name: php_version
+          in: query
+          schema: { type: string }
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [primary_domain, name, created_at, disk_used, php_version, status]
+          description: นำหน้าด้วย `-` = จากมากไปน้อย · ชื่อที่ไม่รู้จักตกกลับไปใช้ค่าปริยาย
+      responses:
+        "200":
+          description: รายการเว็บไซต์พร้อม meta ของการแบ่งหน้า
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Site" }
+                  meta: { $ref: "#/components/schemas/PageMeta" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+    post:
+      tags: [sites]
+      summary: สร้างเว็บไซต์ใหม่
+      description: |
+        สั่งผ่าน capability `site.create` — สร้าง system user, FPM pool, vhost และ
+        โครงสร้างโฟลเดอร์ให้ครบในคำสั่งเดียว · ล้มกลางทางจะคืนค่าทั้งหมดให้เอง
+
+        `owner_user_id` ถูกบังคับเป็น id ของผู้เรียกเสมอเมื่อผู้เรียกเป็น webadmin
+        ค่าที่ส่งมาจะถูกเมิน — ลูกค้าสร้างเว็บให้คนอื่นไม่ได้
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [domain, php_version]
+              properties:
+                domain: { type: string, maxLength: 253 }
+                name: { type: string, description: "ว่าง = ใช้ชื่อโดเมน" }
+                php_version: { type: string, example: "8.4" }
+                aliases:
+                  oneOf:
+                    - { type: array, items: { type: string } }
+                    - { type: string, description: "คั่นด้วยเว้นวรรคหรือจุลภาค" }
+                docroot: { type: string, description: "ว่าง = <บ้าน>/public" }
+                pointer_root: { type: string }
+                owner_user_id: { type: integer }
+      responses:
+        "201":
+          description: สร้างแล้ว
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/Site" }
+        "409":
+          description: "`CONFLICT` — โดเมนนี้มีอยู่แล้ว"
+          $ref: "#/components/responses/Error"
+        "422": { $ref: "#/components/responses/Error" }
+        "503":
+          description: "`AGENT_UNAVAILABLE` — ติดต่อ phpcp-agentd ไม่ได้ ลองใหม่ได้เมื่อบริการกลับมา"
+          $ref: "#/components/responses/Error"
+
+  /sites/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/SiteId" }
+    get:
+      tags: [sites]
+      summary: รายละเอียดเว็บไซต์พร้อมโดเมนทั้งหมด
+      description: |
+        `id=0` เป็นค่าจองพิเศษ — แปลว่า "เว็บนี้ยังไม่มีอยู่จริง ขอค่าเริ่มต้นสำหรับสร้างใหม่"
+        แทนที่จะเป็น 404 · หน้าฟอร์มสร้างเว็บไซต์ใช้เส้นทางเดียวกับหน้าแก้ไขได้ ไม่ต้องมี
+        endpoint แยกต่างหากที่ทำหน้าที่คล้ายกันแค่เพื่อกรณีสร้างใหม่ (ดู `NewSiteDefaults`)
+      responses:
+        "200":
+          description: เว็บไซต์ หรือค่าเริ่มต้นสำหรับสร้างใหม่ (เมื่อ id=0)
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    properties:
+                      ok: { type: boolean, const: true }
+                      data:
+                        allOf:
+                          - { $ref: "#/components/schemas/Site" }
+                          - type: object
+                            properties:
+                              domains:
+                                type: array
+                                items: { $ref: "#/components/schemas/Domain" }
+                              aliases: { type: array, items: { type: string } }
+                  - type: object
+                    properties:
+                      ok: { type: boolean, const: true }
+                      data: { $ref: "#/components/schemas/NewSiteDefaults" }
+        "404":
+          description: |
+            ไม่พบ **หรือ** ไม่ใช่เว็บของผู้เรียก — ตอบเหมือนกันโดยเจตนา
+            ถ้าตอบ 403 เมื่อ "มีอยู่แต่ไม่ใช่ของคุณ" จะใช้ไล่เดา id เพื่อสำรวจเครื่องได้
+            (ไม่เกิดกับ id=0 — เคสนั้นตอบ 200 เสมอ)
+          $ref: "#/components/responses/Error"
+
+    patch:
+      tags: [sites]
+      summary: แก้ไขบางส่วน
+      description: |
+        รองรับเฉพาะ `php_version` เพราะเป็นฟิลด์เดียวของเว็บไซต์ที่มี capability รองรับ
+        การเปลี่ยนชื่อหรือ docroot ต้องรอ capability ของมันเอง — ชั้น API จะไม่เขียน
+        ฐานข้อมูลตรง ๆ เพราะนั่นคือการข้ามชั้นที่ 2 และทำให้ไม่มีร่องรอยใน audit log
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                php_version: { type: string }
+      responses:
+        "200":
+          description: เว็บไซต์หลังแก้ไข
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/Site" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+    delete:
+      tags: [sites]
+      summary: ลบเว็บไซต์
+      description: ต้องยืนยันด้วยชื่อโดเมนเสมอ · ส่งทาง body หรือ query ก็ได้
+      parameters:
+        - name: confirm_domain
+          in: query
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirm_domain: { type: string }
+      responses:
+        "200":
+          description: สำเร็จ — คำตอบของคำสั่งพร้อม `actions` ให้หน้าจอทำตาม
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`VALIDATION_ERROR` — ชื่อโดเมนที่ยืนยันไม่ตรง"
+          $ref: "#/components/responses/Error"
+
+  /sites/{id}/php-version:
+    put:
+      tags: [sites]
+      summary: เปลี่ยนเวอร์ชัน PHP
+      parameters:
+        - { $ref: "#/components/parameters/SiteId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [php_version]
+              properties:
+                php_version: { type: string, example: "8.4" }
+      responses:
+        "200":
+          description: เว็บไซต์หลังเปลี่ยนเวอร์ชัน
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/Site" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /sites/{id}/suspension:
+    put:
+      tags: [sites]
+      summary: ระงับหรือเปิดใช้งานเว็บไซต์
+      description: |
+        เป็นทรัพยากรที่เป็นคำนามและใช้ `PUT` ตาม §4.1 จึงสั่งซ้ำได้โดยผลไม่เปลี่ยน —
+        หน้าจอที่กดปุ่มสองครั้งเพราะเน็ตช้าจะไม่ได้ผลลัพธ์แปลก ๆ
+
+        ระงับแล้วไฟล์และฐานข้อมูลยังอยู่ครบ ผู้เข้าชมเห็นหน้าแจ้งระงับแทน
+      parameters:
+        - { $ref: "#/components/parameters/SiteId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [suspended]
+              properties:
+                suspended: { type: boolean }
+      responses:
+        "200":
+          description: สถานะหลังสั่ง
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      site_id: { type: integer }
+                      suspended: { type: boolean }
+                      message: { type: string }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /sites/{id}/owner-reset:
+    post:
+      tags: [sites]
+      summary: ตั้งเจ้าของไฟล์ของเว็บไซต์กลับให้ถูกต้อง
+      parameters:
+        - { $ref: "#/components/parameters/SiteId" }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                fix_permissions:
+                  type: boolean
+                  description: ตั้งสิทธิ์ไฟล์ให้ถูกต้องด้วย ไม่ใช่แค่เจ้าของ
+      responses:
+        "200":
+          description: ผลการตั้งค่า
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /sites/{id}/rate-limit:
+    parameters:
+      - { $ref: "#/components/parameters/SiteId" }
+    get:
+      tags: [sites]
+      summary: ค่าการจำกัดอัตราคำขอ พร้อมสถานะจริงจาก fail2ban
+      description: |
+        `status` และ `banned_ips` อ่านจากตัว fail2ban เอง ไม่ใช่จากฐานข้อมูลของ panel —
+        สองอย่างนี้ไม่ตรงกันได้เมื่อผู้ดูแลสั่ง `fail2ban-client` เองจากบรรทัดคำสั่ง
+        หรือ fail2ban ไม่ได้โหลด jail เพราะไฟล์ผิด · จะมีเฉพาะเมื่อ `enabled` เป็น true
+
+        เว็บที่ยังไม่เคยตั้งค่าจะได้ค่าเริ่มต้นกลับไปให้ฟอร์มกรอกไว้ ไม่ใช่ค่าว่าง
+      responses:
+        "200":
+          description: ค่าปัจจุบัน
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      site_id: { type: integer }
+                      domain: { type: string }
+                      enabled: { type: boolean }
+                      max_requests: { type: integer }
+                      window_seconds: { type: integer }
+                      ban_seconds: { type: integer }
+                      ignore_ips: { type: string, description: คั่นด้วยช่องว่าง รองรับ CIDR }
+                      status:
+                        type: object
+                        properties:
+                          active: { type: boolean }
+                          banned: { type: integer }
+                          total_banned: { type: integer }
+                          failed: { type: integer }
+                      banned_ips:
+                        type: array
+                        items: { type: string }
+                  meta:
+                    type: object
+                    properties:
+                      ban_scope: { type: string }
+                      notice: { type: string }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [sites]
+      summary: เปิด ปิด หรือปรับค่าการจำกัดอัตราคำขอ
+      description: |
+        บังคับใช้ผ่าน **fail2ban** ที่อ่าน access log ของเว็บแล้วสั่ง firewall แบน IP
+
+        **ข้อแลกเปลี่ยนที่ต้องบอกผู้ใช้ก่อนเปิด:**
+
+        1. การแบนมีผล**ทั้งเครื่อง** ไม่ใช่เฉพาะเว็บนี้ — fail2ban สั่ง firewall
+           ซึ่งไม่รู้จัก vhost · IP ที่ยิงเว็บนี้จนโดนแบนจะเข้าเว็บอื่นบนเครื่องไม่ได้ด้วย
+        2. ตอบสนองช้ากว่าโมดูลในตัวของเว็บเซิร์ฟเวอร์ เพราะอ่าน log เป็นรอบ —
+           คำขอชุดแรกที่เกินเกณฑ์จะผ่านไปถึงเว็บก่อนเสมอ
+
+        ปิดอยู่เป็นค่าเริ่มต้นเสมอ · ค่าตัวเลขตรวจเฉพาะตอน `enabled` เป็น true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+                max_requests: { type: integer, minimum: 10, maximum: 100000, default: 300 }
+                window_seconds: { type: integer, minimum: 10, maximum: 3600, default: 60 }
+                ban_seconds: { type: integer, minimum: 60, maximum: 86400, default: 600 }
+                ignore_ips:
+                  type: string
+                  description: IP หรือ CIDR คั่นด้วยช่องว่างหรือจุลภาค ไม่เกิน 64 รายการ
+      responses:
+        "200":
+          description: บันทึกแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /sites/{id}/rate-limit/bans:
+    parameters:
+      - { $ref: "#/components/parameters/SiteId" }
+    get:
+      tags: [sites]
+      summary: IP ที่ถูกแบนอยู่ตอนนี้
+      description: |
+        แยกจาก `GET /rate-limit` เพราะตารางของหน้าจอต้องการ `data` ที่เป็น **array**
+        ส่วนอันนั้นคืน object (ค่าตั้งของฟอร์ม) · การยัดสองรูปแบบไว้ที่เดียวแล้วให้
+        หน้าจอเลือกเอง แปลว่าต้องเขียน JS ประจำหน้า ซึ่งทั้ง SPA นี้ไม่มีเลยสักหน้า
+
+        อ่านจาก fail2ban โดยตรง — รายการว่างเมื่อยังไม่ได้เปิดใช้หรือไม่มีใครถูกแบน
+      responses:
+        "200":
+          description: รายการ IP ที่ถูกแบน
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ip: { type: string }
+                  meta:
+                    type: object
+                    properties:
+                      total: { type: integer }
+                      jail: { type: string }
+                      active: { type: boolean, description: fail2ban โหลด jail นี้อยู่จริงหรือไม่ }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /sites/{id}/rate-limit/unban:
+    parameters:
+      - { $ref: "#/components/parameters/SiteId" }
+    post:
+      tags: [sites]
+      summary: ปลดแบน IP ที่ถูกจำกัดอัตรา
+      description: |
+        จำเป็นเพราะการแบนสั่งที่ firewall ซึ่งไม่รู้จัก vhost — ผู้ดูแลที่ทดสอบเว็บตัวเอง
+        แรงไปหน่อยแล้วโดนแบน จะเข้าหน้า panel ไม่ได้เลยถ้าไม่มีทางปลดจากที่อื่น
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ip]
+              properties:
+                ip: { type: string, description: "IPv4 หรือ IPv6" }
+      responses:
+        "200":
+          description: ปลดแบนแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /sites/{id}/domains:
+    parameters:
+      - { $ref: "#/components/parameters/SiteId" }
+    get:
+      tags: [sites]
+      summary: โดเมนทั้งหมดของเว็บไซต์นี้
+      responses:
+        "200":
+          description: รายการโดเมน
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Domain" }
+        "404": { $ref: "#/components/responses/Error" }
+
+    post:
+      tags: [sites]
+      summary: เพิ่มโดเมนย่อยหรือ alias
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host]
+              properties:
+                host: { type: string, description: "ชื่อโฮสต์ย่อย หรือโดเมนเต็ม" }
+                path: { type: string, description: "โฟลเดอร์ปลายทางของโดเมนย่อย" }
+      responses:
+        "201":
+          description: เพิ่มแล้ว
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/Domain" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+    put:
+      tags: [sites]
+      summary: แทนที่รายการโดเมนทั้งชุดตามชนิด
+      description: capability คำนวณเองว่าต้องเพิ่มหรือลบอะไรเพื่อให้ตรงกับรายการที่ส่งมา
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [domains]
+              properties:
+                domains:
+                  oneOf:
+                    - { type: array, items: { type: string } }
+                    - { type: string }
+                type: { type: string, enum: [alias, subdomain], default: alias }
+      responses:
+        "200":
+          description: ผลการแทนที่
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /sites/{id}/domains/{domain}:
+    delete:
+      tags: [sites]
+      summary: ลบโดเมนย่อยหรือ alias ออกจากเว็บไซต์
+      parameters:
+        - { $ref: "#/components/parameters/SiteId" }
+        - name: domain
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: สำเร็จ — คำตอบของคำสั่งพร้อม `actions` ให้หน้าจอทำตาม
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`VALIDATION_ERROR` — ลบโดเมนหลักแยกไม่ได้"
+          $ref: "#/components/responses/Error"
+
+  /domains:
+    get:
+      tags: [domains]
+      summary: โดเมนทั้งหมดที่ผู้เรียกมีสิทธิ์เห็น
+      parameters:
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PerPage" }
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: type
+          in: query
+          schema: { type: string, enum: [primary, subdomain, alias, redirect] }
+      responses:
+        "200":
+          description: รายการโดเมนพร้อมข้อมูลเว็บไซต์ที่สังกัด
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Domain" }
+                  meta: { $ref: "#/components/schemas/PageMeta" }
+        "401": { $ref: "#/components/responses/Error" }
+
+    post:
+      tags: [domains]
+      summary: เพิ่มโดเมนโดยระบุเว็บไซต์ปลายทาง
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [site_id, host]
+              properties:
+                site_id: { type: integer }
+                host: { type: string }
+                path: { type: string }
+      responses:
+        "201":
+          description: เพิ่มแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/Domain" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /domains/{id}:
+    delete:
+      tags: [domains]
+      summary: ลบโดเมน
+      parameters:
+        - { $ref: "#/components/parameters/DomainId" }
+      responses:
+        "200":
+          description: สำเร็จ — คำตอบของคำสั่งพร้อม `actions` ให้หน้าจอทำตาม
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`CONFLICT` — เป็นโดเมนหลักของเว็บไซต์ ลบแยกไม่ได้ ต้องลบทั้งเว็บ"
+          $ref: "#/components/responses/Error"
+
+  /domains/{id}/dns-records:
+    parameters:
+      - { $ref: "#/components/parameters/DomainId" }
+    get:
+      tags: [domains]
+      summary: DNS record ทั้งหมดของโดเมนนี้
+      responses:
+        "200":
+          description: รายการเรกคอร์ด
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/DnsRecord" }
+        "404": { $ref: "#/components/responses/Error" }
+
+    post:
+      tags: [domains]
+      summary: เพิ่ม DNS record
+      description: |
+        ค่าถูกตรวจให้ตรงกับชนิดเสมอ — ใส่ IP ลงช่อง CNAME จะถูกปฏิเสธพร้อมบอกทางแก้
+        (ให้ใช้ A หรือ AAAA แทน) ซึ่งเป็นความผิดพลาดที่ DNS server จะรับไว้เงียบ ๆ
+        แล้วทำให้ชื่อนั้นใช้ไม่ได้ทั้งโดเมน
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, value]
+              properties:
+                type: { type: string, enum: [A, AAAA, CNAME, MX, TXT, CAA] }
+                name: { type: string, default: "@", description: "`@` = โดเมนตัวเอง · `*` = wildcard" }
+                value: { type: string, maxLength: 512 }
+                ttl: { type: integer, minimum: 60, maximum: 86400, default: 3600 }
+                priority:
+                  type: integer
+                  description: ใช้กับ MX เท่านั้น · ไม่ส่งมาจะได้ค่าปริยาย 10
+      responses:
+        "201":
+          description: |
+            เพิ่มแล้ว — `dns_synced`/`dns_message` บอกผลการส่ง zone ไปยัง BIND9 จริง
+            (เฟส E3) ล้มได้โดยไม่ทำให้คำขอนี้ล้มเหลวไปด้วย เพราะเรกคอร์ดถูกบันทึกใน
+            ฐานข้อมูลสำเร็จแล้วก่อนถึงขั้นนี้ · `dns_synced = false` พร้อม `dns_message`
+            อธิบายว่า "ยังไม่ได้เปิด dns.enabled" เป็นผลลัพธ์ปกติของการติดตั้งส่วนใหญ่
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      record_id: { type: integer }
+                      domain_id: { type: integer }
+                      dns_synced: { type: boolean }
+                      dns_message: { type: string }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /domains/{id}/zone-file:
+    get:
+      tags: [domains]
+      summary: zone file ของโดเมน (สำหรับส่งออกไป DNS provider ภายนอก)
+      description: |
+        คืนเนื้อหาเป็นข้อความในฟิลด์ `content` ไม่ใช่ไฟล์แนบ — สัญญาของ v2 คือทุก
+        endpoint ตอบ JSON · ฝั่งหน้าเว็บสร้างไฟล์ให้ดาวน์โหลดจากข้อความนี้เองได้
+
+        รูปแบบนี้เป็นไฟล์ export อย่างเดียว **ไม่มี SOA/NS และไม่ผ่านการตรวจ
+        `named-checkzone`** — มีไว้ให้คัดลอกไปวางที่ DNS provider ภายนอกเท่านั้น
+        ถ้าต้องการ zone ที่ BIND9 ของเครื่องนี้โหลดได้จริง (มี SOA/NS/serial ครบ)
+        ให้ดูที่ `POST /domains/{id}/dns-records` ซึ่งสั่ง `dns.zone_write` ให้อัตโนมัติ
+        หลังแก้เรกคอร์ดทุกครั้งอยู่แล้วเมื่อเปิด `dns.enabled`
+      parameters:
+        - { $ref: "#/components/parameters/DomainId" }
+      responses:
+        "200":
+          description: เนื้อหา zone file
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      domain: { type: string }
+                      filename: { type: string }
+                      record_count: { type: integer }
+                      content: { type: string }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /dns-records/{id}:
+    delete:
+      tags: [domains]
+      summary: ลบ DNS record
+      description: |
+        ลบเรกคอร์ดแล้วสั่ง `dns.zone_write` เขียน zone ของโดเมนนั้นใหม่ให้อัตโนมัติ
+        (ล้มได้โดยไม่ทำให้การลบล้มเหลว — ดูหมายเหตุที่ `POST /domains/{id}/dns-records`)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: สำเร็จ — คำตอบของคำสั่งพร้อม `actions` ให้หน้าจอทำตาม
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /dns/reload:
+    post:
+      tags: [domains]
+      summary: ซิงก์ zone ของทุกโดเมนกับ BIND9 ใหม่ทั้งหมด
+      description: |
+        เขียนไฟล์ zone ของทุกโดเมนที่มีเรกคอร์ด DNS อยู่ใหม่ทั้งหมด รวมทั้งเขียนทับ
+        `named.conf.local` ทั้งไฟล์ แล้วสั่ง `rndc reload` ครั้งเดียวตอนจบ
+
+        **สิทธิ์ระดับเครื่อง** (`dns.manage` — superadmin/sysadmin เท่านั้น) ต่างจาก
+        การแก้เรกคอร์ดทีละรายการที่ใช้ `domain.manage` ของ webadmin เจ้าของโดเมน
+        เพราะคำสั่งนี้กระทบ zone ของลูกค้าทุกรายพร้อมกันในครั้งเดียว
+
+        ใช้เมื่อ: เพิ่งเปิด `dns.enabled` ครั้งแรก (มีเรกคอร์ดที่เพิ่มไว้ก่อนหน้าค้างอยู่)
+        หรือมีใครแก้ไฟล์ของ BIND9 ตรง ๆ แล้วต้องการให้ panel เขียนทับคืนสภาพที่ควรจะเป็น
+      responses:
+        "200":
+          description: สำเร็จ — คำตอบของคำสั่งพร้อม `actions` ให้หน้าจอทำตาม
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /php-versions:
+    get:
+      tags: [php]
+      summary: เวอร์ชัน PHP ที่ติดตั้งอยู่บนเครื่อง
+      description: |
+        อ่านสถานะจริงจาก agent ทุกครั้ง ไม่แคช เพราะผู้ดูแลติดตั้ง/ถอน PHP ผ่าน apt
+        นอกเหนือจาก panel ได้ตลอดเวลา
+
+        `fpm_running` มีไว้แสดงสถานะเท่านั้น — การ start/stop อยู่ที่ทรัพยากร services
+        ตามกฎ UX ใน PROMPT.md
+      responses:
+        "200":
+          description: รายการเวอร์ชันเรียงจากเก่าไปใหม่
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/PhpVersion" }
+                  meta:
+                    type: object
+                    properties:
+                      installed_count: { type: integer }
+                      default: { type: [string, "null"] }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /users:
+    get:
+      tags: [users]
+      summary: ผู้ใช้ panel ทั้งหมด
+      parameters:
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PerPage" }
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: role
+          in: query
+          schema: { type: string, enum: [superadmin, sysadmin, webadmin] }
+      responses:
+        "200":
+          description: รายการผู้ใช้
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: array, items: { $ref: "#/components/schemas/UserWithHosting" } }
+                  meta: { $ref: "#/components/schemas/PageMeta" }
+        "403": { $ref: "#/components/responses/Error" }
+
+    post:
+      tags: [users]
+      summary: สร้างผู้ใช้ใหม่
+      description: |
+        รหัสผ่านสุ่มให้เสมอและบังคับเปลี่ยนตอนล็อกอินครั้งแรก — ผู้ดูแลไม่ต้องคิดรหัสเอง
+        (ซึ่งมักได้รหัสที่อ่อน) และรหัสที่ผ่านตาคนกลางมาแล้วมีอายุสั้นที่สุด
+
+        `password` อยู่ใน body ของคำตอบ **ครั้งเดียว** — panel ไม่เก็บไว้ที่ไหนเลย
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, role]
+              properties:
+                username: { type: string, maxLength: 32 }
+                role: { type: string, enum: [superadmin, sysadmin, webadmin] }
+                display_name: { type: string }
+      responses:
+        "201":
+          description: สร้างแล้ว — `password` แสดงครั้งเดียว
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    allOf:
+                      - { $ref: "#/components/schemas/UserWithHosting" }
+                      - type: object
+                        properties:
+                          password: { type: string }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /users/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/UserId" }
+    patch:
+      tags: [users]
+      summary: เปลี่ยนบทบาทหรือสถานะ
+      description: |
+        กฎที่ตรวจก่อนแตะฐานข้อมูลเสมอ:
+          - **เปลี่ยนบทบาท/ระงับบัญชีตัวเองไม่ได้** — กันการล็อกตัวเองออกด้วยการกดพลาด
+          - **ต้องเหลือผู้ดูแลระบบที่ใช้งานได้อย่างน้อยหนึ่งบัญชี**
+
+        session เดิมของผู้ใช้นั้นถูกตัดทั้งหมดหลังเปลี่ยน เพราะยังถือสิทธิ์ชุดเก่าอยู่
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: { type: string, enum: [superadmin, sysadmin, webadmin] }
+                status: { type: string, enum: [active, disabled] }
+      responses:
+        "200":
+          description: ผู้ใช้หลังแก้ไข
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/User" }
+        "403":
+          description: "`FORBIDDEN` — แก้บัญชีตัวเอง หรือไม่มีสิทธิ์"
+          $ref: "#/components/responses/Error"
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`CONFLICT` — จะทำให้ไม่เหลือผู้ดูแลระบบ"
+          $ref: "#/components/responses/Error"
+
+    delete:
+      tags: [users]
+      summary: ลบผู้ใช้
+      responses:
+        "200":
+          description: |
+            ลบแล้ว — ตอบ 200 พร้อม `actions` ไม่ใช่ 204 · 204 ไม่มีเนื้อคำตอบ หน้าจอ
+            จึงไม่รู้ว่าต้องโหลดตารางใหม่ แล้วแถวที่ลบไปแล้วจะค้างอยู่บนหน้าจอ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      deleted: { type: boolean }
+                      user_id: { type: integer }
+                      username: { type: string }
+                  actions: { $ref: "#/components/schemas/ResponseActions" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /users/{id}/password-reset:
+    post:
+      tags: [users]
+      summary: ตั้งรหัสผ่านใหม่ให้ผู้ใช้คนอื่น
+      description: บังคับเปลี่ยนตอนล็อกอินครั้งถัดไป และตัด session เดิมทั้งหมด
+      parameters:
+        - { $ref: "#/components/parameters/UserId" }
+      responses:
+        "200":
+          description: รหัสผ่านใหม่ (แสดงครั้งเดียว)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      user_id: { type: integer }
+                      username: { type: string }
+                      password: { type: string }
+                      sessions_revoked: { type: integer }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /users/{id}/two-factor:
+    delete:
+      tags: [users]
+      summary: ปิด 2FA ของผู้ใช้ (กรณีทำอุปกรณ์หาย)
+      description: |
+        **ไม่มี endpoint ให้ผู้ดูแล *เปิด* 2FA แทนคนอื่น** — การเปิดต้องทำโดยเจ้าของบัญชีเอง
+        ไม่งั้นผู้ดูแลจะถือ secret ของคนอื่นได้ ซึ่งทำลายความหมายของ 2FA
+      parameters:
+        - { $ref: "#/components/parameters/UserId" }
+      responses:
+        "200":
+          description: สำเร็จ — คำตอบของคำสั่งพร้อม `actions` ให้หน้าจอทำตาม
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /users/{id}/quota:
+    put:
+      tags: [users]
+      summary: อัปเดตโควตา
+      description: |
+        ส่งเฉพาะโควตาที่ต้องการเปลี่ยน · กฎเดียวกับทั้งระบบ:
+        `-1` = ไม่จำกัด · `0` = ปิดการใช้งาน · โดเมนห้ามเป็น 0
+
+        `disk_quota_mb` วัดเป็น MB ไม่ใช่จำนวนชิ้นเหมือนฟิลด์อื่น จึงไม่มีกฎ "ห้ามเป็น 0"
+        (`-1` = ไม่จำกัด ที่เหลือคือจำนวนเต็มไม่ติดลบ) — เมื่อเต็มแล้ว การสร้างทรัพยากรใหม่
+        ผ่าน panel (เว็บไซต์/โดเมน/ฐานข้อมูล) ของบัญชีนี้จะถูกปฏิเสธ (PLAN-V2 เฟส E2)
+      parameters:
+        - { $ref: "#/components/parameters/UserId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                quota_domains: { type: integer }
+                quota_subdomains: { type: integer }
+                quota_aliases: { type: integer }
+                quota_emails: { type: integer }
+                quota_databases: { type: integer }
+                quota_ftp_users: { type: integer }
+                disk_quota_mb: { type: integer, description: "MB — -1 = ไม่จำกัด" }
+      responses:
+        "200":
+          description: โควตาหลังอัปเดต พร้อมสรุปว่าอะไรเปลี่ยนจากอะไรเป็นอะไร
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /users/{id}/sftp:
+    parameters:
+      - { $ref: "#/components/parameters/UserId" }
+    put:
+      tags: [users]
+      summary: เปิด SFTP และตั้งรหัสผ่าน
+      description: |
+        **หนึ่งบัญชีโฮสติ้ง = หนึ่ง SFTP login** — ไม่มีบัญชีย่อยต่อเว็บ เพราะทุกเว็บของ
+        ผู้ใช้คนเดียวกันใช้ uid เดียวกันอยู่แล้วตั้งแต่ migration 0006 (PLAN-V2 เฟส E4)
+        `quota_ftp_users` จึงเป็น**สวิตช์**: `0` = แพ็กเกจไม่รวม SFTP · `-1`/`>0` = เปิดได้
+
+        เรียกซ้ำได้เพื่อ**เปลี่ยนรหัสผ่าน** — การเปิดใช้งานกับการตั้งรหัสใหม่คือการกระทำ
+        เดียวกันในทางเทคนิค จึงไม่มี endpoint แยก
+
+        เข้าถึงได้เฉพาะไฟล์ในบ้านตัวเอง (`ChrootDirectory`) และทำได้แค่รับส่งไฟล์
+        (`ForceCommand internal-sftp`) — เปิด shell, port forwarding และ X11 ไม่ได้ทั้งหมด
+
+        ต้องมีบัญชีระบบอยู่ก่อน (สร้างอัตโนมัติตอนสร้างเว็บไซต์แรก) — บัญชีที่ยังไม่มีเว็บ
+        จะได้ 422 พร้อมข้อความบอกว่าต้องสร้างเว็บก่อน
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+                  minLength: 12
+                  description: |
+                    ยาวอย่างน้อย 12 ตัว ห้ามมี `:` หรืออักขระควบคุม · เข้มกว่ารหัสผ่าน panel
+                    เพราะ sshd ไม่มี rate limit และ 2FA แบบที่ panel มี
+      responses:
+        "200":
+          description: สำเร็จ — คำตอบของคำสั่งพร้อม `actions` ให้หน้าจอทำตาม (ไม่มีรหัสผ่านในคำตอบ)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "422":
+          description: "`VALIDATION_ERROR` — รหัสผ่านสั้นเกินไป, โควตาเป็น 0, หรือยังไม่มีบัญชีระบบ"
+          $ref: "#/components/responses/Error"
+        "503": { $ref: "#/components/responses/Error" }
+
+    delete:
+      tags: [users]
+      summary: ปิด SFTP
+      description: |
+        เอาบัญชีออกจากกลุ่ม `phpcp-sftp` แล้วล็อกรหัสผ่านของบัญชีระบบ ·
+        **ไม่ลบบัญชีระบบและไม่ลบไฟล์** เพราะเว็บยังต้องรันด้วย uid นั้นต่อไป —
+        การปิด SFTP คือการปิดช่องทางเข้าถึง ไม่ใช่การยกเลิกบริการ (นั่นคือ `service_status`)
+
+        เรียกซ้ำได้โดยไม่ล้ม
+      responses:
+        "200":
+          description: สำเร็จ — คำตอบของคำสั่งพร้อม `actions` ให้หน้าจอทำตาม
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /users/{id}/sites:
+    post:
+      tags: [users]
+      summary: มอบเว็บไซต์ที่ผู้ดูแลถืออยู่ให้ลูกค้า
+      description: |
+        capability ตรวจโควตาที่ติดมากับเว็บนั้นก่อนเชื่อมเสมอ — เว็บหนึ่งเว็บอาจมี
+        subdomain และ alias ติดมาสิบกว่ารายการ การเชื่อมจึงทำให้ทะลุโควตาได้ในคำสั่งเดียว
+      parameters:
+        - { $ref: "#/components/parameters/UserId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [site_ids]
+              properties:
+                site_ids: { type: array, items: { type: integer } }
+      responses:
+        "200":
+          description: ผลการเชื่อมรายเว็บ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "409":
+          description: "`CONFLICT` — เชื่อมไม่ได้สักเว็บ (เกินโควตา หรือเป็นของลูกค้ารายอื่นอยู่แล้ว)"
+          $ref: "#/components/responses/Error"
+        "422": { $ref: "#/components/responses/Error" }
+
+  /users/{id}/sites/{site_id}:
+    delete:
+      tags: [users]
+      summary: ถอนเว็บไซต์ออกจากบัญชีลูกค้า
+      description: |
+        เจ้าของใหม่คือผู้ดูแลที่สั่ง ไม่ใช่ "ไม่มีเจ้าของ" — เว็บทุกแห่งต้องมีเจ้าของเสมอ
+        (บังคับที่ชั้นฐานข้อมูล) เพราะเว็บไร้เจ้าของคือเว็บที่ยังรันอยู่แต่ไม่มีใครรับผิดชอบ
+        และไม่ถูกนับเข้าโควตาใคร
+      parameters:
+        - { $ref: "#/components/parameters/UserId" }
+        - name: site_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200": { description: ถอนแล้ว พร้อมบอกเจ้าของใหม่ }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /settings:
+    get:
+      tags: [settings]
+      summary: ค่าตั้งของ panel
+      description: |
+        ค่าที่เป็นความลับ (token ของบอท) ถูกปิดบังเป็น `********` ตั้งแต่ฝั่ง capability —
+        token ที่หลุดออกไปทางคำตอบแปลว่าใครก็ส่งข้อความในนามระบบได้ และมันจะติดอยู่ใน
+        แคชของเบราว์เซอร์กับประวัติของ proxy ไปอีกนาน
+      responses:
+        "200":
+          description: ค่าตั้งปัจจุบัน
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      values: { type: object, additionalProperties: { type: string } }
+                      mail_status: { type: object }
+                  meta:
+                    type: object
+                    properties:
+                      keys: { type: object, description: "คีย์ที่แก้ได้ => ชนิด (bool/int/string)" }
+                      events: { type: array, items: { type: string } }
+                      event_labels: { type: object }
+                      notify_active: { type: boolean }
+        "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+    patch:
+      tags: [settings]
+      summary: แก้ค่าตั้งบางส่วน
+      description: |
+        **ห้ามให้ชั้นเว็บเขียน `config.php`** (§7.1 ข้อ 3) — ไฟล์นั้นถูก `include` ตอนบูต
+        ช่องโหว่เดียวในหน้าตั้งค่าจึงเท่ากับรันโค้ดทันที · ค่าที่แก้ได้จากที่นี่อยู่ในตาราง
+        `settings` ผ่าน capability `settings.set` เท่านั้น
+
+        ส่งค่าเดิม `********` กลับมาจะถูกมองข้าม ไม่ใช่เขียนทับ token จริงด้วยดอกจัน
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: ส่งเฉพาะคีย์ที่ต้องการเปลี่ยน · คีย์ที่ไม่รู้จักถูกเมิน
+              additionalProperties: true
+      responses:
+        "200":
+          description: บันทึกแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /settings/notification-test:
+    post:
+      tags: [settings]
+      summary: ส่งข้อความทดสอบไปยังช่องทางแจ้งเตือนช่องหนึ่ง
+      description: |
+        ทดสอบ**ทีละช่องทาง** เพราะผู้ดูแลต้องรู้ว่าช่องไหนพัง ไม่ใช่รู้แค่ว่า "บางช่องพัง"
+
+        ใช้ค่าที่บันทึกไว้ในฐานข้อมูล ไม่ใช่ค่าที่ยังค้างอยู่ในฟอร์ม — ต้องกดบันทึกก่อนทดสอบ
+
+        ต่างจากการแจ้งเตือนอัตโนมัติตรงที่ **ความล้มเหลวต้องดัง** (ตอบ 4xx/5xx) —
+        ผู้ใช้เพิ่งกดปุ่มทดสอบ ถ้าเงียบไปเฉย ๆ จะเข้าใจว่าตั้งค่าถูกแล้วทั้งที่ token ผิด
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                channel:
+                  type: string
+                  enum: [telegram, email, webhook]
+                  default: telegram
+                  description: ไม่ระบุ = telegram เพื่อความเข้ากันได้กับผู้เรียกเดิมที่มีช่องทางเดียว
+      responses:
+        "200":
+          description: ผลการส่ง
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      channel: { type: string, enum: [telegram, email, webhook] }
+                      message: { type: string }
+                      message_id: { type: integer, description: เฉพาะ telegram }
+                      to: { type: string, description: เฉพาะ email }
+                      status: { type: integer, description: เฉพาะ webhook — รหัส HTTP ที่ปลายทางตอบ }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /settings/mail-config:
+    post:
+      tags: [settings]
+      summary: ตั้งค่าเมลขาออก
+      description: |
+        ขอบเขตที่จงใจจำกัด: Postfix ที่ฟังเฉพาะ loopback สำหรับส่งเมลแจ้งเตือนออกเท่านั้น
+        **ไม่ใช่ mail hosting เต็มรูปแบบ** (§2.1) — การตั้ง relay ผิดจนกลายเป็น open relay
+        จะกระทบชื่อเสียง IP ของทุกเว็บไซต์บนเครื่องพร้อมกัน
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                hostname: { type: string }
+      responses:
+        "200":
+          description: ตั้งค่าแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /settings/mail-test:
+    post:
+      tags: [settings]
+      summary: ส่งเมลทดสอบ
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { type: string, format: email }
+      responses:
+        "200":
+          description: ผลการส่ง
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /services:
+    get:
+      tags: [server]
+      summary: บริการของระบบพร้อมสถานะและผลกระทบ
+      description: |
+        รายการ unit เป็น allowlist ตายตัวใน `ServiceCatalog` และ**บริการของ panel เอง
+        ถูกกรองออกตั้งแต่ชั้นนั้น** (SelfProtection) — ไม่ใช่แค่ซ่อนปุ่มบนหน้าจอ
+        ยิง API ตรงเพื่อสั่งหยุด `phpcp-agentd` จึงทำไม่ได้ไม่ว่าจะพยายามอย่างไร
+
+        `affects` บอกว่าหยุดบริการนี้แล้วเว็บไหนดับบ้าง — ต้องเห็นก่อนกด ไม่ใช่รู้ตอน
+        ที่ลูกค้าโทรมาแจ้ง
+      responses:
+        "200":
+          description: รายการบริการ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Service" }
+                  meta:
+                    type: object
+                    properties:
+                      total: { type: integer }
+                      actions: { type: array, items: { type: string } }
+        "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /services/{unit}/actions:
+    post:
+      tags: [server]
+      summary: สั่งงานบริการ
+      description: |
+        เป็นทรัพยากรคำนาม (`actions`) ตาม §4.1 ไม่ใช่ `/restart` — คำสั่งอยู่ใน body
+        ทำให้เพิ่มคำสั่งใหม่ได้โดยไม่ต้องเพิ่มเส้นทาง และ audit log บันทึกทุกคำสั่ง
+        ด้วยรูปแบบเดียวกัน
+      parameters:
+        - name: unit
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [start, stop, restart, reload] }
+      responses:
+        "200":
+          description: ผลการสั่งงาน
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "403":
+          description: |
+            `FORBIDDEN` = ไม่มีสิทธิ์ · `PROTECTED_RESOURCE` = เป็นบริการของ panel เอง
+            ซึ่งสั่งผ่าน UI ไม่ได้โดยเจตนา (ใช้ `phpcp` ที่หน้าเครื่องแทน)
+          $ref: "#/components/responses/Error"
+        "422": { $ref: "#/components/responses/Error" }
+
+  /firewall:
+    get:
+      tags: [server]
+      summary: สถานะและกฎ firewall
+      description: |
+        แต่ละกฎมี `signature` ที่ต้องส่งกลับมาตอนลบ — กันกรณีหมายเลขกฎเลื่อนเพราะ
+        มีคนแก้จากอีกหน้าต่างหนึ่งระหว่างที่หน้านี้เปิดค้างอยู่ แล้วลบผิดกฎ
+
+        `meta.pending_rollback` บอกว่ามีรายการรอยืนยันอยู่หรือไม่ — SPA ต้องใช้ค่านี้
+        ขึ้นตัวนับถอยหลัง ไม่งั้นผู้ใช้จะเสียกฎที่เพิ่งตั้งไปเงียบ ๆ เมื่อครบเวลา
+      responses:
+        "200":
+          description: สถานะ firewall
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/FirewallStatus" }
+                  meta:
+                    type: object
+                    properties:
+                      pending_rollback:
+                        oneOf:
+                          - { $ref: "#/components/schemas/PendingRollback" }
+                          - { type: "null" }
+        "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /firewall/rules:
+    post:
+      tags: [server]
+      summary: เพิ่มกฎ firewall
+      description: |
+        **ต้องยืนยันภายใน `window` วินาที** ไม่งั้นระบบถอนกฎคืนให้เอง — กฎที่เพิ่ง
+        เพิ่มอาจตัดการเชื่อมต่อของผู้สั่งเอง และนั่นคือกรณีที่กลไกนี้มีไว้รับมือ
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, port]
+              properties:
+                action: { type: string, enum: [allow, deny], default: allow }
+                port: { type: string, example: "22" }
+                protocol: { type: string, enum: [tcp, udp], default: tcp }
+                source: { type: string, description: "ว่าง = ทุกที่" }
+                comment: { type: string }
+                window: { type: integer, default: 120, minimum: 30, maximum: 900 }
+      responses:
+        "201":
+          description: เพิ่มแล้ว — ต้องยืนยันภายในเวลา
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /firewall/rules/{number}:
+    delete:
+      tags: [server]
+      summary: ลบกฎตามหมายเลข
+      parameters:
+        - name: number
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: expect
+          in: query
+          schema: { type: string }
+          description: ลายเซ็นของกฎที่ผู้ใช้เห็นตอนกดปุ่ม — agent เทียบก่อนลบเสมอ
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expect: { type: string }
+                window: { type: integer, default: 120 }
+      responses:
+        "200":
+          description: สำเร็จ — คำตอบของคำสั่งพร้อม `actions` ให้หน้าจอทำตาม
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`VALIDATION_ERROR` — ลายเซ็นไม่ตรง (กฎเลื่อนหรือถูกแก้ไปแล้ว)"
+          $ref: "#/components/responses/Error"
+
+  /firewall/enabled:
+    put:
+      tags: [server]
+      summary: เปิดหรือปิด firewall
+      description: |
+        การ**เปิด**ต้องยืนยันภายในเวลาเพราะถ้ากฎยังไม่ครอบพอร์ต SSH ผู้ดูแลจะหลุด
+        จากเครื่องทันที · การ**ปิด**ไม่ต้องยืนยันเพราะทำให้เข้าถึงได้กว้างขึ้น ไม่ใช่แคบลง
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+                window: { type: integer, default: 120 }
+      responses:
+        "200":
+          description: สถานะหลังสั่ง
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /ssh-config:
+    get:
+      tags: [server]
+      summary: ค่าตั้ง SSH ปัจจุบัน
+      responses:
+        "200":
+          description: ค่าปัจจุบันและคีย์ที่แก้ได้
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      installed: { type: boolean }
+                      config: { type: string, description: "เส้นทางไฟล์ sshd_config" }
+                      values: { type: object, additionalProperties: { type: string } }
+                      warnings: { type: array, items: { type: string } }
+                      editable_keys: { type: array, items: { type: string } }
+                  meta:
+                    type: object
+                    properties:
+                      pending_rollback:
+                        oneOf:
+                          - { $ref: "#/components/schemas/PendingRollback" }
+                          - { type: "null" }
+                      default_window: { type: integer }
+        "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+    patch:
+      tags: [server]
+      summary: แก้ค่าตั้ง SSH บางส่วน
+      description: |
+        แก้ได้เฉพาะคีย์ใน allowlist และค่าที่อยู่ใน enum ของแต่ละคีย์ —
+        **ไม่มีทางเขียนบรรทัดอิสระลง sshd_config ผ่าน API นี้** ซึ่งกัน
+        "แก้ config แล้ว sshd ไม่ขึ้นอีกเลย" ตั้งแต่ต้นทาง
+
+        คีย์ที่ไม่รู้จักถูกปฏิเสธพร้อมบอกรายการที่ใช้ได้ แทนที่จะเงียบ ๆ ไม่ทำอะไร
+        แล้วผู้ใช้คิดว่าบันทึกแล้ว · **ต้องยืนยันภายในเวลาเสมอ**
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: ส่งเฉพาะคีย์ที่ต้องการเปลี่ยน เช่น `Port`, `PermitRootLogin`
+              properties:
+                window: { type: integer, default: 120 }
+              additionalProperties: { type: string }
+      responses:
+        "200":
+          description: บันทึกแล้ว — ต้องยืนยันภายในเวลา
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /rollbacks:
+    get:
+      tags: [server]
+      summary: รายการที่รอยืนยัน
+      description: |
+        กลไกนี้ทำให้แก้ firewall/SSH จากระยะไกลแล้วไม่ล็อกตัวเองออกจากเครื่อง
+        **ตัวจับเวลาอยู่ฝั่งเซิร์ฟเวอร์เสมอ** — กรณีที่ต้องกู้คือกรณีที่ผู้ใช้หลุดไปแล้ว
+        เบราว์เซอร์จึงไม่มีโอกาสทำงาน · ตัวกระตุ้นจริงคือ `phpcp-scheduler` ทุกนาที
+      responses:
+        "200":
+          description: รายการที่รอยืนยัน (มีได้ครั้งละหนึ่งรายการ)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/PendingRollback" }
+                  meta:
+                    type: object
+                    properties:
+                      default_window: { type: integer }
+                      expired_waiting:
+                        type: integer
+                        description: หมดเวลาแล้วแต่ scheduler ยังไม่ทันเก็บ
+        "403": { $ref: "#/components/responses/Error" }
+
+  /rollbacks/{id}/confirmation:
+    post:
+      tags: [server]
+      summary: ยืนยันว่ายังเข้าถึงเครื่องได้
+      description: การที่คำขอนี้เดินทางมาถึงได้ คือหลักฐานในตัวมันเองว่าการเชื่อมต่อยังใช้ได้
+      parameters:
+        - { $ref: "#/components/parameters/RollbackId" }
+      responses:
+        "200":
+          description: ยืนยันแล้ว — การเปลี่ยนแปลงถือเป็นถาวร
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "403": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`VALIDATION_ERROR` — หมดเวลาไปแล้ว ระบบกำลังคืนค่าเดิม"
+          $ref: "#/components/responses/Error"
+
+  /rollbacks/{id}/execution:
+    post:
+      tags: [server]
+      summary: สั่งคืนค่าทันทีโดยไม่รอหมดเวลา
+      description: |
+        ใช้เมื่อผู้ใช้รู้ตัวว่าตั้งผิด · บีบให้รายการหมดอายุแล้วเดินเส้นทางคืนค่าเดียวกับ
+        ที่ scheduler ใช้ — ไม่มีตรรกะคืนค่าชุดที่สองในระบบ
+      parameters:
+        - { $ref: "#/components/parameters/RollbackId" }
+      responses:
+        "200":
+          description: คืนค่าแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /logs/sources:
+    get:
+      tags: [server]
+      summary: แหล่ง log ที่ผู้เรียกอ่านได้
+      description: |
+        ผู้ใช้เลือก**คีย์**จากรายการนี้ ไม่ได้ระบุเส้นทางไฟล์เอง — เส้นทางจริงอยู่ใน
+        `LogCatalog` ฝั่งเซิร์ฟเวอร์เท่านั้นและไม่ถูกส่งออกมา · นี่คือเหตุผลที่ API นี้
+        อ่านไฟล์ใดก็ได้บนเครื่องไม่ได้แม้จะพยายาม
+      responses:
+        "200":
+          description: รายการแหล่ง log
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key: { type: string }
+                        label: { type: string }
+                        group: { type: string }
+                        format: { type: string }
+                  meta:
+                    type: object
+                    properties:
+                      levels: { type: object }
+                      default_lines: { type: integer }
+                      max_lines: { type: integer }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /logs:
+    get:
+      tags: [server]
+      summary: อ่านบรรทัดท้าย ๆ ของ log
+      description: |
+        ไม่ระบุ `source` = ใช้แหล่งแรกที่บทบาทนี้อ่านได้ เหมือน endpoint รายการตัวอื่น
+        ที่เรียกเปล่า ๆ แล้วได้ค่าเริ่มต้นที่ใช้งานได้ · `data.source` บอกเสมอว่าใช้แหล่งไหนจริง
+
+        ระบุ `source` ที่ไม่รู้จักหรือไม่มีสิทธิ์อ่าน ยังเป็น 403 เหมือนเดิม
+      parameters:
+        - name: source
+          in: query
+          schema: { type: string }
+          description: คีย์จาก `/logs/sources` — ไม่ระบุ = แหล่งแรกที่อ่านได้
+        - name: lines
+          in: query
+          schema: { type: integer, minimum: 50, maximum: 2000, default: 200 }
+        - name: q
+          in: query
+          schema: { type: string }
+          description: กรองเฉพาะบรรทัดที่มีข้อความนี้
+        - name: level
+          in: query
+          schema: { type: string }
+          description: กรองตามระดับ (error/warn/info)
+      responses:
+        "200":
+          description: บรรทัด log
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "403":
+          description: "`FORBIDDEN` — ไม่มีสิทธิ์อ่านแหล่งนี้ หรือไม่รู้จักคีย์"
+          $ref: "#/components/responses/Error"
+        "503": { $ref: "#/components/responses/Error" }
+
+  /scheduled-jobs:
+    get:
+      tags: [server]
+      summary: งานตามเวลาของ panel และชีพจรของตัวจับเวลา
+      description: |
+        อ่านอย่างเดียว · `meta.stale` เป็น true เมื่อตัวจับเวลาไม่ได้เดินมานานกว่า
+        `meta.stale_after` วินาที ซึ่งเป็นเกณฑ์เดียวกับที่ `phpcp doctor` ใช้
+
+        ตัวจับเวลาที่ตายทำให้ทุกอย่างดูปกติทั้งที่กลไกคืนค่าอัตโนมัติของ SSH/firewall
+        หายไปเงียบ ๆ — หน้าตั้งค่าจึงต้องแสดงค่านี้เสมอ
+      responses:
+        "200":
+          description: รายการงานตามเวลา
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        capability: { type: string }
+                        schedule: { type: string }
+                        enabled: { type: boolean }
+                        last_run_at: { type: integer, nullable: true }
+                        last_status: { type: string }
+                        last_error: { type: string }
+                  meta:
+                    type: object
+                    properties:
+                      last_run_at: { type: integer, nullable: true }
+                      stale: { type: boolean }
+                      stale_after: { type: integer }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /alerts:
+    get:
+      tags: [server]
+      summary: เกณฑ์เตือนของเครื่องที่ยังผิดปกติอยู่
+      description: |
+        อ่านอย่างเดียว · แถวว่าง = ตอนนี้ไม่มีเกณฑ์ไหนเกิน
+
+        **ทำไมต้องมีทั้งที่มีการแจ้งเตือนอยู่แล้ว:** ระบบแจ้งเตือนตั้งใจให้เงียบเมื่อปัญหา
+        ยังเหมือนเดิม (แจ้งซ้ำทุก `meta.repeat_after` วินาทีเท่านั้น) ผู้ดูแลที่เพิ่งเปิดเครื่อง
+        จึงไม่มีทางรู้ว่าดิสก์ยังเต็มอยู่ไหม ถ้าข้อความรอบล่าสุดถูกส่งไปตั้งแต่เมื่อวาน
+        · ที่นี่คือ "สถานะปัจจุบัน" ส่วนการแจ้งเตือนคือ "สิ่งที่เพิ่งเปลี่ยน"
+
+        `meta.channels` ว่างแปลว่าไม่มีช่องทางไหนใช้งานได้จริง — ตารางที่ว่างในกรณีนั้น
+        ไม่ได้แปลว่าเครื่องปกติ แต่แปลว่าไม่มีใครได้รับข้อความ
+      responses:
+        "200":
+          description: รายการเกณฑ์ที่ยังผิดปกติ
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        alert_key:
+                          type: string
+                          description: "รูปแบบ `ชนิด` หรือ `ชนิด:เป้าหมาย` เช่น `disk`, `service:nginx`, `cert:example.com`"
+                        label: { type: string }
+                        level: { type: string, enum: [warning, critical] }
+                        value: { type: number }
+                        first_at: { type: integer, description: ครั้งแรกที่ตรวจพบว่าผิดปกติ }
+                        notified_at: { type: integer, description: ครั้งล่าสุดที่ส่งข้อความออกไป }
+                        duration: { type: integer, description: วินาทีที่ผิดปกติมาแล้ว }
+                        level_tone: { type: string, enum: [warn, danger] }
+                  meta:
+                    type: object
+                    properties:
+                      total: { type: integer }
+                      critical: { type: integer }
+                      channels:
+                        type: array
+                        items: { type: string, enum: [telegram, email, webhook] }
+                      repeat_after: { type: integer }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /security/audit:
+    get:
+      tags: [server]
+      summary: ผลตรวจจากภายนอกที่ tools/security-audit.sh ทิ้งไว้
+      description: |
+        คนละมุมมองกับ `/security/scan` — `scan` ตรวจจาก**ข้างใน**เครื่องผ่าน agent
+        ส่วนตัวนี้คือผลที่มองจาก**ข้างนอก** (TLS, header, พอร์ตที่เปิด, คุกกี้)
+
+        อ่านจากไฟล์ `<data>/security-audit.json` ที่ผู้ดูแลสั่งเขียนไว้ด้วย
+        `tools/security-audit.sh <url> --json-out=/var/lib/phpcp/security-audit.json`
+
+        **ไม่มีปุ่มสั่งสแกนจากหน้าเว็บโดยตั้งใจ** — ตัวสแกนยิง nmap และทดสอบ rate limit
+        ซึ่งกินเวลาเป็นนาที และปุ่มแบบนั้นยังเป็นช่องให้ใช้ panel สแกนเป้าหมายอื่น
+
+        `meta.stale` เป็น true เมื่อผลตรวจเก่ากว่า `meta.max_age_seconds` (30 วัน)
+      responses:
+        "200":
+          description: ผลตรวจล่าสุด
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: array, items: { type: object, additionalProperties: true } }
+                  meta:
+                    type: object
+                    properties:
+                      target: { type: string }
+                      mode: { type: string }
+                      scanned_at: { type: integer }
+                      age_seconds: { type: integer }
+                      stale: { type: boolean }
+                      max_age_seconds: { type: integer }
+                      summary: { type: object, additionalProperties: { type: integer } }
+        "403": { $ref: "#/components/responses/Error" }
+        "404":
+          description: "`NOT_FOUND` — ยังไม่เคยรันตัวสแกน"
+          $ref: "#/components/responses/Error"
+
+  /security/scan:
+    get:
+      tags: [server]
+      summary: ตรวจความปลอดภัยจากสภาพจริงของเครื่อง
+      description: |
+        ให้คะแนนจากสถานะ ณ ตอนที่เรียก ไม่ใช่จากค่าที่บันทึกไว้ — ผู้ดูแลแก้ค่าผ่าน ssh
+        นอก panel ได้ตลอดเวลา คะแนนที่แคชไว้จึงกลายเป็นคำโกหกทันที
+
+        เป็น `GET` แม้ชื่อจะเป็น "scan" เพราะไม่เปลี่ยนอะไรบนเครื่องเลย
+      responses:
+        "200":
+          description: ผลการตรวจรายข้อพร้อมคะแนนรวม
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: array, items: { type: object } }
+                  meta:
+                    type: object
+                    description: คะแนน ระดับ และสรุปจำนวนข้อที่ผ่าน/ไม่ผ่าน
+        "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /metrics:
+    get:
+      tags: [server]
+      summary: ตัวเลขทรัพยากรของเครื่อง ณ ขณะนี้
+      responses:
+        "200":
+          description: CPU, RAM, ดิสก์, load, uptime
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /metrics/stream:
+    get:
+      tags: [server]
+      summary: สตรีมตัวเลขทรัพยากรแบบสด (SSE)
+      description: |
+        **ข้อยกเว้นที่สองของกฎ "ทุก endpoint ตอบ JSON"** ต่อจาก `/files/download`
+
+        เป็น `text/event-stream` ตามมาตรฐาน SSE ซึ่งเบราว์เซอร์ต่อกลับให้เองเมื่อหลุด
+        — เหตุผลที่เลือกแทน WebSocket ตั้งแต่แรก (ข้อมูลไหลทางเดียว ไม่ต้องมีเซิร์ฟเวอร์เพิ่ม
+        ผ่าน reverse proxy ได้ตรงไปตรงมา) · **เนื้อของแต่ละ event ยังเป็น JSON**
+
+        ส่งค่าใหม่ทุก 2 วินาที และปิดเองที่ 30 นาทีแล้วให้เบราว์เซอร์ต่อใหม่ —
+        การเชื่อมต่อที่ค้างกินสล็อต PHP-FPM ไว้หนึ่งตัวตลอดเวลา
+      responses:
+        "200":
+          description: สตรีมของ event
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /metrics/history:
+    get:
+      tags: [server]
+      summary: ค่าทรัพยากรย้อนหลังสำหรับกราฟ
+      description: |
+        อ่านจากตาราง `metrics_history` ที่งานตามเวลา `metrics.record` เขียนทุกนาที
+        (PLAN-V2 เฟส E6) — **ไม่ผ่าน agent** เพราะเป็นการอ่านตารางของ panel เอง
+        ไม่ได้แตะเครื่อง เช่นเดียวกับ audit log
+
+        **ข้อมูลถูกลดความละเอียดตามอายุ** เพื่อให้ขนาดคงที่ (~2,500 แถวต่อเครื่องตลอดกาล):
+
+        | ชั้น | ความละเอียด | เก็บนาน |
+        |---|---|---|
+        | `minute` | 1 นาที | 24 ชั่วโมง |
+        | `hour` | 1 ชั่วโมง | 30 วัน |
+        | `day` | 1 วัน | 365 วัน |
+
+        เซิร์ฟเวอร์**เลือกชั้นให้เอง**จาก `range` ที่ขอมา — หน้าจอไม่ต้องรู้กฎการยุบชั้น
+        ถ้าให้หน้าจอเลือกเอง วันที่เปลี่ยนนโยบายจะต้องไล่แก้ทุกที่ที่เรียก
+
+        `cpu_peak` แยกจาก `cpu` โดยเจตนา — ค่าเฉลี่ยกลบพีคสั้น ๆ ที่เป็นต้นเหตุของอาการ
+        "เว็บช้าเป็นช่วง ๆ" จนมองไม่เห็น ซึ่งเป็นคำถามที่กราฟย้อนหลังมีไว้ตอบโดยเฉพาะ
+      parameters:
+        - name: range
+          in: query
+          description: ช่วงเวลาย้อนหลัง — ค่าปริยาย `24h`
+          schema:
+            type: string
+            enum: ["1h", "6h", "24h", "7d", "30d", "1y"]
+            default: "24h"
+      responses:
+        "200":
+          description: จุดข้อมูลเรียงตามเวลา
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        at: { type: integer, description: "unix timestamp ของจุดเริ่มช่วง" }
+                        cpu: { type: number, description: "ค่าเฉลี่ย % ของช่วง" }
+                        cpu_peak: { type: number, description: "ค่าสูงสุด % ในช่วง" }
+                        memory: { type: number }
+                        disk: { type: number }
+                        load1: { type: number }
+                        memory_used: { type: integer, description: ไบต์ }
+                        disk_used: { type: integer, description: ไบต์ }
+                        samples: { type: integer, description: "จำนวนตัวอย่างที่รวมกันเป็นจุดนี้" }
+                  meta:
+                    type: object
+                    properties:
+                      range: { type: string }
+                      bucket: { type: string, enum: [minute, hour, day] }
+                      since: { type: integer }
+                      points: { type: integer }
+                      collecting:
+                        type: boolean
+                        description: |
+                          `true` = ยังไม่มีข้อมูลในช่วงนี้เลย (เพิ่งติดตั้ง หรือ scheduler
+                          ยังไม่ได้รัน) · หน้าจอใช้บอกผู้ใช้ว่าทำไมกราฟว่าง แทนกล่องเปล่า
+        "422":
+          description: "`VALIDATION_ERROR` — `range` ไม่อยู่ในรายการที่รองรับ"
+          $ref: "#/components/responses/Error"
+
+  /system/info:
+    get:
+      tags: [server]
+      summary: ข้อมูลเครื่อง
+      responses:
+        "200":
+          description: distro, kernel, CPU, RAM, uptime
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /system/health:
+    get:
+      tags: [server]
+      summary: สุขภาพของ panel เอง
+      description: |
+        **ไม่เรียก agent โดยเจตนา** — endpoint นี้มีไว้ตอบว่า "ติดต่อ agent ได้ไหม"
+        ถ้าตัวมันเองต้องพึ่ง agent มันจะล้มพร้อมกันแล้วตอบอะไรไม่ได้เลยในจังหวะที่
+        ต้องการคำตอบที่สุด · ทุกบทบาทเรียกได้เพราะทุกคนต้องรู้ว่าทำไมปุ่มถึงไม่ทำงาน
+      responses:
+        "200":
+          description: สถานะของ panel
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      agent_available: { type: boolean }
+                      socket: { type: string }
+                      mode: { type: string }
+                      version: { type: string }
+                      time: { type: integer }
+
+  /files/roots:
+    get:
+      tags: [files]
+      summary: ขอบเขตไฟล์ที่ผู้เรียกเปิดได้
+      description: |
+        SPA ต้องเรียกอันนี้ก่อนเสมอเพื่อรู้ว่ามีอะไรให้เปิดบ้าง
+
+        **ไม่มีในตารางแปลงเส้นทางของ §4.6** เพราะ UI เดิมได้ข้อมูลนี้มาพร้อมหน้า HTML
+        แต่ SPA ไม่มีหน้าให้แนบมาด้วย จึงต้องมีทางขอแยก
+
+        ผลลัพธ์**ไม่มีเส้นทางจริงบนเครื่อง** — ฝั่งหน้าเว็บไม่มีอะไรต้องทำกับค่านั้น
+        และการเปิดเผยโครงสร้างไดเรกทอรีโดยไม่จำเป็นคือการช่วยผู้โจมตีฟรี ๆ
+      responses:
+        "200":
+          description: รายการขอบเขต
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/FileRoot" }
+                  meta:
+                    type: object
+                    properties:
+                      max_upload_bytes: { type: integer }
+                      max_edit_bytes: { type: integer }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /files:
+    get:
+      tags: [files]
+      summary: รายการไฟล์ในโฟลเดอร์
+      parameters:
+        - { $ref: "#/components/parameters/FileRootKey" }
+        - { $ref: "#/components/parameters/FilePath" }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PerPage" }
+      responses:
+        "200":
+          description: รายการไฟล์ พร้อมข้อมูลพื้นที่ดิสก์ของขอบเขตนั้น
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/FileEntry" }
+                  meta:
+                    type: object
+                    description: ค่าที่ capability คำนวณมาให้ (การแบ่งหน้า เส้นทางปัจจุบัน พื้นที่ดิสก์)
+        "403":
+          description: "`FORBIDDEN` — ไม่มีสิทธิ์เข้าถึงขอบเขตนี้"
+          $ref: "#/components/responses/Error"
+        "422":
+          description: "`VALIDATION_ERROR` — เส้นทางออกนอกขอบเขต หรือไม่ใช่โฟลเดอร์"
+          $ref: "#/components/responses/Error"
+
+    delete:
+      tags: [files]
+      summary: ลบไฟล์หรือโฟลเดอร์ที่เลือก
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [root, items]
+              properties:
+                root: { type: string }
+                items:
+                  type: array
+                  items: { type: string }
+                  description: เส้นทางสัมพัทธ์ในขอบเขตนั้น
+      responses:
+        "200":
+          description: สำเร็จ — คำตอบของคำสั่งพร้อม `actions` ให้หน้าจอทำตาม
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /files/tree:
+    get:
+      tags: [files]
+      summary: โครงโฟลเดอร์สำหรับแถบนำทาง
+      description: |
+        คืน**เฉพาะโฟลเดอร์** ไม่มีไฟล์ — ใช้วาดแถบนำทางด้านซ้ายของตัวจัดการไฟล์
+
+        ขยายทีละชั้นตามที่ผู้ใช้กด (`depth` ปริยาย 1) เพราะการไล่ทั้งต้นไม้ของ
+        เครื่องจริงใช้เวลาเป็นนาที · แต่ละโหนดบอก `has_children` มาด้วย
+        หน้าจอจึงรู้ว่าควรขึ้นลูกศรขยายหรือไม่โดยไม่ต้องถามล่วงหน้า
+
+        คำตอบถูกตัดที่ 1,500 โหนด · `meta.truncated` เป็น `true` เมื่อถูกตัด
+      parameters:
+        - { $ref: "#/components/parameters/FileRootKey" }
+        - { $ref: "#/components/parameters/FilePath" }
+        - name: depth
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 3, default: 1 }
+          description: จำนวนชั้นที่ไล่ลงไปในคำขอเดียว
+      responses:
+        "200":
+          description: รายการโฟลเดอร์แบบซ้อนชั้น
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/FileTreeNode" }
+                  meta:
+                    type: object
+                    properties:
+                      root: { type: string }
+                      path: { type: string }
+                      depth: { type: integer }
+                      truncated: { type: boolean }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /files/search:
+    get:
+      tags: [files]
+      summary: ค้นหาไฟล์ตามชื่อ
+      description: |
+        ค้นจาก**ชื่อเท่านั้น ไม่เปิดอ่านเนื้อไฟล์** — การค้นในเนื้อไฟล์ต้องอ่านทุกไบต์
+        ของทุกไฟล์ ซึ่งบนขอบเขต `server` แปลว่าอ่านทั้งดิสก์ต่อการค้นหนึ่งครั้ง
+
+        มีเพดานสี่ชั้นทำงานพร้อมกัน: ผลลัพธ์ 200 รายการ · เดินผ่าน 20,000 รายการ ·
+        ลึก 12 ชั้น · เวลา 5 วินาที · `meta.truncated` บอกว่าชนเพดานหรือไม่ ซึ่ง
+        ผู้เรียก**ต้องแสดงให้ผู้ใช้เห็น** ไม่งั้น "ไม่เจอ" กับ "หยุดหาก่อน" จะแยกไม่ออก
+
+        ไม่เดินตาม symlink — ทั้งเพื่อไม่ให้ออกนอกขอบเขตและเพื่อไม่ให้วนไม่รู้จบ
+      parameters:
+        - { $ref: "#/components/parameters/FileRootKey" }
+        - { $ref: "#/components/parameters/FilePath" }
+        - name: q
+          in: query
+          required: true
+          schema: { type: string, minLength: 2, maxLength: 100 }
+          description: ส่วนของชื่อไฟล์ที่ต้องการหา (ไม่สนตัวพิมพ์ใหญ่เล็ก)
+      responses:
+        "200":
+          description: รายการที่ชื่อตรงกับคำค้น
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/FileEntry" }
+                  meta:
+                    type: object
+                    properties:
+                      root: { type: string }
+                      path: { type: string }
+                      q: { type: string }
+                      visited: { type: integer }
+                      truncated: { type: boolean }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /files/info:
+    get:
+      tags: [files]
+      summary: ข้อมูลของไฟล์หรือโฟลเดอร์เดียว
+      description: |
+        กล่อง "คุณสมบัติ" ของตัวจัดการไฟล์
+
+        **ไม่คำนวณขนาดรวมของโฟลเดอร์** — ต้องไล่ทั้งต้นไม้ซึ่งบนขอบเขต `server`
+        แปลว่าไล่ทั้งดิสก์ต่อการกดหนึ่งครั้ง · บอก `entries` (จำนวนรายการชั้นบนสุด) แทน
+      parameters:
+        - { $ref: "#/components/parameters/FileRootKey" }
+        - { $ref: "#/components/parameters/FilePath" }
+      responses:
+        "200":
+          description: ข้อมูลของรายการนั้น
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/FileEntry" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /files/content:
+    get:
+      tags: [files]
+      summary: อ่านเนื้อหาไฟล์ข้อความ
+      description: อ่านได้เฉพาะไฟล์ที่ชนิดและขนาดผ่านเกณฑ์ของตัวแก้ไข (ดู `max_edit_bytes`)
+      parameters:
+        - { $ref: "#/components/parameters/FileRootKey" }
+        - { $ref: "#/components/parameters/FilePath" }
+      responses:
+        "200":
+          description: เนื้อหาไฟล์
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      name: { type: string }
+                      path: { type: string }
+                      content: { type: string }
+                      size: { type: integer }
+                      syntax: { type: string, description: "ชนิดไวยากรณ์สำหรับตัวเน้นสีในตัวแก้ไข" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+    put:
+      tags: [files]
+      summary: บันทึกเนื้อหาไฟล์
+      description: |
+        ค่าปริยายคือ **เขียนทับไฟล์ที่มีอยู่เท่านั้น** · ต้องส่ง `create: true`
+        จึงจะสร้างไฟล์ใหม่ได้ — การพิมพ์ชื่อไฟล์ผิดจึงได้ error ไม่ใช่สร้างไฟล์เปล่า
+        ทิ้งไว้ในที่ที่ไม่ตั้งใจ
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [root, path, content]
+              properties:
+                root: { type: string }
+                path: { type: string }
+                content: { type: string }
+                create: { type: boolean, default: false }
+      responses:
+        "200":
+          description: บันทึกแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /files/download:
+    get:
+      tags: [files]
+      summary: ดาวน์โหลดไฟล์
+      description: |
+        **ข้อยกเว้นเดียวของกฎ "ทุก endpoint ตอบ JSON"**
+
+        เหตุผล: ไฟล์ไบนารีที่ห่อด้วย base64 ใน JSON จะโตขึ้น 33% และบังคับให้ client
+        ถอดรหัสทั้งไฟล์ในหน่วยความจำก่อนบันทึกได้ ซึ่งใช้ไม่ได้จริงกับไฟล์หลายสิบเมกะไบต์
+
+        ตอบเป็น `application/octet-stream` + `X-Content-Type-Options: nosniff` เสมอ
+        ถ้าปล่อยให้เบราว์เซอร์เดาชนิดเอง ไฟล์ .html ของผู้ใช้จะถูกเรนเดอร์ในโดเมนของ panel
+        แล้วกลายเป็น stored XSS ที่ขโมย session ของผู้ดูแลได้ทันที
+
+        **กรณีข้อผิดพลาดยังตอบ JSON ตามปกติ** — มีแต่เนื้อไฟล์เท่านั้นที่ไม่ใช่ JSON
+      parameters:
+        - { $ref: "#/components/parameters/FileRootKey" }
+        - { $ref: "#/components/parameters/FilePath" }
+      responses:
+        "200":
+          description: เนื้อไฟล์
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+              description: "แนบชื่อไฟล์ทั้งแบบ ASCII และ UTF-8 ตาม RFC 5987"
+            X-Content-Type-Options:
+              schema: { type: string, const: nosniff }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /files/upload:
+    post:
+      tags: [files]
+      summary: อัปโหลดไฟล์
+      description: |
+        รับได้สองแบบ:
+          - `multipart/form-data` ช่อง `files[]` — สำหรับเบราว์เซอร์ (อัปโหลดหลายไฟล์ได้)
+          - `application/json` ที่มี `name` + `content_base64` — สำหรับสคริปต์และ curl
+
+        ส่งให้ agent ทีละไฟล์เสมอ เพราะโปรโตคอลมีเพดานขนาดต่อหนึ่งคำสั่ง
+        การรวมหลายไฟล์เป็นคำสั่งเดียวจะทำให้อัปโหลดไฟล์เล็กหลายไฟล์ล้มทั้งชุด
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                root: { type: string }
+                path: { type: string }
+                overwrite: { type: boolean }
+                files:
+                  type: array
+                  items: { type: string, format: binary }
+          application/json:
+            schema:
+              type: object
+              required: [root, name, content_base64]
+              properties:
+                root: { type: string }
+                path: { type: string }
+                name: { type: string }
+                content_base64: { type: string }
+                overwrite: { type: boolean, default: false }
+      responses:
+        "201":
+          description: อัปโหลดแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      uploaded: { type: array, items: { type: string } }
+                      count: { type: integer }
+                      message: { type: string }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /files/directories:
+    post:
+      tags: [files]
+      summary: สร้างโฟลเดอร์
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [root, name]
+              properties:
+                root: { type: string }
+                path: { type: string, description: "โฟลเดอร์แม่ · ว่าง = ชั้นบนสุดของขอบเขต" }
+                name: { type: string }
+      responses:
+        "201":
+          description: สร้างแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /files/move:
+    post:
+      tags: [files]
+      summary: ย้ายหรือเปลี่ยนชื่อ
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FileTransfer" }
+      responses:
+        "200":
+          description: ย้ายแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /files/copy:
+    post:
+      tags: [files]
+      summary: คัดลอก
+      description: |
+        ใช้ capability เดียวกับการย้ายโดยตั้งแฟล็ก `copy` — แยกเป็นคนละเส้นทางเพราะ
+        "คัดลอก" กับ "ย้าย" เป็นคนละการกระทำในสายตาผู้ใช้ และการซ่อนความต่างไว้ในแฟล็ก
+        ของ body ทำให้อ่าน log ย้อนหลังแล้วแยกไม่ออกว่าเกิดอะไรขึ้น
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FileTransfer" }
+      responses:
+        "200":
+          description: คัดลอกแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /files/permissions:
+    put:
+      tags: [files]
+      summary: เปลี่ยนสิทธิ์ไฟล์
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [root, path, mode]
+              properties:
+                root: { type: string }
+                path: { type: string }
+                mode: { type: string, example: "644", description: "เลขฐานแปดสามหลัก" }
+                recursive: { type: boolean, default: false }
+      responses:
+        "200":
+          description: เปลี่ยนแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /files/archives:
+    post:
+      tags: [files]
+      summary: สร้างไฟล์บีบอัดจากรายการที่เลือก
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [root, items, archive]
+              properties:
+                root: { type: string }
+                path: { type: string, description: "โฟลเดอร์ที่ไฟล์บีบอัดจะไปอยู่" }
+                items: { type: array, items: { type: string } }
+                archive: { type: string, description: "ชื่อไฟล์ .zip" }
+      responses:
+        "201":
+          description: สร้างแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /files/extractions:
+    post:
+      tags: [files]
+      summary: แตกไฟล์บีบอัด
+      description: กัน Zip Slip ที่ระดับ Executor — รายการที่ชี้ออกนอกปลายทางถูกข้ามและรายงานกลับมา
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [root, path]
+              properties:
+                root: { type: string }
+                path: { type: string, description: "ไฟล์ .zip ที่จะแตก (เส้นทางสัมพัทธ์)" }
+                destination:
+                  type: string
+                  description: |
+                    **ชื่อโฟลเดอร์** ที่จะสร้างใหม่ใต้โฟลเดอร์ของไฟล์ zip ไม่ใช่เส้นทาง —
+                    ค่าที่มี `/` จะถูกปฏิเสธ · ว่าง = แตกลงโฟลเดอร์เดียวกับไฟล์เลย
+      responses:
+        "200":
+          description: แตกไฟล์แล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      entries: { type: integer }
+                      bytes: { type: integer }
+                      skipped: { type: integer, description: "รายการที่ถูกข้ามเพราะชี้ออกนอกปลายทาง" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /certificates:
+    get:
+      tags: [certificates]
+      summary: ใบรับรอง SSL ของทุกเว็บไซต์ที่ผู้เรียกมีสิทธิ์เห็น
+      description: |
+        อ่านจากไฟล์ใบรับรองจริงทุกครั้ง ไม่ใช่จากตารางในฐานข้อมูล — certbot ต่ออายุเอง
+        ผ่าน timer ของมันโดยไม่ผ่าน panel เลย ตารางจึงล้าหลังได้เสมอ
+      responses:
+        "200":
+          description: รายการใบรับรองรายเว็บไซต์
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/SiteCertificate" }
+                  meta:
+                    type: object
+                    properties:
+                      expiring: { type: integer, description: "จำนวนใบที่ใกล้หมดอายุหรือหมดแล้ว" }
+                      certbot_installed: { type: boolean }
+                      auto_renew_active: { type: boolean }
+                      warn_days: { type: integer }
+        "503": { $ref: "#/components/responses/Error" }
+
+    post:
+      tags: [certificates]
+      summary: ขอใบรับรองใหม่ให้เว็บไซต์
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [site_id, method]
+              properties:
+                site_id: { type: integer }
+                method: { type: string, enum: [letsencrypt, self-signed] }
+                email: { type: string, format: email, description: "ใช้แจ้งเตือนใบใกล้หมดอายุจาก Let's Encrypt" }
+                staging:
+                  type: boolean
+                  description: |
+                    ใช้ staging ของ Let's Encrypt เพื่อทดสอบโดยไม่กิน rate limit ของ production
+                    ซึ่งพอโดนแล้วต้องรอเป็นสัปดาห์
+      responses:
+        "201":
+          description: ออกใบรับรองแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "500":
+          description: "`EXECUTION_FAILED` — ขอใบไม่สำเร็จ (เช่น DNS ยังไม่ชี้มาที่เครื่องนี้)"
+          $ref: "#/components/responses/Error"
+
+  /certificates/{site_id}:
+    delete:
+      tags: [certificates]
+      summary: ลบใบรับรอง
+      description: |
+        ปิด HTTPS ให้ก่อนลบไฟล์เสมอ ไม่งั้น vhost จะชี้ไปยังไฟล์ที่ไม่มีอยู่
+        แล้ว Apache จะปฏิเสธทั้ง config ทำให้เว็บทั้งเครื่องไม่ขึ้น ไม่ใช่แค่เว็บนี้
+      parameters:
+        - { $ref: "#/components/parameters/CertSiteId" }
+        - name: confirm_domain
+          in: query
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirm_domain: { type: string }
+      responses:
+        "200":
+          description: สำเร็จ — คำตอบของคำสั่งพร้อม `actions` ให้หน้าจอทำตาม
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /certificates/{site_id}/renewal:
+    post:
+      tags: [certificates]
+      summary: ต่ออายุใบรับรอง
+      parameters:
+        - { $ref: "#/components/parameters/CertSiteId" }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                force: { type: boolean, description: "ต่อทันทีแม้ยังไม่ถึงกำหนด" }
+      responses:
+        "200":
+          description: ผลการต่ออายุ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "404": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
+
+  /certificates/{site_id}/mode:
+    put:
+      tags: [certificates]
+      summary: เปลี่ยนโหมด HTTPS ของเว็บไซต์
+      parameters:
+        - { $ref: "#/components/parameters/CertSiteId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode]
+              properties:
+                mode:
+                  type: string
+                  enum: [off, on, forced]
+                  description: "`forced` = บังคับ redirect ทุก request ไป HTTPS"
+      responses:
+        "200":
+          description: ผลการเปลี่ยนโหมด
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /databases:
+    get:
+      tags: [databases]
+      summary: รายการฐานข้อมูล
+      description: |
+        ผู้ดูแลเว็บไซต์ได้เฉพาะฐานข้อมูลของเว็บตัวเอง — กรองที่ capability `db.list`
+        ฝั่ง agent ไม่ใช่ที่ชั้นเว็บ
+
+        header `X-Total-Size` บอกขนาดรวมทั้งหมดเป็นไบต์ (ก่อนแบ่งหน้า)
+      parameters:
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PerPage" }
+        - name: q
+          in: query
+          schema: { type: string }
+          description: ค้นจากชื่อฐานข้อมูล ชื่อเว็บไซต์ หรือชื่อผู้ใช้
+      responses:
+        "200":
+          description: รายการฐานข้อมูล
+          headers:
+            X-Total-Size:
+              schema: { type: integer }
+              description: ขนาดรวมเป็นไบต์
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Database" }
+                  meta: { $ref: "#/components/schemas/PageMeta" }
+        "503": { $ref: "#/components/responses/Error" }
+
+    post:
+      tags: [databases]
+      summary: สร้างฐานข้อมูลพร้อมผู้ใช้
+      description: |
+        รหัสผ่านที่สุ่มให้อยู่ในคำตอบ **ครั้งเดียวเท่านั้น** — panel ไม่เก็บไว้ที่ไหนเลย
+        และไม่มีทางดูย้อนหลังได้ ต้องตั้งใหม่ถ้าทำหาย
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, username]
+              properties:
+                name: { type: string }
+                username: { type: string }
+                host: { type: string, default: localhost }
+                privileges: { type: string, default: readwrite }
+                site_id: { type: integer, description: "ผูกกับเว็บไซต์เพื่อให้นับเข้าโควตาและสำรองไปด้วยกัน" }
+                charset: { type: string, default: utf8mb4 }
+      responses:
+        "201":
+          description: สร้างแล้ว — `password` แสดงครั้งเดียว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      name: { type: string }
+                      username: { type: string }
+                      host: { type: string }
+                      password: { type: string }
+                      privileges: { type: string }
+                      message: { type: string }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /databases/{name}:
+    delete:
+      tags: [databases]
+      summary: ลบฐานข้อมูล
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - name: confirm
+          in: query
+          schema: { type: string }
+        - name: drop_user
+          in: query
+          schema: { type: boolean }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirm: { type: string, description: "ต้องตรงกับชื่อฐานข้อมูล" }
+                drop_user:
+                  type: boolean
+                  default: false
+                  description: |
+                    ลบผู้ใช้ที่ผูกอยู่ด้วย · ไม่ใช่ค่าปริยายเพราะผู้ใช้หนึ่งคนอาจมีสิทธิ์
+                    กับหลายฐานข้อมูล การลบทิ้งจะทำให้เว็บอื่นต่อฐานข้อมูลไม่ได้ทันที
+      responses:
+        "200":
+          description: สำเร็จ — คำตอบของคำสั่งพร้อม `actions` ให้หน้าจอทำตาม
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /database-users/{user}/password:
+    post:
+      tags: [databases]
+      summary: ตั้งรหัสผ่านใหม่ให้ผู้ใช้ฐานข้อมูล
+      description: |
+        เป็น sub-resource ของ `database-users` ไม่ใช่ของ `databases` เพราะผู้ใช้หนึ่งคน
+        ใช้ได้กับหลายฐานข้อมูล
+      parameters:
+        - name: user
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                host: { type: string, default: localhost }
+      responses:
+        "200":
+          description: รหัสผ่านใหม่ (แสดงครั้งเดียว)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      username: { type: string }
+                      host: { type: string }
+                      password: { type: string }
+                      databases: { type: array, items: { type: string } }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /phpmyadmin/session:
+    post:
+      tags: [databases]
+      summary: เปิด session ของ phpMyAdmin แบบไม่ต้องพิมพ์รหัส
+      description: |
+        ขอบัญชี MariaDB ประจำผู้ใช้จาก agent (ที่เดียวที่ถอดรหัสได้) แล้วเขียนลง
+        session ที่ phpMyAdmin อ่าน (`auth_type = signon`) จากนั้นคืน URL ปลายทางมาให้
+        หน้าเว็บพาไปต่อ
+
+        **รหัสผ่านไม่เคยอยู่ในคำตอบ** — มันเดินจาก agent ไปลง session ของ phpMyAdmin
+        เท่านั้น ไม่ผ่าน HTML ไม่ผ่าน query string และไม่ผ่าน JSON ที่ JavaScript อ่านได้
+
+        **เป็น POST เพราะนี่คือการล็อกอิน ไม่ใช่การอ่านข้อมูล** — ถ้าเป็น GET เว็บใด
+        ก็ตามที่ผู้ใช้เปิดอยู่จะฝัง `<img src="…">` แล้วสร้าง session ขึ้นมาเงียบ ๆ ได้
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                db:
+                  type: string
+                  description: ชื่อฐานข้อมูลที่จะเปิดตรงไปหน้าโครงสร้าง — ไม่ระบุ = หน้าแรก
+      responses:
+        "200":
+          description: URL ที่หน้าเว็บต้องพาไปต่อ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      url: { type: string }
+        "404": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
+
+  /cron-jobs:
+    get:
+      tags: [cron]
+      summary: รายการงานอัตโนมัติ
+      parameters:
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PerPage" }
+        - name: site_id
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: รายการงาน
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/CronJob" }
+                  meta: { $ref: "#/components/schemas/PageMeta" }
+        "401": { $ref: "#/components/responses/Error" }
+
+    post:
+      tags: [cron]
+      summary: เพิ่มงานอัตโนมัติ
+      description: |
+        บันทึกลงฐานข้อมูลแล้วเขียนไฟล์ `/etc/cron.d` ใหม่ทันที
+        **ถ้าเขียนไฟล์ไม่สำเร็จ แถวที่เพิ่งสร้างจะถูกลบทิ้ง** ไม่ปล่อยให้เหลืองานที่
+        หน้าจอบอกว่าทำงานอยู่แต่ cron ไม่รู้จัก
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [site_id, name, schedule, command]
+              properties:
+                site_id: { type: integer }
+                name: { type: string, maxLength: 100 }
+                schedule:
+                  type: string
+                  description: "cron 5 ฟิลด์ หรือตัวย่อ @daily @hourly @weekly @monthly @yearly"
+                  example: "0 3 * * *"
+                command: { type: string }
+                enabled: { type: boolean, default: true }
+      responses:
+        "201":
+          description: เพิ่มแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/CronJob" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /cron-jobs/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+    patch:
+      tags: [cron]
+      summary: แก้ไขงานอัตโนมัติ
+      description: ส่งเฉพาะฟิลด์ที่ต้องการเปลี่ยน · ค่าที่ไม่ส่งมาคงเดิม (รวมถึง `enabled`)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                schedule: { type: string }
+                command: { type: string }
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: งานหลังแก้ไข
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/CronJob" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+    delete:
+      tags: [cron]
+      summary: ลบงานอัตโนมัติ
+      responses:
+        "200":
+          description: สำเร็จ — คำตอบของคำสั่งพร้อม `actions` ให้หน้าจอทำตาม
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /backups:
+    get:
+      tags: [backups]
+      summary: รายการไฟล์สำรอง
+      description: |
+        ไฟล์สำรองระดับระบบ (type `config`) ไม่ผูกกับเว็บไซต์ใด ผู้ดูแลเว็บไซต์จึงไม่เห็น
+        — ข้างในมีค่า config ของทั้งเครื่อง
+      parameters:
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PerPage" }
+        - name: type
+          in: query
+          schema: { type: string, enum: [site, database, config, full] }
+        - name: site_id
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: รายการไฟล์สำรอง
+          headers:
+            X-Total-Size:
+              schema: { type: integer }
+              description: ขนาดรวมเป็นไบต์
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Backup" }
+                  meta: { $ref: "#/components/schemas/PageMeta" }
+        "401": { $ref: "#/components/responses/Error" }
+
+    post:
+      tags: [backups]
+      summary: สร้างไฟล์สำรอง
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type: { type: string, enum: [site, database, config, full] }
+                site_id: { type: integer, description: "ต้องระบุเมื่อ type = site" }
+                database: { type: string, description: "ต้องระบุเมื่อ type = database" }
+                note: { type: string, maxLength: 120 }
+      responses:
+        "201":
+          description: สร้างแล้ว — ไฟล์พร้อมใช้ตั้งแต่ตอนที่คำตอบกลับไปถึง
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/Backup" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
+
+  /backups/{id}:
+    delete:
+      tags: [backups]
+      summary: ลบไฟล์สำรอง
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: สำเร็จ — คำตอบของคำสั่งพร้อม `actions` ให้หน้าจอทำตาม
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /backups/{id}/restoration:
+    post:
+      tags: [backups]
+      summary: กู้คืนจากไฟล์สำรอง
+      description: |
+        **คำสั่งที่อันตรายที่สุดในระบบ** — เขียนทับข้อมูลปัจจุบันทั้งหมด
+
+        กลไกป้องกันที่ทำงานทุกครั้ง: ต้องยืนยันด้วยชื่อเป้าหมาย · ตรวจ checksum ของไฟล์
+        ก่อนแตะข้อมูลจริง (ไฟล์ที่ไม่มี checksum กู้ไม่ได้เลย) · สร้างไฟล์สำรองนิรภัย
+        ของสถานะปัจจุบันไว้ก่อนเขียนทับ จึงย้อนกลับไปจุดก่อนกู้ได้
+
+        ใช้สิทธิ์ `backup.restore` ซึ่งแยกจาก `backup.manage` ที่ใช้สร้าง/ลบ
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              properties:
+                confirm: { type: string, description: "ชื่อโดเมนหรือชื่อเป้าหมายของไฟล์สำรองนั้น" }
+      responses:
+        "200":
+          description: กู้คืนสำเร็จ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`VALIDATION_ERROR` — ไม่ยืนยัน หรือ checksum ไม่ตรง (ไฟล์ถูกแก้)"
+          $ref: "#/components/responses/Error"
+
+  /backups/{id}/offsite-copy:
+    post:
+      tags: [backups]
+      summary: ส่งไฟล์สำรองออกไปเก็บที่ปลายทางนอกเครื่อง
+      description: |
+        ตรวจ checksum ก่อนส่งเสมอ — ไฟล์ที่เสียแล้วถูกส่งออกไปเก็บ คือไฟล์สำรองปลอม
+        ที่ไม่มีใครรู้ว่าปลอมจนถึงวันที่ต้องใช้จริง
+
+        ชื่อเป็นคำนาม (`offsite-copy` = สำเนาที่อยู่นอกเครื่อง) ตาม §4.1 ไม่ใช่กริยา
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [destination_id]
+              properties:
+                destination_id: { type: integer }
+      responses:
+        "200":
+          description: ส่งสำเร็จ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      remote_path: { type: string }
+                      destination: { type: string }
+                      bytes: { type: integer }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /backup-destinations:
+    get:
+      tags: [backups]
+      summary: ปลายทางของไฟล์สำรองทั้งหมด
+      description: |
+        ต้องใช้สิทธิ์ `backup.offsite` (superadmin/sysadmin) **ไม่ใช่ `backup.manage`** —
+        ปลายทางหนึ่งที่รับไฟล์สำรองของลูกค้าทุกราย จึงเป็นทรัพยากรของทั้งเครื่อง
+
+        **ความลับไม่เคยอยู่ในคำตอบ** — กุญแจ ssh ที่เก็บไว้ถูกเข้ารหัสในฐานข้อมูลและ
+        ไม่มี endpoint ไหนคืนกลับมา · `has_secret` บอกแค่ว่ามีเก็บไว้แล้วหรือยัง
+
+        `meta.required_fields` บอกว่าแต่ละ driver ต้องการฟิลด์อะไร หน้าจอจึงสร้างฟอร์ม
+        ตามนั้นได้โดยไม่ต้องฝังรายการซ้ำอีกชุด
+      responses:
+        "200":
+          description: รายการปลายทาง
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/BackupDestination" }
+                  meta:
+                    type: object
+                    properties:
+                      drivers: { type: array, items: { type: string } }
+                      required_fields: { type: object }
+        "403": { $ref: "#/components/responses/Error" }
+
+    post:
+      tags: [backups]
+      summary: เพิ่มปลายทางใหม่
+      description: |
+        ฟิลด์ค่าตั้งส่งมาแบน ๆ ระดับบนสุด (`host`, `port`, `user`, `path`) ไม่ต้องห่อ
+        เป็น object · `secret` คือ private key ของ ssh สำหรับ driver `sftp`/`rsync`
+        หรือ secret access key สำหรับ driver `s3`
+
+        **ไม่รองรับรหัสผ่านโดยตั้งใจ** — รหัสผ่านที่ส่งผ่านอาร์กิวเมนต์ของโปรเซส
+        อ่านได้จาก `/proc/<pid>/cmdline` โดยผู้ใช้อื่นบนเครื่องเดียวกัน
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, driver]
+              properties:
+                name: { type: string }
+                driver: { type: string, enum: [local, sftp, rsync, s3] }
+                host: { type: string, description: "sftp/rsync เท่านั้น" }
+                port: { type: integer, default: 22 }
+                user: { type: string }
+                path: { type: string, description: "เส้นทางเต็มที่ปลายทาง (local/sftp/rsync) หรือ key prefix ภายใน bucket (s3, ไม่บังคับ)" }
+                known_hosts_file: { type: string, description: "ไฟล์ known_hosts ที่ใช้ตรวจ host key" }
+                bucket: { type: string, description: "s3 เท่านั้น" }
+                region: { type: string, description: "s3 เท่านั้น เช่น us-east-1" }
+                access_key: { type: string, description: "s3 เท่านั้น — ไม่ใช่ความลับ เก็บเป็นค่าตั้งธรรมดา" }
+                endpoint: { type: string, description: "s3 เท่านั้น — เว้นว่างสำหรับ AWS S3 จริง ต้องระบุสำหรับบริการที่พูดโปรโตคอลเดียวกัน เช่น MinIO/Backblaze B2/DigitalOcean Spaces" }
+                path_style: { type: boolean, description: "s3 เท่านั้น — เปิดสำหรับบริการที่ไม่มี wildcard DNS ต่อ bucket" }
+                secret: { type: string, description: "private key (sftp/rsync) หรือ secret access key (s3) — ไม่มีทางอ่านกลับหลังบันทึก" }
+                retention_days: { type: integer, default: 30, description: "0 = ไม่จำกัด" }
+                retention_count: { type: integer, default: 7, description: "เก็บอย่างน้อยกี่ชุดล่าสุดเสมอ" }
+      responses:
+        "201":
+          description: สร้างแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/BackupDestination" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`VALIDATION_ERROR` — `fields` บอกชื่อฟิลด์ที่ขาดทีละตัว"
+          $ref: "#/components/responses/Error"
+
+  /backup-destinations/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+    get:
+      tags: [backups]
+      summary: ปลายทางหนึ่งรายการ
+      responses:
+        "200":
+          description: ปลายทาง
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/BackupDestination" }
+        "404": { $ref: "#/components/responses/Error" }
+
+    patch:
+      tags: [backups]
+      summary: แก้ไขปลายทาง
+      description: |
+        **ส่ง `secret` ว่างมา = ไม่เปลี่ยนกุญแจเดิม ไม่ใช่ล้างทิ้ง** — หน้าจอแก้ไขส่ง
+        ฟอร์มทั้งชุดกลับมาโดยที่ช่องนั้นว่างเสมอ (เพราะไม่เคยได้ค่าเดิมไป) ถ้าตีความว่า
+        ล้าง ผู้ดูแลจะทำปลายทางพังทุกครั้งที่แก้แค่ชื่อ
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                enabled: { type: integer, enum: [0, 1] }
+                host: { type: string }
+                port: { type: integer }
+                user: { type: string }
+                path: { type: string }
+                known_hosts_file: { type: string }
+                secret: { type: string }
+                retention_days: { type: integer }
+                retention_count: { type: integer }
+      responses:
+        "200":
+          description: แก้ไขแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/BackupDestination" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+    delete:
+      tags: [backups]
+      summary: ลบปลายทางออกจากรายการ
+      description: |
+        **ไม่ตามไปลบไฟล์ที่ส่งไปแล้ว** — การเลิกใช้ปลายทางกับการทำลายไฟล์สำรองที่
+        เก็บไว้ที่นั่นเป็นคนละเจตนากัน และอย่างหลังย้อนคืนไม่ได้ ·
+        `remote_files_left` บอกว่ามีไฟล์ค้างอยู่กี่รายการเพื่อให้ไปจัดการเองได้
+      responses:
+        "200":
+          description: ลบแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      deleted: { type: boolean }
+                      remote_files_left: { type: integer }
+                      message: { type: string }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /backup-schedules:
+    get:
+      tags: [backups]
+      summary: ตารางเวลาสำรองอัตโนมัติ
+      description: |
+        ต้องใช้สิทธิ์ `backup.offsite` (superadmin/sysadmin) **ไม่ใช่ `backup.manage`**
+        ซึ่งเป็นสิทธิ์หมวด Hosting ที่ผู้ดูแลเว็บไซต์มีอยู่แล้ว
+
+        เก็บเป็นแถวในตาราง `scheduled_jobs` เดิม แต่**เห็นและแก้ได้เฉพาะงานที่ทรัพยากร
+        นี้สร้างเอง** (ชื่อขึ้นต้นด้วย `backup.auto.`)
+
+        งานของระบบอย่าง `rollback.run` และ `expiry.check` ไม่อยู่ในนี้และแก้ผ่าน API
+        ไม่ได้เลย — การปิดมันคือการลดการป้องกันของระบบผ่านหน้าเว็บ
+      responses:
+        "200":
+          description: รายการตารางเวลา
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/BackupSchedule" }
+                  meta:
+                    type: object
+                    properties:
+                      presets:
+                        type: object
+                        description: ตารางเวลาสำเร็จรูปพร้อมคำอธิบายภาษาไทย
+        "403": { $ref: "#/components/responses/Error" }
+
+    post:
+      tags: [backups]
+      summary: ตั้งเวลาสำรองอัตโนมัติ
+      description: |
+        `capability` ถูกตรึงไว้ที่ `backup.create` เสมอและผู้เรียกเลือกไม่ได้ — ถ้าเลือกได้
+        ก็เท่ากับตั้งเวลาให้ระบบรันคำสั่งอะไรก็ได้ในนามของ "ระบบ" ซึ่งเป็นสิทธิ์สูงสุดที่มี
+
+        ระบุ `destination_id` เพื่อให้ **สร้างแล้วส่งออกนอกเครื่องในคำสั่งเดียว** ·
+        ถ้าไม่ระบุ ไฟล์จะอยู่บนดิสก์ก้อนเดียวกับข้อมูลจริงต่อไป
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [label, type, schedule]
+              properties:
+                label: { type: string, description: "ชื่อที่ผู้ใช้ตั้ง — ใช้สร้างชื่องานแบบ ASCII ให้เอง" }
+                type: { type: string, enum: [site, database, config, full] }
+                schedule: { type: string, description: "cron 5 ฟิลด์" }
+                site_id: { type: integer }
+                database: { type: string }
+                destination_id: { type: integer, description: "0 = เก็บไว้ในเครื่องอย่างเดียว" }
+      responses:
+        "201":
+          description: ตั้งเวลาแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/BackupSchedule" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /backup-schedules/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+    patch:
+      tags: [backups]
+      summary: แก้ไขตารางเวลา
+      description: |
+        ส่ง id ของงานระบบมาจะได้ **404 เหมือนงานที่ไม่มีอยู่จริง** ไม่ใช่ 403 — งานเหล่านั้น
+        ไม่ใช่ทรัพยากรของ endpoint นี้เลย
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled: { type: integer, enum: [0, 1] }
+                schedule: { type: string }
+                destination_id: { type: integer }
+      responses:
+        "200":
+          description: แก้ไขแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/BackupSchedule" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+    delete:
+      tags: [backups]
+      summary: ลบตารางเวลา
+      responses:
+        "200":
+          description: สำเร็จ — คำตอบของคำสั่งพร้อม `actions` ให้หน้าจอทำตาม
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /backup-destinations/{id}/verification:
+    post:
+      tags: [backups]
+      summary: ทดสอบว่าปลายทางเขียนและอ่านกลับได้จริง
+      description: |
+        **เขียนไฟล์จริงแล้วอ่านกลับ ไม่ใช่แค่เชื่อมต่อผ่าน** — กรณีที่พบบ่อยที่สุดตอน
+        ตั้งค่าครั้งแรกคือ ssh ผ่านแต่ไม่มีสิทธิ์เขียนในไดเรกทอรีนั้น ซึ่งการทดสอบแบบ
+        "ต่อได้ไหม" จะรายงานว่าผ่าน แล้วไปพังจริงตอนตี 3 ที่ไม่มีใครดู
+
+        ผลถูกบันทึกลง `last_ok_at` / `last_error` ของปลายทางนั้นเสมอ
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: ปลายทางใช้งานได้
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      name: { type: string }
+                      driver: { type: string }
+                      details: { type: object }
+                      message: { type: string }
+        "404": { $ref: "#/components/responses/Error" }
+        "500":
+          description: "ปลายทางใช้ไม่ได้ — ข้อความบอกว่าต้องแก้อะไร (เช่นคำสั่ง ssh-keyscan ที่ต้องรัน)"
+          $ref: "#/components/responses/Error"
+
+components:
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PerPage:
+      name: per_page
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      description: ค่าที่เกินเพดานถูกบีบลงมาที่ 200 ไม่ใช่ปฏิเสธคำขอ
+    SiteId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer }
+    DomainId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer }
+    UserId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer }
+    CustomerId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer }
+    RollbackId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer }
+    FileRootKey:
+      name: root
+      in: query
+      required: true
+      schema: { type: string }
+      description: คีย์ขอบเขตจาก `GET /files/roots` เช่น `site-3` หรือ `etc`
+    FilePath:
+      name: path
+      in: query
+      schema: { type: string }
+      description: |
+        เส้นทาง**สัมพัทธ์**ในขอบเขตนั้น · ว่าง = ชั้นบนสุด
+        ไม่มี endpoint ใดรับเส้นทางสัมบูรณ์ของเครื่อง — นั่นคือสิ่งที่ทำให้ traversal
+        ออกนอกขอบเขตเป็นไปไม่ได้ตั้งแต่รูปแบบของ API ไม่ใช่แค่จากการตรวจค่า
+    CertSiteId:
+      name: site_id
+      in: path
+      required: true
+      schema: { type: integer }
+      description: ใช้ id ของ **เว็บไซต์** เพราะหนึ่งเว็บมีใบรับรองได้ใบเดียวเสมอ
+
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: phpcp_sid
+      description: |
+        ตั้งโดยเซิร์ฟเวอร์เท่านั้น · HttpOnly + SameSite=Strict + Secure (เมื่อใช้ HTTPS)
+        ชื่อจะเป็น `__Host-phpcp_sid` เมื่อเปิด cookie_secure
+
+  schemas:
+    SessionState:
+      type: object
+      required: [authenticated, csrf_token, mode, agent_available]
+      properties:
+        authenticated:
+          type: boolean
+          description: ผ่านการยืนยันตัวตนครบทุกขั้นแล้วหรือยัง
+        two_factor_pending:
+          type: boolean
+          description: ผ่านรหัสผ่านแล้วแต่ยังไม่ยืนยัน 2FA
+        csrf_token:
+          type: string
+          description: ใส่ใน header `X-CSRF-Token` ของทุกคำขอที่เปลี่ยนข้อมูล
+        mode:
+          type: string
+          enum: [production, sandbox, dryrun]
+          description: โหมดที่ไม่ใช่ production ต้องขึ้นแถบเตือนที่ปิดไม่ได้บนหน้าจอ
+        mode_label: { type: string }
+        agent_available:
+          type: boolean
+          description: ติดต่อ phpcp-agentd ได้หรือไม่ — false = คำสั่งที่แตะระบบจะล้มทั้งหมด
+        must_change_password: { type: boolean }
+        user: { $ref: "#/components/schemas/User" }
+        permissions:
+          type: array
+          items: { type: string }
+          description: |
+            ใช้ซ่อน/แสดงเมนูเท่านั้น **ไม่ใช่การบังคับสิทธิ์**
+            การบังคับจริงอยู่ที่ middleware และที่ agent ซึ่งคำนวณใหม่จาก role เสมอ
+
+    User:
+      type: object
+      description: |
+        เลือกฟิลด์ทีละตัวโดยเจตนา — คอลัมน์ที่เพิ่มในฐานข้อมูลภายหลังจะไม่หลุดออก API เอง
+        ไม่มี `password_hash` และ `totp_secret` ในผลลัพธ์ไม่ว่ากรณีใด
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        display_name: { type: string }
+        role: { type: string, enum: [superadmin, sysadmin, webadmin] }
+        role_label: { type: string }
+        status: { type: string, enum: [active, disabled] }
+        two_factor_enabled: { type: boolean }
+        must_change_password: { type: boolean }
+        last_login_at:
+          type: [integer, "null"]
+          description: unix timestamp — ฝั่งหน้าจอเป็นคนจัดรูปแบบตามภาษาและเขตเวลาของผู้ดู
+        last_login_ip: { type: string }
+        created_at: { type: [integer, "null"] }
+
+    UserWithPermissions:
+      allOf:
+        - $ref: "#/components/schemas/User"
+        - type: object
+          properties:
+            permissions:
+              type: array
+              items: { type: string }
+
+    UserWithHosting:
+      description: |
+        รูปแบบที่ `GET /users` และ `GET /users/{id}` คืนจริง — เพิ่ม `quota`/`site_count`/
+        `disk_*` จาก `UserResource::withHosting()` เหนือ `User` พื้นฐาน (เฉพาะบัญชี webadmin
+        เท่านั้นที่ตัวเลขพวกนี้มีความหมาย — ดู PLAN-V2 เฟส E2 สำหรับ disk_*)
+      allOf:
+        - $ref: "#/components/schemas/User"
+        - type: object
+          properties:
+            site_count: { type: integer }
+            quota: { type: object, description: "โดเมน/ฐานข้อมูล/ฯลฯ — นับเป็นจำนวนชิ้น" }
+            disk_quota_mb: { type: integer, description: "MB — -1 = ไม่จำกัด" }
+            disk_used_mb: { type: integer }
+            disk_quota_unlimited: { type: boolean }
+            disk_quota_percent: { type: integer, description: "0 เมื่อไม่จำกัดหรือ quota เป็น 0" }
+            disk_quota_tone: { type: string, enum: [ok, warn, danger, muted], description: "pill-${disk_quota_tone}" }
+            sftp_enabled: { type: boolean, description: "เปิด SFTP อยู่หรือไม่ (PLAN-V2 เฟส E4)" }
+            sftp_available:
+              type: boolean
+              description: |
+                แพ็กเกจนี้เปิด SFTP ได้หรือไม่ (`quota_ftp_users != 0`) — แยกจาก `sftp_enabled`
+                เพราะหน้าจอต้องบอกต่างกันระหว่าง "แพ็กเกจไม่รวม" กับ "รวมแต่ยังไม่ได้เปิด"
+            sftp_enabled_at: { type: [integer, "null"], description: "unix timestamp ที่เปิดล่าสุด · null = ยังไม่เคยเปิด" }
+
+    PageMeta:
+      type: object
+      required: [page, per_page, total, total_pages]
+      properties:
+        page: { type: integer }
+        per_page: { type: integer }
+        total: { type: integer }
+        total_pages: { type: integer }
+
+    Site:
+      type: object
+      description: |
+        ค่าทั้งหมดเป็นค่าดิบ — `disk_used`/`disk_quota` เป็นไบต์ (แม้ฐานข้อมูลจะเก็บเป็น MB)
+        และเวลาเป็น unix timestamp · ฝั่งหน้าจอเป็นคนจัดรูปแบบตามภาษาและเขตเวลาของผู้ดู
+
+        `domain_count`/`database_count`/`cron_count`/`certificate` มีเฉพาะตอนดึงเป็นรายการ
+        — ไม่ใส่คีย์เลยเมื่อไม่ได้ถามมา ดีกว่าใส่ 0 ปลอมที่แยกไม่ออกจาก "ไม่มีจริง ๆ"
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        domain: { type: string }
+        php_version: { type: string }
+        ssl_mode: { type: string, enum: [off, on, forced] }
+        status: { type: string, enum: [active, suspended] }
+        system_user: { type: string, description: "รูปแบบ web_<id> — 1 เว็บ = 1 uid" }
+        uid: { type: integer }
+        gid: { type: integer }
+        root: { type: [string, "null"], description: "บ้านของเว็บไซต์" }
+        docroot: { type: string, description: "โฟลเดอร์ที่เว็บเซิร์ฟเวอร์เสิร์ฟจริง" }
+        docroot_override: { type: string }
+        owner_user_id: { type: [integer, "null"] }
+        status_tone: { type: string, enum: [ok, warn, muted], description: "สีของป้ายสถานะ — pill-${status_tone}" }
+        disk_used: { type: integer, description: "ไบต์" }
+        disk_quota: { type: [integer, "null"], description: "ไบต์" }
+        created_at: { type: [integer, "null"] }
+        updated_at: { type: [integer, "null"] }
+        domain_count: { type: integer }
+        database_count: { type: integer }
+        cron_count: { type: integer }
+        can:
+          type: object
+          description: สิทธิ์ที่ผู้เรียกมีกับเว็บไซต์นี้ — มีเฉพาะตอนดึงทีละรายการ (`GET /sites/{id}`)
+          additionalProperties: { type: boolean }
+        certificate:
+          type: object
+          properties:
+            status: { type: string }
+            expires_at: { type: [integer, "null"] }
+
+    Domain:
+      type: object
+      properties:
+        id: { type: integer }
+        site_id: { type: integer }
+        domain: { type: string }
+        type: { type: string, enum: [primary, subdomain, alias, redirect] }
+        removable:
+          type: boolean
+          description: |
+            false สำหรับโดเมนหลัก — ส่งมาให้ตรง ๆ เพื่อให้หน้าจอไม่ต้องรู้กฎนี้เอง
+            แล้วเผลอแสดงปุ่มลบที่กดแล้วได้ error
+        redirect_target: { type: string }
+        redirect_code: { type: [integer, "null"] }
+        created_at: { type: [integer, "null"] }
+        site_name: { type: string, description: "มีเฉพาะตอนดึงจาก /domains" }
+        site_domain: { type: string }
+        site_status: { type: string }
+
+    DnsRecord:
+      type: object
+      properties:
+        id: { type: integer }
+        domain_id: { type: integer }
+        type: { type: string, enum: [A, AAAA, CNAME, MX, TXT, CAA] }
+        name: { type: string }
+        value: { type: string }
+        ttl: { type: integer }
+        priority:
+          type: [integer, "null"]
+          description: null สำหรับทุกชนิดยกเว้น MX — "ไม่มีลำดับ" ต่างจาก "ลำดับ 0"
+        can_manage:
+          type: boolean
+          description: สิทธิ์ `domain.manage` ของผู้เรียก — เงื่อนไขปุ่มลบในตารางอ่านได้แค่ค่าในแถวเดียวกัน
+
+    PhpVersion:
+      type: object
+      properties:
+        version: { type: string }
+        unit: { type: string, description: "ชื่อ systemd unit ของ FPM เวอร์ชันนี้" }
+        fpm_status: { type: string }
+        fpm_running: { type: boolean }
+        fpm_memory: { type: integer, description: "ไบต์" }
+        sites: { type: integer, description: "จำนวนเว็บไซต์ที่ใช้เวอร์ชันนี้" }
+        extensions: { type: array, items: { type: string } }
+        extension_count: { type: integer }
+        supported: { type: boolean, description: "ยังได้รับการอัปเดตความปลอดภัยอยู่หรือไม่" }
+        cli_binary: { type: string }
+
+    Customer:
+      type: object
+      properties:
+        id: { type: integer }
+        user_id: { type: [integer, "null"], description: "id ในตาราง users — คนละช่วงตัวเลขกับ customers.id" }
+        username: { type: string }
+        display_name: { type: string }
+        email: { type: string }
+        status: { type: string, enum: [active, suspended, expired] }
+        expiry_at: { type: [integer, "null"] }
+        created_at: { type: [integer, "null"] }
+        site_count: { type: integer }
+        usage:
+          type: object
+          description: จำนวนที่ใช้จริงของแต่ละทรัพยากร
+        quota:
+          type: object
+          description: "เพดานของแต่ละทรัพยากร · -1 = ไม่จำกัด · 0 = ปิด"
+        sites:
+          type: array
+          description: มีเฉพาะตอนดึงรายเดียว
+          items: { type: object }
+
+    Service:
+      type: object
+      properties:
+        unit: { type: string }
+        label: { type: string }
+        kind: { type: string, enum: [webserver, php, database, dns, scheduler] }
+        critical: { type: boolean, description: "หยุดแล้วกระทบทั้งเครื่อง ไม่ใช่แค่บริการเดียว" }
+        installed: { type: boolean }
+        running: { type: boolean }
+        status: { type: string }
+        enabled: { type: boolean, description: "ขึ้นเองตอนบูตหรือไม่" }
+        memory_bytes: { type: integer }
+        affects:
+          type: object
+          description: เว็บไซต์และฐานข้อมูลที่จะได้รับผลกระทบถ้าหยุดบริการนี้
+
+    FirewallStatus:
+      type: object
+      properties:
+        installed: { type: boolean }
+        active: { type: boolean }
+        readable: { type: boolean, description: "อ่านสถานะได้หรือไม่ (ต้องใช้สิทธิ์ root)" }
+        note: { type: string }
+        panel_port: { type: string }
+        rules:
+          type: array
+          items:
+            type: object
+            properties:
+              number: { type: integer }
+              action: { type: string }
+              port: { type: string }
+              protocol: { type: string }
+              source: { type: string }
+              comment: { type: string }
+              signature:
+                type: string
+                description: ต้องส่งกลับมาเป็น `expect` ตอนลบ — กันลบผิดกฎเมื่อหมายเลขเลื่อน
+
+    PendingRollback:
+      type: object
+      properties:
+        id: { type: integer }
+        action: { type: string }
+        description: { type: string }
+        created_at: { type: integer }
+        expires_at: { type: integer }
+        remaining_seconds: { type: integer, description: "0 = หมดเวลาแล้ว รอ scheduler เก็บ" }
+
+    FileRoot:
+      type: object
+      properties:
+        key: { type: string, description: "ใช้เป็นค่า `root` ของทุก endpoint ในหมวดไฟล์" }
+        label: { type: string }
+        kind:
+          type: string
+          enum: [site, server]
+          description: |
+            `site` = ทำงานในสิทธิ์ของเจ้าของเว็บ (บั๊กเรื่องเส้นทางมีผลได้แค่ในเว็บนั้น)
+            `server` = ทำงานในสิทธิ์ของ agent เอง เปิดให้เฉพาะผู้ดูแลระดับเซิร์ฟเวอร์
+        site_id: { type: integer, description: "0 เมื่อ kind = server" }
+        writable: { type: boolean }
+
+    FileEntry:
+      type: object
+      properties:
+        name: { type: string }
+        path: { type: string, description: "เส้นทางสัมพัทธ์ในขอบเขต" }
+        type: { type: string, enum: [dir, file, link] }
+        kind: { type: string, description: "ชนิดเชิงความหมายสำหรับเลือกไอคอน เช่น folder, image, code" }
+        size: { type: integer, description: "ไบต์" }
+        mode: { type: integer, description: "สิทธิ์ไฟล์เป็นเลขฐานแปด" }
+        mtime: { type: integer, description: "unix timestamp" }
+        uid: { type: integer }
+        gid: { type: integer }
+        link: { type: [string, "null"], description: "ปลายทางของ symlink" }
+        editable: { type: boolean, description: "เปิดในตัวแก้ไขข้อความได้หรือไม่ (ดูจากชนิดและขนาด)" }
+        parent: { type: string, description: "โฟลเดอร์แม่ — มีเฉพาะคำตอบของ /files/search และ /files/info" }
+        entries: { type: [integer, "null"], description: "จำนวนรายการชั้นบนสุด — มีเฉพาะโฟลเดอร์ใน /files/info" }
+        syntax: { type: string, description: "โหมดไวยากรณ์ของตัวแก้ไข — มีเฉพาะ /files/info" }
+
+    FileTreeNode:
+      type: object
+      description: โฟลเดอร์หนึ่งโหนดในแถบนำทาง — ไม่มีไฟล์อยู่ในโครงนี้เลย
+      properties:
+        name: { type: string }
+        path: { type: string, description: "เส้นทางสัมพัทธ์ในขอบเขต" }
+        mtime: { type: integer, description: "unix timestamp" }
+        has_children:
+          type: boolean
+          description: มีโฟลเดอร์ย่อยหรือไม่ — หน้าจอใช้ตัดสินว่าจะขึ้นลูกศรขยายไหม
+        children:
+          type: array
+          description: โฟลเดอร์ย่อยที่ไล่มาแล้ว — ว่างเมื่อยังไม่ได้ขยายถึงชั้นนี้
+          items: { $ref: "#/components/schemas/FileTreeNode" }
+
+    FileTransfer:
+      type: object
+      required: [root, items, destination]
+      properties:
+        root: { type: string }
+        items:
+          type: array
+          items: { type: string }
+          description: เส้นทางสัมพัทธ์ของสิ่งที่จะย้าย/คัดลอก
+        destination: { type: string, description: "โฟลเดอร์ปลายทาง" }
+        rename: { type: string, description: "ชื่อใหม่ — ใช้ได้เมื่อมีรายการเดียว" }
+        overwrite: { type: boolean, default: false }
+
+    NewSiteDefaults:
+      type: object
+      description: |
+        ค่าเริ่มต้นสำหรับสร้างเว็บไซต์ใหม่ — คืนจาก `GET /sites/0` (ดูหมายเหตุที่ endpoint)
+      properties:
+        owner_user_id:
+          type: integer
+          description: เจ้าของโดยปริยาย (ผู้เรียกเอง) — ฟอร์มยังไม่มีตัวเลือกเจ้าของ
+        pointer_roots:
+          type: array
+          items: { type: string }
+          description: โฟลเดอร์แม่ที่ยอมให้ Domain Pointer ชี้ไปได้ (`sites.pointer_roots`) — ว่างถ้าไม่ได้ตั้งค่า
+
+    SiteCertificate:
+      type: object
+      description: |
+        ใบรับรองของเว็บไซต์หนึ่ง — อ่านจากไฟล์ PEM จริงด้วย openssl
+
+        รายละเอียดของใบรับรองอยู่**ระดับบนสุดของแถว** ไม่ได้ซ้อนอยู่ในคีย์ย่อย ·
+        นี่คือ endpoint แบบรายการ รูปที่เหมาะกับมันคือแถวแบน ๆ หนึ่งแถวต่อหนึ่งเว็บ
+        (ของเดิมซ้อนไว้ใน `certificate` ซึ่งทำให้ตารางฝั่งหน้าจออ่านไม่ถึงเลย)
+      properties:
+        site_id: { type: integer }
+        name: { type: string }
+        domain: { type: string }
+        aliases: { type: array, items: { type: string } }
+        ssl_mode: { type: string, enum: [off, on, forced] }
+        status:
+          type: string
+          enum: [none, valid, expiring, expired, invalid]
+          description: "`none` = ยังไม่มีใบ · `expiring` = เหลือน้อยกว่า warn_days"
+        status_tone: { type: string, enum: [ok, warn, danger, muted], description: "สีของป้ายสถานะ — pill-${status_tone}" }
+        source: { type: [string, "null"], enum: [letsencrypt, self-signed, null] }
+        issuer: { type: [string, "null"] }
+        subject: { type: [string, "null"] }
+        covers:
+          type: array
+          items: { type: string }
+          description: โดเมนที่ใบนี้ครอบคลุม — ชื่อ `covers` เพราะ `domains` ชนกับทรัพยากรโดเมน
+        expires_at: { type: [integer, "null"], description: "unix timestamp · null = ไม่มีใบรับรอง (status=none)" }
+        days_left: { type: [integer, "null"], description: "null = ไม่มีใบรับรอง (status=none)" }
+        auto_renew: { type: boolean, description: "จริงเฉพาะใบของ Let's Encrypt" }
+        can_manage:
+          type: boolean
+          description: สิทธิ์ `ssl.manage` ของผู้เรียก — เงื่อนไขปุ่มในตารางอ่านได้แค่ค่าในแถวเดียวกัน
+
+    CommandResponse:
+      type: object
+      description: |
+        คำตอบของ **คำสั่ง** (POST/PUT/PATCH/DELETE ที่เปลี่ยนสถานะ)
+
+        **ไม่มีคีย์ `data`** — ค่าที่ผู้เรียกต้องใช้อยู่ระดับบนสุดคู่กับ `message`
+        และ `actions` · กฎนี้มาจากวิธีที่ Now.js แกะคำตอบ (`response.data.data ??
+        response.data`) ซึ่งจะเลือกชั้นในทันทีที่มี `data` ซ้อนอยู่ แล้ว `actions`
+        ที่อยู่ชั้นนอกจะไม่ถูกเห็นเลย
+
+        คำตอบสำหรับ**อ่าน** (GET) ยังเป็น `{ok, data, meta}` ตามเดิม เพราะตารางและ
+        ฟอร์มผูกกับ `data` โดยตรง
+      properties:
+        ok: { type: boolean, const: true }
+        message: { type: string, description: ข้อความสรุปผลสำหรับคนอ่าน }
+        actions: { $ref: "#/components/schemas/ResponseActions" }
+      additionalProperties: true
+
+    ResponseActions:
+      type: array
+      description: |
+        คำสั่งหน้าจอที่เซิร์ฟเวอร์ส่งกลับมา — `ResponseHandler` ของ Now.js อ่านคีย์
+        `actions` ที่ระดับบนสุดของคำตอบแล้วทำตามลำดับ
+
+        ใช้กับผลลัพธ์ที่ **ต้องให้ผู้ใช้เห็นเนื้อหาในคำตอบ** ไม่ใช่แค่รู้ว่าสำเร็จ
+        เช่นรหัสผ่านที่ระบบสุ่มให้ ซึ่งไม่มีที่อื่นให้ดูย้อนหลังอีกเลย
+
+        ชนิดที่ใช้ได้: `notification` `alert` `modal` `redirect` `update` `render`
+        `remove` `class` `attribute` `focus` `scroll` `clipboard` `download` `event`
+      items:
+        type: object
+        required: [type]
+        properties:
+          type: { type: string }
+          message: { type: string }
+          title: { type: string }
+          content: { type: string }
+          level: { type: string, enum: [success, info, warning, error] }
+          url: { type: string, description: "`reload` = โหลดใหม่ · ที่เหลือคือปลายทางจริง" }
+          target: { type: string, description: "ชื่อ data-table ที่จะโหลดใหม่" }
+          action: { type: string, enum: [show, open, close, hide] }
+
+    BackupSchedule:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string, description: "ชื่องานใน scheduled_jobs — ขึ้นต้นด้วย backup.auto." }
+        label: { type: string, description: "ชื่อที่ผู้ใช้ตั้ง (รองรับภาษาไทย) — คอลัมน์ name เป็น ASCII เพราะเป็นกุญแจ" }
+        schedule: { type: string }
+        schedule_label: { type: string, description: "คำอธิบายภาษาไทยของตารางเวลา" }
+        type: { type: string, enum: [site, database, config, full] }
+        site_id: { type: integer }
+        destination_id: { type: integer, description: "0 = ไม่ส่งออกนอกเครื่อง" }
+        enabled: { type: boolean }
+        last_run_at: { type: [integer, "null"], description: "null = ยังไม่เคยรัน" }
+        last_status: { type: string }
+        last_error: { type: string }
+        run_status: { type: string, enum: [never, ok, failed] }
+        run_tone: { type: string, enum: [muted, ok, danger], description: "สีของป้าย run_status — pill-${run_tone}" }
+        can_manage:
+          type: boolean
+          description: สิทธิ์ `backup.offsite` ของผู้เรียก — เงื่อนไขปุ่มในตารางอ่านได้แค่ค่าในแถวเดียวกัน
+
+    BackupDestination:
+      type: object
+      description: |
+        ปลายทางหนึ่งที่ของไฟล์สำรอง — **ไม่มีความลับอยู่ในนี้ไม่ว่ากรณีใด**
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        driver: { type: string, enum: [local, sftp, rsync, s3] }
+        config:
+          type: object
+          description: ค่าตั้งที่ไม่ใช่ความลับ — ฟิลด์ต่างกันตาม driver
+        has_secret: { type: boolean, description: "มีกุญแจเก็บไว้แล้วหรือยัง (ไม่บอกว่าคืออะไร)" }
+        retention_days: { type: integer, description: "0 = ไม่จำกัด" }
+        retention_count: { type: integer, description: "เก็บอย่างน้อยกี่ชุดล่าสุดเสมอ" }
+        enabled: { type: integer, enum: [0, 1] }
+        last_ok_at: { type: integer, nullable: true, description: "unix timestamp ของการติดต่อที่สำเร็จครั้งล่าสุด" }
+        last_error: { type: string, nullable: true }
+        created_at: { type: integer }
+        updated_at: { type: integer }
+        target_display: { type: string, description: "host:port:path หรือ path ประกอบสำเร็จรูป ตาม driver" }
+        retention_label: { type: string, description: "ข้อความนโยบายเก็บย้อนหลังสำเร็จรูป" }
+        health_status: { type: string, enum: [never, ok, failed] }
+        health_tone: { type: string, enum: [muted, ok, danger], description: "สีของป้าย health_status — pill-${health_tone}" }
+        can_manage:
+          type: boolean
+          description: สิทธิ์ `backup.offsite` ของผู้เรียก — เงื่อนไขปุ่มในตารางอ่านได้แค่ค่าในแถวเดียวกัน
+
+    Database:
+      type: object
+      properties:
+        name: { type: string }
+        site_id: { type: integer }
+        site: { type: [string, "null"], description: "โดเมนหลักของเว็บที่ผูกอยู่" }
+        charset: { type: string }
+        size: { type: integer, description: "ไบต์" }
+        created_at: { type: integer }
+        exists_on_server:
+          type: boolean
+          description: |
+            false = มีในตารางของ panel แต่ไม่มีบน MariaDB จริง (ถูกลบนอก panel)
+            — ต้องแสดงให้ผู้ดูแลเห็น ไม่ใช่ซ่อน
+        managed:
+          type: boolean
+          description: false = พบบนเครื่องแต่ panel ไม่รู้จัก (สร้างนอก panel) — เห็นได้แต่ยังลบผ่าน panel ได้ตามปกติ
+        can_manage:
+          type: boolean
+          description: สิทธิ์ `db.manage` ของผู้เรียก — เงื่อนไขปุ่มลบในตารางอ่านได้แค่ค่าในแถวเดียวกัน
+        users:
+          type: array
+          items:
+            type: object
+            properties:
+              username: { type: string }
+              host: { type: string }
+              privileges: { type: string }
+
+    CronJob:
+      type: object
+      properties:
+        id: { type: integer }
+        site_id: { type: integer }
+        name: { type: string }
+        schedule: { type: string, description: "cron 5 ฟิลด์ — ค่าดิบสำหรับฟอร์มแก้ไข" }
+        schedule_label: { type: string, description: "คำอธิบายภาษาไทยแบบย่อสำหรับแสดงผล" }
+        command: { type: string }
+        enabled: { type: boolean }
+        last_run_at: { type: [integer, "null"] }
+        last_exit_code:
+          type: [integer, "null"]
+          description: 0 = สำเร็จ · ค่าอื่น = คำสั่งล้มเหลว · null = ยังไม่เคยรัน
+        created_at: { type: [integer, "null"] }
+        site_domain: { type: string }
+        system_user: { type: string }
+        row_id:
+          type: integer
+          description: |
+            ซ้ำกับ id โดยตั้งใจ — ใช้ในหน้าที่ URL ของหน้าเองมี ?id= แล้ว (เช่น site.html)
+            เพื่อไม่ให้ {id} ใน data-row-actions ชนกับ {id} ที่ RouterManager.render
+            แทนค่าจาก query string ของหน้าไปก่อน
+
+    Backup:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        type: { type: string, enum: [site, database, config, full] }
+        site_id: { type: [integer, "null"] }
+        path: { type: string }
+        size_bytes: { type: integer }
+        checksum:
+          type: string
+          description: SHA-256 ของไฟล์ · ไฟล์ที่ไม่มีค่านี้กู้คืนไม่ได้เลยโดยเจตนา
+        status: { type: string, enum: [running, ok, failed] }
+        status_tone: { type: string, enum: [ok, danger, warn, muted], description: "สีของป้าย status — pill-${status_tone}" }
+        created_at: { type: [integer, "null"] }
+        site_domain: { type: string }
+        destination_id: { type: [integer, "null"] }
+        destination_name: { type: string }
+        offsite_status: { type: string, enum: [none, ok, failed] }
+        offsite_tone: { type: string, enum: [muted, ok, danger], description: "สีของป้าย offsite_status — pill-${offsite_tone}" }
+        offsite_at: { type: [integer, "null"] }
+        offsite_error: { type: string }
+        can_manage:
+          type: boolean
+          description: สิทธิ์ `backup.manage` ของผู้เรียก
+        can_restore:
+          type: boolean
+          description: สิทธิ์ `backup.restore` ของผู้เรียก
+        can_offsite:
+          type: boolean
+          description: สิทธิ์ `backup.offsite` ของผู้เรียก
+
+    Error:
+      type: object
+      required: [ok, error]
+      properties:
+        ok: { type: boolean, const: false }
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: รหัสตายตัวที่ฝั่งเรียกใช้ตัดสินใจ — ห้ามเทียบจากข้อความ
+              enum:
+                - VALIDATION_ERROR
+                - UNAUTHENTICATED
+                - TWO_FACTOR_REQUIRED
+                - PASSWORD_CHANGE_REQUIRED
+                - FORBIDDEN
+                - NOT_FOUND
+                - CONFLICT
+                - CSRF_INVALID
+                - RATE_LIMITED
+                - QUOTA_EXCEEDED
+                - PROTECTED_RESOURCE
+                - AGENT_UNAVAILABLE
+                - EXECUTION_FAILED
+                - BAD_REQUEST
+                - METHOD_NOT_ALLOWED
+                - INTERNAL_ERROR
+            message:
+              type: string
+              description: ข้อความภาษาไทยที่แสดงให้ผู้ใช้เห็นได้ทันที
+            fields:
+              type: object
+              additionalProperties: { type: string }
+              description: ชื่อฟิลด์ => เหตุผลที่ค่านั้นไม่ผ่าน (มีเฉพาะ VALIDATION_ERROR)
+
+  responses:
+    Error:
+      description: ข้อผิดพลาดตามรูปแบบมาตรฐาน
+      headers:
+        X-CSRF-Token:
+          schema: { type: string }
+          description: แนบมากับ 419 เสมอ เพื่อให้ลองใหม่ได้ทันทีโดยไม่ต้องรีเฟรชหน้า
+        Retry-After:
+          schema: { type: integer }
+          description: แนบมากับ 429 เสมอ
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+security:
+  - sessionCookie: []

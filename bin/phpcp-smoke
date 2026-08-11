@@ -1,0 +1,413 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * ยิงทุก endpoint ของ REST API v2 ใส่เซิร์ฟเวอร์ที่รันอยู่จริง
+ *
+ * **ทำไมต้องมีตัวนี้ทั้งที่มีเทสต์ 334 เคสอยู่แล้ว**
+ *
+ * เทสต์ contract สร้าง `Request` ขึ้นมาในโปรเซสเดียวกัน ไม่ได้เดินผ่าน PHP-FPM, Apache,
+ * middleware ของเว็บเซิร์ฟเวอร์ หรือ session จริง · ความต่างเล็ก ๆ ระหว่างตัวจำลอง
+ * กับของจริงจึงซ่อนบั๊กทั้งชั้นได้ และเคยเกิดขึ้นแล้ว:
+ *
+ *   `Request::make()` วาง Content-Type เป็น `HTTP_CONTENT_TYPE` แต่ PHP-FPM ส่งมาเป็น
+ *   `CONTENT_TYPE` ตาม RFC 3875 → **ทุก endpoint อ่าน JSON body ไม่ได้เลยบนเครื่องจริง**
+ *   ขณะที่เทสต์ผ่าน 333/333 · ไปเจอตอนกดปุ่มบนเซิร์ฟเวอร์จริงเท่านั้น
+ *
+ * ตัวนี้จึงเป็นด่านสุดท้ายก่อนเชื่อว่า API ใช้งานได้ — โดยเฉพาะก่อนเริ่มเขียน SPA
+ * ซึ่งจะคุยกับ API ด้วย JSON ล้วนและไม่มีทางรู้ว่าปัญหาอยู่ชั้นไหน
+ *
+ * **ความปลอดภัย:** ไม่สร้างหรือลบข้อมูลจริงเลย
+ *   - เส้นทางที่มีพารามิเตอร์ → ใส่ id ที่ไม่มีอยู่จริง ให้ตอบ 404
+ *   - เส้นทางที่เปลี่ยนแปลงข้อมูลและไม่มีพารามิเตอร์ → ส่ง body ว่าง ให้ตกที่ 422
+ *   - เส้นทางที่ทำลาย session ของตัวเอง (ออกจากระบบ) → ข้าม
+ * สิ่งที่ตรวจคือ "คำขอเดินทางถึงตัวควบคุมและตอบตามสัญญาไหม" ไม่ใช่ผลลัพธ์ทางธุรกิจ
+ *
+ * ใช้งาน:
+ *   bin/phpcp-smoke --url=https://127.0.0.1:8443 --user=demo --password=xxx
+ *   bin/phpcp-smoke --url=... --user=... --password-file=/path/to/file
+ */
+
+require __DIR__.'/../bootstrap.php';
+
+use Phpcp\Http\ApiProblem;
+use Phpcp\Kernel\Routes;
+
+/** id ที่ตั้งใจให้ไม่มีอยู่จริง — ใช้แทนพารามิเตอร์ทุกตัวเพื่อให้ตอบ 404 โดยไม่แตะข้อมูล */
+const MISSING_ID = '999999';
+
+/**
+ * เส้นทางที่ต้องข้าม พร้อมเหตุผล
+ *
+ * ข้ามให้น้อยที่สุด — ทุกบรรทัดที่นี่คือจุดที่ตัวตรวจนี้มองไม่เห็น
+ */
+const SKIP = [
+    'DELETE /api/v2/session' => 'ออกจากระบบ จะทำให้คำขอที่เหลือทั้งหมดล้มตาม',
+    'POST /api/v2/session' => 'ล็อกอินซ้ำจะชนกับ rate limit ของเส้นทางล็อกอิน',
+    'POST /api/v2/session/2fa' => 'เหตุผลเดียวกับล็อกอิน',
+];
+
+/**
+ * เส้นทางที่ส่งข้อมูลต่อเนื่องไม่รู้จบ (Server-Sent Events)
+ *
+ * ตรวจแบบเดียวกับเส้นทางอื่นไม่ได้ เพราะการเชื่อมต่อไม่มีวันปิดเอง — ต้องตั้งเวลาสั้น ๆ
+ * แล้วดูว่าเริ่มส่งด้วยชนิดที่ถูกต้องหรือยัง (ไม่ใช่ JSON โดยตั้งใจ)
+ *
+ * @var array<string,string>
+ */
+const STREAMING = [
+    'GET /api/v2/metrics/stream' => 'text/event-stream',
+];
+
+$options = parseArguments($argv);
+
+$base = rtrim((string) ($options['url'] ?? 'https://127.0.0.1:8443'), '/');
+$username = (string) ($options['user'] ?? '');
+$password = readPassword($options);
+
+if ($username === '' || $password === '') {
+    fwrite(STDERR, "ต้องระบุ --user และ --password (หรือ --password-file)\n");
+    exit(2);
+}
+
+$client = new SmokeClient($base);
+
+line('');
+line("ยิง REST API v2 ใส่ {$base}");
+line(str_repeat('─', 62));
+
+if (!$client->login($username, $password)) {
+    fwrite(STDERR, "  ✘ ล็อกอินไม่สำเร็จ — ตรวจชื่อผู้ใช้และรหัสผ่าน\n");
+    exit(1);
+}
+
+line("  ✔ ล็อกอินสำเร็จในนาม {$username}");
+line('');
+
+$results = [];
+
+foreach (Routes::build()->routes() as $route) {
+    if (!str_starts_with($route->path, '/api/v2')) {
+        continue;
+    }
+
+    $key = $route->method.' '.$route->path;
+
+    if (isset(SKIP[$key])) {
+        $results[] = ['route' => $key, 'status' => 0, 'skip' => SKIP[$key], 'problems' => []];
+
+        continue;
+    }
+
+    $url = preg_replace('/\{[^}]+\}/', MISSING_ID, $route->path) ?? $route->path;
+
+    if (isset(STREAMING[$key])) {
+        $response = $client->request($route->method, $url, timeout: 3);
+
+        $results[] = [
+            'route' => $key,
+            'status' => $response['status'],
+            'skip' => $response['status'] === 429 ? 'ถูกจำกัดอัตรา — ยังไม่ได้ตรวจจริง' : null,
+            'problems' => $response['status'] === 429 ? [] : inspectStream($response, STREAMING[$key]),
+        ];
+
+        continue;
+    }
+
+    $response = $client->request($route->method, $url);
+
+    $results[] = [
+        'route' => $key,
+        'status' => $response['status'],
+        'skip' => $response['status'] === 429 ? 'ถูกจำกัดอัตรา — ยังไม่ได้ตรวจจริง' : null,
+        'problems' => $response['status'] === 429 ? [] : inspect($route->method, $url, $response),
+    ];
+}
+
+report($results);
+
+// ถือว่าไม่ผ่านเมื่อมีปัญหา **หรือ** เมื่อยังมีเส้นทางที่ไม่เคยถูกตรวจจริง
+$incomplete = array_filter(
+    $results,
+    static fn (array $r): bool => $r['problems'] !== [] || $r['status'] === 429,
+);
+
+exit($incomplete === [] ? 0 : 1);
+
+// ---------------------------------------------------------------------------
+
+/**
+ * ตรวจคำตอบหนึ่งครั้งว่าตรงสัญญาของ §4.2 หรือไม่
+ *
+ * @param array{status:int,body:string,contentType:string} $response
+ * @return list<string> รายการปัญหา — ว่างเปล่า = ผ่าน
+ */
+function inspect(string $method, string $url, array $response): array
+{
+    $problems = [];
+
+    // 500 คือสิ่งที่ตัวตรวจนี้มีไว้จับเป็นอันดับแรก — แปลว่าคำขอไปตายกลางทาง
+    if ($response['status'] >= 500) {
+        $problems[] = "ตอบ {$response['status']} — คำขอล้มกลางทาง";
+    }
+
+    if (!str_contains(strtolower($response['contentType']), 'application/json')) {
+        $problems[] = 'ไม่ได้ตอบเป็น JSON แต่เป็น '.($response['contentType'] ?: 'ไม่ระบุชนิด');
+
+        return $problems;   // ตรวจรูปร่างต่อไม่ได้ถ้าไม่ใช่ JSON
+    }
+
+    // 204 ไม่มี body ตามมาตรฐาน
+    if ($response['status'] === 204) {
+        return $problems;
+    }
+
+    $decoded = json_decode($response['body'], true);
+
+    if (!is_array($decoded)) {
+        $problems[] = 'body ไม่ใช่ JSON ที่แปลงได้';
+
+        return $problems;
+    }
+
+    if (!array_key_exists('ok', $decoded)) {
+        $problems[] = 'ไม่มีฟิลด์ ok ตามสัญญา §4.2';
+    }
+
+    if (($decoded['ok'] ?? true) === false) {
+        $code = (string) (($decoded['error'] ?? [])['code'] ?? '');
+
+        if (ApiProblem::tryFrom($code) === null) {
+            $problems[] = "ใช้รหัสข้อผิดพลาดนอก enum: {$code}";
+        }
+
+        if ((string) (($decoded['error'] ?? [])['message'] ?? '') === '') {
+            $problems[] = 'ข้อผิดพลาดไม่มีข้อความอธิบาย';
+        }
+    }
+
+    return $problems;
+}
+
+/**
+ * เส้นทางแบบ stream ผ่านก็ต่อเมื่อเริ่มส่งด้วยชนิดที่ถูกต้อง
+ *
+ * curl จะจบด้วย timeout เสมอ (สถานะ 0) เพราะฝั่งเซิร์ฟเวอร์ไม่ปิดการเชื่อมต่อ —
+ * สิ่งที่พิสูจน์ได้คือ header เดินทางมาถึงและถูกต้อง ซึ่งแปลว่า routing กับสิทธิ์ผ่านแล้ว
+ *
+ * @param array{status:int,body:string,contentType:string} $response
+ * @return list<string>
+ */
+function inspectStream(array $response, string $expected): array
+{
+    if ($response['status'] >= 500) {
+        return ["ตอบ {$response['status']} — คำขอล้มกลางทาง"];
+    }
+
+    if ($response['contentType'] === '' && $response['status'] === 0) {
+        return ['ไม่ได้เริ่มส่งข้อมูลเลยภายในเวลาที่กำหนด'];
+    }
+
+    if (!str_contains(strtolower($response['contentType']), $expected)) {
+        return ["ต้องเริ่มส่งด้วย {$expected} แต่ได้ ".($response['contentType'] ?: 'ไม่ระบุชนิด')];
+    }
+
+    return [];
+}
+
+/** @param list<array{route:string,status:int,skip:?string,problems:list<string>}> $results */
+function report(array $results): void
+{
+    $failed = 0;
+    $skipped = 0;
+
+    foreach ($results as $r) {
+        if ($r['skip'] !== null) {
+            $skipped++;
+            line(sprintf('  ‒ %-52s ข้าม: %s', $r['route'], $r['skip']));
+
+            continue;
+        }
+
+        if ($r['problems'] === []) {
+            line(sprintf('  ✔ %-52s %d', $r['route'], $r['status']));
+
+            continue;
+        }
+
+        $failed++;
+        line(sprintf('  ✘ %-52s %d', $r['route'], $r['status']));
+
+        foreach ($r['problems'] as $problem) {
+            line('      '.$problem);
+        }
+    }
+
+    $throttled = count(array_filter(
+        $results,
+        static fn (array $r): bool => $r['status'] === 429,
+    ));
+
+    $checked = count($results) - $skipped;
+
+    line('');
+    line(sprintf(
+        ' ตรวจ %d เส้นทาง · ผ่าน %d · ไม่ผ่าน %d · ข้าม %d',
+        $checked,
+        $checked - $failed,
+        $failed,
+        $skipped,
+    ));
+
+    // ถ้ามีเส้นทางที่ถูกจำกัดอัตรา ผลลัพธ์ยังไม่สมบูรณ์ — ต้องบอกให้ชัด ไม่ใช่ปล่อยให้
+    // ตัวเลข "ผ่าน" ดูสวยทั้งที่ endpoint เหล่านั้นไม่เคยถูกเรียกถึงตัวควบคุมเลย
+    if ($throttled > 0) {
+        line('');
+        line(sprintf(' ⚠ %d เส้นทางถูกจำกัดอัตรา — ยังพิสูจน์ไม่ได้ ให้รอสักครู่แล้วรันซ้ำ', $throttled));
+    }
+
+    line('');
+}
+
+function line(string $text): void
+{
+    fwrite(STDOUT, $text."\n");
+}
+
+/**
+ * @param list<string> $argv
+ * @return array<string,string>
+ */
+function parseArguments(array $argv): array
+{
+    $options = [];
+
+    foreach (array_slice($argv, 1) as $argument) {
+        if (preg_match('/^--([a-z-]+)=(.*)$/', $argument, $matches) === 1) {
+            $options[$matches[1]] = $matches[2];
+        }
+    }
+
+    return $options;
+}
+
+/**
+ * รหัสผ่านจากไฟล์ดีกว่าจากบรรทัดคำสั่ง เพราะ argv โผล่ใน `ps` ให้ผู้ใช้อื่นบนเครื่องเห็นได้
+ *
+ * @param array<string,string> $options
+ */
+function readPassword(array $options): string
+{
+    if (isset($options['password-file'])) {
+        $raw = @file_get_contents($options['password-file']);
+
+        return $raw === false ? '' : trim($raw);
+    }
+
+    return (string) ($options['password'] ?? '');
+}
+
+/**
+ * ตัวยิงคำขอที่เก็บ cookie และ CSRF token ให้เหมือนเบราว์เซอร์
+ *
+ * ใช้ curl ของ PHP โดยตรง ไม่ผ่าน Client ของ agent — ตั้งใจให้เดินเส้นทางเดียวกับ
+ * ผู้ใช้จริงทุกประการ รวมถึงชั้น TLS และ Apache
+ */
+final class SmokeClient
+{
+    private string $cookieFile;
+
+    private string $csrf = '';
+
+    public function __construct(private readonly string $base)
+    {
+        $this->cookieFile = (string) tempnam(sys_get_temp_dir(), 'phpcp-smoke-');
+    }
+
+    public function __destruct()
+    {
+        @unlink($this->cookieFile);
+    }
+
+    public function login(string $username, string $password): bool
+    {
+        $this->request('GET', '/api/v2/session');
+
+        $response = $this->request('POST', '/api/v2/session', [
+            'username' => $username,
+            'password' => $password,
+        ]);
+
+        return $response['status'] === 200;
+    }
+
+    /**
+     * @param array<string,mixed>|null $body
+     * @return array{status:int,body:string,contentType:string}
+     */
+    public function request(
+        string $method,
+        string $path,
+        ?array $body = null,
+        int $timeout = 20,
+        bool $retry = true,
+    ): array {
+        $handle = curl_init($this->base.$path);
+
+        $headers = ['Accept: application/json'];
+
+        if ($this->csrf !== '') {
+            $headers[] = 'X-CSRF-Token: '.$this->csrf;
+        }
+
+        // เส้นทางที่เปลี่ยนแปลงข้อมูลต้องมี body เป็น JSON เสมอ แม้จะเป็นวัตถุว่าง —
+        // เพื่อให้เดินผ่านตัวแปลง body จริง ซึ่งเป็นชั้นที่เคยพังทั้งชั้นมาแล้ว
+        if ($method !== 'GET' && $method !== 'HEAD') {
+            $headers[] = 'Content-Type: application/json';
+            curl_setopt($handle, CURLOPT_POSTFIELDS, json_encode($body ?? [], JSON_UNESCAPED_UNICODE));
+        }
+
+        curl_setopt_array($handle, [
+            CURLOPT_CUSTOMREQUEST => $method,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HEADER => true,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_COOKIEFILE => $this->cookieFile,
+            CURLOPT_COOKIEJAR => $this->cookieFile,
+            // ใบรับรองของ panel เป็นแบบเซ็นเองตอนติดตั้ง — ตัวตรวจนี้ยิงไปที่ 127.0.0.1
+            // จึงไม่ได้พึ่ง TLS เป็นตัวยืนยันตัวตนอยู่แล้ว
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYHOST => 0,
+            CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_FOLLOWLOCATION => false,
+        ]);
+
+        $raw = (string) curl_exec($handle);
+        $status = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+        $headerSize = (int) curl_getinfo($handle, CURLINFO_HEADER_SIZE);
+        $contentType = (string) (curl_getinfo($handle, CURLINFO_CONTENT_TYPE) ?? '');
+
+        curl_close($handle);
+
+        $rawHeaders = substr($raw, 0, $headerSize);
+        $responseBody = substr($raw, $headerSize);
+
+        // token ใหม่มากับทุกคำตอบของ v2 — ต้องเก็บไว้ใช้กับคำขอถัดไป
+        if (preg_match('/^x-csrf-token:\s*(\S+)/im', $rawHeaders, $matches) === 1) {
+            $this->csrf = $matches[1];
+        }
+
+        // ตัวจำกัดอัตราคืนเวลาที่ควรรอมาให้ — รอแล้วลองใหม่หนึ่งครั้ง เพื่อให้การรันตัวตรวจ
+        // ที่ยิงหลายสิบคำขอรวดเดียวไม่กลายเป็นการรายงานผลที่ไม่สมบูรณ์
+        if ($status === 429 && $retry) {
+            preg_match('/^retry-after:\s*(\d+)/im', $rawHeaders, $wait);
+            sleep(min(30, max(1, (int) ($wait[1] ?? 2))));
+
+            return $this->request($method, $path, $body, $timeout, retry: false);
+        }
+
+        return ['status' => $status, 'body' => $responseBody, 'contentType' => $contentType];
+    }
+}

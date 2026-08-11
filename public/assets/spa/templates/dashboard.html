@@ -1,0 +1,131 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <main class="content">
+    <!--
+      ทั้งหน้าผูกกับ GET /api/v2/dashboard ผ่าน ApiComponent — ไม่มี JS ประจำหน้าเลย
+      · `data-text` อ่านจาก data ของคำตอบโดยตรง · `| ชื่อ` คือไปป์จัดรูปแบบที่
+      ลงทะเบียนไว้ใน js/formatters.js · `data-refresh-event` ทำให้ปุ่มโหลดใหม่
+      สั่งดึงข้อมูลรอบใหม่ได้โดยไม่ต้องผูก handler เอง
+    -->
+    <div class="card-groups" data-component="api" data-endpoint="/api/v2/dashboard"
+         data-refresh-event="phpcp:reload">
+      <header>
+        <div>
+          <h1 class="icon-dashboard" data-i18n>Dashboard</h1>
+          <p data-i18n>Server and hosting overview</p>
+        </div>
+        <div class="header-actions">
+          <button type="button" class="btn icon-refresh"
+                  data-action="click.prevent:emit" data-emit-event="phpcp:reload"
+                  data-i18n>Refresh</button>
+        </div>
+      </header>
+
+      <!-- ทรัพยากรของเครื่อง — ความกว้างแถบตั้งผ่าน data-style (CSSOM ไม่ใช่ style= ที่ CSP บล็อก) -->
+      <div class="ggrid">
+        <div class="block3 large6 stat-card">
+          <div class="stat-header icon-meter"><span data-i18n>CPU</span></div>
+          <div class="stat-value"><span data-text="metrics.cpu.percent | fixed">—</span>%</div>
+          <div class="meter"><span data-style="width: {{metrics.cpu.percent}}%"></span></div>
+        </div>
+        <div class="block3 large6 stat-card">
+          <div class="stat-header icon-database"><span data-i18n>Memory</span></div>
+          <div class="stat-value">
+            <span data-text="metrics.memory.used | bytes">—</span> /
+            <span data-text="metrics.memory.total | bytes">—</span>
+          </div>
+          <div class="meter"><span data-style="width: {{metrics.memory.percent}}%"></span></div>
+        </div>
+        <div class="block3 large6 stat-card">
+          <div class="stat-header icon-stack"><span data-i18n>Disk</span></div>
+          <div class="stat-value">
+            <span data-text="metrics.disk.used | bytes">—</span> /
+            <span data-text="metrics.disk.total | bytes">—</span>
+          </div>
+          <div class="meter"><span data-style="width: {{metrics.disk.percent}}%"></span></div>
+        </div>
+        <div class="block3 large6 stat-card">
+          <div class="stat-header icon-clock"><span data-i18n>Uptime</span></div>
+          <div class="stat-value" data-text="metrics.uptime.seconds | duration">—</div>
+          <div class="stat-sub">
+            <span data-i18n>Load average</span>:
+            <span data-text="metrics.load['1'] | fixed:2">—</span> ·
+            <span data-text="metrics.load['5'] | fixed:2">—</span> ·
+            <span data-text="metrics.load['15'] | fixed:2">—</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- จำนวนทรัพยากร — การ์ดแต่ละใบเป็นลิงก์ไปหน้าของมันเอง -->
+      <div class="ggrid">
+        <a class="block3 large6 stat-card" href="/app/sites" data-route="/sites">
+          <div class="stat-header icon-website"><span data-i18n>Websites</span></div>
+          <div class="stat-value" data-text="counts.sites">0</div>
+        </a>
+        <a class="block3 large6 stat-card" href="/app/domains" data-route="/domains">
+          <div class="stat-header icon-link"><span data-i18n>Domains</span></div>
+          <div class="stat-value" data-text="counts.domains">0</div>
+        </a>
+        <a class="block3 large6 stat-card" href="/app/databases" data-route="/databases">
+          <div class="stat-header icon-database"><span data-i18n>Databases</span></div>
+          <div class="stat-value" data-text="counts.databases">0</div>
+        </a>
+        <a class="block3 large6 stat-card" href="/app/certificates" data-route="/certificates">
+          <div class="stat-header icon-lock"><span data-i18n>SSL Certificates</span></div>
+          <div class="stat-value" data-text="counts.certificates">0</div>
+        </a>
+        <a class="block3 large6 stat-card" href="/app/php-versions" data-route="/php-versions">
+          <div class="stat-header icon-code"><span data-i18n>PHP versions in use</span></div>
+          <div class="stat-value" data-text="counts.php_versions">0</div>
+        </a>
+        <a class="block3 large6 stat-card" href="/app/backups" data-route="/backups">
+          <div class="stat-header icon-stack"><span data-i18n>Backups</span></div>
+          <div class="stat-value" data-text="counts.backups">0</div>
+        </a>
+      </div>
+
+      <div class="ggrid">
+        <!-- ลูกค้าไม่มีสิทธิ์ service.view — API ส่ง services เป็นรายการว่าง ส่วนนี้จึงหายไปเอง -->
+        <section class="block6" data-if="services.length > 0">
+          <h2 class="icon-stats" data-i18n>Services</h2>
+          <div class="tablebody">
+            <!-- data-attr="data:services" = ผูกตารางกับข้อมูลที่โหลดมาแล้ว ไม่ยิงคำขอซ้ำ -->
+            <table class="table border fullwidth" data-table="dashboardServices" data-attr="data:services">
+              <thead>
+                <tr>
+                  <th data-field="label" data-i18n>{LNG_Service}</th>
+                  <th data-field="status" class="center" data-cell-class="center"
+                      data-template="<span class='pill pill-${status_tone}'>{LNG_${status}}</span>"
+                      data-i18n>{LNG_Status}</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="block6" data-if="activity.length > 0">
+          <h2 class="icon-list" data-i18n>Recent activity</h2>
+          <div class="tablebody">
+            <table class="table border fullwidth" data-table="dashboardActivity" data-attr="data:activity">
+              <thead>
+                <tr>
+                  <th data-field="action" data-i18n>{LNG_Action}</th>
+                  <th data-field="actor_name" data-i18n>{LNG_User}</th>
+                  <th data-field="target" class="center" data-cell-class="center mono" data-i18n>{LNG_Target}</th>
+                  <th data-field="result" class="center" data-cell-class="center"
+                      data-template="<span class='pill pill-${result_tone}'>{LNG_${result}}</span>"
+                      data-i18n>{LNG_Status}</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>

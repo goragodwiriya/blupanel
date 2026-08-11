@@ -1,0 +1,455 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <main class="content" data-component="api" data-endpoint="/api/v2/session">
+    <div class="card-groups">
+      <header>
+        <div>
+          <h1 class="icon-stack" data-i18n>Backups</h1>
+          <p data-i18n>Backup archives and restore points</p>
+        </div>
+        <div class="header-actions" data-if="permissions['backup.manage']">
+          <button type="button" class="btn btn-primary icon-plus"
+                  data-action="click.prevent:toggleClass"
+                  data-toggle-target="[data-create-panel]" data-toggle-class="is-open"
+                  data-i18n>Create backup</button>
+        </div>
+      </header>
+      <!-- แผงสร้าง — ซ่อนไว้จนกดปุ่ม เพราะหน้านี้ใช้ดูรายการเป็นหลัก -->
+      <div class="content-body collapsible" data-create-panel>
+        <h2 data-i18n>Create backup</h2>
+        <form data-form="backupCreate"
+              action="/api/v2/backups"
+              method="post"
+              data-ajax-submit="true"
+              data-validate="true"
+              data-reset="true">
+          <fieldset>
+            <div>
+              <label for="nb_type" data-i18n>Type</label>
+              <span class="form-control icon-menus">
+                <select id="nb_type" name="type" required>
+                  <option value="site">site</option>
+                  <option value="database">database</option>
+                  <option value="config">config</option>
+                  <option value="full">full</option>
+                </select>
+              </span>
+            </div>
+            <!--
+              เลือกเว็บไซต์จากรายการจริง ไม่ใช่ให้กรอกเลข id เอง — รายการมาจาก
+              endpoint ของมันเอง ผ่าน ApiComponent ที่ครอบ <select> ไว้
+            -->
+            <div data-component="api" data-endpoint="/api/v2/sites">
+              <label for="nb_site" data-i18n>Website</label>
+              <div class="comment" data-i18n>Used only when the type is site</div>
+              <span class="form-control icon-website">
+                <select id="nb_site" name="site_id" data-for="site in data">
+                  <template>
+                    <option data-attr="value:site.id" data-text="site.domain"></option>
+                  </template>
+                </select>
+              </span>
+            </div>
+            <div>
+              <label for="nb_db" data-i18n>Database name</label>
+              <span class="form-control icon-database">
+                <input type="text" id="nb_db" name="database" maxlength="64" autocomplete="off">
+              </span>
+            </div>
+            <div>
+              <label for="nb_note" data-i18n>Note</label>
+              <span class="form-control icon-edit">
+                <input type="text" id="nb_note" name="note" maxlength="200" autocomplete="off">
+              </span>
+            </div>
+          </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-save" data-i18n>Create backup</button>
+          </fieldset>
+        </form>
+      </div>
+
+      <!--
+        สำรองอัตโนมัติ — เฟส E1
+        เลือกปลายทางไว้ด้วยได้ แล้ว backup.create จะสร้างและส่งออกในคำสั่งเดียว
+        ซึ่งจำเป็นเพราะ scheduler เรียก capability ได้ทีละตัวต่อหนึ่งงาน
+      -->
+      <div class="content-body" data-if="permissions['backup.offsite']">
+        <h2 class="icon-clock" data-i18n>Automatic backups</h2>
+
+        <div class="tablebody">
+          <table class="table border fullwidth"
+                 data-table="schedules"
+                 data-source="/api/v2/backup-schedules"
+                 data-page-size="25"
+                 data-row-actions='{
+                   "disable": {
+                     "title": "Disable",
+                     "className": "btn btn-sm icon-ban",
+                     "method": "patch",
+                     "url": "/api/v2/backup-schedules/{id}",
+                     "params": {"enabled": false},
+                     "condition": "${can_manage && enabled}"
+                   },
+                   "enable": {
+                     "title": "Enable",
+                     "className": "btn btn-sm icon-play",
+                     "method": "patch",
+                     "url": "/api/v2/backup-schedules/{id}",
+                     "params": {"enabled": true},
+                     "condition": "${can_manage && !enabled}"
+                   },
+                   "delete": {
+                     "title": "Delete",
+                     "className": "btn btn-sm btn-danger icon-delete",
+                     "method": "delete",
+                     "url": "/api/v2/backup-schedules/{id}",
+                     "condition": "${can_manage}",
+                     "confirm": "Remove this automatic backup schedule?"
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="label" data-i18n>{LNG_Name}</th>
+                <th data-field="type" class="center" data-cell-class="center" data-i18n>{LNG_Type}</th>
+                <th data-field="schedule_label" data-i18n>{LNG_Schedule}</th>
+                <th data-field="enabled" class="center" data-cell-class="center"
+                    data-format="boolean" data-true-text="{LNG_Yes}" data-false-text="{LNG_No}" data-i18n>{LNG_Enabled}</th>
+                <th data-field="run_status" class="center" data-cell-class="center"
+                    data-template="<span class='pill pill-${run_tone}'>{LNG_${run_status}}</span>"
+                    data-i18n>{LNG_Last run}</th>
+                <th data-field="last_run_at" class="center" data-cell-class="center"
+                    data-format="datetime" data-empty-text="—" data-i18n>{LNG_When}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <button type="button" class="btn icon-plus"
+                data-action="click.prevent:toggleClass"
+                data-toggle-target="[data-schedule-panel]" data-toggle-class="is-open"
+                data-i18n>Add schedule</button>
+
+        <div class="content-body collapsible" data-schedule-panel>
+          <form data-form="scheduleCreate"
+                action="/api/v2/backup-schedules"
+                method="post"
+                data-ajax-submit="true"
+                data-validate="true"
+                data-reset="true">
+            <fieldset>
+              <div class="form-group">
+                <div class="width50">
+                  <label for="ns_label" data-i18n>Name</label>
+                  <span class="form-control icon-edit">
+                    <input type="text" id="ns_label" name="label" required maxlength="100" autocomplete="off">
+                  </span>
+                </div>
+                <div class="width50">
+                  <label for="ns_type" data-i18n>Type</label>
+                  <span class="form-control icon-menus">
+                    <select id="ns_type" name="type" required>
+                      <option value="site">site</option>
+                      <option value="database">database</option>
+                      <option value="config">config</option>
+                      <option value="full">full</option>
+                    </select>
+                  </span>
+                </div>
+              </div>
+              <div class="form-group">
+                <div class="width50" data-component="api" data-endpoint="/api/v2/sites">
+                  <label for="ns_site" data-i18n>Website</label>
+                  <span class="form-control icon-website">
+                    <select id="ns_site" name="site_id" data-for="site in data">
+                      <template>
+                        <option data-attr="value:site.id" data-text="site.domain"></option>
+                      </template>
+                    </select>
+                  </span>
+                </div>
+                <div class="width50">
+                  <label for="ns_schedule" data-i18n>Schedule</label>
+                  <span class="form-control icon-clock">
+                    <select id="ns_schedule" name="schedule" required>
+                      <option value="0 1 * * *">ทุกวัน เวลา 01:00 น.</option>
+                      <option value="0 * * * *">ทุกชั่วโมง</option>
+                      <option value="0 3 * * 0">ทุกสัปดาห์ (อาทิตย์ 03:00 น.)</option>
+                      <option value="0 4 1 * *">ทุกเดือน (วันที่ 1 เวลา 04:00 น.)</option>
+                    </select>
+                  </span>
+                </div>
+              </div>
+              <!--
+                ต้องเลือกปลายทาง — สำรองอัตโนมัติที่ทิ้งไฟล์ไว้บนดิสก์ก้อนเดียวกับข้อมูลจริง
+                ไม่ได้แก้ปัญหาที่เฟสนี้ตั้งใจแก้เลย · ถ้ายังไม่มีปลายทาง ตัวเลือกจะว่าง
+                และคำอธิบายข้างล่างบอกให้ไปเพิ่มก่อน
+                (`data-for` แทนที่ลูกทั้งหมดของ <select> จึงใส่ตัวเลือก "ไม่ส่ง" ปนไว้ไม่ได้ ·
+                API ยังรับ destination_id = 0 อยู่สำหรับผู้ที่เรียกตรง)
+              -->
+              <div data-component="api" data-endpoint="/api/v2/backup-destinations" data-refresh-event="phpcp:reload">
+                <label for="ns_dest" data-i18n>Copy to</label>
+                <span class="form-control icon-cloud">
+                  <select id="ns_dest" name="destination_id" required data-for="d in data">
+                    <template>
+                      <option data-attr="value:d.id" data-text="d.name"></option>
+                    </template>
+                  </select>
+                </span>
+                <div class="comment" data-i18n>Add a destination above first. Backups that stay on this machine are lost with the disk they are on.</div>
+              </div>
+            </fieldset>
+            <fieldset class="submit">
+              <button type="submit" class="btn btn-primary icon-save" data-i18n>Add schedule</button>
+            </fieldset>
+          </form>
+        </div>
+      </div>
+
+      <!--
+        ปลายทางนอกเครื่อง — เฟส E1
+        เห็นเฉพาะผู้ดูแลระดับเซิร์ฟเวอร์ เพราะปลายทางเป็นทรัพยากรของทั้งเครื่อง
+        และการเลือกปลายทางได้เท่ากับเลือกได้ว่าจะส่งข้อมูลของเว็บไซต์ออกไปที่ไหน
+      -->
+      <div class="content-body" data-if="permissions['backup.offsite']">
+        <h2 class="icon-cloud" data-i18n>Offsite destinations</h2>
+        <p class="muted" data-i18n>Backups stay on the same disk as the live data until they are copied somewhere else</p>
+
+        <div class="tablebody">
+          <table class="table border fullwidth"
+                 data-table="destinations"
+                 data-source="/api/v2/backup-destinations"
+                 data-page-size="25"
+                 data-row-actions='{
+                   "test": {
+                     "title": "Test",
+                     "className": "btn btn-sm icon-refresh",
+                     "method": "post",
+                     "url": "/api/v2/backup-destinations/{id}/verification",
+                     "condition": "${can_manage}"
+                   },
+                   "delete": {
+                     "title": "Delete",
+                     "className": "btn btn-sm btn-danger icon-delete",
+                     "method": "delete",
+                     "url": "/api/v2/backup-destinations/{id}",
+                     "condition": "${can_manage}",
+                     "confirm": "Remove this destination? Files already copied there are left alone."
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="name" data-i18n>{LNG_Name}</th>
+                <th data-field="driver" class="center" data-cell-class="center" data-i18n>{LNG_Type}</th>
+                <th data-field="target_display" data-cell-class="mono" data-i18n>{LNG_Target}</th>
+                <th data-field="retention_label" class="center" data-cell-class="center" data-i18n>{LNG_Retention}</th>
+                <th data-field="health_status" class="center" data-cell-class="center"
+                    data-template="<span class='pill pill-${health_tone}'>{LNG_${health_status}}</span>"
+                    data-i18n>{LNG_Last check}</th>
+                <th data-field="last_ok_at" class="center" data-cell-class="center"
+                    data-format="datetime" data-empty-text="—" data-i18n>{LNG_When}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <button type="button" class="btn icon-plus"
+                data-action="click.prevent:toggleClass"
+                data-toggle-target="[data-destination-panel]" data-toggle-class="is-open"
+                data-i18n>Add destination</button>
+
+        <div class="content-body collapsible" data-destination-panel>
+          <form data-form="destinationCreate"
+                action="/api/v2/backup-destinations"
+                method="post"
+                data-ajax-submit="true"
+                data-validate="true"
+                data-reset="true">
+            <fieldset>
+              <div class="form-group">
+                <div class="width50">
+                  <label for="nd_name" data-i18n>Name</label>
+                  <span class="form-control icon-cloud">
+                    <input type="text" id="nd_name" name="name" required maxlength="100" autocomplete="off">
+                  </span>
+                </div>
+                <div class="width50">
+                  <label for="nd_driver" data-i18n>Type</label>
+                  <span class="form-control icon-menus">
+                    <select id="nd_driver" name="driver" required>
+                      <option value="local">local</option>
+                      <option value="sftp">sftp</option>
+                      <option value="rsync">rsync</option>
+                      <option value="s3">s3</option>
+                    </select>
+                  </span>
+                  <div class="comment" data-i18n>local = another path on this machine, such as a mounted NAS. s3 = AWS S3 or a compatible service (MinIO, Backblaze B2, DigitalOcean Spaces, Cloudflare R2)</div>
+                </div>
+              </div>
+              <div class="form-group">
+                <div class="width50">
+                  <label for="nd_host" data-i18n>Host</label>
+                  <span class="form-control icon-cpu">
+                    <input type="text" id="nd_host" name="host" maxlength="255" autocomplete="off">
+                  </span>
+                  <div class="comment" data-i18n>sftp/rsync only</div>
+                </div>
+                <div class="width25">
+                  <label for="nd_port" data-i18n>Port</label>
+                  <span class="form-control">
+                    <input type="number" id="nd_port" name="port" min="1" max="65535" value="22">
+                  </span>
+                </div>
+                <div class="width25">
+                  <label for="nd_user" data-i18n>User</label>
+                  <span class="form-control icon-user">
+                    <input type="text" id="nd_user" name="user" maxlength="64" autocomplete="off">
+                  </span>
+                </div>
+              </div>
+              <div>
+                <label for="nd_path" data-i18n>Path</label>
+                <span class="form-control icon-folder">
+                  <input type="text" id="nd_path" name="path" maxlength="512" autocomplete="off" placeholder="/srv/backups">
+                </span>
+                <div class="comment" data-i18n>Required for local/sftp/rsync. Optional key prefix for s3</div>
+              </div>
+              <!-- ฟิลด์เฉพาะ s3 — ฟอร์มเดียวกันแสดงทุกช่องตลอด ไม่มี JS สลับตามชนิดที่เลือก
+                   เหมือนช่อง host/port/user ด้านบนที่ก็ไม่ผูกกับ driver เหมือนกัน -->
+              <div class="form-group">
+                <div class="width50">
+                  <label for="nd_bucket" data-i18n>Bucket</label>
+                  <span class="form-control icon-stack">
+                    <input type="text" id="nd_bucket" name="bucket" maxlength="63" autocomplete="off">
+                  </span>
+                  <div class="comment" data-i18n>s3 only</div>
+                </div>
+                <div class="width50">
+                  <label for="nd_region" data-i18n>Region</label>
+                  <span class="form-control icon-world">
+                    <input type="text" id="nd_region" name="region" maxlength="64" autocomplete="off" placeholder="us-east-1">
+                  </span>
+                </div>
+              </div>
+              <div class="form-group">
+                <div class="width50">
+                  <label for="nd_access_key" data-i18n>Access key</label>
+                  <span class="form-control icon-user">
+                    <input type="text" id="nd_access_key" name="access_key" maxlength="128" autocomplete="off">
+                  </span>
+                </div>
+                <div class="width50">
+                  <label for="nd_endpoint" data-i18n>Endpoint</label>
+                  <span class="form-control icon-link">
+                    <input type="text" id="nd_endpoint" name="endpoint" maxlength="255" autocomplete="off" placeholder="https://s3.us-west-000.backblazeb2.com">
+                  </span>
+                  <div class="comment" data-i18n>Leave blank for AWS S3. Required for other s3-compatible services</div>
+                </div>
+              </div>
+              <div>
+                <input type="checkbox" class="switch" id="nd_path_style" name="path_style" value="1">
+                <label for="nd_path_style" data-i18n>Path-style addressing</label>
+                <div class="comment" data-i18n>Turn on for services without wildcard DNS per bucket, such as self-hosted MinIO</div>
+              </div>
+              <div>
+                <label for="nd_secret" data-i18n>Private key / secret key</label>
+                <span class="form-control">
+                  <textarea id="nd_secret" name="secret" rows="4" class="mono" autocomplete="off"></textarea>
+                </span>
+                <div class="comment" data-i18n>Needed for sftp, rsync and s3 (secret access key). Stored encrypted and never shown again. Password authentication is not supported for sftp/rsync</div>
+              </div>
+              <div class="form-group">
+                <div class="width50">
+                  <label for="nd_days" data-i18n>Keep for (days)</label>
+                  <span class="form-control icon-clock">
+                    <input type="number" id="nd_days" name="retention_days" min="0" value="30">
+                  </span>
+                  <div class="comment" data-i18n>0 = keep forever</div>
+                </div>
+                <div class="width50">
+                  <label for="nd_count" data-i18n>Always keep (copies)</label>
+                  <span class="form-control icon-stack">
+                    <input type="number" id="nd_count" name="retention_count" min="0" value="7">
+                  </span>
+                  <div class="comment" data-i18n>Newest copies are kept even when older than the day limit</div>
+                </div>
+              </div>
+            </fieldset>
+            <fieldset class="submit">
+              <button type="submit" class="btn btn-primary icon-save" data-i18n>Add destination</button>
+            </fieldset>
+          </form>
+        </div>
+      </div>
+
+      <div class="content-body">
+        <!--
+          เลือกปลายทางครั้งเดียวตรงนี้ แล้วปุ่ม "ส่งออก" ของทุกแถวใช้ค่านี้ — ดีกว่ามี
+          ตัวเลือกซ้ำในทุกแถว และดีกว่าเดาปลายทางให้เองเมื่อมีมากกว่าหนึ่งที่ · ตัวเลือกนี้
+          อยู่นอกแถว ปุ่ม "ส่งออก" (formatBackupActions ใน js/formatters.js) จึงต้องเป็น
+          โค้ดจริง — data-row-actions ประกอบค่าจากแถวเดียวล้วน ๆ อ่านค่านี้ไม่ได้
+        -->
+        <div data-if="permissions['backup.offsite']" data-component="api"
+             data-endpoint="/api/v2/backup-destinations" data-refresh-event="phpcp:reload">
+          <label for="offsite_to" data-i18n>Copy to</label>
+          <span class="form-control icon-cloud">
+            <select id="offsite_to" data-offsite-destination data-for="d in data">
+              <template>
+                <option data-attr="value:d.id" data-text="d.name"></option>
+              </template>
+            </select>
+          </span>
+        </div>
+
+        <div class="tablebody">
+          <table class="table border fullwidth"
+                 data-table="backups"
+                 data-source="/api/v2/backups"
+                 data-default-sort="created_at desc"
+                 data-page-size="25"
+                 data-row-actions='{
+                   "restore": {
+                     "title": "Restore",
+                     "className": "btn btn-sm icon-refresh",
+                     "method": "post",
+                     "url": "/api/v2/backups/{id}/restoration",
+                     "params": {"confirm": "{site_domain}"},
+                     "condition": "${can_restore && site_domain}",
+                     "confirm": "Restoring overwrites the current files of this website."
+                   },
+                   "delete": {
+                     "title": "Delete",
+                     "className": "btn btn-sm btn-danger icon-delete",
+                     "method": "delete",
+                     "url": "/api/v2/backups/{id}",
+                     "condition": "${can_manage}",
+                     "confirm": "Permanently delete this backup file?"
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="name" data-i18n>{LNG_Name}</th>
+                <th data-field="type" class="center" data-cell-class="center" data-i18n>{LNG_Type}</th>
+                <th data-field="size_bytes" data-format="bytes" class="center" data-cell-class="center" data-i18n>{LNG_Size}</th>
+                <th data-field="status" class="center" data-cell-class="center"
+                    data-template="<span class='pill pill-${status_tone}'>{LNG_${status}}</span>"
+                    data-i18n>{LNG_Status}</th>
+                <th data-field="offsite_status" class="center" data-cell-class="center"
+                    data-template="<span class='pill pill-${offsite_tone}'>{LNG_${offsite_status}}</span>"
+                    data-i18n>{LNG_Offsite copy}</th>
+                <th data-field="created_at" data-format="datetime" class="center" data-cell-class="center" data-i18n>{LNG_Created}</th>
+                <th data-field="id" data-formatter="formatBackupActions" data-i18n>{LNG_Offsite}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>

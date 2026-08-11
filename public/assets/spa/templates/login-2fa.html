@@ -1,0 +1,24 @@
+<div class="auth-container" data-script="pageTwoFactor">
+  <div class="auth-card">
+    <div class="auth-header">
+      <h1 data-i18n>Two-factor verification</h1>
+      <p data-i18n>Enter the 6-digit code from your authenticator app</p>
+    </div>
+
+    <form novalidate>
+      <fieldset>
+        <div>
+          <label for="code" data-i18n>Verification code</label>
+          <span class="form-control icon-lock">
+            <input type="text" id="code" name="code" required autofocus inputmode="numeric"
+                   autocomplete="one-time-code" maxlength="32" pattern="[0-9A-Za-z-]{6,32}">
+          </span>
+        </div>
+      </fieldset>
+
+      <fieldset class="center">
+        <button type="submit" class="btn btn-primary fullwidth large" data-i18n>Verify</button>
+      </fieldset>
+    </form>
+  </div>
+</div>

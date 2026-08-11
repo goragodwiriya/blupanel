@@ -1,0 +1,140 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <main class="content">
+    <div class="card-groups">
+      <header>
+        <div>
+          <h1 class="icon-user" data-i18n>Add user</h1>
+          <p data-i18n>Panel administrators and hosting customers share one account table</p>
+        </div>
+        <div class="header-actions">
+          <a class="btn icon-arrow-left" href="/app/users" data-route="/users" data-i18n>Users</a>
+        </div>
+      </header>
+      <div class="content-body">
+        <form data-form="userCreate" data-validate="true" data-reset="true" action="/api/v2/users" method="post" data-ajax-submit="true" data-load-api="/api/v2/users/0"
+              autocomplete="off">
+          <fieldset>
+            <div class="form-group">
+              <div class="width50">
+                <label for="nu_username" data-i18n>Username</label>
+                <span class="form-control icon-user">
+                  <input type="text" id="nu_username" name="username" required maxlength="32" pattern="[a-z][a-z0-9_-]{2,31}" autocomplete="off">
+                </span>
+                <div class="comment" data-i18n>Lowercase letters, digits, - and _ only</div>
+              </div>
+              <div class="width50">
+                <label for="nu_display" data-i18n>Name</label>
+                <span class="form-control icon-edit">
+                  <input type="text" id="nu_display" name="display_name" maxlength="100" autocomplete="off">
+                </span>
+              </div>
+            </div>
+            <div class="form-group">
+              <div class="width50">
+                <label for="nu_email" data-i18n>Email</label>
+                <span class="form-control icon-email">
+                  <input type="email" id="nu_email" name="email" required autocomplete="off">
+                </span>
+              </div>
+              <div class="width50">
+                <label for="nu_role" data-i18n>Role</label>
+                <span class="form-control icon-star0">
+                  <select id="nu_role" name="role" required>
+                    <option value="webadmin">webadmin</option>
+                    <option value="sysadmin">sysadmin</option>
+                    <option value="superadmin">superadmin</option>
+                  </select>
+                </span>
+              </div>
+            </div>
+            <div>
+              <label for="nu_password" data-i18n>Password</label>
+              <span class="form-control icon-lock">
+                <input type="password" id="nu_password" name="password" autocomplete="new-password">
+              </span>
+              <div class="comment" data-i18n>Leave empty to have the system generate one</div>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend class="icon-link" data-i18n>First website</legend>
+            <div class="form-group">
+              <div class="width50">
+                <label for="nu_domain" data-i18n>Domain</label>
+                <span class="form-control icon-website">
+                  <input type="text" id="nu_domain" name="domain" maxlength="253" autocomplete="off" placeholder="example.com">
+                </span>
+                <div class="comment" data-i18n>Leave empty to create the account without a website</div>
+              </div>
+              <div class="width50">
+                <label for="nu_php" data-i18n>PHP version</label>
+                <span class="form-control icon-code">
+                  <select id="nu_php" name="php_version" data-options-key="php_version">
+                  </select>
+                </span>
+              </div>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend class="icon-meter" data-i18n>Quota</legend>
+            <div class="form-group">
+              <div class="width25">
+                <label for="nu_q_domains" data-i18n>Domains</label>
+                <span class="form-control icon-number"><input type="number" id="nu_q_domains" name="quota_domains" min="-1" data-allow-negative="true" value="10"></span>
+              </div>
+              <div class="width25">
+                <label for="nu_q_subdomains" data-i18n>Subdomains</label>
+                <span class="form-control icon-number"><input type="number" id="nu_q_subdomains" name="quota_subdomains" min="-1" data-allow-negative="true" value="20"></span>
+              </div>
+              <div class="width25">
+                <label for="nu_q_aliases" data-i18n>Domain aliases</label>
+                <span class="form-control icon-number"><input type="number" id="nu_q_aliases" name="quota_aliases" min="-1" data-allow-negative="true" value="50"></span>
+              </div>
+              <div class="width25">
+                <label for="nu_q_emails" data-i18n>Email</label>
+                <span class="form-control icon-number"><input type="number" id="nu_q_emails" name="quota_emails" min="-1" data-allow-negative="true" value="100"></span>
+              </div>
+            </div>
+            <div class="form-group">
+              <div class="width25">
+                <label for="nu_q_databases" data-i18n>Databases</label>
+                <span class="form-control icon-number"><input type="number" id="nu_q_databases" name="quota_databases" min="-1" data-allow-negative="true" value="10"></span>
+              </div>
+              <!--
+                SFTP เป็นสวิตช์ ไม่ใช่จำนวน — หนึ่งบัญชีโฮสติ้งมีได้บัญชีเดียวเสมอ (เฟส E4)
+                เดิมเป็นช่องกรอกตัวเลขซึ่งสื่อผิดว่าตั้งได้หลายบัญชี
+              -->
+              <div class="width25">
+                <label for="nu_q_ftp" data-i18n>SFTP</label>
+                <span class="form-control icon-folder">
+                  <select id="nu_q_ftp" name="quota_ftp_users">
+                    <option value="-1" data-i18n>Allowed in this package</option>
+                    <option value="0" data-i18n>Not included</option>
+                  </select>
+                </span>
+              </div>
+              <div class="width25">
+                <label for="nu_q_disk" data-i18n>Disk space (MB)</label>
+                <span class="form-control icon-number"><input type="number" id="nu_q_disk" name="disk_quota_mb" min="-1" data-allow-negative="true" value="10240"></span>
+              </div>
+              <div class="width25">
+                <label for="nu_expiry" data-i18n>Expires</label>
+                <span class="form-control icon-calendar">
+                  <input type="date" id="nu_expiry" name="expiry_at">
+                </span>
+                <div class="comment" data-i18n>Leave blank for no expiry date</div>
+              </div>
+            </div>
+            <div class="comment" data-i18n>-1 = unlimited</div>
+          </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-save" data-i18n>Add user</button>
+          </fieldset>
+        </form>
+      </div>
+    </div>
+  </main>
+</div>

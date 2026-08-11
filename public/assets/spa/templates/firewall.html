@@ -1,0 +1,88 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <main class="content" data-component="api" data-endpoint="/api/v2/session">
+    <div class="card-groups">
+      <header>
+        <div>
+          <h1 class="icon-fire" data-i18n>Firewall</h1>
+          <p data-i18n>ufw rules — every change rolls back automatically unless confirmed</p>
+        </div>
+      </header>
+      <div class="content-body" data-component="api" data-endpoint="/api/v2/firewall">
+        <div class="flex justify-between">
+          <h2 data-i18n>{LNG_Rules} / {LNG_Status}</h2>
+          <div class="flex gap-6 middle">
+            <span class="pill pill-ok" data-show="active === true" data-i18n>Enabled</span>
+            <span class="pill pill-danger" data-show="active === false" data-i18n>Disabled</span>
+            <div class="header-actions" data-if="permissions['firewall.manage']">
+              <button type="button" class="btn small btn-primary icon-power" data-show="active === false" data-action="click.prevent:requestApi"
+                      data-api-url="/api/v2/firewall/enabled" data-api-method="put" data-param-enabled="true"
+                      data-confirm="Enabling the firewall can lock you out if a needed port isn't allowed yet — the panel and SSH ports are opened automatically first."
+                      data-i18n>Enable firewall</button>
+              <button type="button" class="btn small btn-danger icon-power" data-show="active === true" data-action="click.prevent:requestApi"
+                      data-api-url="/api/v2/firewall/enabled" data-api-method="put" data-param-enabled="false"
+                      data-confirm="Disabling the firewall makes this server reachable on every port." data-i18n>Disable firewall</button>
+            </div>
+          </div>
+        </div>
+        <div class="tablebody">
+          <table class="table border fullwidth" data-table="firewallRules" data-attr="data:rules" data-row-actions='{
+                   "delete": {
+                     "title": "Delete",
+                     "className": "btn btn-sm btn-danger icon-delete",
+                     "method": "delete",
+                     "url": "/api/v2/firewall/rules/{number}",
+                     "params": {"expect": "{signature}"},
+                     "condition": "${can_manage}",
+                     "confirm": "Deleting a firewall rule can lock you out of this server."
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="number" class="center" data-cell-class="center" data-i18n>{LNG_ID}</th>
+                <!-- signature คือ "ACTION target source" ที่ประกอบไว้แล้ว (เช่น
+                     "ALLOW 8123/tcp Anywhere") — อ่านง่ายพอสำหรับแสดงผลตรง ๆ ไม่ต้อง
+                     ประกอบข้อความเองอีกชั้น และเป็นค่าเดียวกับที่ต้องส่งกลับตอนลบอยู่แล้ว -->
+                <th data-field="signature" data-cell-class="mono" data-i18n>{LNG_Rule}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <form data-form="firewallRule" class="table_nav" action="/api/v2/firewall/rules" method="post" data-ajax-submit="true" data-validate="true" data-reset="true"
+                data-if="permissions['firewall.manage']">
+            <div>
+              <label for="fw_action" data-i18n>Action</label>
+              <span class="form-control">
+                <select id="fw_action" name="action" required>
+                  <option value="allow">allow</option>
+                  <option value="deny">deny</option>
+                </select>
+              </span>
+            </div>
+            <div>
+              <label for="fw_port" data-i18n>Port</label>
+              <span class="form-control"><input type="text" id="fw_port" name="port" required maxlength="16" autocomplete="off"></span>
+            </div>
+            <div>
+              <label for="fw_protocol" data-i18n>Protocol</label>
+              <span class="form-control">
+                <select id="fw_protocol" name="protocol">
+                  <option value="tcp">tcp</option>
+                  <option value="udp">udp</option>
+                </select>
+              </span>
+            </div>
+            <div>
+              <label for="fw_source" data-i18n>Source</label>
+              <span class="form-control"><input type="text" id="fw_source" name="source" maxlength="64" placeholder="any" autocomplete="off"></span>
+            </div>
+            <button type="submit" class="btn btn-primary icon-plus" data-i18n>Add rule</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>

@@ -1,0 +1,141 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * phpcp-alert — ส่งข้อความแจ้งเตือนเมื่อ systemd unit ของ panel ล้มเหลว (PLAN-V2 เฟส E6)
+ *
+ * ถูกเรียกโดย `OnFailure=` ของ `phpcp-agentd.service` ไม่ใช่โดยคน
+ *
+ * **ทำไมต้องเป็นโปรแกรมแยก ไม่ใช่งานใน scheduler:** ตอน `phpcp-agentd` ตาย ไม่มีใครใน
+ * ระบบส่งข้อความออกได้เลย —
+ *
+ *   · `alert.check` เป็น capability ที่รัน**ผ่าน agent** จึงเรียกไม่ได้ตั้งแต่แรก
+ *   · `phpcp-scheduler` ถูก hardening ด้วย `RestrictAddressFamilies=AF_UNIX`
+ *     (เปิด TCP ไม่ได้ → Telegram/webhook ตาย) และ `NoNewPrivileges=yes`
+ *     (ปิด setgid ของ postdrop → เข้าคิวเมลไม่ได้)
+ *
+ * ทั้งสองข้อจำกัดนั้นถูกต้องและห้ามผ่อนเพียงเพื่อความสะดวกของการแจ้งเตือน (§7.1 ข้อ 2)
+ * · โปรแกรมนี้จึงรันเป็น root ในโปรเซสของตัวเอง ทำงานอย่างเดียวคือส่งข้อความ แล้วจบ
+ *
+ * เจตนาที่ตั้งใจให้แคบ: **ไม่แตะระบบอะไรเลย** ไม่สั่งงาน ไม่แก้ไฟล์ ไม่รีสตาร์ตอะไร
+ * — อ่านค่าตั้งกับเขียน `alert_state` เท่านั้น · โปรแกรมที่ systemd เรียกตอนระบบมีปัญหา
+ * ต้องเป็นโปรแกรมที่พังยากที่สุดในระบบ ไม่ใช่โปรแกรมที่พยายามกู้สถานการณ์เอง
+ *
+ * ใช้:
+ *   phpcp-alert unit-failed <ชื่อ unit>    แจ้งว่า unit นั้นล้มเหลว
+ *   phpcp-alert test                       ส่งข้อความทดสอบ (ใช้ตรวจว่าติดตั้งถูกไหม)
+ */
+
+if (PHP_VERSION_ID < 80200) {
+    $candidates = ['/usr/bin/php8.5', '/usr/bin/php8.4', '/usr/bin/php8.3', '/usr/bin/php8.2'];
+
+    foreach ($candidates as $binary) {
+        if (!is_executable($binary) || realpath($binary) === realpath(PHP_BINARY)) {
+            continue;
+        }
+
+        $argv[0] = __FILE__;
+        pcntl_exec($binary, $argv);
+
+        $command = escapeshellarg($binary);
+        foreach ($argv as $arg) {
+            $command .= ' ' . escapeshellarg($arg);
+        }
+
+        passthru($command, $code);
+        exit($code);
+    }
+
+    fwrite(STDERR, sprintf(
+        "phpcp-alert ต้องการ PHP 8.2 ขึ้นไป แต่ %s เป็นเวอร์ชัน %s\n",
+        PHP_BINARY,
+        PHP_VERSION,
+    ));
+    exit(1);
+}
+
+require dirname(__DIR__) . '/bootstrap.php';
+
+use Phpcp\Agent\Executor\RealExecutor;
+use Phpcp\Domain\AlertRules;
+use Phpcp\Domain\Notifier;
+use Phpcp\Kernel\App;
+
+if (PHP_SAPI !== 'cli') {
+    http_response_code(403);
+    exit("phpcp-alert ใช้ได้จากบรรทัดคำสั่งเท่านั้น\n");
+}
+
+/**
+ * ห้ามล้มเหลวแบบดัง — systemd เรียกโปรแกรมนี้ตอนที่ระบบมีปัญหาอยู่แล้ว
+ * ถ้ามันตายด้วย fatal error จะได้ unit ที่ล้มเหลวเพิ่มมาอีกหนึ่งตัวโดยไม่ได้อะไรกลับมา
+ */
+try {
+    $action = $argv[1] ?? '';
+    $unit = trim((string) ($argv[2] ?? ''));
+
+    $app = App::boot(dirname(__DIR__));
+    $db = $app->db();
+
+    // รันเป็น root จึงส่งได้ทุกช่องทาง รวมถึงอีเมลที่ต้องเรียก sendmail ผ่าน Executor
+    $notifier = new Notifier($db, new RealExecutor());
+
+    if ($action === 'test') {
+        $channels = $notifier->activeChannels();
+
+        if ($channels === []) {
+            fwrite(STDERR, "ยังไม่มีช่องทางแจ้งเตือนที่ตั้งค่าครบ — ตั้งที่หน้า \"ตั้งค่า\" ของ panel ก่อน\n");
+            exit(1);
+        }
+
+        $sent = $notifier->send(
+            'alert',
+            'ทดสอบการแจ้งเตือนเมื่อบริการล้มเหลว',
+            "ถ้าคุณได้รับข้อความนี้ แปลว่า phpcp-alert ทำงานได้\n"
+            . 'ระบบจะใช้เส้นทางนี้แจ้งเมื่อ phpcp-agentd ล้มเหลว ซึ่งเป็นจังหวะที่ช่องทางอื่นทั้งหมดใช้ไม่ได้',
+            'ok',
+        );
+
+        printf("ช่องทางที่ใช้งานได้: %s\nผลการส่ง: %s\n", implode(', ', $channels), $sent ? 'สำเร็จ' : 'ล้มเหลว');
+        exit($sent ? 0 : 1);
+    }
+
+    if ($action !== 'unit-failed' || $unit === '') {
+        fwrite(STDERR, "ใช้: phpcp-alert unit-failed <ชื่อ unit>  |  phpcp-alert test\n");
+        exit(2);
+    }
+
+    // ใช้กลไกกันสแปมตัวเดียวกับเกณฑ์อื่น — unit ที่ restart วนซ้ำ ๆ (Restart=on-failure)
+    // จะเรียกโปรแกรมนี้ทุกรอบที่ล้ม ถ้าไม่กันไว้จะได้ข้อความเป็นสิบฉบับในไม่กี่นาที
+    $decision = (new AlertRules($db))->evaluate('unit:' . $unit, 'critical', 0.0);
+
+    if (!$decision['notify']) {
+        exit(0);
+    }
+
+    $body = $unit === 'phpcp-agentd.service'
+        ? "phpcp-agentd ล้มเหลว — **คำสั่งทุกอย่างของ panel หยุดทำงานทั้งหมด**\n\n"
+          . "ที่กระทบทันที:\n"
+          . "  · หน้าเว็บสั่งงานอะไรไม่ได้เลย\n"
+          . "  · กลไกคืนค่าอัตโนมัติของ firewall/SSH ไม่มีใครกระตุ้น — ถ้ากำลังแก้ค้างไว้ อาจถูกล็อกออกจากเครื่องถาวร\n"
+          . "  · งานตามเวลาทุกงานล้มเหลว รวมถึงการสำรองข้อมูลและการต่ออายุใบรับรอง\n\n"
+          . "ตรวจด้วย: sudo systemctl status phpcp-agentd\n"
+          . 'แก้ด้วย: sudo systemctl restart phpcp-agentd'
+        : sprintf(
+            "systemd unit %s ล้มเหลวบนเครื่อง %s\n\nตรวจด้วย: sudo systemctl status %s",
+            $unit,
+            gethostname() ?: 'ไม่ทราบชื่อ',
+            $unit,
+        );
+
+    $notifier->send('alert', sprintf('บริการ %s ล้มเหลว', $unit), $body, 'danger');
+
+    exit(0);
+} catch (\Throwable $e) {
+    // เขียนลง stderr เท่านั้น — journalctl เก็บให้แล้ว และการเขียนไฟล์ log เองอาจล้มซ้ำ
+    // ถ้าปัญหาต้นทางคือดิสก์เต็ม ซึ่งเป็นหนึ่งในเหตุที่ทำให้ unit ล้มตั้งแต่แรก
+    fwrite(STDERR, 'phpcp-alert ล้มเหลว: ' . $e->getMessage() . "\n");
+    exit(1);
+}

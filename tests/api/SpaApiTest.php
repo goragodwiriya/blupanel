@@ -1,0 +1,416 @@
+<?php
+
+declare(strict_types=1);
+
+/**
+ * สิ่งที่เฟส C เพิ่มเข้ามา — PLAN-V2 เฟส C
+ *
+ * สามเรื่องที่เทสต์ชุดนี้ตรึงไว้ และเหตุผลที่แต่ละเรื่องคุ้มค่าที่จะมีเทสต์:
+ *
+ * 1. **shell ของ SPA ต้องเปิดได้โดยไม่ต้องล็อกอิน และต้องไม่รั่วอะไรออกไป** —
+ *    มันเป็นเส้นทางสาธารณะเส้นเดียวที่เพิ่มเข้ามาในระบบตั้งแต่เฟส B
+ * 2. **`GET /dashboard` ต้องตอบ 200 แม้ agent ล่ม** — เป็นข้อยกเว้นที่ตั้งใจให้ต่างจาก
+ *    เส้นทางอื่นของ v2 ถ้าใครมาแก้ให้ล้มตาม agent หน้าแรกจะว่างในจังหวะที่ต้องการ
+ *    ข้อมูลที่สุด · เทสต์นี้คือสิ่งเดียวที่กันการถอยกลับนั้น
+ * 3. **ไฟล์ของ Now.js ต้องตรงกับ SHA256SUMS** — การตัดสินใจ N8 · `phpcp doctor`
+ *    ตรวจบนเครื่องที่ติดตั้งแล้ว แต่เทสต์ตรวจตั้งแต่ก่อน commit
+ */
+
+use Phpcp\Http\ApiProblem;
+use Phpcp\Security\Permissions;
+
+group('SPA และสิ่งที่เฟส C เพิ่ม');
+
+function spaHarness(): ApiHarness
+{
+    static $harness = null;
+
+    if ($harness !== null) {
+        return $harness;
+    }
+
+    $harness = ApiHarness::boot();
+    $harness->createUser('spaadmin', 'Spa-Admin-Pass-11', Permissions::SUPERADMIN);
+    $harness->createUser('spaweb', 'Spa-Web-Pass-22', Permissions::WEBADMIN);
+
+    return $harness;
+}
+
+function spaLogin(string $username, string $password): ApiHarness
+{
+    $harness = spaHarness();
+    $harness->forget();
+    $harness->clearRateLimits();
+    $harness->request('GET', '/api/v2/session');
+
+    $login = $harness->request('POST', '/api/v2/session', ['username' => $username, 'password' => $password]);
+
+    if ($login->status !== 200) {
+        throw new RuntimeException("เตรียมเทสต์ไม่สำเร็จ: ล็อกอินได้ {$login->status}");
+    }
+
+    return $harness;
+}
+
+test('shell ของ SPA เปิดได้โดยไม่ต้องล็อกอิน และมีแต่โครงเปล่า', static function (): void {
+    $harness = spaHarness();
+    $harness->forget();
+
+    // รูปที่ลงท้ายด้วย / ต้องใช้ได้ด้วย เพราะผู้ใช้พิมพ์กันเป็นปกติ
+    foreach (['/app', '/app/', '/app/sites', '/app/sites/', '/app/logs'] as $path) {
+        $response = $harness->request('GET', $path);
+
+        assertSame(200, $response->status, "{$path} ต้องเปิดได้โดยไม่ต้องล็อกอิน");
+    }
+
+    $body = $harness->request('GET', '/app')->body;
+
+    // ไม่มีข้อมูลของผู้ใช้อยู่ในไฟล์นี้เลย — ทุกอย่างมาจาก /api/v2/* ตอนรันจริง
+    assertTrue(str_contains($body, '/assets/spa/js/main.js'), 'shell ต้องโหลดสคริปต์ของแอป');
+    // ตัดคอมเมนต์ออกก่อน — คอมเมนต์ในไฟล์อธิบายไว้ว่า "ไม่มี <meta name=csrf-token> ที่นี่โดยตั้งใจ"
+    // ซึ่งเป็นข้อความที่ต้องอยู่ต่อ ไม่ใช่แท็กจริงที่ต้องห้าม
+    $markup = preg_replace('/<!--.*?-->/s', '', $body) ?? $body;
+
+    assertTrue(
+        preg_match('/<meta[^>]+name=["\']csrf-token/', $markup) !== 1,
+        'shell ต้องไม่ฝัง CSRF token — SPA ขอเองจาก /session',
+    );
+    assertTrue(!str_contains($body, 'spaadmin'), 'shell ต้องไม่มีชื่อผู้ใช้คนใดอยู่ในนั้น');
+});
+
+test('shell ใช้เส้นทางสัมบูรณ์ทุกไฟล์ ไม่งั้นหน้าย่อยจะโหลดสคริปต์ไม่เจอ', static function (): void {
+    // /app/sites ถูกเสิร์ฟด้วยไฟล์เดียวกับ /app · เส้นทางสัมพัทธ์จะกลายเป็น
+    // เส้นทางที่ผิดทันทีที่ผู้ใช้กดรีเฟรชบนหน้าย่อย และ <base href> ใช้แก้ไม่ได้
+    // เพราะ CSP ของ panel ตั้ง base-uri 'none'
+    $html = (string) file_get_contents(PHPCP_ROOT . '/public/assets/spa/index.html');
+
+    preg_match_all('/(?:src|href)="([^"]+)"/', $html, $matches);
+
+    foreach ($matches[1] as $url) {
+        assertTrue(
+            str_starts_with($url, '/') || str_starts_with($url, 'http'),
+            "shell อ้างไฟล์ด้วยเส้นทางสัมพัทธ์: {$url}",
+        );
+    }
+});
+
+test('แดชบอร์ดตอบ 200 แม้ agent ล่ม — หน้าแรกต้องเปิดได้เสมอ', static function (): void {
+    $harness = spaLogin('spaadmin', 'Spa-Admin-Pass-11');
+
+    $response = $harness->request('GET', '/api/v2/dashboard');
+
+    assertSame(200, $response->status, 'แดชบอร์ดต้องไม่ล้มตาม agent');
+    assertSame(false, $response->data('agent')['available'], 'ต้องรายงานว่า agent ใช้งานไม่ได้');
+    assertTrue(is_array($response->data('counts')), 'ตัวเลขจากฐานข้อมูลของ panel ต้องยังใช้ได้');
+    assertTrue(is_array($response->data('activity')), 'กิจกรรมล่าสุดต้องยังอ่านได้');
+});
+
+test('แดชบอร์ดของลูกค้าไม่มีบริการและ audit log ของทั้งเครื่อง', static function (): void {
+    $harness = spaLogin('spaweb', 'Spa-Web-Pass-22');
+
+    $response = $harness->request('GET', '/api/v2/dashboard');
+
+    assertSame(200, $response->status, 'ลูกค้าต้องเปิดหน้าแรกได้');
+    assertSame([], $response->data('services'), 'ลูกค้าไม่มีสิทธิ์ service.view');
+    assertSame([], $response->data('activity'), 'ลูกค้าไม่มีสิทธิ์ audit.view');
+    assertSame(0, $response->data('counts')['users'], 'ลูกค้าต้องไม่เห็นจำนวนผู้ใช้ทั้งระบบ');
+});
+
+test('กิจกรรมล่าสุดต้องไม่ส่งกลไกภายในของ hash-chain ออกไป', static function (): void {
+    $harness = spaLogin('spaadmin', 'Spa-Admin-Pass-11');
+
+    // การล็อกอินข้างบนเขียน audit log ไปแล้ว จึงมีอย่างน้อยหนึ่งรายการเสมอ
+    $activity = $harness->request('GET', '/api/v2/dashboard')->data('activity');
+
+    assertTrue($activity !== [], 'ต้องมีรายการอย่างน้อยหนึ่งรายการจากการล็อกอิน');
+
+    foreach ($activity as $entry) {
+        assertTrue(!array_key_exists('hash', $entry), 'ต้องไม่ส่ง hash ของ audit chain');
+        assertTrue(!array_key_exists('prev_hash', $entry), 'ต้องไม่ส่ง prev_hash');
+        assertTrue(!array_key_exists('detail_json', $entry), 'ต้องไม่ส่ง argument ดิบของคำสั่ง');
+    }
+});
+
+test('ลูกค้าดูงานตามเวลาของระบบไม่ได้', static function (): void {
+    $harness = spaLogin('spaweb', 'Spa-Web-Pass-22');
+
+    $response = $harness->request('GET', '/api/v2/scheduled-jobs');
+
+    assertSame(403, $response->status, 'งานตามเวลาเป็นของหมวด SERVER');
+    assertSame(ApiProblem::Forbidden->value, $response->errorCode(), 'ต้องเป็น FORBIDDEN');
+});
+
+test('งานตามเวลาบอกได้ว่าตัวจับเวลายังเดินอยู่ไหม', static function (): void {
+    $harness = spaLogin('spaadmin', 'Spa-Admin-Pass-11');
+
+    $response = $harness->request('GET', '/api/v2/scheduled-jobs');
+
+    assertSame(200, $response->status, 'ผู้ดูแลต้องดูได้');
+    assertTrue(is_array($response->json['data']), 'ต้องเป็นรายการ');
+    assertTrue(is_bool($response->json['meta']['stale'] ?? null), 'ต้องบอกได้ว่าตัวจับเวลาค้างหรือไม่');
+});
+
+test('ไฟล์ของ Now.js ตรงกับ SHA256SUMS ที่ commit ไว้', static function (): void {
+    // การตัดสินใจ N8 — ถ้าไฟล์ dist ถูกอัปเดตโดยไม่อัปเดต checksum เทสต์นี้จะจับได้
+    // ก่อนขึ้นเซิร์ฟเวอร์ ซึ่งเป็นจังหวะเดียวที่ยังแก้ได้ง่าย
+    $dir = PHPCP_ROOT . '/public/assets/spa/vendor/now';
+    $sums = (string) file_get_contents($dir . '/SHA256SUMS');
+
+    assertTrue(trim($sums) !== '', 'ต้องมี SHA256SUMS ที่ไม่ว่าง');
+
+    foreach (preg_split('/\R/', trim($sums)) ?: [] as $line) {
+        [$expected, $name] = preg_split('/\s+/', trim($line), 2);
+        $file = $dir . '/' . $name;
+
+        assertTrue(is_file($file), "ไม่มีไฟล์ {$name} ที่ SHA256SUMS อ้างถึง");
+        assertSame($expected, hash_file('sha256', $file), "checksum ของ {$name} ไม่ตรง");
+    }
+});
+
+test('SPA ไม่ดึงอะไรจาก CDN เลย', static function (): void {
+    // หลัก supply-chain เดิมของโปรเจกต์: ติดตั้งบนเครื่องที่ไม่มีเน็ตแล้วต้องใช้ได้
+    // และ CSP ของ panel เป็น default-src 'none' อยู่แล้ว การอ้าง origin ภายนอกจึงพังเงียบ ๆ
+    $files = array_merge(
+        glob(PHPCP_ROOT . '/public/assets/spa/*.html') ?: [],
+        glob(PHPCP_ROOT . '/public/assets/spa/css/*.css') ?: [],
+        glob(PHPCP_ROOT . '/public/assets/spa/vendor/now/*.css') ?: [],
+    );
+
+    foreach ($files as $file) {
+        $content = (string) file_get_contents($file);
+        $name = basename($file);
+
+        assertTrue(!str_contains($content, '@import url(\'http'), "{$name} มี @import จาก origin ภายนอก");
+        assertTrue(!str_contains($content, 'fonts.googleapis.com'), "{$name} อ้าง Google Fonts");
+        assertTrue(!str_contains($content, 'cdn.jsdelivr'), "{$name} อ้าง CDN");
+        assertTrue(!str_contains($content, 'unpkg.com'), "{$name} อ้าง CDN");
+    }
+});
+
+test('ทุกแถวของตารางในเทมเพลตมีทั้งป้ายและช่องข้อมูล', static function (): void {
+    // เจอจากของจริง: regex ที่ตั้งใจถอดค่าออกจาก `data-i18n` เผลอโลภ แล้วกิน
+    // `Hostname</th><td class="mono" data-text="hostname"` ไปด้วยทั้งท่อน เหลือ
+    // `<tr><th data-i18n></td></tr>` · หน้ายังเรนเดอร์ครบ ตารางยังขึ้นทุกแถว console
+    // สะอาด **แต่ทุกช่องว่างเปล่า** — ไม่มีอะไรในระบบฟ้องเลยนอกจากเปิดดูด้วยตา
+    //
+    // เทสต์นี้จึงตรวจสองอย่างที่ตารางต้องมีเสมอ: `<th>` ต้องมีข้อความ และแถวที่มี
+    // `<th>` ต้องมี `<td>` คู่กัน
+    $problems = [];
+
+    foreach (glob(PHPCP_ROOT . '/public/assets/spa/templates/*.html') ?: [] as $file) {
+        $name = basename($file);
+
+        foreach (explode("\n", (string) file_get_contents($file)) as $number => $line) {
+            if (!str_contains($line, '<th')) {
+                continue;
+            }
+
+            $at = $name . ':' . ($number + 1);
+
+            // `<th ...>ข้อความ</th>` — หัวตารางที่ไม่มีข้อความคือหัวที่ผู้ใช้อ่านไม่ออก
+            if (preg_match('#<th[^>]*>\s*</th>#', $line) === 1) {
+                $problems[] = "{$at} มี <th> ที่ไม่มีข้อความ";
+            }
+
+            // แถวที่เขียนจบในบรรทัดเดียวต้องมี <td> ด้วย ไม่งั้นคือแถวที่เสียรูป
+            if (str_contains($line, '<tr>') && str_contains($line, '</tr>') && !str_contains($line, '<td')) {
+                $problems[] = "{$at} เป็นแถวที่มีแต่ <th> ไม่มี <td>";
+            }
+
+            // ปิดแท็กผิดชนิดในบรรทัดเดียวกัน = ร่องรอยของการถูกตัดกลางทาง
+            if (preg_match('#<th[^>]*>[^<]*</td>#', $line) === 1) {
+                $problems[] = "{$at} เปิด <th> แล้วปิดด้วย </td>";
+            }
+        }
+    }
+
+    assertSame([], $problems, "เทมเพลตเสียรูป:\n  " . implode("\n  ", $problems));
+});
+
+test('data-i18n ต้องไม่มีค่า — Now.js เติมคีย์จากข้อความในแท็กเอง', static function (): void {
+    // ใส่ค่าเองแล้วมีสองแหล่งความจริง: ค่าในแอตทริบิวต์กับข้อความในแท็ก ซึ่งจะค่อย ๆ
+    // ไม่ตรงกันเมื่อมีคนแก้ข้อความแต่ลืมแก้คีย์ แล้วป้ายนั้นจะไม่ถูกแปลโดยไม่มีใครรู้
+    $problems = [];
+
+    foreach (glob(PHPCP_ROOT . '/public/assets/spa/templates/*.html') ?: [] as $file) {
+        if (preg_match_all('#data-i18n="[^"]*"#', (string) file_get_contents($file), $matches) > 0) {
+            $problems[] = basename($file) . ': ' . implode(', ', array_slice($matches[0], 0, 3));
+        }
+    }
+
+    assertSame([], $problems, "data-i18n ต้องเขียนเปล่า ๆ:\n  " . implode("\n  ", $problems));
+});
+
+test('ห้ามมีข้อความไทยฝังในนิพจน์ของ data-text — ข้อความแบบนั้นไม่ผ่านตัวแปลภาษา', static function (): void {
+    // ระบบแปลใช้**ข้อความอังกฤษเป็นคีย์** แล้วเทียบกับ lang/th.json (en.json จึงว่างเปล่า
+    // โดยตั้งใจ) · ข้อความที่เขียนตรง ๆ ในนิพจน์ เช่น `data-text="x ? 'ใช้งานอยู่' : '—'"`
+    // ไม่ผ่านตัวแปลเลย จึงค้างเป็นภาษาเดียวแม้ผู้ใช้สลับเป็นอังกฤษ
+    //
+    // ทางที่ถูกคือแยกเป็นหลาย <span> ที่มี `data-if` + `data-i18n` ตามปกติ
+    // (เจอจากการเผลอเขียนเองตอนแก้ตารางโควตา 2026-08-10)
+    $problems = [];
+
+    foreach (glob(PHPCP_ROOT . '/public/assets/spa/templates/*.html') ?: [] as $file) {
+        $html = (string) preg_replace('/<!--.*?-->/s', '', (string) file_get_contents($file));
+
+        // มองเฉพาะค่าในแอตทริบิวต์ที่เป็นนิพจน์ ไม่ใช่ข้อความในแท็ก (ซึ่งแปลได้ปกติ)
+        if (preg_match_all('/data-(?:text|attr|class|style)="([^"]*)"/', $html, $matches) === 0) {
+            continue;
+        }
+
+        foreach ($matches[1] as $expression) {
+            // จับอักษรไทยที่อยู่ในเครื่องหมายคำพูดเดี่ยว = ข้อความคงที่ในนิพจน์
+            if (preg_match("/'[^']*[\u{0E00}-\u{0E7F}][^']*'/u", $expression) === 1) {
+                $problems[] = basename($file) . ': ' . mb_substr($expression, 0, 70);
+            }
+        }
+    }
+
+    assertSame([], $problems, "ข้อความไทยในนิพจน์ต้องย้ายไปเป็น <span data-i18n>:\n  " . implode("\n  ", $problems));
+});
+
+test('SPA ทับตัวจัดรูป datetime ของเฟรมเวิร์ก', static function (): void {
+    // `Utils.string.applyFormatters()` ค้นตามลำดับ filters ของ context → builtinFormatters
+    // → `window.formatters` · ชื่อ `datetime` ชนกับตัวที่มีมากับเฟรมเวิร์ก ตัวของเราจึง
+    // ไม่เคยถูกเรียก และ `| datetime` ทุกที่แสดงเป็นปี 1970 เพราะตัวเดิมตีความตัวเลข
+    // เป็น**มิลลิวินาที** ส่วน API ของเราส่งเป็น**วินาที** ทั้งระบบ
+    //
+    // บั๊กนี้ไม่มีอะไรฟ้อง — หน้าเรนเดอร์ครบ console สะอาด เห็นทางเดียวคืออ่านวันที่
+    // บนหน้าจอแล้วเทียบกับค่าที่ API ส่งมา · เทสต์นี้จึงเฝ้าว่าการทับยังอยู่
+    $source = (string) file_get_contents(PHPCP_ROOT . '/public/assets/spa/js/formatters.js');
+
+    assertTrue(
+        str_contains($source, 'window.Utils.string.builtinFormatters.datetime = datetime'),
+        'formatters.js ต้องทับ datetime ของเฟรมเวิร์ก ไม่งั้นทุกวันที่บนหน้าจอกลายเป็นปี 1970',
+    );
+
+    // ใช้จริงอยู่หลายหน้า — ถ้าวันหนึ่งไม่มีใครใช้แล้วก็ไม่ต้องทับอีก
+    $used = 0;
+
+    foreach (glob(PHPCP_ROOT . '/public/assets/spa/templates/*.html') ?: [] as $file) {
+        $used += substr_count((string) file_get_contents($file), '| datetime');
+    }
+
+    assertTrue($used > 0, 'ไม่มีเทมเพลตไหนใช้ | datetime แล้ว — ลบการทับออกได้');
+});
+
+test('ทุกไฟล์ที่ SPA อ้างถึงมีอยู่จริงบนดิสก์', static function (): void {
+    // เจอจากการลบ UI แบบ HTML: `app.css` ของ SPA อ้าง `/assets/images/logo.svg` ซึ่งอยู่
+    // นอกโฟลเดอร์ของ SPA · พอลบชุดของเก่าทิ้ง โลโก้ก็หายไปโดยที่ไม่มีอะไรพังให้เห็น
+    // — หน้ายังเรนเดอร์ครบ เทสต์ยังเขียว เห็นแค่ตอนเปิดดูด้วยตาหรือดู console
+    //
+    // เทสต์นี้จึงตามทุก URL ที่ขึ้นต้นด้วย `/assets/` ไปดูว่ามีไฟล์นั้นจริงไหม
+    $public = PHPCP_ROOT . '/public';
+    $files = array_merge(
+        glob(PHPCP_ROOT . '/public/assets/spa/*.html') ?: [],
+        glob(PHPCP_ROOT . '/public/assets/spa/css/*.css') ?: [],
+        glob(PHPCP_ROOT . '/public/assets/spa/js/*.js') ?: [],
+        glob(PHPCP_ROOT . '/public/assets/spa/templates/*.html') ?: [],
+    );
+
+    $checked = 0;
+
+    foreach ($files as $file) {
+        $content = (string) file_get_contents($file);
+        $name = basename($file);
+
+        preg_match_all('#/assets/[A-Za-z0-9_./-]+\.[a-z0-9]{2,5}#', $content, $matches);
+
+        foreach (array_unique($matches[0]) as $url) {
+            assertTrue(is_file($public . $url), "{$name} อ้าง {$url} แต่ไม่มีไฟล์นั้นอยู่จริง");
+            $checked++;
+        }
+    }
+
+    assertTrue($checked > 10, 'ต้องเจอไฟล์ที่ถูกอ้างถึงจริง ๆ ไม่ใช่ผ่านเพราะหาไม่เจอสักอัน');
+});
+
+test('ทุกคลาสไอคอนที่ SPA ใช้ มีอยู่จริงในชุด icomoon', static function (): void {
+    // ไอคอนที่ไม่มีอยู่จริงไม่ทำให้อะไรพัง มันแค่**หายไปเงียบ ๆ** ซึ่งแปลว่าไม่มีใคร
+    // สังเกตจนกว่าจะมีคนเปิดหน้านั้นด้วยตา · เฟส C เสียเวลากับเรื่องนี้ไปหนึ่งรอบแล้ว
+    $app = PHPCP_ROOT . '/public/assets/spa';
+    $css = (string) file_get_contents($app . '/vendor/now/icons.css');
+
+    $sources = array_merge(
+        glob($app . '/templates/*.html') ?: [],
+        glob($app . '/js/*.js') ?: [],
+    );
+
+    $used = [];
+    foreach ($sources as $file) {
+        preg_match_all('/\bicon-[a-z0-9-]+/', (string) file_get_contents($file), $matches);
+        $used = array_merge($used, $matches[0]);
+    }
+
+    $missing = [];
+    foreach (array_unique($used) as $icon) {
+        if (!str_contains($css, "\n.{$icon}:before")) {
+            $missing[] = $icon;
+        }
+    }
+
+    assertSame([], $missing, 'ไอคอนที่ไม่มีอยู่ในชุด: ' . implode(', ', $missing));
+});
+
+test('อ่าน log ได้โดยไม่ต้องระบุแหล่ง — ค่าเริ่มต้นที่ใช้งานได้ ไม่ใช่ข้อผิดพลาด', static function (): void {
+    // หน้า Logs ของ SPA โหลดตารางก่อนที่ผู้ใช้จะเลือกอะไร ถ้าเส้นทางนี้ตอบ 403
+    // เมื่อไม่มี `source` หน้าจะขึ้นพร้อม error ทุกครั้งที่เปิด ทั้งที่ยังไม่มีใครทำอะไรผิด
+    $harness = spaLogin('spaadmin', 'Spa-Admin-Pass-11');
+
+    $response = $harness->request('GET', '/api/v2/logs');
+
+    // agent ไม่ทำงานในชุดทดสอบ จึงได้ 503 — สิ่งที่ตรึงไว้คือ **ต้องไม่ใช่ 403**
+    // แปลว่าผ่านด่านเลือกแหล่งไปแล้วจริง
+    assertTrue($response->status !== 403, 'ไม่ระบุแหล่งต้องไม่ถูกปฏิเสธด้วยสิทธิ์');
+
+    $denied = $harness->request('GET', '/api/v2/logs', [], [], ['source' => 'ไม่มีจริง']);
+
+    assertSame(403, $denied->status, 'แหล่งที่ไม่รู้จักยังต้องเป็น 403 เหมือนเดิม');
+    assertSame(ApiProblem::Forbidden->value, $denied->errorCode(), 'ต้องเป็น FORBIDDEN');
+});
+
+test('ไม่มีตารางไหนมี data-field ซ้ำกัน', static function (): void {
+    // TableManager ทำดัชนีคอลัมน์ด้วยชื่อฟิลด์ — สอง `<th>` ที่ใช้ฟิลด์เดียวกัน
+    // ทำให้คอลัมน์แรก**หายไปเงียบ ๆ** ไม่มี error ใด ๆ ให้เห็น
+    //
+    // เจอจริงตอนเพิ่มคอลัมน์ปุ่ม: หน้าฐานข้อมูลผูกทั้งคอลัมน์ชื่อและคอลัมน์ปุ่มไว้กับ
+    // `name` ผลคือชื่อฐานข้อมูลหายไปทั้งคอลัมน์ · ทางแก้คือให้คอลัมน์ปุ่มผูกกับฟิลด์
+    // ที่ไม่ได้แสดงที่อื่น แล้วอ่านค่าที่ต้องใช้จาก `row` ที่ formatter ได้รับอยู่แล้ว
+    $problems = [];
+
+    foreach (glob(PHPCP_ROOT . '/public/assets/spa/templates/*.html') ?: [] as $file) {
+        $html = (string) file_get_contents($file);
+
+        // ตัดคอมเมนต์ HTML ออกก่อนเสมอ — `<th>` ที่ถูกคอมเมนต์ไว้ไม่ได้เรนเดอร์จริง
+        // จึงชนกับคอลัมน์ที่ใช้งานอยู่ไม่ได้ · เคยทำให้เทสต์แดงทั้งที่เทมเพลตถูกต้อง
+        $html = (string) preg_replace('/<!--.*?-->/s', '', $html);
+
+        preg_match_all('/<table\b.*?<\/table>/s', $html, $tables);
+
+        foreach ($tables[0] as $table) {
+            preg_match_all('/<th\b[^>]*data-field="([^"]+)"/', $table, $fields);
+
+            foreach (array_count_values($fields[1]) as $field => $count) {
+                if ($count > 1) {
+                    $problems[] = basename($file) . ' → ' . $field;
+                }
+            }
+        }
+    }
+
+    assertSame([], $problems, 'มี data-field ซ้ำในตารางเดียวกัน: ' . implode(', ', $problems));
+});
+
+test('หัวตารางไม่มีอักขระเกินติดมากับข้อความ', static function (): void {
+    // ตัวสร้างเทมเพลตรอบแรกเติม `></th>` ซ้ำ ทำให้หัวตารางอ่านว่า "Name>" ทุกคอลัมน์
+    // — ไม่พังอะไร แต่เห็นเต็มหน้าจอทุกหน้าที่มีตาราง
+    $problems = [];
+
+    foreach (glob(PHPCP_ROOT . '/public/assets/spa/templates/*.html') ?: [] as $file) {
+        if (preg_match('/data-i18n="([^"]*)">\1>/', (string) file_get_contents($file)) === 1) {
+            $problems[] = basename($file);
+        }
+    }
+
+    assertSame([], $problems, 'หัวตารางมี > เกิน: ' . implode(', ', $problems));
+});

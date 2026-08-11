@@ -1,0 +1,483 @@
+/* ตัวจัดการไฟล์เต็มจอ — คู่กับ templates/filemanager.html และ js/filemanager.js
+ *
+ * ใช้ตัวแปรสีของ Now.js ทั้งหมด (--color-*) ไม่ตั้งค่าสีดิบเอง — หน้านี้จึงเปลี่ยน
+ * ธีมสว่าง/มืดตามที่ผู้ใช้ตั้งไว้ใน panel โดยไม่ต้องมีชุดสีของตัวเอง
+ *
+ * ห้ามใส่ style ลงใน HTML หรือกำหนดผ่าน element.style — CSP ของ panel เป็น
+ * style-src 'self' ไม่มี 'unsafe-inline' · ค่าที่ต้องคำนวณตอนรัน (เช่นตำแหน่ง
+ * เมนูคลิกขวา) ส่งผ่าน custom property ด้วย setProperty ซึ่งไม่ใช่ inline style
+ * ในสายตา CSP เพราะเป็นการเซ็ตผ่าน CSSOM ไม่ใช่แอตทริบิวต์
+ */
+/* --------------------------------------------------------------------------
+   โครงหน้าจอ — เต็ม viewport ไม่มีการเลื่อนที่ระดับหน้า
+   -------------------------------------------------------------------------- */
+.fm {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  background: var(--color-background);
+  color: var(--color-text);
+  font-size: 0.9rem;
+}
+.fm-toolbar {
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.fm-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  flex-wrap: wrap;
+}
+.fm-toolbar-row .fm-scope {
+  min-width: 12rem;
+}
+.fm-toolbar-row .fm-find {
+  flex: 1;
+  min-width: 10rem;
+  max-width: 26rem;
+  margin-left: auto;
+}
+.fm-views {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+.fm-views .btn.is-active {
+  background: var(--color-primary);
+  color: var(--color-primary-text);
+}
+/* --------------------------------------------------------------------------
+   เส้นทางนำทาง
+   -------------------------------------------------------------------------- */
+.fm-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0 0.75rem 0.5rem;
+  flex-wrap: wrap;
+  min-height: 1.5rem;
+}
+.fm-crumbs button {
+  border: 0;
+  background: none;
+  color: var(--color-primary);
+  cursor: pointer;
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  font: inherit;
+}
+.fm-crumbs button:hover {
+  background: var(--color-surface-hover);
+}
+.fm-crumbs button:last-child {
+  color: var(--color-text);
+  font-weight: 600;
+}
+.fm-crumbs .fm-crumb-sep {
+  opacity: 0.4;
+}
+/* --------------------------------------------------------------------------
+   แถบคำสั่ง
+   -------------------------------------------------------------------------- */
+.fm-commands {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0 0.75rem 0.6rem;
+  flex-wrap: wrap;
+}
+.fm-commands .btn[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.fm-sep {
+  width: 1px;
+  height: 1.4rem;
+  background: var(--color-border);
+}
+/* --------------------------------------------------------------------------
+   ตัวเนื้อหา: แถบโฟลเดอร์ + รายการไฟล์
+   -------------------------------------------------------------------------- */
+.fm-body {
+  display: grid;
+  grid-template-columns: 16rem 1fr;
+  min-height: 0;
+}
+.fm-tree {
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface-alt, var(--color-surface));
+  overflow: auto;
+  padding: 0.5rem 0;
+}
+.fm-tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 0.75rem;
+}
+.fm-tree > ul {
+  padding-left: 0.25rem;
+}
+.fm-node {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+.fm-node > .fm-twist {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: var(--color-text);
+  width: 1.25rem;
+  padding: 0;
+  opacity: 0.6;
+}
+.fm-node > .fm-twist[hidden] {
+  display: block;
+  visibility: hidden;
+}
+.fm-node > .fm-label {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 0.25rem 0.4rem;
+  border-radius: 6px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  align-items: center;
+}
+.fm-node > .fm-label:hover {
+  background: var(--color-surface-hover);
+}
+.fm-node.is-current > .fm-label {
+  background: var(--color-primary);
+  color: var(--color-primary-text);
+}
+/* --------------------------------------------------------------------------
+   รายการไฟล์ — มุมมองรายการ
+   -------------------------------------------------------------------------- */
+.fm-pane {
+  overflow: auto;
+  outline: none;
+  position: relative;
+}
+.fm-pane table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.fm-pane th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  /* ต้องทึบ ไม่ใช่ --color-surface ซึ่งในธีมนี้เป็นสีดำโปร่ง 3% สำหรับ "เคลือบ" พื้นหลัง
+     — หัวตารางที่ลอยอยู่ต้องบังแถวที่เลื่อนผ่านใต้มัน ไม่ใช่ให้มองทะลุ */
+  background: var(--color-surface-bg);
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.fm-pane th .fm-sort {
+  opacity: 0.5;
+  font-size: 0.75rem;
+}
+.fm-pane td {
+  padding: 0.35rem 0.75rem;
+  border-bottom: 1px solid var(--color-divider, var(--color-border));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 28rem;
+}
+.fm-row {
+  cursor: default;
+  user-select: none;
+}
+.fm-row:hover {
+  background: var(--color-surface-hover);
+}
+.fm-row.is-selected {
+  background: var(--color-primary-light, var(--color-surface-hover));
+}
+.fm-row.is-cut {
+  opacity: 0.5;
+}
+.fm-name {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.fm-name .fm-icon {
+  flex: none;
+  opacity: 0.8;
+}
+.fm-mono {
+  font-family: monospace;
+}
+.fm-muted {
+  opacity: 0.6;
+}
+/* --------------------------------------------------------------------------
+   รายการไฟล์ — มุมมองไอคอน
+   -------------------------------------------------------------------------- */
+.fm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  gap: 0.5rem;
+  padding: 0.75rem;
+}
+.fm-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.75rem 0.4rem;
+  border-radius: 8px;
+  cursor: default;
+  user-select: none;
+  text-align: center;
+}
+.fm-tile:hover {
+  background: var(--color-surface-hover);
+}
+.fm-tile.is-selected {
+  background: var(--color-primary-light, var(--color-surface-hover));
+  outline: 1px solid var(--color-primary);
+}
+.fm-tile.is-cut {
+  opacity: 0.5;
+}
+.fm-tile .fm-icon {
+  font-size: 2rem;
+  opacity: 0.85;
+}
+.fm-tile .fm-tile-name {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fm-empty {
+  padding: 3rem 1rem;
+  text-align: center;
+  opacity: 0.6;
+}
+/* --------------------------------------------------------------------------
+   แถบสถานะ
+   -------------------------------------------------------------------------- */
+.fm-status {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.4rem 0.75rem;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+  font-size: 0.8rem;
+}
+.fm-disk {
+  margin-left: auto;
+  opacity: 0.75;
+}
+.fm-pager {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.fm-pager button {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: inherit;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0 0.4rem;
+  font: inherit;
+}
+.fm-pager button[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* --------------------------------------------------------------------------
+   เมนูคลิกขวา — ตำแหน่งมาจาก custom property ที่ JS เซ็ตผ่าน CSSOM
+   -------------------------------------------------------------------------- */
+.fm-context {
+  position: fixed;
+  top: var(--fm-menu-top, 0);
+  left: var(--fm-menu-left, 0);
+  z-index: 60;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  min-width: 12rem;
+  background: var(--color-surface-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.fm-context li button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.fm-context li button:hover {
+  background: var(--color-surface-hover);
+}
+.fm-context li button[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.fm-context .fm-context-sep {
+  height: 1px;
+  margin: 0.25rem 0.3rem;
+  background: var(--color-border);
+}
+/* --------------------------------------------------------------------------
+   กล่องซ้อน
+   -------------------------------------------------------------------------- */
+.fm-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  padding: 1rem;
+}
+.fm-modal[hidden] {
+  display: none;
+}
+.fm-modal-card {
+  /* เหตุผลเดียวกับหัวตาราง — กล่องซ้อนที่มองทะลุเห็นตารางข้างหลังอ่านไม่ออก */
+  background: var(--color-surface-bg);
+  border-radius: var(--phpcp-radius, 12px);
+  width: min(60rem, 100%);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.fm-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--color-border);
+}
+.fm-modal-head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fm-modal-body {
+  padding: 1rem;
+  overflow: auto;
+  min-height: 4rem;
+}
+.fm-modal-body label {
+  display: block;
+  margin-bottom: 0.35rem;
+}
+.fm-modal-body input[type="text"],
+.fm-modal-body select {
+  width: 100%;
+}
+.fm-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--color-border);
+}
+/* ตัวแก้ไขข้อความในกล่องซ้อน */
+.fm-editor {
+  width: 100%;
+  min-height: 55vh;
+  font-family: monospace;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  tab-size: 4;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}
+/* ตัวอย่างไฟล์ */
+.fm-preview {
+  display: flex;
+  justify-content: center;
+}
+.fm-preview img,
+.fm-preview video {
+  max-width: 100%;
+  max-height: 70vh;
+}
+/* ตารางคุณสมบัติ */
+.fm-props {
+  width: 100%;
+  border-collapse: collapse;
+}
+.fm-props th {
+  text-align: left;
+  padding: 0.35rem 0.75rem 0.35rem 0;
+  white-space: nowrap;
+  font-weight: 600;
+  vertical-align: top;
+}
+.fm-props td {
+  padding: 0.35rem 0;
+  word-break: break-all;
+}
+/* --------------------------------------------------------------------------
+   ชั้นลากไฟล์มาวาง
+   -------------------------------------------------------------------------- */
+.fm-drop {
+  position: fixed;
+  inset: 0;
+  z-index: 65;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(47, 111, 235, 0.15);
+  border: 3px dashed var(--color-primary);
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  pointer-events: none;
+}
+.fm-drop[hidden] {
+  display: none;
+}
+/* --------------------------------------------------------------------------
+   จอแคบ — แถบโฟลเดอร์ยุบทิ้ง เพราะรายการไฟล์สำคัญกว่า
+   -------------------------------------------------------------------------- */
+@media (max-width: 48rem) {
+  .fm-body {
+    grid-template-columns: 1fr;
+  }
+  .fm-tree {
+    display: none;
+  }
+  .fm-toolbar-row .fm-find {
+    margin-left: 0;
+    max-width: none;
+  }
+}

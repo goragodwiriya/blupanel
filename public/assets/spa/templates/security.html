@@ -1,0 +1,71 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <!--
+    คะแนนรวมอยู่ใน `meta` ของคำตอบ ซึ่ง **ไม่มี directive ใดของ Now.js ผูกถึงได้**
+    (ApiComponent ส่งเฉพาะ data เข้า context ของเทมเพลต) จึงต้องมีสคริปต์สั้น ๆ
+    อ่านมาเติมเอง · ส่วนตารางรายการตรวจเป็นการประกาศล้วนตามปกติ
+  -->
+  <main class="content" data-script="pageSecurityScore">
+    <div class="card-groups">
+      <header>
+        <div>
+          <h1 class="icon-shield" data-i18n>Security</h1>
+          <p data-i18n>Security posture measured from the real system state</p>
+        </div>
+      </header>
+
+      <div class="ggrid">
+        <div class="block4 large6 stat-card">
+          <div class="stat-header icon-shield"><span data-i18n>Score</span></div>
+          <div class="stat-value" data-score>—</div>
+          <div class="meter" data-score-meter><span></span></div>
+        </div>
+      </div>
+
+      <!--
+        ผลตรวจจากภายนอก — คนละมุมมองกับตารางข้างล่างที่ agent ตรวจจากข้างในเครื่อง
+        เนื้อหาทุกช่องมาจากเป้าหมายที่ถูกสแกน จึงผูกแบบ text ทั้งหมด (PLAN-V2 §M)
+      -->
+      <div class="content-body" data-audit-panel hidden>
+        <h2 class="icon-shield" data-i18n>External scan</h2>
+        <p data-audit-meta class="muted"></p>
+        <div class="tablebody">
+          <table class="table border fullwidth">
+            <thead>
+              <tr>
+                <th data-i18n>Severity</th>
+                <th data-i18n>Check</th>
+                <th data-i18n>Detail</th>
+              </tr>
+            </thead>
+            <tbody data-audit-rows></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="content-body">
+        <h2 data-i18n>Checks</h2>
+        <div class="tablebody">
+          <table class="table border fullwidth"
+                 data-table="securityChecks"
+                 data-source="/api/v2/security/scan"
+                 data-page-size="100">
+            <thead>
+              <tr>
+                <th data-field="title" data-i18n>{LNG_Check}</th>
+                <th data-field="status" class="center" data-cell-class="center"
+                    data-template="<span class='pill pill-${status_tone}'>{LNG_${status}}</span>"
+                    data-i18n>{LNG_Status}</th>
+                <th data-field="detail" data-empty-text="—" data-i18n>{LNG_Detail}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>

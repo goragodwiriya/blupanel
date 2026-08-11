@@ -1,0 +1,125 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * phpcp-agentd — ชั้นที่ 2 ของสถาปัตยกรรม (ARCHITECTURE §4)
+ *
+ * รันเป็น root บนเซิร์ฟเวอร์จริง และรันเป็นผู้ใช้ธรรมดาได้ในโหมด sandbox
+ * ซึ่งเป็นเหตุผลที่ทดสอบระบบทั้งหมดบนเครื่องนักพัฒนาได้โดยไม่ต้อง sudo
+ *
+ * ใช้:
+ *   phpcp-agentd                 รันค้างไว้ (systemd เรียกแบบนี้)
+ *   phpcp-agentd --check         ตรวจความพร้อมแล้วออก
+ */
+
+/**
+ * ด่านตรวจเวอร์ชัน — ต้องอยู่ก่อน require ทุกบรรทัด
+ *
+ * โค้ดส่วนที่เหลือใช้ readonly class ซึ่งมีตั้งแต่ PHP 8.2 ถ้า `php` ของระบบเก่ากว่านั้น
+ * การ require จะตายด้วย parse error ที่อ่านไม่รู้เรื่องเลยว่าต้องแก้อะไร
+ *
+ * เกิดขึ้นจริงบน Ubuntu 22.04: ตัวติดตั้งเลือก php8.4 จาก ppa:ondrej/php มาใช้อย่างถูกต้อง
+ * แต่ `php` ที่ผู้ดูแลพิมพ์เองยังชี้ไปที่ 8.1 ของดิสทริบิวชัน — คำสั่งกู้ระบบอย่าง
+ * `phpcp user:passwd` จึงใช้ไม่ได้ในจังหวะที่ต้องใช้ที่สุด
+ *
+ * ไฟล์นี้จึงหาไบนารีที่ใหม่พอแล้วเรียกตัวเองซ้ำให้ ไม่ใช่แค่บอกว่าเวอร์ชันผิด
+ * โค้ดในบล็อกนี้ต้องเขียนด้วยไวยากรณ์ที่ PHP เก่าอ่านออกด้วย
+ */
+if (PHP_VERSION_ID < 80200) {
+    $candidates = ['/usr/bin/php8.5', '/usr/bin/php8.4', '/usr/bin/php8.3', '/usr/bin/php8.2'];
+
+    foreach ($candidates as $binary) {
+        if (!is_executable($binary)) {
+            continue;
+        }
+
+        // ป้องกันการวนไม่รู้จบถ้าไบนารีที่เจอกลับเป็นตัวเดิม
+        if (realpath($binary) === realpath(PHP_BINARY)) {
+            continue;
+        }
+
+        $argv[0] = __FILE__;
+        pcntl_exec($binary, $argv);   // ถ้าไม่มี pcntl จะตกไปที่ passthru ด้านล่าง
+
+        $command = escapeshellarg($binary);
+        foreach ($argv as $arg) {
+            $command .= ' ' . escapeshellarg($arg);
+        }
+
+        passthru($command, $code);
+        exit($code);
+    }
+
+    fwrite(STDERR, sprintf(
+        "phpcp ต้องการ PHP 8.2 ขึ้นไป แต่ %s เป็นเวอร์ชัน %s\n"
+        . "และหาไบนารีที่ใหม่พอบนเครื่องนี้ไม่เจอ\n\n"
+        . "Ubuntu 22.04: sudo add-apt-repository ppa:ondrej/php && sudo apt install php8.3-cli\n",
+        PHP_BINARY,
+        PHP_VERSION,
+    ));
+    exit(1);
+}
+
+require dirname(__DIR__) . '/bootstrap.php';
+
+use Phpcp\Agent\CapabilityRegistry;
+use Phpcp\Agent\Server;
+use Phpcp\Kernel\App;
+use Phpcp\Kernel\Logger;
+
+if (PHP_SAPI !== 'cli') {
+    fwrite(STDERR, "phpcp-agentd ต้องรันจากบรรทัดคำสั่งเท่านั้น\n");
+    exit(1);
+}
+
+foreach (['pcntl', 'posix', 'sockets'] as $extension) {
+    if (!extension_loaded($extension)) {
+        fwrite(STDERR, "ต้องการ PHP extension: {$extension}\n");
+        exit(1);
+    }
+}
+
+try {
+    $app = App::boot();
+    $config = $app->config;
+    $config->paths->ensureDirectories();
+
+    $logger = new Logger(
+        $config->paths->logFile('agent'),
+        $config->string('log.level', 'info'),
+        alsoStderr: true,
+    );
+
+    $registry = new CapabilityRegistry();
+
+    if (in_array('--check', $argv, true)) {
+        printf("โหมด        : %s\n", $config->mode->label());
+        printf("socket      : %s\n", $config->agentSocket());
+        printf("ฐานข้อมูล   : %s\n", $config->paths->database());
+        printf("capability  : %d รายการ\n", count($registry->names()));
+        printf("ผู้ใช้ปัจจุบัน: uid=%d\n", posix_geteuid());
+
+        if ($config->mode->isProduction() && posix_geteuid() !== 0) {
+            fwrite(STDERR, "คำเตือน: โหมด production ต้องรันด้วยสิทธิ์ root\n");
+            exit(1);
+        }
+
+        echo "พร้อมทำงาน\n";
+        exit(0);
+    }
+
+    // โหมด production ที่ไม่ได้เป็น root จะทำงานจริงไม่ได้ ปฏิเสธตั้งแต่ต้นดีกว่าล้มกลางทาง
+    if ($config->mode->isProduction() && posix_geteuid() !== 0) {
+        fwrite(STDERR, "phpcp-agentd ในโหมด production ต้องรันด้วยสิทธิ์ root\n");
+        exit(1);
+    }
+
+    $server = new Server($config, $logger, $registry);
+
+    exit($server->run());
+} catch (\Throwable $e) {
+    fwrite(STDERR, 'phpcp-agentd เริ่มทำงานไม่สำเร็จ: ' . $e->getMessage() . "\n");
+    exit(1);
+}

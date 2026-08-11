@@ -1,0 +1,69 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <main class="content" data-component="api" data-endpoint="/api/v2/session">
+    <div class="card-groups">
+      <header>
+        <div>
+          <h1 class="icon-users" data-i18n>Users</h1>
+          <p data-i18n>Panel administrators and hosting customers share one account table</p>
+        </div>
+        <div class="header-actions" data-if="permissions['customer.manage']">
+          <a class="btn btn-primary icon-plus" href="/app/user-create" data-route="/user-create" data-i18n>Add user</a>
+        </div>
+      </header>
+      <div class="content-body">
+        <div class="tablebody">
+          <table class="table border fullwidth"
+                 data-table="users"
+                 data-source="/api/v2/users"
+                 data-default-sort="username asc"
+                 data-search-columns="username,display_name"
+                 data-page-size="25"
+                 data-row-actions='{
+                   "manage": {
+                     "title": "Manage",
+                     "className": "btn btn-success icon-edit",
+                     "method": "get",
+                     "url": "/app/user?id={id}"
+                   },
+                   "reset": {
+                     "title": "Reset password",
+                     "className": "btn btn-warning icon-lock",
+                     "method": "post",
+                     "url": "/api/v2/users/{id}/password-reset",
+                     "condition": "${!is_self}",
+                     "confirm": "Reset this account password? The current password stops working immediately."
+                   },
+                   "delete": {
+                     "title": "Delete",
+                     "className": "btn btn-sm btn-danger icon-delete",
+                     "method": "delete",
+                     "url": "/api/v2/users/{id}",
+                     "condition": "${!is_self}",
+                     "confirm": "Delete this account? Its websites must be removed or reassigned first."
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="username" data-sort="username" data-cell-class="mono" data-i18n>{LNG_Username}</th>
+                <th data-field="display_name" data-sort="display_name" data-i18n>{LNG_Name}</th>
+                <th data-field="role_label" class="center" data-cell-class="center" data-i18n>{LNG_Role}</th>
+                <!-- สถานะบริการเป็นป้ายสี — `data-template` แทนตัวจัดรูปฝั่ง JS -->
+                <th data-field="service_status" class="center" data-cell-class="center"
+                    data-template="<span class='pill pill-${service_tone}'>{LNG_${service_status}}</span>"
+                    data-i18n>{LNG_Service status}</th>
+                <th data-field="site_count" class="center" data-cell-class="center" data-i18n>{LNG_Websites}</th>
+                <th data-field="expiry_at" data-sort="expiry_at" class="center" data-cell-class="center"
+                    data-format="date" data-i18n>{LNG_Expires}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>

@@ -1,0 +1,73 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <main class="content" data-script="pageDetail" data-fallback="/cron-jobs">
+    <div class="card-groups" data-component="api" data-endpoint="/api/v2/cron-jobs/{id}"
+         data-refresh-event="phpcp:reload">
+      <header>
+        <div>
+          <h1 class="icon-clock" data-text="name">—</h1>
+          <p data-text="schedule_label"></p>
+        </div>
+        <div class="header-actions">
+          <a class="btn icon-arrow-left" href="/app/cron-jobs" data-route="/cron-jobs" data-i18n>Cron Jobs</a>
+        </div>
+      </header>
+
+      <div class="content-body">
+        <table class="table border fullwidth">
+          <tbody>
+            <tr><th data-i18n>Last run</th><td data-text="last_run_at | datetime"></td></tr>
+            <tr><th data-i18n>Exit code</th><td data-text="last_exit_code | dash"></td></tr>
+            <tr><th data-i18n>Created</th><td data-text="created_at | datetime"></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="content-body" data-if="can['manage']">
+        <h2 data-i18n>Edit</h2>
+        <form data-form="cronEdit"
+              action="/api/v2/cron-jobs/{id}"
+              method="post"
+              data-method="PATCH"
+              data-ajax-submit="true"
+              data-validate="true">
+          <fieldset>
+            <div>
+              <label for="ce_name" data-i18n>Name</label>
+              <span class="form-control icon-edit">
+                <input type="text" id="ce_name" name="name" required maxlength="100"
+                       autocomplete="off" data-attr="value:name">
+              </span>
+            </div>
+            <div>
+              <label for="ce_schedule" data-i18n>Schedule</label>
+              <span class="form-control icon-clock">
+                <input type="text" id="ce_schedule" name="schedule" required maxlength="100"
+                       autocomplete="off" data-attr="value:schedule">
+              </span>
+              <div class="comment" data-i18n>Five fields in cron format: minute hour day month weekday</div>
+            </div>
+            <div>
+              <label for="ce_command" data-i18n>Command</label>
+              <span class="form-control icon-keyboard">
+                <input type="text" id="ce_command" name="command" required maxlength="500"
+                       autocomplete="off" data-attr="value:command">
+              </span>
+            </div>
+            <div>
+              <input type="checkbox" class="switch" id="ce_enabled" name="enabled" data-checked="enabled">
+              <label for="ce_enabled" data-i18n>Enabled</label>
+            </div>
+          </fieldset>
+
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
+          </fieldset>
+        </form>
+      </div>
+    </div>
+  </main>
+</div>

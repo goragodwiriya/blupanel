@@ -1,0 +1,261 @@
+<?php
+
+declare(strict_types=1);
+
+/**
+ * การเขียนไฟล์ config — จุดที่พลาดแล้วเว็บทั้งเครื่องดับ (ARCHITECTURE §10)
+ *
+ * ครอบคลุมสองความเสี่ยง:
+ *   1. ค่าที่ผู้ใช้ควบคุมได้แทรก directive เข้าไปในไฟล์ config (เทียบเท่า command injection)
+ *   2. config ที่ผิดถูกนำไปใช้จริงโดยไม่ผ่านการตรวจ
+ */
+
+use Phpcp\Agent\CapabilityRegistry;
+use Phpcp\Agent\Executor\SandboxExecutor;
+use Phpcp\Agent\ValidationError;
+use Phpcp\Domain\Site;
+use Phpcp\Domain\UserAccount;
+use Phpcp\Driver\ConfigTransaction;
+use Phpcp\Driver\Php\FpmManager;
+use Phpcp\Driver\Template;
+use Phpcp\Driver\WebServer\ApacheDriver;
+
+group('ConfigWrite — เขียนไฟล์ config อย่างปลอดภัยและย้อนกลับได้');
+
+function testTemplates(): Template
+{
+    return new Template(PHPCP_ROOT . '/templates');
+}
+
+function testSite(array $overrides = []): Site
+{
+    return new Site(
+        id: $overrides['id'] ?? 42,
+        name: $overrides['name'] ?? 'เว็บทดสอบ',
+        domain: $overrides['domain'] ?? 'example.test',
+        owner: new UserAccount(7, $overrides['systemUser'] ?? 'sitefiles'),
+        phpVersion: $overrides['phpVersion'] ?? '8.4',
+        status: $overrides['status'] ?? 'active',
+        aliases: $overrides['aliases'] ?? ['www.example.test'],
+    );
+}
+
+test('Template ปฏิเสธค่าที่มีขึ้นบรรทัดใหม่ (แทรก directive)', static function (): void {
+    $payloads = [
+        "example.test\n    Require all granted",
+        "example.test\r\nServerAlias evil.test",
+        "example.test\n</VirtualHost>\n<VirtualHost *:80>",
+        "value\x00null",
+        "value\x1bescape",
+    ];
+
+    foreach ($payloads as $payload) {
+        assertRejects(
+            ValidationError::class,
+            static fn () => testTemplates()->render('apache/vhost.conf.tpl', [
+                'DOMAIN' => $payload,
+                'SERVER_ALIASES' => Template::lines('ServerAlias', []),
+                'DOCROOT' => '/srv/x/public',
+                'FPM_SOCKET' => '/run/php/x.sock',
+                'ERROR_LOG' => '/srv/x/logs/error.log',
+                'ACCESS_LOG' => '/srv/x/logs/access.log',
+                'SITE_USER' => 'web_1',
+                'PHP_VERSION' => '8.4',
+                'HTTP_PORT' => 80,
+                'GENERATED_AT' => 'now',
+            ]),
+            'ต้องปฏิเสธค่าที่แทรกบรรทัดใหม่เข้ามาได้',
+        );
+    }
+});
+
+test('Template ปฏิเสธเมื่อมี placeholder ที่ไม่ได้กำหนดค่า', static function (): void {
+    assertRejects(
+        RuntimeException::class,
+        static fn () => testTemplates()->render('apache/vhost.conf.tpl', ['DOMAIN' => 'x.test']),
+        'เทมเพลตที่ยังมี {{...}} ค้างต้องไม่ถูกเขียนออกไป',
+    );
+});
+
+test('Template::lines ตรวจทุกบรรทัดที่สร้าง', static function (): void {
+    assertRejects(
+        ValidationError::class,
+        static fn () => Template::lines('ServerAlias', ["ok.test", "bad.test\n  Require all denied"]),
+        'รายการหลายบรรทัดต้องถูกตรวจทีละบรรทัด',
+    );
+
+    $safe = Template::lines('ServerAlias', ['a.test', 'b.test']);
+    assertSame(
+        "    ServerAlias a.test\n    ServerAlias b.test",
+        $safe->text,
+        'ค่าที่ถูกต้องต้องสร้างออกมาได้ตามรูปแบบ',
+    );
+});
+
+test('vhost ที่สร้างมี directive ที่จำเป็นครบและไม่มี placeholder ตกค้าง', static function (): void {
+    $executor = new SandboxExecutor(sys_get_temp_dir() . '/phpcp-test-' . getmypid());
+    $driver = new ApacheDriver(testTemplates());
+
+    $vhost = $driver->renderVhost(testSite(), $executor);
+
+    foreach (['ServerName example.test', 'ServerAlias www.example.test', 'DocumentRoot',
+        'SetHandler "proxy:unix:', 'ErrorLog', 'CustomLog'] as $needle) {
+        assertTrue(str_contains($vhost, $needle), "vhost ต้องมี {$needle}");
+    }
+
+    assertTrue(!str_contains($vhost, '{{'), 'vhost ต้องไม่มี placeholder ตกค้าง');
+
+    // socket ต้องผูกกับเวอร์ชัน PHP — จุดที่ทำให้สลับเวอร์ชันต่อเว็บไซต์ได้
+    assertTrue(str_contains($vhost, '-8.4.sock'), 'socket ต้องระบุเวอร์ชัน PHP');
+
+    $vhost74 = $driver->renderVhost(testSite(['phpVersion' => '7.4']), $executor);
+    assertTrue(str_contains($vhost74, '-7.4.sock'), 'เปลี่ยนเวอร์ชันแล้ว socket ต้องเปลี่ยนตาม');
+});
+
+test('vhost ของเว็บที่ถูกระงับต้องไม่ส่งงานให้ PHP เลย', static function (): void {
+    $executor = new SandboxExecutor(sys_get_temp_dir() . '/phpcp-test-' . getmypid());
+    $driver = new ApacheDriver(testTemplates());
+
+    $vhost = $driver->renderVhost(testSite(['status' => 'suspended']), $executor);
+
+    assertTrue(!str_contains($vhost, 'proxy:unix:'), 'เว็บที่ถูกระงับต้องไม่มี handler ของ PHP');
+    assertTrue(str_contains($vhost, '503'), 'เว็บที่ถูกระงับต้องตอบ 503');
+});
+
+test('pool ของ FPM ต้องมีมาตรการแยกเว็บไซต์ครบ', static function (): void {
+    $executor = new SandboxExecutor(sys_get_temp_dir() . '/phpcp-test-' . getmypid());
+    $pool = (new FpmManager(testTemplates()))->renderPool(testSite(), 'www-data', $executor);
+
+    // สองบรรทัดนี้คือกลไกที่กันไม่ให้เว็บที่ถูกแฮ็กอ่านไฟล์เว็บอื่นหรือยกระดับเป็น root
+    assertTrue(str_contains($pool, 'open_basedir'), 'pool ต้องกำหนด open_basedir');
+    assertTrue(str_contains($pool, 'disable_functions'), 'pool ต้องปิด shell function');
+
+    foreach (['exec', 'shell_exec', 'proc_open', 'passthru', 'system', 'pcntl_exec'] as $dangerous) {
+        assertTrue(
+            preg_match('/disable_functions.*\b' . preg_quote($dangerous, '/') . '\b/', $pool) === 1,
+            "disable_functions ต้องมี {$dangerous}",
+        );
+    }
+
+    assertTrue(str_contains($pool, 'user  = sitefiles'), 'pool ต้องรันด้วย uid ของเจ้าของเว็บ');
+    assertTrue(str_contains($pool, 'listen.mode  = 0660'), 'socket ต้องไม่เปิดให้ผู้ใช้อื่นในเครื่องต่อได้');
+});
+
+test('ConfigTransaction คืนไฟล์เดิมเมื่อการตรวจไม่ผ่าน', static function (): void {
+    $prefix = sys_get_temp_dir() . '/phpcp-tx-' . getmypid();
+    $executor = new SandboxExecutor($prefix);
+
+    $path = '/etc/phpcp-test/demo.conf';
+    $resolved = $executor->path($path);
+
+    $executor->writeFile($resolved, "เนื้อหาเดิม\n");
+
+    $transaction = new ConfigTransaction($executor);
+    $transaction->write($path, "เนื้อหาใหม่ที่ผิด\n");
+
+    assertSame("เนื้อหาใหม่ที่ผิด\n", $executor->readFile($resolved), 'ระหว่างทางต้องเห็นเนื้อหาใหม่');
+
+    assertRejects(
+        \Phpcp\Agent\ExecutionFailed::class,
+        static fn () => $transaction->commit(static fn (): array => [false, 'จำลองว่าตรวจไม่ผ่าน']),
+        'commit ที่ตรวจไม่ผ่านต้องโยน error',
+    );
+
+    assertSame("เนื้อหาเดิม\n", $executor->readFile($resolved), 'ต้องคืนเนื้อหาเดิมกลับมาครบ');
+
+    @unlink($resolved);
+    @rmdir(dirname($resolved));
+});
+
+test('ConfigTransaction ลบไฟล์ที่เพิ่งสร้างเมื่อย้อนกลับ', static function (): void {
+    $prefix = sys_get_temp_dir() . '/phpcp-tx2-' . getmypid();
+    $executor = new SandboxExecutor($prefix);
+
+    $path = '/etc/phpcp-test/new.conf';
+    $resolved = $executor->path($path);
+
+    $transaction = new ConfigTransaction($executor);
+    $transaction->write($path, "ไฟล์ใหม่\n");
+    assertTrue($executor->exists($resolved), 'ไฟล์ต้องถูกสร้างระหว่างทาง');
+
+    $transaction->rollback();
+
+    assertTrue(!$executor->exists($resolved), 'ไฟล์ที่เดิมไม่มีต้องถูกลบทิ้งตอนย้อนกลับ');
+});
+
+test('site.create ปฏิเสธชื่อโดเมนที่ผิดรูปแบบ', static function (): void {
+    $capability = (new CapabilityRegistry())->resolve('site.create');
+
+    $bad = [
+        'ไม่ใช่โดเมน', '-bad.test', 'bad-.test', 'no-tld', '..test',
+        'a.test/../../etc', "a.test\nServerAlias evil", 'a.test;rm -rf /',
+        str_repeat('a', 300) . '.test',
+    ];
+
+    foreach ($bad as $domain) {
+        assertRejects(
+            ValidationError::class,
+            static fn () => $capability->validate(['domain' => $domain, 'php_version' => '8.4']),
+            "ต้องปฏิเสธโดเมน: {$domain}",
+        );
+    }
+
+    $clean = $capability->validate(['domain' => 'Good.Example.TEST', 'php_version' => '8.4']);
+    assertSame('good.example.test', $clean['domain'], 'โดเมนต้องถูกแปลงเป็นตัวพิมพ์เล็ก');
+});
+
+test('site.create ปฏิเสธเวอร์ชัน PHP ที่ระบบไม่รู้จัก', static function (): void {
+    $capability = (new CapabilityRegistry())->resolve('site.create');
+
+    foreach (['9.9', '8', 'latest', '8.4; rm -rf /', '../8.4'] as $version) {
+        assertRejects(
+            ValidationError::class,
+            static fn () => $capability->validate(['domain' => 'ok.test', 'php_version' => $version]),
+            "ต้องปฏิเสธเวอร์ชัน: {$version}",
+        );
+    }
+});
+
+test('site.delete ต้องได้ชื่อโดเมนยืนยันที่ถูกต้อง', static function (): void {
+    $capability = (new CapabilityRegistry())->resolve('site.delete');
+
+    assertRejects(
+        ValidationError::class,
+        static fn () => $capability->validate(['site_id' => 1]),
+        'ต้องบังคับให้ยืนยันด้วยชื่อโดเมน',
+    );
+
+    $clean = $capability->validate(['site_id' => 1, 'confirm_domain' => 'x.test']);
+    assertSame('x.test', $clean['confirm_domain'], 'ชื่อยืนยันที่ถูกต้องต้องผ่าน');
+});
+
+test('เส้นทางของเว็บไซต์อนุมานจากเจ้าของและโดเมนอย่างสม่ำเสมอ', static function (): void {
+    $site = testSite();
+
+    assertSame('/srv/phpcp/users/sitefiles/domains/example.test', $site->root(), 'บ้านของเว็บไซต์');
+    assertSame('/srv/phpcp/users/sitefiles/domains/example.test/public', $site->docroot(), 'docroot');
+
+    // socket และไฟล์ pool ผูกกับ (เจ้าของ × เวอร์ชัน) ไม่ใช่กับโดเมน — เว็บหลายแห่ง
+    // ของเจ้าของคนเดียวกันจึงใช้ pool ร่วมกันได้
+    assertSame('/run/php/phpcp-sitefiles-8.4.sock', $site->fpmSocket(), 'socket ผูกกับเจ้าของและเวอร์ชัน');
+    assertSame('/etc/php/8.4/fpm/pool.d/phpcp-sitefiles.conf', $site->fpmPoolFile(), 'ไฟล์ pool');
+
+    // เปลี่ยนเวอร์ชันแล้ว socket กับ pool ต้องย้ายตามกันทั้งคู่ ไม่ใช่ย้ายอย่างเดียว
+    $switched = $site->withPhpVersion('7.4');
+    assertSame('/run/php/phpcp-sitefiles-7.4.sock', $switched->fpmSocket(), 'socket ย้ายตามเวอร์ชัน');
+    assertSame('/etc/php/7.4/fpm/pool.d/phpcp-sitefiles.conf', $switched->fpmPoolFile(), 'pool ย้ายตามเวอร์ชัน');
+});
+
+test('ชื่อบัญชีระบบต้องอยู่ในรูปแบบที่ปลอดภัยพอจะเป็นชื่อโฟลเดอร์และชื่อ pool', static function (): void {
+    // ค่านี้ไปโผล่ในเส้นทางไฟล์และไฟล์ config ที่รันด้วยสิทธิ์ root — ต้องกันตั้งแต่ต้นทาง
+    // ตัวพิมพ์ใหญ่และจุดถูกห้ามด้วย เพราะทำให้ chown, quota และเครื่องมือจัดการเมลตีความผิด
+    foreach (['root;id', '../evil', 'Web42', 'a', 'has.dot', 'has space', '9start', ''] as $bad) {
+        assertRejects(
+            InvalidArgumentException::class,
+            static fn () => UserAccount::assertSystemUser($bad),
+            "ต้องปฏิเสธชื่อบัญชี: {$bad}",
+        );
+    }
+
+    assertSame('customer_a', UserAccount::assertSystemUser('customer_a'), 'รูปแบบที่ถูกต้องต้องผ่าน');
+});

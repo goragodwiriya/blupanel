@@ -1,0 +1,79 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <main class="content">
+    <div class="card-groups">
+      <header>
+        <div>
+          <h1 class="icon-stats" data-i18n>Services</h1>
+          <p data-i18n>System services this panel manages</p>
+        </div>
+      </header>
+
+      <div class="content-body">
+        <div class="tablebody">
+          <!--
+            data-row-actions ไม่รองรับข้อความยืนยันที่แทรกค่าต่อแถวได้ (confirm เป็น
+            ข้อความคงที่หนึ่งชุดสำหรับทุกแถวใน JSON นี้) — คอลัมน์ "กระทบ" จึงต้องแสดง
+            ตลอดเวลาแทนที่จะไปโผล่แค่ตอนกดยืนยัน ผู้ดูแลเห็นก่อนกดอยู่แล้วโดยไม่ต้องกด
+          -->
+          <table class="table border fullwidth"
+                 data-table="services"
+                 data-source="/api/v2/services"
+                 data-default-sort="label asc"
+                 data-page-size="50"
+                 data-row-actions='{
+                   "start": {
+                     "title": "Start",
+                     "className": "btn icon-play",
+                     "method": "post",
+                     "url": "/api/v2/services/{unit}/actions",
+                     "params": {"action": "start"},
+                     "condition": "${can_manage}"
+                   },
+                   "stop": {
+                     "title": "Stop",
+                     "className": "btn icon-ban",
+                     "method": "post",
+                     "url": "/api/v2/services/{unit}/actions",
+                     "params": {"action": "stop"},
+                     "condition": "${can_manage}",
+                     "confirm": "Stop this service? Check the Affects column for websites this takes offline."
+                   },
+                   "restart": {
+                     "title": "Restart",
+                     "className": "btn icon-history",
+                     "method": "post",
+                     "url": "/api/v2/services/{unit}/actions",
+                     "params": {"action": "restart"},
+                     "condition": "${can_manage}",
+                     "confirm": "Restart this service? Check the Affects column for websites this takes offline briefly."
+                   },
+                   "reload": {
+                     "title": "Reload",
+                     "className": "btn icon-refresh",
+                     "method": "post",
+                     "url": "/api/v2/services/{unit}/actions",
+                     "params": {"action": "reload"},
+                     "condition": "${can_manage}"
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="label" data-i18n>{LNG_Service}</th>
+                <th data-field="unit" data-cell-class="mono" data-i18n>{LNG_Unit}</th>
+                <th data-field="status" class="center" data-cell-class="center"
+                    data-template="<span class='pill pill-${status_tone}'>{LNG_${status}}</span>"
+                    data-i18n>{LNG_State}</th>
+                <th data-field="affects_label" data-i18n>{LNG_Affects}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
