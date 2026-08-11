@@ -89,11 +89,7 @@ final class SiteRemoveDomain extends SiteCapability
 
         $provisioner = $this->provisioner($context);
         $transaction = new ConfigTransaction($executor);
-        $transaction->write(
-            $provisioner->webserver()->vhostPath($updated),
-            $provisioner->webserver()->renderVhost($updated, $executor),
-            0644,
-        );
+        $provisioner->stageVhost($transaction, $updated, $executor);
         $transaction->commit(static fn (): array => $provisioner->webserver()->testConfig($executor));
         $provisioner->webserver()->reload($executor);
 

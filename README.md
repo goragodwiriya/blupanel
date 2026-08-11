@@ -1,4 +1,4 @@
-# phpcp — PHP Server Control Panel
+# BluPanel — PHP Server Control Panel
 
 แผงควบคุมโฮสติ้งสำหรับเซิร์ฟเวอร์ Linux ที่ใช้รันเว็บ PHP เป็นหลัก — จัดการเว็บไซต์ โดเมน DNS
 ฐานข้อมูล ใบรับรอง SSL ผู้ใช้ การสำรองข้อมูล และบริการของระบบ จากหน้าจอเดียวที่เป็นภาษาไทย
@@ -6,8 +6,8 @@
 ติดตั้งด้วยคำสั่งเดียวบนเครื่องเปล่า แล้วได้ระบบที่พร้อมสร้างเว็บไซต์พร้อม HTTPS ได้ทันที
 
 ```bash
-git clone https://github.com/goragodwiriya/phpcp.git
-cd phpcp
+git clone https://github.com/goragodwiriya/blupanel.git
+cd blupanel
 sudo ./install.sh
 ```
 
@@ -20,7 +20,7 @@ sudo ./install.sh
 
 | ด้าน | ความสามารถ |
 |---|---|
-| เว็บไซต์ | สร้าง/ลบ/พักการใช้งาน · Apache หรือ nginx · PHP หลายเวอร์ชันต่อเว็บ · Domain Pointer |
+| เว็บไซต์ | สร้าง/ลบ/พักการใช้งาน · Apache, nginx หรือ nginx+Apache (ได้ `.htaccess` บน nginx) · PHP หลายเวอร์ชันต่อเว็บ · Domain Pointer |
 | โดเมนและ DNS | โดเมนหลัก/ย่อย/alias/wildcard · เขียน zone เข้า BIND9 จริงพร้อมตรวจ `named-checkzone` ก่อนใช้ |
 | SSL | Let's Encrypt (webroot และ DNS-01 สำหรับ wildcard) · self-signed · ต่ออายุอัตโนมัติ |
 | ฐานข้อมูล | MariaDB — สร้างฐาน/ผู้ใช้/สิทธิ์ · เข้า phpMyAdmin ต่อจาก panel ได้โดยไม่ต้องพิมพ์รหัส |

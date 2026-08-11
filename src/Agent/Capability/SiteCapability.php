@@ -17,6 +17,7 @@ use Phpcp\Driver\SiteProvisioner;
 use Phpcp\Driver\Template;
 use Phpcp\Driver\WebServer\ApacheDriver;
 use Phpcp\Driver\WebServer\NginxDriver;
+use Phpcp\Driver\WebServer\NginxProxyDriver;
 use Phpcp\Driver\WebServer\WebServerDriver;
 use Phpcp\Security\Permissions;
 use Phpcp\Support\Validator;
@@ -54,6 +55,8 @@ abstract class SiteCapability implements Capability
     {
         return match ($context->config->string('webserver', 'apache')) {
             'nginx' => new NginxDriver($templates),
+            // nginx ชั้นหน้า + Apache ชั้นหลัง — โหมดเดียวที่ .htaccess ใช้งานได้บน nginx
+            'nginx-proxy' => new NginxProxyDriver($templates),
             default => new ApacheDriver($templates),
         };
     }

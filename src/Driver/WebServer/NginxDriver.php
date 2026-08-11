@@ -80,6 +80,18 @@ final class NginxDriver implements WebServerDriver
         return self::SITES_DIR . '/phpcp-' . ($site->hasWildcard() ? 'zz-wildcard-' : '') . $site->domain . '.conf';
     }
 
+    /** @return list<string> */
+    public function vhostPaths(Site $site): array
+    {
+        return [$this->vhostPath($site)];
+    }
+
+    /** @return array<string,string> */
+    public function vhostFiles(Site $site, Executor $executor): array
+    {
+        return [$this->vhostPath($site) => $this->renderVhost($site, $executor)];
+    }
+
     public function renderVhost(Site $site, Executor $executor): string
     {
         // nginx ใส่ทุกโดเมนไว้ใน server_name บรรทัดเดียว ต่างจาก ServerAlias ของ Apache

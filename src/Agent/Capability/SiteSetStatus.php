@@ -69,11 +69,7 @@ abstract class SiteSetStatus extends SiteCapability
         } else {
             // ระงับ: vhost ตอบ 503 และไม่มี pool ให้เว็บทำงานได้อีก
             $transaction->delete($updated->fpmPoolFile());
-            $transaction->write(
-                $provisioner->webserver()->vhostPath($updated),
-                $provisioner->webserver()->renderVhost($updated, $executor),
-                0644,
-            );
+            $provisioner->stageVhost($transaction, $updated, $executor);
         }
 
         $transaction->commit(static fn (): array => $provisioner->validate($executor, $updated));

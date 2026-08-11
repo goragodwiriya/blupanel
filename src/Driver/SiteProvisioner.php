@@ -201,11 +201,21 @@ final class SiteProvisioner
             0644,
         );
 
-        $tx->write(
-            $this->webserver->vhostPath($site),
-            $this->webserver->renderVhost($site, $executor),
-            0644,
-        );
+        $this->stageVhost($tx, $site, $executor);
+    }
+
+    /**
+     * เขียนไฟล์ตั้งค่าของเว็บไซต์ลงทรานแซกชัน — ทุกไฟล์ที่เว็บนี้ต้องมี
+     *
+     * แยกเป็นเมธอดเพราะมีผู้เรียกหกที่ (สร้างเว็บ · เพิ่ม/ลบ/ตั้งโดเมน · พัก/เปิดใช้งาน)
+     * และตั้งแต่มีโหมด nginx-proxy จำนวนไฟล์ต่อเว็บไม่ใช่หนึ่งเสมอไปอีกแล้ว
+     * ถ้าปล่อยให้แต่ละที่วนเอง วันหนึ่งจะมีที่ที่ลืมเขียนไฟล์ชั้นหลัง
+     */
+    public function stageVhost(ConfigTransaction $tx, Site $site, Executor $executor): void
+    {
+        foreach ($this->webserver->vhostFiles($site, $executor) as $path => $contents) {
+            $tx->write($path, $contents, 0644);
+        }
     }
 
     /**
@@ -260,7 +270,9 @@ final class SiteProvisioner
         array $allPhpVersions,
         array $versionsStillUsed = [],
     ): void {
-        $tx->delete($this->webserver->vhostPath($site));
+        foreach ($this->webserver->vhostPaths($site) as $path) {
+            $tx->delete($path);
+        }
 
         // ลบ pool ของทุกเวอร์ชันที่ไม่ได้ใช้แล้ว เผื่อเคยสลับเวอร์ชันจนมีไฟล์ค้าง
         foreach ($allPhpVersions as $version) {

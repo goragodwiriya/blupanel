@@ -93,3 +93,8 @@ jobs:
       # → PHP รันด้วย uid ของลูกค้า → หน้า panel และ API ตอบได้
       - name: เกณฑ์รับงานปลายทาง
         run: docker run --rm phpcp:ci bash /usr/local/src/phpcp/docker/acceptance.sh
+
+      # โหมด nginx-proxy พิสูจน์ได้ทางเดียวคือยิงคำขอจริงผ่าน nginx แล้วดูว่ากฎใน
+      # .htaccess มีผลไหม — เทสต์ที่อ่านไฟล์ config ยืนยันได้แค่ว่า "เขียนถูกรูปแบบ"
+      - name: เกณฑ์รับงาน nginx-proxy (.htaccess ต้องทำงานจริง)
+        run: docker run --rm phpcp:ci bash /usr/local/src/phpcp/docker/acceptance-proxy.sh
