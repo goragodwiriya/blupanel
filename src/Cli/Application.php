@@ -330,6 +330,9 @@ final class Application
             // ปกติทุกอย่าง แต่กลไกคืนค่าอัตโนมัติของ SSH/firewall หายไปเฉย ๆ
             // ผู้ดูแลจะรู้ตัวตอนที่เปลี่ยนพอร์ต SSH ผิดแล้วไม่มีอะไรคืนค่าให้เท่านั้น
             $problems += $this->checkScheduler($app);
+
+            // 7.1 ไฟล์ตั้งค่าของเว็บไซต์ตรงกับเว็บเซิร์ฟเวอร์ที่เลือกไว้หรือไม่
+            $problems += $this->checkWebserverConfigs($app);
         }
 
         // 8. ไฟล์ของ Now.js ที่ commit เข้ามาในโปรเจกต์ (การตัดสินใจ N8)
@@ -441,6 +444,72 @@ final class Application
      * เกณฑ์ "ค้างเกิน 5 นาที" มาจากคาบการทำงานจริง (ทุกนาที) บวกที่ว่างพอสำหรับงานที่ยาว
      * อย่าง disk.usage บนเครื่องที่มีเว็บเยอะ — ถ้าค้างนานกว่านี้แปลว่าไม่ได้ทำงานจริง
      */
+    /**
+     * ไฟล์ vhost ของทุกเว็บต้องตรงกับโหมดเว็บเซิร์ฟเวอร์ที่ตั้งไว้
+     *
+     * **สภาพที่ตรวจจับ:** เปลี่ยนโหมดแล้วค่าระดับเครื่องถูกเขียน (ports.conf, map)
+     * แต่ vhost รายเว็บไม่ได้ถูกเขียนตาม — เกิดได้เมื่อการสลับล้มกลางทางหรือมีคน
+     * แก้ค่าในไฟล์เองแล้วไม่ได้รัน `sites:rebuild`
+     *
+     * อาการที่ผู้ดูแลเห็นคือ **เว็บลูกค้าตอบ 403/404 ทั้งเครื่อง** โดยที่ทุกหน้าจอ
+     * ของ panel ยังปกติดีทุกอย่าง ไม่มีอะไรฟ้องเลยสักจุด (เจอจริงเมื่อ 2026-08-11)
+     *
+     * @return int จำนวนปัญหาที่พบ
+     */
+    private function checkWebserverConfigs(App $app): int
+    {
+        $sites = new \Phpcp\Domain\SiteRepository($app->db());
+        $rows = $sites->listWithCounts();
+
+        if ($rows === []) {
+            return 0;
+        }
+
+        $mode = trim((new \Phpcp\Domain\SettingsRepository($app->db()))->get('webserver.mode'));
+        if ($mode === '') {
+            $mode = $app->config->string('webserver', 'apache');
+        }
+
+        $templates = new \Phpcp\Driver\Template($app->config->paths->templates());
+        $driver = match ($mode) {
+            'nginx' => new \Phpcp\Driver\WebServer\NginxDriver($templates),
+            'nginx-proxy' => new \Phpcp\Driver\WebServer\NginxProxyDriver($templates),
+            default => new \Phpcp\Driver\WebServer\ApacheDriver($templates),
+        };
+
+        $missing = [];
+
+        foreach ($rows as $row) {
+            $site = $sites->load((int) $row['id']);
+            if ($site === null) {
+                continue;
+            }
+
+            foreach ($driver->vhostPaths($site) as $path) {
+                if (!is_file($path)) {
+                    $missing[] = $site->domain;
+                    break;
+                }
+            }
+        }
+
+        if ($missing === []) {
+            $this->out->ok(sprintf('ไฟล์ตั้งค่าของเว็บไซต์ครบตามโหมด %s (%d เว็บ)', $mode, count($rows)));
+
+            return 0;
+        }
+
+        $this->out->fail(sprintf(
+            'เว็บไซต์ %d จาก %d ยังไม่มีไฟล์ตั้งค่าของโหมด %s (%s) — รัน `phpcp sites:rebuild`',
+            count($missing),
+            count($rows),
+            $mode,
+            implode(', ', array_slice($missing, 0, 3)) . (count($missing) > 3 ? ' …' : ''),
+        ));
+
+        return 1;
+    }
+
     private function checkScheduler(App $app): int
     {
         $problems = 0;
