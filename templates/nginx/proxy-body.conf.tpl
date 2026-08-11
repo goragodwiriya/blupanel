@@ -1,15 +1,5 @@
-
-    # ส่งต่อ **ทุกคำขอ** ไปยัง Apache รวมทั้งไฟล์ static
-    #
-    # จงใจไม่ให้ nginx เสิร์ฟไฟล์ static เองทั้งที่เร็วกว่า เพราะ `.htaccess` คุมไฟล์
-    # static ด้วย (Require all denied, auth_basic, RedirectMatch, Header set ฯลฯ)
-    # ถ้า nginx ตอบไฟล์เองกฎเหล่านั้นจะถูกข้ามไปเงียบ ๆ — ลูกค้าที่ป้องกันโฟลเดอร์
-    # ด้วย .htaccess จะกลายเป็นเปิดให้ทุกคนเข้าถึงโดยไม่มีอะไรบอก ซึ่งเป็นช่องโหว่
-    # ที่เกิดจากตัว panel เอง ไม่ใช่จากค่าที่ลูกค้าตั้ง
-    #
-    # สิ่งที่ยังได้จาก nginx ชั้นหน้า: จบ TLS · รับ-ส่งกับผู้ใช้ที่เน็ตช้าแทน Apache
-    # (Apache หนึ่ง process ต่อหนึ่งการเชื่อมต่อ nginx จึงกันไม่ให้ worker ถูกกินหมด)
-    # · จำกัดขนาด body · เป็นจุดเดียวที่คุม rate limit ทั้งเครื่อง
+{{FORCE_PROXY_DIRS}}{{STATIC_SECTION}}
+    # คำขอที่เหลือทั้งหมดส่งให้ Apache — ที่นั่นคือที่เดียวที่อ่าน `.htaccess` ได้
     location / {
         proxy_pass http://{{BACKEND}};
 
@@ -39,4 +29,20 @@
 
         proxy_buffering on;
         proxy_buffer_size 8k;
+    }
+
+    # ปลายทางของ try_files เมื่อไฟล์ไม่มีอยู่จริง — ให้ Apache ตัดสินด้วยกฎ rewrite
+    # ของลูกค้า ไม่ใช่ให้ nginx ตอบ 404 ไปเอง
+    location @backend {
+        proxy_pass http://{{BACKEND}};
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto {{SCHEME}};
+        proxy_set_header X-Forwarded-Host  $host;
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
     }

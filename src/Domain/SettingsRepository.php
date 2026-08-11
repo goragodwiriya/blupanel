@@ -66,6 +66,16 @@ final class SettingsRepository
         'mail.relay_user' => 'string',
         'mail.relay_password' => 'secret',
         'mail.relay_tls' => 'bool',
+
+        // เว็บเซิร์ฟเวอร์ที่โฮสต์เว็บของลูกค้า — ย้ายมาจาก config.php เพื่อให้เปลี่ยนได้
+        // จากหน้าจอ · ค่าว่าง = ใช้ค่าใน config.php (เครื่องที่ติดตั้งไว้ก่อนหน้านี้)
+        'webserver.mode' => 'string',       // 'apache' | 'nginx' | 'nginx-proxy'
+        'webserver.static_by_nginx' => 'bool',
+
+        // DNS — ต้องตั้งจากหน้าจอได้ ไม่ใช่ให้ผู้ดูแลไปแก้ไฟล์เอง
+        'dns.enabled' => 'bool',
+        'dns.nameservers' => 'string',      // คั่นด้วยคอมมา เช่น ns1.example.com,ns2.example.com
+        'dns.soa_email' => 'string',
     ];
 
     /** ค่าเริ่มต้นเมื่อยังไม่เคยตั้ง */
@@ -93,7 +103,34 @@ final class SettingsRepository
         'mail.relay_user' => '',
         'mail.relay_password' => '',
         'mail.relay_tls' => '1',
+
+        // ว่าง = ยังไม่เคยเลือกจากหน้าจอ ให้ถอยไปอ่านค่าใน config.php ตามเดิม
+        'webserver.mode' => '',
+        // ให้ nginx ตอบไฟล์ static เองเป็นค่าเริ่มต้น — นั่นคือเหตุผลที่มี nginx อยู่
+        'webserver.static_by_nginx' => '1',
+        'dns.enabled' => '0',
+        'dns.nameservers' => '',
+        'dns.soa_email' => '',
     ];
+
+    /**
+     * คีย์ที่ฟอร์มตั้งค่าทั่วไปแก้ได้ — **ไม่รวม `webserver.*`**
+     *
+     * ค่าของเว็บเซิร์ฟเวอร์เปลี่ยนแล้วต้องเขียนไฟล์ vhost ใหม่ทั้งเครื่องและรีสตาร์ต
+     * บริการตามลำดับที่ถูกต้อง · ถ้ายอมให้ PATCH /settings เขียนค่านี้ได้ตรง ๆ
+     * จะได้เครื่องที่ "ค่าตั้งบอกว่า nginx แต่ไฟล์บนดิสก์ยังเป็นของ Apache"
+     * ซึ่งเป็นสภาพที่ผู้ดูแลมองไม่ออกว่าอะไรเป็นอะไร — ต้องผ่าน `webserver.apply` เท่านั้น
+     *
+     * @return array<string,string>
+     */
+    public static function webEditableKeys(): array
+    {
+        return array_filter(
+            self::keys(),
+            static fn (string $key): bool => !str_starts_with($key, 'webserver.'),
+            ARRAY_FILTER_USE_KEY,
+        );
+    }
 
     public function __construct(private readonly Db $db)
     {

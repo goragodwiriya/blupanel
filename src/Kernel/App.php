@@ -50,7 +50,22 @@ final class App
 
     public function db(): Db
     {
-        return $this->db ??= new Db($this->config->paths->database());
+        if ($this->db === null) {
+            $this->db = new Db($this->config->paths->database());
+
+            // ค่าที่ตั้งจากหน้าจอต้องทับค่าใน config.php — ทำตรงนี้เพราะเป็นจุดแรกสุด
+            // ที่ฐานข้อมูลพร้อมใช้ · ตารางยังไม่มี (ก่อน migrate) ก็ข้ามไปเงียบ ๆ
+            // แล้วใช้ค่าจากไฟล์ตามเดิม ไม่ใช่ล้มทั้งระบบ
+            try {
+                Config::useStoredSettings(
+                    (new \Phpcp\Domain\SettingsRepository($this->db))->all(),
+                );
+            } catch (\Throwable) {
+                // ยังไม่มีตาราง settings — ปกติสำหรับเครื่องที่เพิ่งติดตั้ง
+            }
+        }
+
+        return $this->db;
     }
 
     public function logger(string $channel = 'panel'): Logger

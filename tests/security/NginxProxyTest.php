@@ -61,13 +61,103 @@ test('ชั้นหลังต้องเปิด AllowOverride All — ถ
     assertTrue(str_contains($conf, 'AllowOverride All'), 'ชั้นหลังต้องอ่าน .htaccess ได้: ' . $conf);
 });
 
-test('ชั้นหน้าต้องส่งต่อทุกคำขอ ไม่เสิร์ฟไฟล์ static เอง', static function (): void {
+test('PHP ต้องผ่าน Apache เสมอ ไม่ยิงเข้า FPM ตรง', static function (): void {
     $conf = proxyDriver()->renderVhost(proxySite(), proxyExecutor());
 
-    // ถ้า nginx เสิร์ฟไฟล์เอง กฎ .htaccess ที่กันโฟลเดอร์จะถูกข้ามเงียบ ๆ
-    assertTrue(!str_contains(withoutComments($conf), 'try_files'), 'ต้องไม่มี try_files ที่ทำให้ nginx ตอบไฟล์เอง: ' . $conf);
-    assertTrue(!str_contains(withoutComments($conf), 'fastcgi_pass'), 'PHP ต้องผ่าน Apache ไม่ใช่ยิงเข้า FPM ตรง: ' . $conf);
+    assertTrue(!str_contains(withoutComments($conf), 'fastcgi_pass'), 'PHP ต้องผ่าน Apache: ' . $conf);
     assertTrue(str_contains($conf, 'proxy_pass http://127.0.0.1:8080'), 'ต้องส่งต่อไปชั้นหลัง: ' . $conf);
+});
+
+/** สร้าง docroot จริงใน sandbox พร้อมไฟล์ .htaccess ตามที่ระบุ */
+function proxyDocroot(SandboxExecutor $executor, array $files): Site
+{
+    $site = proxySite();
+    $root = $executor->path($site->docroot());
+
+    foreach ($files as $relative => $contents) {
+        $path = $root . '/' . ltrim($relative, '/');
+        @mkdir(dirname($path), 0755, true);
+        file_put_contents($path, $contents);
+    }
+
+    @mkdir($root, 0755, true);
+
+    return $site;
+}
+
+// --- 1.1 nginx ตอบ static เองได้ แต่ต้องไม่ทำให้กฎของลูกค้าหาย -------------------
+
+test('เว็บที่ .htaccess มีแต่กฎ rewrite — nginx ตอบไฟล์ static เองได้', static function (): void {
+    $executor = proxyExecutor();
+    $site = proxyDocroot($executor, [
+        '.htaccess' => "RewriteEngine On\nRewriteCond %{REQUEST_FILENAME} !-f\nRewriteRule . /index.php [L]\n",
+    ]);
+
+    $conf = proxyDriver()->renderVhost($site, $executor);
+
+    assertTrue(str_contains($conf, 'try_files $uri @backend'), 'ต้องให้ nginx ตอบไฟล์ที่มีอยู่จริงเอง: ' . $conf);
+
+    // ไฟล์ที่รากเว็บต้องตอบได้โดยไม่ติดเงื่อนไข — WordPress/Laravel มี .htaccess
+    // ของ front controller อยู่ที่รากเสมอ ถ้าตรวจแล้วเด้งไป Apache ทุกครั้ง
+    // การเปิดสวิตช์นี้จะไม่มีความหมายอะไรเลยกับเว็บส่วนใหญ่ในโลก
+    assertTrue(str_contains($conf, 'location ~* ^/[^/]+\\.'), 'ต้องมี location ของไฟล์ที่รากเว็บ: ' . $conf);
+    assertTrue(str_contains($conf, 'location @backend'), 'ไฟล์ที่ไม่มีอยู่ต้องตกไปให้ Apache ตัดสินด้วยกฎ rewrite');
+});
+
+test('.htaccess ที่รากเว็บมีกฎควบคุมการเข้าถึง — ห้ามให้ nginx ตอบไฟล์เอง', static function (): void {
+    $executor = proxyExecutor();
+    $site = proxyDocroot($executor, [
+        '.htaccess' => "RewriteEngine On\nRewriteRule . /index.php [L]\n<FilesMatch \"\\.txt$\">\nRequire all denied\n</FilesMatch>\n",
+    ]);
+
+    $conf = proxyDriver()->renderVhost($site, $executor);
+
+    assertTrue(
+        !str_contains(withoutComments($conf), 'try_files $uri @backend'),
+        'กฎปฏิเสธไฟล์ .txt จะถูกข้ามถ้า nginx ตอบเอง: ' . $conf,
+    );
+});
+
+test('โฟลเดอร์ย่อยที่ป้องกันไว้ต้องถูกบังคับผ่าน Apache และมาก่อน location ของ static', static function (): void {
+    $executor = proxyExecutor();
+    $site = proxyDocroot($executor, [
+        '.htaccess' => "RewriteEngine On\nRewriteRule . /index.php [L]\n",
+        'private/.htaccess' => "Require all denied\n",
+        'private/secret.txt' => 'ความลับ',
+    ]);
+
+    $conf = proxyDriver()->renderVhost($site, $executor);
+
+    assertTrue(str_contains($conf, 'location ^~ /private/'), 'โฟลเดอร์ที่ป้องกันไว้ต้องมี location ของตัวเอง: ' . $conf);
+
+    // `^~` ชนะ regex ก็ต่อเมื่อ nginx เห็นมันด้วย — แต่ลำดับในไฟล์ต้องอ่านง่ายสำหรับคนด้วย
+    $forced = strpos($conf, 'location ^~ /private/');
+    $static = strpos($conf, 'location ~* ^/[^/]+');
+    assertTrue($forced !== false && $static !== false && $forced < $static, 'ต้องประกาศก่อนบล็อกไฟล์ static');
+});
+
+test('ต้องตรวจ .htaccess ตอนรับคำขอ ไม่ใช่เชื่อผลสแกนย้อนหลังอย่างเดียว', static function (): void {
+    $executor = proxyExecutor();
+    $site = proxyDocroot($executor, ['.htaccess' => "RewriteEngine On\n"]);
+
+    $conf = proxyDriver()->renderVhost($site, $executor);
+
+    // ลูกค้าอัปโหลด .htaccess ผ่าน SFTP ได้ตลอด — ผลสแกนตอนเขียน vhost จึงเก่าได้เสมอ
+    assertTrue(
+        str_contains($conf, 'if (-f "$document_root$phpcp_dir.htaccess")'),
+        'ต้องตรวจว่ามี .htaccess ในโฟลเดอร์นั้นทุกคำขอ: ' . $conf,
+    );
+    assertTrue(str_contains($conf, 'error_page 418 = @backend'), 'ต้องมีทางส่งต่อไป Apache เมื่อเจอ');
+});
+
+test('ปิดสวิตช์แล้วต้องกลับไปให้ Apache ตอบทุกอย่าง', static function (): void {
+    $executor = proxyExecutor();
+    $site = proxyDocroot($executor, ['.htaccess' => "RewriteEngine On\n"]);
+
+    $conf = (new NginxProxyDriver(new Template(PHPCP_ROOT . '/templates'), false))
+        ->renderVhost($site, $executor);
+
+    assertTrue(!str_contains(withoutComments($conf), 'try_files'), 'ปิดสวิตช์แล้วต้องไม่มีบล็อก static: ' . $conf);
 });
 
 // --- 2. ชั้นหลังต้องไม่โผล่ออกอินเทอร์เน็ต ------------------------------------

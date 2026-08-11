@@ -49,7 +49,8 @@ final class SettingsController extends ApiController
      */
     public function update(Request $request): Response
     {
-        $known = SettingsRepository::keys();
+        // เว็บเซิร์ฟเวอร์แก้จากที่นี่ไม่ได้ — ดู SettingsRepository::webEditableKeys()
+        $known = SettingsRepository::webEditableKeys();
         $args = [];
 
         foreach ($request->json() + $request->post as $key => $value) {
@@ -108,6 +109,26 @@ final class SettingsController extends ApiController
         );
 
         return $this->completed((string) ($result['message'] ?? 'บันทึกค่าอีเมลแล้ว'), '', is_array($result) ? $result : []);
+    }
+
+    /**
+     * เปลี่ยนเว็บเซิร์ฟเวอร์ที่ใช้โฮสต์เว็บไซต์ — จบในคำขอเดียว
+     *
+     * ชั้นนี้ไม่ตัดสินใจอะไรเลย ส่งต่อให้ capability ซึ่งเป็นที่เดียวที่รู้ว่าต้อง
+     * เขียนไฟล์อะไรบ้างและรีสตาร์ตอะไรตามลำดับไหน — ชั้นเว็บแตะ /etc ไม่ได้อยู่แล้ว
+     */
+    public function applyWebserver(Request $request): Response
+    {
+        $result = $this->agent()->data(
+            'webserver.apply',
+            [
+                'mode' => $request->payloadString('mode'),
+                'static_by_nginx' => $request->payloadString('static_by_nginx'),
+            ],
+            $this->ctx->actor($request),
+        );
+
+        return $this->completed((string) ($result['message'] ?? 'เปลี่ยนเว็บเซิร์ฟเวอร์แล้ว'), '', is_array($result) ? $result : []);
     }
 
     /** ส่งเมลทดสอบ */

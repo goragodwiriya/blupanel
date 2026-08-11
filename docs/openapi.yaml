@@ -1473,6 +1473,47 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
 
+  /settings/webserver:
+    post:
+      tags: [settings]
+      summary: เปลี่ยนเว็บเซิร์ฟเวอร์ที่ใช้โฮสต์เว็บไซต์
+      description: |
+        ทำครบทั้งกระบวนการในคำขอเดียว: บันทึกค่า → เขียนไฟล์ตั้งค่าของทุกเว็บใหม่ตาม
+        รูปแบบของเซิร์ฟเวอร์ตัวใหม่ → รีสตาร์ตบริการตามลำดับที่ถูกต้อง
+
+        แยกจาก `PATCH /settings` โดยเจตนา เพราะการเขียนค่านี้เฉย ๆ โดยไม่ทำขั้นที่เหลือ
+        จะได้เครื่องที่ค่าตั้งกับไฟล์บนดิสก์ไม่ตรงกัน · ใช้เวลาหลายวินาที
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode]
+              properties:
+                mode:
+                  type: string
+                  enum: [nginx-proxy, apache, nginx]
+                static_by_nginx:
+                  type: boolean
+                  description: ให้ nginx ตอบไฟล์ static เอง (มีผลเฉพาะโหมด nginx-proxy)
+      responses:
+        "200":
+          description: เปลี่ยนแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      mode: { type: string }
+                      previous: { type: string }
+                      rebuilt: { type: integer }
+                      steps: { type: array, items: { type: string } }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
   /settings/mail-config:
     post:
       tags: [settings]

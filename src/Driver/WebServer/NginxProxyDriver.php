@@ -66,8 +66,13 @@ final class NginxProxyDriver implements WebServerDriver
 
     private readonly ApacheDriver $apache;
 
-    public function __construct(private readonly Template $templates)
-    {
+    /**
+     * @param bool $staticByNginx ให้ nginx ตอบไฟล์ static เอง — ค่าจาก `webserver.static_by_nginx`
+     */
+    public function __construct(
+        private readonly Template $templates,
+        private readonly bool $staticByNginx = true,
+    ) {
         $this->apache = new ApacheDriver($templates);
     }
 
@@ -219,7 +224,7 @@ final class NginxProxyDriver implements WebServerDriver
 
         if ($site->sslMode === 'off') {
             return $this->templates->render('nginx/proxy-vhost.conf.tpl', $common + [
-                'PROXY_BODY' => $this->proxyBody('http'),
+                'PROXY_BODY' => $this->proxyBody('http', $site, $executor),
             ]);
         }
 
@@ -230,21 +235,85 @@ final class NginxProxyDriver implements WebServerDriver
             'SSL_CERT' => $executor->path($certificate . '/fullchain.pem'),
             'SSL_KEY' => $executor->path($certificate . '/privkey.pem'),
             'SSL_MODE_LABEL' => $site->sslMode === 'forced' ? 'บังคับ HTTPS' : 'เปิดใช้งาน',
-            'PROXY_BODY' => $this->proxyBody('https'),
-            'HTTP_SECTION' => $this->httpSection($site),
+            'PROXY_BODY' => $this->proxyBody('https', $site, $executor),
+            'HTTP_SECTION' => $this->httpSection($site, $executor),
             'HSTS_HEADER' => $this->hstsHeader($site),
         ]);
     }
 
     /**
-     * บล็อกส่งต่อคำขอ — ต่างกันแค่ค่า X-Forwarded-Proto ที่บอกชั้นหลัง
+     * บล็อกส่งต่อคำขอ พร้อมส่วนที่ให้ nginx ตอบไฟล์ static เองเมื่อทำได้อย่างปลอดภัย
+     *
+     * ลำดับของ location สำคัญ: โฟลเดอร์ที่ต้องบังคับผ่าน Apache ใช้ `^~` ซึ่งชนะ
+     * location แบบ regex ของไฟล์ static เสมอ จึงต้องประกาศก่อน — ถ้าสลับลำดับ
+     * ไฟล์ static ในโฟลเดอร์ที่ป้องกันไว้จะถูก nginx ตอบไปโดยไม่ผ่านกฎของลูกค้า
      */
-    private function proxyBody(string $scheme): SafeBlock
+    private function proxyBody(string $scheme, Site $site, Executor $executor): SafeBlock
     {
+        $scan = $this->staticPolicy($executor, $site);
+
         return new SafeBlock($this->templates->render('nginx/proxy-body.conf.tpl', [
             'BACKEND' => self::BACKEND,
             'SCHEME' => $scheme,
+            'FORCE_PROXY_DIRS' => $this->forceProxyDirs($scan['proxy_dirs']),
+            'STATIC_SECTION' => $scan['static_ok']
+                ? new SafeBlock($this->templates->render('nginx/proxy-static.conf.tpl', [
+                    'DOCROOT' => $executor->path($site->docroot()),
+                ]))
+                : new SafeBlock(
+                    "\n    # เว็บนี้ให้ Apache ตอบทุกอย่างรวมทั้งไฟล์ static เพราะ .htaccess ที่รากเว็บ\n"
+                    . "    # มีกฎที่ nginx ทำแทนไม่ได้ (ควบคุมการเข้าถึงหรือแก้ response header)\n"
+                    . '    # — ดู Phpcp\\Driver\\WebServer\\HtaccessScan',
+                ),
         ]));
+    }
+
+    /**
+     * ให้ nginx ตอบ static เองไหม และโฟลเดอร์ไหนต้องบังคับผ่าน Apache
+     *
+     * @return array{static_ok:bool,proxy_dirs:list<string>}
+     */
+    private function staticPolicy(Executor $executor, Site $site): array
+    {
+        if (!$this->staticByNginx) {
+            return ['static_ok' => false, 'proxy_dirs' => []];
+        }
+
+        return HtaccessScan::inspect($executor, $site->docroot());
+    }
+
+    /**
+     * location ของโฟลเดอร์ที่มี .htaccess ชนิดที่ nginx ทำแทนไม่ได้
+     *
+     * `^~` บอก nginx ว่า "เจอคำนำหน้านี้แล้วหยุด ไม่ต้องลอง regex ต่อ" ซึ่งเป็นสิ่ง
+     * เดียวที่กันไม่ให้ location ของไฟล์ static ไปคว้าคำขอในโฟลเดอร์นี้ไปตอบเอง
+     *
+     * @param list<string> $dirs
+     */
+    private function forceProxyDirs(array $dirs): SafeBlock
+    {
+        if ($dirs === []) {
+            return new SafeBlock('');
+        }
+
+        $out = "\n    # โฟลเดอร์ที่มีกฎ .htaccess ซึ่ง nginx ทำแทนไม่ได้ — ต้องผ่าน Apache ทุกคำขอ\n";
+
+        foreach ($dirs as $dir) {
+            $out .= sprintf(
+                // ตัวแปรของ nginx ต้องอยู่ในสตริงเดี่ยว ไม่งั้น PHP แทนค่าเป็นค่าว่าง
+                // แล้วได้ config ที่ส่ง Host เปล่าไปให้ Apache — ทุกคำขอตกไป vhost แรก
+                "    location ^~ %s {\n"
+                . "        proxy_pass http://%s;\n"
+                . '        proxy_set_header Host            $host;' . "\n"
+                . '        proxy_set_header X-Real-IP       $remote_addr;' . "\n"
+                . '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;' . "\n"
+                . "    }\n",
+                Template::assertValue('location', $dir),
+                self::BACKEND,
+            );
+        }
+
+        return new SafeBlock($out);
     }
 
     /**
@@ -253,10 +322,10 @@ final class NginxProxyDriver implements WebServerDriver
      * `location /` ที่นี่ทับ location เดียวกันไม่ได้ จึงต้องเลือกอย่างใดอย่างหนึ่ง:
      * โหมดบังคับ = redirect · โหมดเปิดใช้งานเฉย ๆ = ส่งต่อไป backend ตามปกติ
      */
-    private function httpSection(Site $site): SafeBlock
+    private function httpSection(Site $site, Executor $executor): SafeBlock
     {
         if ($site->sslMode !== 'forced') {
-            return $this->proxyBody('http');
+            return $this->proxyBody('http', $site, $executor);
         }
 
         return new SafeBlock(

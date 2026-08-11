@@ -21,6 +21,75 @@
           วงเล็บเหลี่ยม `values['...']` ไม่ใช่จุด ไม่งั้นตัวประเมินนิพจน์จะอ่านเป็นเส้นทางซ้อน
           แล้วได้ค่าว่างโดยไม่มี error ให้เห็น
         -->
+        <!--
+          เว็บเซิร์ฟเวอร์ — แยกออกมาเป็นฟอร์มของตัวเองโดยเจตนา
+
+          ไม่ใช่แค่บันทึกค่า แต่เขียนไฟล์ตั้งค่าของทุกเว็บใหม่แล้วรีสตาร์ตบริการจริง
+          ซึ่งใช้เวลาหลายวินาที · ถ้ารวมไว้กับปุ่ม "บันทึก" ของค่าตั้งอื่น ผู้ใช้ที่แค่
+          แก้อีเมลแจ้งเตือนจะโดนรีสตาร์ตเว็บเซิร์ฟเวอร์ไปด้วยโดยไม่ได้ตั้งใจ
+        -->
+        <form data-form="webserver" action="/api/v2/settings/webserver" method="post" data-ajax-submit="true" data-load-api="/api/v2/settings" data-emit-event="phpcp:reload">
+          <fieldset>
+            <legend class="icon-service" data-i18n>Web server</legend>
+            <div class="comment" data-i18n>Changing this rewrites every site's configuration and restarts the web server. Existing sites keep working.</div>
+            <div>
+              <label for="webserver_mode" data-i18n>Web server for hosted sites</label>
+              <span class="form-control icon-service">
+                <select id="webserver_mode" name="mode" data-value="values['webserver.mode'] || 'apache'">
+                  <option value="nginx-proxy" data-i18n>nginx + Apache (.htaccess works · recommended)</option>
+                  <option value="apache" data-i18n>Apache only</option>
+                  <option value="nginx" data-i18n>nginx only (no .htaccess)</option>
+                </select>
+              </span>
+            </div>
+            <div>
+              <input type="checkbox" class="switch" id="webserver_static" name="static_by_nginx" data-checked="isOn(values['webserver.static_by_nginx'])">
+              <label for="webserver_static" data-i18n>Let nginx serve static files directly (faster)</label>
+            </div>
+            <div class="comment" data-i18n>Only applies to nginx + Apache. Folders that contain a .htaccess file always go through Apache so their rules keep working.</div>
+          </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-refresh" data-loading-text="Applying..." data-i18n>Apply web server</button>
+          </fieldset>
+        </form>
+      </div>
+
+      <div class="content-body">
+        <!--
+          DNS — ค่าพวกนี้เคยอยู่ใน config.php ซึ่งแปลว่าต้อง ssh เข้าไปแก้ไฟล์เอง
+          ทั้งที่เป็นค่าที่ผู้ดูแลต้องตั้งตั้งแต่วันแรกที่จะใช้ DNS ของเครื่องนี้
+        -->
+        <form data-form="dns" action="/api/v2/settings" method="post" data-method="PATCH" data-ajax-submit="true" data-load-api="/api/v2/settings">
+          <fieldset>
+            <legend class="icon-world" data-i18n>DNS (BIND9)</legend>
+            <div>
+              <input type="checkbox" class="switch" id="dns_enabled" name="dns.enabled" data-checked="isOn(values['dns.enabled'])">
+              <label for="dns_enabled" data-i18n>Manage DNS zones with BIND9 on this server</label>
+            </div>
+            <div class="comment" data-i18n>Turning this on lets the panel write zone files. Zones you created by hand in named.conf.local will be replaced.</div>
+            <div>
+              <label for="dns_nameservers" data-i18n>Name servers</label>
+              <span class="form-control icon-service">
+                <input type="text" id="dns_nameservers" name="dns.nameservers" autocomplete="off"
+                       placeholder="ns1.example.com, ns2.example.com" data-attr="value:values['dns.nameservers']">
+              </span>
+            </div>
+            <div class="comment" data-i18n>At least one is required — BIND9 refuses a zone with no NS record.</div>
+            <div>
+              <label for="dns_soa_email" data-i18n>DNS administrator email</label>
+              <span class="form-control icon-email">
+                <input type="email" id="dns_soa_email" name="dns.soa_email" autocomplete="off"
+                       placeholder="hostmaster@example.com" data-attr="value:values['dns.soa_email']">
+              </span>
+            </div>
+          </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
+          </fieldset>
+        </form>
+      </div>
+
+      <div class="content-body">
         <form data-form="settings" action="/api/v2/settings" method="post" data-method="PATCH" data-ajax-submit="true" data-load-api="/api/v2/settings">
           <fieldset>
             <legend class="icon-bell" data-i18n>Telegram notifications</legend>

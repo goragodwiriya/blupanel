@@ -157,6 +157,32 @@ curl -s -D /tmp/h -o /dev/null -H "Host: ${DOMAIN}" http://127.0.0.1/
 grep -qi 'X-From-Htaccess: yes' /tmp/h \
   && ok "Header ที่ตั้งใน .htaccess ถูกส่งกลับถึงผู้ใช้" || bad "ไม่พบ header จาก .htaccess"
 
+# --- 4.1 nginx ต้องตอบไฟล์ static เอง (เหตุผลที่เอา nginx มาวางหน้า) ---
+echo "body{color:red}" > "${DOCROOT}/style.css"
+chown "${SU}:www-data" "${DOCROOT}/style.css"
+
+# nginx ที่ตอบเองจะไม่ใส่ header ของ Apache (X-From-Htaccess มาจาก .htaccess)
+curl -s -D /tmp/hs -o /dev/null -H "Host: ${DOMAIN}" http://127.0.0.1/style.css
+if grep -qi 'X-From-Htaccess' /tmp/hs; then
+  bad "style.css ยังผ่าน Apache อยู่ — nginx ไม่ได้ตอบเอง"
+else
+  ok "nginx ตอบไฟล์ static เองโดยไม่ปลุก Apache"
+fi
+grep -qi 'Cache-Control: public' /tmp/hs \
+  && ok "ไฟล์ static ได้ header แคชจาก nginx" || bad "ไม่มี header แคชของ nginx"
+
+# กฎกันโฟลเดอร์ต้องยังชนะแม้ไฟล์ข้างในจะเป็น static ล้วน
+code=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: ${DOMAIN}" http://127.0.0.1/private/secret.txt)
+[ "$code" = "403" ] \
+  && ok "โฟลเดอร์ที่ .htaccess ป้องกันไว้ยังถูกบังคับผ่าน Apache (403)" \
+  || bad "ไฟล์ลับตอบ ${code} — nginx แซงกฎ .htaccess ไปแล้ว"
+
+# ไฟล์ที่ไม่มีอยู่จริงต้องตกไปให้ Apache ตัดสินด้วยกฎ rewrite ไม่ใช่ 404 จาก nginx
+body=$(curl -s -H "Host: ${DOMAIN}" http://127.0.0.1/hello)
+[ "$body" = "REWRITE-OK" ] \
+  && ok "กฎ rewrite ยังทำงานหลังเปิดให้ nginx ตอบ static" \
+  || bad "rewrite พังหลังเปิด static — ได้: ${body}"
+
 # --- 5. ที่อยู่ผู้ใช้จริงต้องไปถึงชั้นหลัง ---
 # เรียก index.php ตรง ๆ — โครงเว็บที่ panel วางให้มี index.html ซึ่งชนะใน DirectoryIndex
 ip=$(curl -s -H "Host: ${DOMAIN}" http://127.0.0.1/index.php | sed 's/.*ip=//')

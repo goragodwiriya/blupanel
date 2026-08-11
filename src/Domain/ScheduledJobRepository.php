@@ -49,6 +49,12 @@ final class ScheduledJobRepository
         // · การกันข้อความซ้ำอยู่ที่ `AlertRules` ไม่ใช่ที่ความถี่ของงานนี้ (PLAN-V2 เฟส E6)
         ['name' => 'alert.check', 'capability' => 'alert.check', 'schedule' => '*/5 * * * *', 'args' => []],
 
+        // ทุกชั่วโมง — ลูกค้าแก้ .htaccess เองได้ตลอดผ่าน SFTP ซึ่งเปลี่ยนคำตอบว่า
+        // nginx ตอบไฟล์ static ของเว็บนั้นเองได้ไหม · ไม่มีงานนี้ กฎป้องกันที่ลูกค้า
+        // เพิ่งใส่จะยังไม่มีผลกับไฟล์ที่รากเว็บจนกว่าจะมีใครไปกดแก้เว็บนั้น
+        // เขียนไฟล์ใหม่เฉพาะเมื่อเนื้อหาต่างจริง จึงเงียบสนิทเมื่อไม่มีอะไรเปลี่ยน
+        ['name' => 'webserver.rescan', 'capability' => 'webserver.rescan', 'schedule' => '20 * * * *', 'args' => []],
+
         // ทุกวันตี 4 ครึ่ง — หลัง timer ของ certbot ที่มักทำงานช่วงเช้ามืด
         ['name' => 'cert.sync', 'capability' => 'cert.sync', 'schedule' => '30 4 * * *', 'args' => []],
 

@@ -61,9 +61,11 @@ test('คีย์ที่ไม่อยู่ในรายการต้�
 
     // ค่าที่ต้องมีก่อนระบบบูตต้องแก้จากหน้าเว็บไม่ได้ — config.php เป็นไฟล์ PHP ที่ถูก include
     // ถ้าหน้าเว็บเขียนได้ ช่องโหว่เดียวในหน้าตั้งค่าจะกลายเป็นการรันโค้ดทันที
+    $allowedPrefixes = ['notify.', 'mail.', 'dns.', 'webserver.'];
+
     foreach (array_keys($keys) as $key) {
         assertTrue(
-            str_starts_with($key, 'notify.') || str_starts_with($key, 'mail.'),
+            array_filter($allowedPrefixes, static fn (string $p): bool => str_starts_with($key, $p)) !== [],
             "คีย์ {$key} อยู่นอกขอบเขตที่หน้าเว็บควรแก้ได้",
         );
     }
@@ -199,4 +201,33 @@ test('ซ่อมเจ้าของไฟล์ต้องตรวจส�
 
     // -h ทำให้ chown เปลี่ยนตัว symlink เอง ไม่ไล่ตามไปเปลี่ยนไฟล์ปลายทางนอกขอบเขต
     assertTrue(str_contains($source, "'-Rh'"), 'chown ต้องใช้ -h เพื่อไม่ไล่ตาม symlink');
+});
+
+test('เปลี่ยนเว็บเซิร์ฟเวอร์ผ่านฟอร์มตั้งค่าทั่วไปไม่ได้ — ต้องผ่านการ apply เท่านั้น', static function (): void {
+    // ถ้า PATCH /settings เขียนค่านี้ได้ จะได้เครื่องที่ค่าตั้งบอกว่า nginx
+    // แต่ไฟล์ vhost บนดิสก์ยังเป็นของ Apache แล้วไม่มีอะไรฟ้องเลย
+    $editable = SettingsRepository::webEditableKeys();
+
+    foreach (['webserver.mode', 'webserver.static_by_nginx'] as $key) {
+        assertTrue(isset(SettingsRepository::keys()[$key]), "{$key} ต้องเก็บในตารางตั้งค่าได้");
+        assertTrue(!isset($editable[$key]), "{$key} ต้องแก้ผ่านฟอร์มตั้งค่าทั่วไปไม่ได้");
+    }
+
+    $source = (string) file_get_contents(PHPCP_ROOT . '/src/Http/V2/SettingsController.php');
+    assertTrue(
+        str_contains($source, 'SettingsRepository::webEditableKeys()'),
+        'ตัวควบคุมต้องใช้รายการที่กรอง webserver.* ออกแล้ว',
+    );
+});
+
+test('nameserver ตั้งจากหน้าจอได้ ไม่ต้องแก้ไฟล์เอง', static function (): void {
+    $editable = SettingsRepository::webEditableKeys();
+
+    foreach (['dns.enabled', 'dns.nameservers', 'dns.soa_email'] as $key) {
+        assertTrue(isset($editable[$key]), "{$key} ต้องแก้จากหน้าตั้งค่าได้");
+    }
+
+    $page = (string) file_get_contents(PHPCP_ROOT . '/public/assets/spa/templates/settings.html');
+    assertTrue(str_contains($page, 'name="dns.nameservers"'), 'หน้าตั้งค่าต้องมีช่องกรอก nameserver');
+    assertTrue(str_contains($page, 'name="mode"'), 'หน้าตั้งค่าต้องมีตัวเลือกเว็บเซิร์ฟเวอร์');
 });

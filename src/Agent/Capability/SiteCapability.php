@@ -14,6 +14,7 @@ use Phpcp\Domain\Site;
 use Phpcp\Domain\SiteRepository;
 use Phpcp\Driver\Php\FpmManager;
 use Phpcp\Driver\SiteProvisioner;
+use Phpcp\Domain\SettingsRepository;
 use Phpcp\Driver\Template;
 use Phpcp\Driver\WebServer\ApacheDriver;
 use Phpcp\Driver\WebServer\NginxDriver;
@@ -47,18 +48,32 @@ abstract class SiteCapability implements Capability
     /**
      * เลือกเว็บเซิร์ฟเวอร์ตามค่าตั้ง
      *
-     * ค่าที่ไม่รู้จักตกกลับไปใช้ Apache แทนที่จะโยน error — ถ้าพิมพ์ผิดในไฟล์ config
-     * แล้วระบบไม่ยอมทำงานเลย ผู้ดูแลจะเข้าหน้าเว็บไปแก้ค่าไม่ได้ด้วย
-     * กลายเป็นล็อกตัวเองออกจากระบบเพราะพิมพ์ผิดหนึ่งตัวอักษร
+     * **ฐานข้อมูลมาก่อน `config.php`** — ค่านี้ต้องเปลี่ยนได้จากหน้าจอ ไม่ใช่ให้ผู้ดูแล
+     * ไป `sed` ไฟล์เอาเอง · `config.php` ยังเป็นค่าเริ่มต้นสำหรับเครื่องที่ติดตั้งไว้
+     * ก่อนหน้านี้และยังไม่เคยเลือกจากหน้าจอ (ค่าในตารางเป็นสตริงว่าง)
+     *
+     * ค่าที่ไม่รู้จักตกกลับไปใช้ Apache แทนที่จะโยน error — ถ้าพิมพ์ผิดแล้วระบบไม่ยอม
+     * ทำงานเลย ผู้ดูแลจะเข้าหน้าเว็บไปแก้ค่าไม่ได้ด้วย กลายเป็นล็อกตัวเองออกจากระบบ
      */
     protected static function webServer(Context $context, Template $templates): WebServerDriver
     {
-        return match ($context->config->string('webserver', 'apache')) {
+        return match (self::webServerMode($context)) {
             'nginx' => new NginxDriver($templates),
             // nginx ชั้นหน้า + Apache ชั้นหลัง — โหมดเดียวที่ .htaccess ใช้งานได้บน nginx
-            'nginx-proxy' => new NginxProxyDriver($templates),
+            'nginx-proxy' => new NginxProxyDriver(
+                $templates,
+                (new SettingsRepository($context->db))->bool('webserver.static_by_nginx'),
+            ),
             default => new ApacheDriver($templates),
         };
+    }
+
+    /** โหมดที่ใช้งานอยู่จริง — ตารางตั้งค่ามาก่อน แล้วค่อยถอยไป config.php */
+    public static function webServerMode(Context $context): string
+    {
+        $stored = trim((new SettingsRepository($context->db))->get('webserver.mode'));
+
+        return $stored !== '' ? $stored : $context->config->string('webserver', 'apache');
     }
 
     /**

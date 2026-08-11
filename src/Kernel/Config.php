@@ -255,8 +255,36 @@ final class Config
      * `install.sh` มีแพ็กเกจอยู่แล้ว แต่ไม่ได้แปลว่าตั้งค่าให้ panel เขียนทับ named.conf.local
      * ได้อย่างปลอดภัย) ปิดอยู่ = `dns.zone_write` เป็น no-op ที่บอกชัดเจนว่ายังไม่ได้เชื่อม
      */
+    /**
+     * ค่าที่ผู้ดูแลตั้งจากหน้าจอ — ทับค่าใน config.php
+     *
+     * ใช้รูปแบบเดียวกับ `Paths::useSitesDir()` คือ setter แบบ static ที่ถูกเรียกครั้งเดียว
+     * ตอนที่ฐานข้อมูลพร้อม · จำเป็นเพราะ `Config` ถูกสร้างก่อน `Db` เสมอ (Db ต้องใช้
+     * เส้นทางจาก Config) จึงอ่านตารางตั้งค่าตอนสร้างไม่ได้
+     *
+     * @var array<string,mixed>
+     */
+    private static array $stored = [];
+
+    /**
+     * @param array<string,string> $values ค่าจากตาราง settings
+     */
+    public static function useStoredSettings(array $values): void
+    {
+        self::$stored = $values;
+    }
+
+    /**
+     * เปิดใช้งาน DNS หรือยัง — **ค่าจากหน้าจอมาก่อน config.php เสมอ**
+     *
+     * ผู้ดูแลที่กดเปิดจากหน้าตั้งค่าต้องได้ผลทันที ไม่ใช่ต้อง ssh เข้าไปแก้ไฟล์ตาม
+     */
     public function dnsEnabled(): bool
     {
+        if (array_key_exists('dns.enabled', self::$stored)) {
+            return self::$stored['dns.enabled'] === '1';
+        }
+
         return $this->bool('dns.enabled');
     }
 
@@ -273,12 +301,20 @@ final class Config
     /** @return list<string> */
     public function dnsNameservers(): array
     {
+        $stored = trim((string) (self::$stored['dns.nameservers'] ?? ''));
+
+        if ($stored !== '') {
+            return array_values(array_filter(array_map('trim', explode(',', $stored))));
+        }
+
         return $this->list('dns.nameservers');
     }
 
     public function dnsSoaEmail(): string
     {
-        return $this->string('dns.soa_email');
+        $stored = trim((string) (self::$stored['dns.soa_email'] ?? ''));
+
+        return $stored !== '' ? $stored : $this->string('dns.soa_email');
     }
 
     /**

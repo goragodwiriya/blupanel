@@ -72,6 +72,8 @@ use Phpcp\Agent\Capability\SiteRateLimitSet;
 use Phpcp\Agent\Capability\SiteRateLimitStatus;
 use Phpcp\Agent\Capability\SiteRateLimitUnban;
 use Phpcp\Agent\Capability\SiteRebuild;
+use Phpcp\Agent\Capability\WebserverApply;
+use Phpcp\Agent\Capability\WebserverRescan;
 use Phpcp\Agent\Capability\SiteSetPhp;
 use Phpcp\Agent\Capability\SiteSuspend;
 use Phpcp\Agent\Capability\SslDelete;
@@ -152,6 +154,8 @@ final class CapabilityRegistry
             SiteRateLimitStatus::class,
             SiteRateLimitUnban::class,
             SiteRebuild::class,
+            WebserverApply::class,
+            WebserverRescan::class,
             SiteSetPhp::class,
             SiteSetDomains::class,
             SiteAddDomain::class,

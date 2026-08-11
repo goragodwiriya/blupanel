@@ -98,7 +98,9 @@ return [
     // โหมด nginx-proxy เขียนทับ /etc/apache2/ports.conf ให้ Apache ฟังเฉพาะ loopback
     // และ **ต้องรีสตาร์ต Apache หนึ่งครั้ง** ไม่ใช่แค่ reload เพราะการเปลี่ยนพอร์ตที่ฟัง
     // ทำตอน reload ไม่ได้ตามการออกแบบของ Apache เอง
-    'webserver' => 'apache',
+    // ค่าเริ่มต้นคือโหมดที่ใช้ได้กับทุกเว็บ — .htaccess ทำงานเหมือนโฮสต์ทั่วไป
+    // และได้ nginx รับหน้าไปด้วย · เปลี่ยนได้จากหน้า Settings ไม่ต้องแก้ไฟล์นี้
+    'webserver' => 'nginx-proxy',
 
     'security' => [
         // สร้างด้วย `bin/phpcp key:generate` — เป็น base64 ของข้อมูล 32 ไบต์
