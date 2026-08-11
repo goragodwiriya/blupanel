@@ -1,0 +1,60 @@
+<!--
+  ฟอร์มสร้างงานตามเวลา — FRAMEWORK_GUIDE Pattern 3 (Table + Modal)
+
+  **ไม่มี chrome ของหน้าเลย** ทั้ง sidebar และ topbar เพราะไฟล์นี้ถูกโหลดเข้า Modal
+  ไม่ใช่เส้นทางของ router · ตารางอยู่คนละไฟล์ (`cron-jobs.html`) ตามกฎที่ว่า
+  ฟอร์มกับตารางต้องไม่อยู่ในเทมเพลตเดียวกัน
+
+  ฟอร์มนี้ทำหน้าที่ "สร้างใหม่" อย่างเดียว — การแก้ไขอยู่ที่หน้า `cron-job.html`
+  ซึ่งแสดงประวัติการทำงานย้อนหลังด้วย จึงเป็นหน้าเว็บไม่ใช่ modal ตามกฎข้อที่ว่า
+  ถ้ามีข้อมูลมากกว่าฟอร์มให้เป็นหน้า
+
+  `data-emit-event` ทำให้ตารางในหน้าที่เปิด modal นี้โหลดข้อมูลใหม่หลังบันทึกสำเร็จ
+-->
+<form data-form="cronJobCreate"
+      action="/api/v2/cron-jobs"
+      method="post"
+      data-ajax-submit="true"
+      data-validate="true"
+      data-reset="true"
+      data-emit-event="phpcp:reload">
+  <fieldset>
+    <!--
+      เลือกเว็บไซต์จากรายการจริง ไม่ให้กรอกเลข id เอง — รายการมาจาก endpoint
+      ของมันเองผ่าน ApiComponent ที่ครอบ <select> ไว้
+    -->
+    <div data-component="api" data-endpoint="/api/v2/sites">
+      <label for="cj_site" data-i18n>Website</label>
+      <span class="form-control icon-website">
+        <select id="cj_site" name="site_id" required data-for="site in data">
+          <template>
+            <option data-attr="value:site.id" data-text="site.domain"></option>
+          </template>
+        </select>
+      </span>
+    </div>
+    <div>
+      <label for="cj_name" data-i18n>Name</label>
+      <span class="form-control icon-edit">
+        <input type="text" id="cj_name" name="name" required maxlength="100" autocomplete="off">
+      </span>
+    </div>
+    <div>
+      <label for="cj_schedule" data-i18n>Schedule</label>
+      <span class="form-control icon-clock">
+        <input type="text" id="cj_schedule" name="schedule" required maxlength="100"
+               placeholder="0 3 * * *" autocomplete="off">
+      </span>
+      <div class="comment" data-i18n>Five fields in cron format: minute hour day month weekday</div>
+    </div>
+    <div>
+      <label for="cj_command" data-i18n>Command</label>
+      <span class="form-control icon-keyboard">
+        <input type="text" id="cj_command" name="command" required maxlength="500" autocomplete="off">
+      </span>
+    </div>
+  </fieldset>
+  <fieldset class="submit right">
+    <button type="submit" class="btn btn-primary icon-save" data-i18n>Add cron job</button>
+  </fieldset>
+</form>

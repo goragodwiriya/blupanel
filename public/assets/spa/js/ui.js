@@ -406,6 +406,37 @@
   // ---------------------------------------------------------------------------
   const events = window.Now.getManager('eventsystem') || window.EventSystemManager;
 
+  /**
+   * เปิดฟอร์มใน Modal จากเทมเพลตของมันเอง
+   *
+   * **ทำไมต้องมี:** FRAMEWORK_GUIDE Pattern 3 กำหนดว่าตารางกับฟอร์มต้องอยู่คนละ
+   * เทมเพลต · ฝั่งแก้ไขเปิด modal ได้อยู่แล้วผ่าน `modal` ใน `data-row-actions`
+   * (ซึ่งมีข้อมูลของแถวติดมาด้วย) แต่ฝั่ง **สร้างใหม่** ไม่มีแถวให้อ้าง เฟรมเวิร์ก
+   * จึงยังไม่มีทางเปิด modal แบบประกาศล้วน — ตัวนี้เติมช่องนั้น
+   *
+   * งานหนักทั้งหมด (โหลดเทมเพลต · เรนเดอร์ · แสดง modal · ผูกฟอร์ม) เป็นของ
+   * `ResponseHandler.executeAction` ตัวเดิม ไม่ได้เขียนกลไก modal ขึ้นใหม่
+   *
+   *   data-modal-template   ชื่อไฟล์เทมเพลตของฟอร์ม เช่น `cron-job-form.html`
+   *   data-modal-title      หัวข้อของ modal (ผ่านตัวแปลภาษา)
+   */
+  events.registerAction('openModal', async (event, element) => {
+    const template = element.dataset.modalTemplate || '';
+
+    if (template === '') return;
+
+    try {
+      await window.ResponseHandler.executeAction({
+        type: 'modal',
+        template: template,
+        title: t(element.dataset.modalTitle || ''),
+        className: element.dataset.modalClass || '',
+      }, {data: {}});
+    } catch (error) {
+      window.NotificationManager.error(error.message);
+    }
+  });
+
   /** ส่งสัญญาณให้ ApiComponent ที่ตั้ง `data-refresh-event` ไว้ดึงข้อมูลรอบใหม่ */
   events.registerAction('emit', (event, element) => {
     window.EventManager.emit(element.dataset.emitEvent || 'phpcp:reload', {trigger: element});

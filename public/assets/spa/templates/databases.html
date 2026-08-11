@@ -12,76 +12,12 @@
         </div>
         <div class="header-actions">
           <button type="button" class="btn icon-database" data-action="click.prevent:openPhpMyAdmin" data-i18n>Open phpMyAdmin</button>
-          <button type="button" class="btn btn-primary icon-plus" data-if="permissions['db.manage']" data-action="click.prevent:toggleClass"
-                  data-toggle-target="[data-create-panel]" data-toggle-class="is-open" data-i18n>Add database</button>
+          <button type="button" class="btn btn-primary icon-plus" data-if="permissions['db.manage']" data-action="click.prevent:openModal"
+                  data-modal-template="database-form.html"
+                  data-modal-title="Add database" data-i18n>Add database</button>
         </div>
       </header>
-      <!-- แผงสร้าง — ซ่อนไว้จนกดปุ่ม เพราะหน้านี้ใช้ดูรายการเป็นหลัก -->
-      <div class="content-body collapsible" data-create-panel>
-        <h2 data-i18n>Add database</h2>
-        <form data-form="databaseCreate" action="/api/v2/databases" method="post" data-ajax-submit="true" data-validate="true" data-reset="true">
-          <fieldset>
-            <div>
-              <label for="nd_name" data-i18n>Name</label>
-              <span class="form-control icon-database">
-                <input type="text" id="nd_name" name="name" required maxlength="64" autocomplete="off">
-              </span>
             </div>
-            <div>
-              <label for="nd_user" data-i18n>Database user</label>
-              <span class="form-control icon-user">
-                <input type="text" id="nd_user" name="username" required maxlength="32" autocomplete="off">
-              </span>
-            </div>
-            <div>
-              <label for="nd_priv" data-i18n>Privileges</label>
-              <span class="form-control icon-menus">
-                <select id="nd_priv" name="privileges" required>
-                  <option value="readwrite">readwrite</option>
-                  <option value="readonly">readonly</option>
-                  <option value="full">full</option>
-                </select>
-              </span>
-            </div>
-          </fieldset>
-          <fieldset class="submit">
-            <button type="submit" class="btn btn-primary icon-save" data-i18n>Add database</button>
-          </fieldset>
-        </form>
-      </div>
-      <div class="content-body">
-        <div class="tablebody">
-          <table class="table border fullwidth" data-table="databases" data-source="/api/v2/databases" data-default-sort="name asc" data-page-size="25" data-search-columns="name"
-                 data-row-actions='{
-                    "phpmyadmin": {
-                     "title": "Open phpMyAdmin",
-                     "className": "btn btn-success icon-database",
-                     "method": "get",
-                     "target": "_blank",
-                     "url": "/phpmyadmin/index.php?route=/database/structure&db={name}"
-                   },
-                   "delete": {
-                     "title": "Delete",
-                     "className": "btn btn-danger icon-delete",
-                     "method": "delete",
-                     "url": "/api/v2/databases/{name}",
-                     "params": {"confirm": "{name}", "drop_user": "1"},
-                     "condition": "${can_manage}",
-                     "confirm": "Permanently delete this database and its data?"
-                   }
-                 }'>
-            <thead>
-              <tr>
-                <th data-field="name" data-cell-class="mono" data-i18n>{LNG_Name}</th>
-                <th data-field="size" data-format="bytes" class="center" data-cell-class="center" data-i18n>{LNG_Size}</th>
-                <th data-field="charset" class="center" data-cell-class="center" data-empty-text="—" data-i18n>{LNG_Charset}</th>
-                <th data-field="site" data-empty-text="—" data-i18n>{LNG_Website}</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </div>
     </div>
   </main>
 </div>
