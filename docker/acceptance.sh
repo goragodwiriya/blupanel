@@ -38,6 +38,21 @@ PHPV=$("$PHP_BIN" -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')
 printf '  ใช้ PHP %s ที่ %s\n' "$PHPV" "$PHP_BIN"
 mkdir -p /run/php
 
+# --- ตรึงโหมดเป็น apache ก่อนสร้างเว็บ ---
+#
+# สคริปต์นี้ตรวจ "Apache ตัวเดียวรับตั้งแต่พอร์ต 80" จึงต้องระบุโหมดเอง ไม่ใช่พึ่ง
+# ค่าเริ่มต้นของตัวติดตั้ง — ค่าเริ่มต้นเปลี่ยนเป็น nginx-proxy เมื่อ 2026-08-11
+# แล้วทุกการตรวจที่ยิงพอร์ต 80 ได้ 000 (ไม่มีอะไรฟัง) ทั้งที่ระบบทำงานถูกต้อง
+# · โหมด nginx-proxy มีสคริปต์ของตัวเองที่ docker/acceptance-proxy.sh
+"$PHP_BIN" -r '
+  $f = "/etc/phpcp/config.php";
+  $s = file_get_contents($f);
+  $s = preg_replace("/(\x27webserver\x27\s*=>\s*)\x27[^\x27]*\x27/", "$1\x27apache\x27", $s, 1);
+  file_put_contents($f, $s);
+'
+grep -q "'webserver' => 'apache'" /etc/phpcp/config.php \
+  && ok "ตรึงโหมดเป็น apache สำหรับชุดตรวจนี้" || bad "ตั้งโหมด apache ไม่สำเร็จ"
+
 if ! pgrep -f "php-fpm: [m]aster process \(/etc/php/${PHPV}/" >/dev/null; then
   "/usr/sbin/php-fpm${PHPV}" --fpm-config "/etc/php/${PHPV}/fpm/php-fpm.conf" 2>/dev/null
   sleep 2
