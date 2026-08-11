@@ -245,6 +245,9 @@ final class Routes
         // --- ฐานข้อมูล (อ้างด้วยชื่อ เพราะชื่อคือสิ่งที่ MariaDB รู้จัก) ---
         $router->add(new Route('GET', '/api/v2/databases', DatabasesController::class, 'index', 'db.view', 'api.v2.databases.index'));
         $router->add(new Route('POST', '/api/v2/databases', DatabasesController::class, 'store', 'db.manage', 'api.v2.databases.store'));
+        // ฟอร์มสร้างฐานข้อมูล — คืนโครงเปล่าพร้อมคำสั่งเปิด modal ให้หน้าเว็บ
+        // (แบบเดียวกับ GET /cron-jobs/0) หน้าเว็บจึงไม่ต้องรู้จักชื่อไฟล์เทมเพลต
+        $router->add(new Route('GET', '/api/v2/databases/form', DatabasesController::class, 'form', 'db.manage', 'api.v2.databases.form'));
         $router->add(new Route('DELETE', '/api/v2/databases/{name}', DatabasesController::class, 'destroy', 'db.manage', 'api.v2.databases.destroy'));
         // POST ไม่ใช่ GET โดยตั้งใจ — นี่คือการล็อกอินเข้า phpMyAdmin ไม่ใช่ลิงก์ธรรมดา
         $router->add(new Route('POST', '/api/v2/phpmyadmin/session', PhpMyAdminController::class, 'create', 'db.view', 'api.v2.phpmyadmin.session'));

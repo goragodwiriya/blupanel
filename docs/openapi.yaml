@@ -1473,6 +1473,26 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
 
+  /databases/form:
+    get:
+      tags: [databases]
+      summary: โครงเปล่าของฟอร์มสร้างฐานข้อมูล พร้อมคำสั่งเปิด modal
+      description: |
+        คืนค่าเริ่มต้นของฟอร์มพร้อม `actions: [{type: modal, template: ...}]`
+        หน้าเว็บจึงยิงคำขอเดียวแล้วส่งคำตอบต่อให้ ResponseHandler โดยไม่ต้องรู้ว่า
+        เทมเพลตของฟอร์มชื่ออะไร — รูปแบบเดียวกับ `GET /cron-jobs/{id}` ที่ id = 0
+      responses:
+        "200":
+          description: โครงเปล่าและคำสั่งเปิด modal
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { type: object }
+                  actions: { type: array, items: { type: object } }
+
   /settings/webserver:
     post:
       tags: [settings]

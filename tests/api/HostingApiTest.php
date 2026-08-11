@@ -147,6 +147,63 @@ test('รายการงานอัตโนมัติคืนทั้�
     assertSame('host.example.com', $job['site_domain'], 'ต้องบอกว่าเป็นงานของเว็บไหน');
 });
 
+test('ขอฟอร์มของใหม่ด้วย id = 0 ต้องได้โครงเปล่าพร้อมคำสั่งเปิด Modal', static function (): void {
+    // Add กับ Edit ใช้ฟอร์มเดียวกัน — ปุ่ม Add เรียก /cron-jobs/0 แล้วเซิร์ฟเวอร์
+    // เป็นคนสั่งเปิด Modal เอง · ถ้า id = 0 กลายเป็น 404 เมื่อไหร่ ปุ่ม Add ตายทันที
+    $harness = hostingLogin('hostadmin', 'Hosting-Admin-Pass-11');
+
+    $response = $harness->request('GET', '/api/v2/cron-jobs/0');
+
+    assertSame(200, $response->status, 'id = 0 คือ "ของใหม่" ไม่ใช่ของที่หาไม่เจอ');
+    assertSame(0, $response->json['data']['id'] ?? -1, 'ต้องคืน id เป็น 0 ให้ฟอร์มรู้ว่าเป็นของใหม่');
+    assertSame('', $response->json['data']['name'] ?? null, 'ช่องต่าง ๆ ต้องว่าง');
+
+    $action = $response->json['actions'][0] ?? [];
+
+    assertSame('modal', $action['type'] ?? '', 'เซิร์ฟเวอร์ต้องเป็นคนสั่งเปิด Modal');
+    assertSame('cron-job-form.html', $action['template'] ?? '', 'ต้องเป็นฟอร์มตัวเดียวกับที่ Edit ใช้');
+});
+
+test('ฟอร์มแก้ไขใช้ template เดียวกับฟอร์มเพิ่มใหม่', static function (): void {
+    $harness = hostingLogin('hostadmin', 'Hosting-Admin-Pass-11');
+    $jobId = (int) $harness->app->db()->value("SELECT id FROM cron_jobs WHERE name = 'ล้างแคชรายวัน'", [], 0);
+
+    $response = $harness->request('GET', '/api/v2/cron-jobs/' . $jobId);
+
+    assertSame(200, $response->status, 'ต้องเปิดฟอร์มแก้ไขได้');
+    assertSame($jobId, $response->json['data']['id'] ?? 0, 'ต้องคืนค่าของแถวนั้นให้ฟอร์มเติม');
+    assertSame(
+        'cron-job-form.html',
+        $response->json['actions'][0]['template'] ?? '',
+        'ถ้าแยกเป็นคนละไฟล์เมื่อไหร่ ช่องที่เพิ่มทีหลังจะหลุดไปฝั่งเดียว',
+    );
+});
+
+test('บันทึกฟอร์มที่มี id ติดมาด้วย ต้องเป็นการแก้ไข ไม่ใช่สร้างใหม่', static function (): void {
+    // ฟอร์มเดียวยิงไป POST /cron-jobs เสมอ — ตัวที่บอกว่าแก้หรือสร้างคือ id ที่ซ่อนอยู่
+    // เคยพังตรงนี้มาแล้ว: store() ส่งต่อให้ update() ด้วย id ที่เป็น int ทำให้ทั้งคำขอ
+    // ตายเป็น 500 (preg_match ไม่รับ int) — เห็นเฉพาะตอนกดบันทึกจริงเท่านั้น
+    $harness = hostingLogin('hostadmin', 'Hosting-Admin-Pass-11');
+    $jobId = (int) $harness->app->db()->value("SELECT id FROM cron_jobs WHERE name = 'ล้างแคชรายวัน'", [], 0);
+    $siteId = hostingSiteId('host.example.com');
+    $before = (int) $harness->app->db()->value('SELECT count(*) FROM cron_jobs', [], 0);
+
+    $response = $harness->request('POST', '/api/v2/cron-jobs', [
+        'id' => $jobId,
+        'site_id' => $siteId,
+        'name' => 'ล้างแคชรายวัน (แก้ชื่อ)',
+        'schedule' => '0 4 * * *',
+        'command' => 'echo hi',
+    ]);
+
+    assertTrue($response->status !== 500, 'ต้องไม่ระเบิดเป็น 500 — คำขอนี้คือปุ่มบันทึกของฟอร์มแก้ไข');
+    assertSame(
+        $before,
+        (int) $harness->app->db()->value('SELECT count(*) FROM cron_jobs', [], 0),
+        'มี id ติดมา = แก้ของเดิม ต้องไม่เกิดแถวใหม่',
+    );
+});
+
 test('cron ที่รูปแบบผิดถูกปฏิเสธก่อนแตะฐานข้อมูล', static function (): void {
     $harness = hostingLogin('hostadmin', 'Hosting-Admin-Pass-11');
     $siteId = hostingSiteId('host.example.com');

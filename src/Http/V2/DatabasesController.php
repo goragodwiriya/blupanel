@@ -69,6 +69,28 @@ final class DatabasesController extends ApiController
      * (ของเดิมส่งผ่าน query string ตอน redirect ซึ่งไปโผล่ใน log ของเว็บเซิร์ฟเวอร์
      * และในประวัติเบราว์เซอร์ · การส่งใน body ของคำตอบไม่มีปัญหานั้น)
      */
+    /**
+     * โครงเปล่าของฟอร์มสร้างฐานข้อมูล พร้อมคำสั่งเปิด modal
+     *
+     * ฐานข้อมูลแก้ไขไม่ได้ (สร้างกับลบเท่านั้น) จึงไม่มี `show` แบบ cron-jobs —
+     * แต่ยังใช้เส้นทางเดียวกันเพื่อให้หน้าเว็บทำสิ่งเดียวกันทุกหน้า: ยิงคำขอ
+     * แล้วส่งคำตอบต่อให้ ResponseHandler โดยไม่ต้องรู้ว่าเทมเพลตชื่ออะไร
+     */
+    public function form(Request $request): Response
+    {
+        return $this->ok(
+            ['name' => '', 'username' => '', 'privileges' => 'readwrite'],
+            [],
+            [[
+                'type' => 'modal',
+                'action' => 'show',
+                'template' => 'database-form.html',
+                'title' => '{LNG_Add database}',
+                'titleClass' => 'icon-database',
+            ]],
+        );
+    }
+
     public function store(Request $request): Response
     {
         $result = $this->agent()->data('db.create', [

@@ -16,9 +16,8 @@
             สี่ช่องกรอกถือว่าน้อย จึงเปิดใน Modal ไม่ต้องเปลี่ยนหน้า
           -->
           <button type="button" class="btn btn-primary icon-plus"
-                  data-action="click.prevent:openModal"
-                  data-modal-template="cron-job-form.html"
-                  data-modal-title="Add cron job"
+                  data-action="click.prevent:requestApi"
+                  data-api-url="/api/v2/cron-jobs/0" data-api-method="get"
                   data-i18n>Add cron job</button>
         </div>
       </header>
@@ -30,11 +29,13 @@
                  data-default-sort="name asc"
                  data-page-size="25"
                  data-row-actions='{
-                   "open": {
-                     "title": "Manage",
+                   "edit": {
+                     "title": "Edit",
                      "className": "btn btn-sm btn-success icon-edit",
                      "method": "get",
-                     "url": "/app/cron-job?id={id}"
+                     "navigate": false,
+                     "url": "/api/v2/cron-jobs/{id}",
+                     "condition": "${can_manage}"
                    },
                    "disable": {
                      "title": "Disable",

@@ -401,6 +401,74 @@ test('ไม่มีตารางไหนมี data-field ซ้ำกั�
     assertSame([], $problems, 'มี data-field ซ้ำในตารางเดียวกัน: ' . implode(', ', $problems));
 });
 
+test('ปุ่มในแถวที่ใช้ GET ต้องบอกว่าไม่ใช่การเปลี่ยนหน้า', static function (): void {
+    /*
+     * TableManager ตีความ `method: get` ว่า "เปิดหน้าใหม่" มาแต่ไหนแต่ไร (ปุ่มแบบ
+     * "เปิดหน้าแก้ไข") · ปุ่มที่ตั้งใจจะ **เรียก API แล้วให้เซิร์ฟเวอร์สั่งเปิด Modal**
+     * จึงต้องประกาศ `navigate: false` ให้ชัด
+     *
+     * เจอจากการกดจริง: ปุ่มแก้ไขในหน้า /cron-jobs พาไปที่ /api/v2/cron-jobs/1 แล้ว
+     * router ของ SPA ตอบ not-found.html — ไม่มี error ให้เห็นสักบรรทัด
+     */
+    $problems = [];
+
+    foreach (glob(PHPCP_ROOT . '/public/assets/spa/templates/*.html') ?: [] as $file) {
+        $html = (string) preg_replace('/<!--.*?-->/s', '', (string) file_get_contents($file));
+
+        preg_match_all("/data-row-actions='([^']+)'/s", $html, $matches);
+
+        foreach ($matches[1] as $json) {
+            $actions = json_decode(html_entity_decode($json, ENT_QUOTES), true);
+
+            if (!is_array($actions)) {
+                $problems[] = basename($file) . ' → data-row-actions ไม่ใช่ JSON ที่อ่านได้';
+                continue;
+            }
+
+            foreach ($actions as $key => $cfg) {
+                if (!is_array($cfg) || strtolower((string) ($cfg['method'] ?? '')) !== 'get') {
+                    continue;
+                }
+
+                // ปุ่มที่พาไปหน้าอื่นของ SPA (`/sites/12`) ตั้งใจให้เปลี่ยนหน้าอยู่แล้ว
+                // ที่ผิดคือปุ่มที่ชี้ไปที่ API ซึ่งไม่มีหน้าให้ไป
+                if (!str_starts_with((string) ($cfg['url'] ?? ''), '/api/')) {
+                    continue;
+                }
+
+                if (($cfg['navigate'] ?? null) !== false) {
+                    $problems[] = basename($file) . ' → ' . $key;
+                }
+            }
+        }
+    }
+
+    assertSame(
+        [],
+        $problems,
+        'ปุ่ม GET เหล่านี้จะพาผู้ใช้ออกจากหน้าไปที่ URL ของ API: ' . implode(', ', $problems),
+    );
+});
+
+test('บันเดิลของ Now.js ที่ ship ไปด้วยต้องมีตัวเลือกชั้นที่ถือ actions', static function (): void {
+    /*
+     * `payloadOf()` คือจุดที่ตัดสินว่า ResponseHandler จะได้ซองที่มี `actions` หรือได้
+     * แค่ก้อนข้อมูล · ก่อนหน้านี้บันเดิลแกะลึกไปหนึ่งชั้น (`data.data`) ทำให้คำสั่ง
+     * modal/redirect/reload ที่ API ส่งมา **หายไปทั้งหมดโดยไม่มีข้อผิดพลาด**
+     *
+     * ถ้าใครเอาบันเดิลเก่ากลับมาวาง ปุ่ม Add/Edit ทุกหน้าจะเงียบสนิทอีกครั้ง — เทสต์นี้
+     * จับได้ทันทีว่าไฟล์ที่ commit ไว้ build มาจากเฟรมเวิร์กรุ่นที่แก้แล้วหรือยัง
+     */
+    foreach (['now.core.min.js', 'now.table.min.js'] as $bundle) {
+        $path = PHPCP_ROOT . '/public/assets/spa/vendor/now/' . $bundle;
+
+        assertTrue(
+            str_contains((string) file_get_contents($path), 'payloadOf'),
+            $bundle . ' เป็นรุ่นก่อนแก้ — actions ที่เซิร์ฟเวอร์สั่งมาจะถูกทิ้ง',
+        );
+    }
+});
+
 test('หัวตารางไม่มีอักขระเกินติดมากับข้อความ', static function (): void {
     // ตัวสร้างเทมเพลตรอบแรกเติม `></th>` ซ้ำ ทำให้หัวตารางอ่านว่า "Name>" ทุกคอลัมน์
     // — ไม่พังอะไร แต่เห็นเต็มหน้าจอทุกหน้าที่มีตาราง

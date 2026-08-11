@@ -12,9 +12,8 @@
         </div>
         <div class="header-actions">
           <button type="button" class="btn icon-database" data-action="click.prevent:openPhpMyAdmin" data-i18n>Open phpMyAdmin</button>
-          <button type="button" class="btn btn-primary icon-plus" data-if="permissions['db.manage']" data-action="click.prevent:openModal"
-                  data-modal-template="database-form.html"
-                  data-modal-title="Add database" data-i18n>Add database</button>
+          <button type="button" class="btn btn-primary icon-plus" data-if="permissions['db.manage']" data-action="click.prevent:requestApi"
+                  data-api-url="/api/v2/databases/form" data-api-method="get" data-i18n>Add database</button>
         </div>
       </header>
             </div>

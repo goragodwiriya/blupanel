@@ -145,10 +145,20 @@ final class Request
      * @param array $params
      * @return mixed
      */
+    /**
+     * พารามิเตอร์จากเส้นทางเป็นสตริงเสมอ — ที่นี่บังคับให้เป็นสตริงด้วย
+     *
+     * เพราะโค้ดที่เรียกใช้เองมักส่งตัวเลขมา (`withParams(['id' => $id])` ตอนที่
+     * store() ส่งงานต่อให้ update()) แล้ว param()/paramInt() ที่คาดว่าจะได้สตริง
+     * ก็ระเบิดเป็น TypeError กลางคำขอ
+     */
     public function withParams(array $params): self
     {
         $clone = clone $this;
-        $clone->params = $params;
+        $clone->params = array_map(
+            static fn ($value): string => is_scalar($value) ? (string) $value : '',
+            $params,
+        );
 
         return $clone;
     }
@@ -172,7 +182,11 @@ final class Request
     {
         $value = $this->params[$key] ?? null;
 
-        return $value !== null && preg_match('/^\d+$/', $value) === 1 ? (int) $value : $default;
+        if (!is_string($value)) {
+            return is_int($value) ? $value : $default;
+        }
+
+        return preg_match('/^\d+$/', $value) === 1 ? (int) $value : $default;
     }
 
     /**

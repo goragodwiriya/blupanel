@@ -15,6 +15,20 @@ use Phpcp\Domain\CronSchedule;
  */
 final class CronJobResource extends Resource
 {
+    /**
+     * โครงเปล่าสำหรับฟอร์ม "สร้างใหม่"
+     *
+     * ฟอร์มเดียวใช้ทั้งสร้างและแก้ไข จึงต้องได้ข้อมูลรูปเดียวกันเสมอ — ถ้าตอนสร้าง
+     * ได้ object ว่าง `data-attr="value:name"` จะไม่มีอะไรให้ผูกแล้วเทมเพลตต้องเขียน
+     * เผื่อกรณีไม่มีคีย์ · `id = 0` คือสิ่งที่บอกทั้งฟอร์มและเซิร์ฟเวอร์ว่านี่ของใหม่
+     *
+     * @return array<string,mixed>
+     */
+    public static function blank(): array
+    {
+        return self::one([]);
+    }
+
     public static function one(array $row): array
     {
         $schedule = self::string($row['schedule'] ?? '');
