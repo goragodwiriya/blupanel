@@ -108,6 +108,29 @@ else
   bad "php-fpm.conf ของ panel ไม่ผ่าน configtest"
 fi
 
+# --- 5.1 ของที่ตัวติดตั้งต้องเตรียมให้พร้อมใช้ทันที ---
+#
+# สามอย่างนี้เคยเป็น "ผู้ดูแลต้องไปทำเอง" ซึ่งแปลว่าไม่มีใครทำ — log โตจนดิสก์เต็ม
+# และการแจ้งเตือนทางอีเมลใช้ไม่ได้เงียบ ๆ จนกว่าจะมีเหตุจริงแล้วไม่มีใครได้รับแจ้ง
+check_file /etc/logrotate.d/phpcp
+
+if command -v logrotate >/dev/null 2>&1; then
+  if logrotate -d /etc/logrotate.d/phpcp >/dev/null 2>&1; then
+    ok "ไฟล์ตั้งค่า logrotate ใช้งานได้จริง"
+  else
+    bad "ไฟล์ตั้งค่า logrotate ไม่ผ่านการตรวจของ logrotate เอง"
+  fi
+fi
+
+# audit.log ต้องไม่ถูกหมุนบ่อยเท่า log ทั่วไป — มันคือหลักฐานคู่ขนานของ audit_log
+grep -q 'rotate 24' /etc/logrotate.d/phpcp 2>/dev/null \
+  && ok "audit.log เก็บย้อนหลังนานกว่า log ทั่วไป" \
+  || bad "ไม่มีกฎแยกสำหรับ audit.log"
+
+command -v postfix >/dev/null 2>&1 \
+  && ok "มี Postfix สำหรับส่งอีเมลแจ้งเตือน" \
+  || bad "ไม่มี Postfix — การแจ้งเตือนทางอีเมลจะใช้ไม่ได้"
+
 # --- 6. systemd unit (ติดตั้งไว้แม้คอนเทนเนอร์จะเปิดใช้งานไม่ได้) ---
 for unit in phpcp-agentd phpcp-fpm phpcp-web; do
   check_file "/etc/systemd/system/${unit}.service"

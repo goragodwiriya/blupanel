@@ -11,6 +11,18 @@
 #   --pointer-root=/mnt/Server/htdocs  ยอมให้ชี้ DocumentRoot เข้าโฟลเดอร์นี้ (ซ้ำได้)
 #   --shared-owner                     เฉพาะ NTFS/exFAT/FAT — ข้ามการแยกสิทธิ์ระหว่างเว็บ
 #
+# ค่าเริ่มต้นคือ "ติดตั้งให้ครบพร้อมใช้" — ปิดเป็นรายข้อได้เมื่อเครื่องมีของพวกนี้อยู่แล้ว
+# หรือจัดการเองด้วยวิธีอื่น:
+#
+#   --dns-ns=ns1.a.com,ns2.a.com  เปิดใช้งาน BIND9 ให้เลย (ไม่ใส่ = ติดตั้งไว้แต่ยังไม่เปิด)
+#   --dns-email=hostmaster@a.com  อีเมลผู้ดูแลใน SOA (ไม่ใส่ = hostmaster@<ชื่อเครื่อง>)
+#   --no-postfix                  ไม่ติดตั้ง/ตั้งค่า Postfix (ใช้ MTA อื่นอยู่แล้ว)
+#   --no-logrotate                ไม่เขียน /etc/logrotate.d/phpcp
+#   --no-check                    ข้ามการตรวจ `phpcp doctor` ตอนจบ
+#   --smoke-user=U --smoke-password-file=P
+#                                 ยิงทุก endpoint ใส่เครื่องจริงตอนจบด้วยบัญชีนี้
+#                                 (ใช้ได้เฉพาะบัญชีที่เปลี่ยนรหัสผ่านครั้งแรกไปแล้ว)
+#
 # หลักการ: ทุกอย่างของ panel อยู่ใน config tree ของตัวเอง
 # ไม่แตะ /etc/apache2 และ /etc/php ของระบบเลยแม้แต่ไฟล์เดียว (ARCHITECTURE §5.2)
 
@@ -38,6 +50,14 @@ POINTER_ROOTS=""  # ว่าง = ใช้ค่าจาก sites_dir อั�
 SANDBOX_DIR="/opt/phpcp-sandbox"
 PANEL_USER="phpcp-web"
 PANEL_GROUP="phpcp"
+
+WITH_POSTFIX="yes"
+WITH_LOGROTATE="yes"
+RUN_DOCTOR="yes"
+DNS_NS=""
+DNS_EMAIL=""
+SMOKE_USER=""
+SMOKE_PASSWORD_FILE=""
 
 # ---------------------------------------------------------------------------
 # ข้อความ
@@ -67,8 +87,17 @@ for arg in "$@"; do
     --users-dir=*)    USERS_DIR="${arg#*=}" ;;
     --shared-owner)   SHARED_OWNER="yes" ;;
     --pointer-root=*) POINTER_ROOTS="${POINTER_ROOTS}${POINTER_ROOTS:+,}${arg#*=}" ;;
+    --no-postfix)     WITH_POSTFIX="no" ;;
+    --no-logrotate)   WITH_LOGROTATE="no" ;;
+    --no-check)       RUN_DOCTOR="no" ;;
+    --dns-ns=*)       DNS_NS="${arg#*=}" ;;
+    --dns-email=*)    DNS_EMAIL="${arg#*=}" ;;
+    --smoke-user=*)          SMOKE_USER="${arg#*=}" ;;
+    --smoke-password-file=*) SMOKE_PASSWORD_FILE="${arg#*=}" ;;
     -h|--help)
-      sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      # พิมพ์คอมเมนต์หัวไฟล์ทั้งบล็อก ไม่ใช่ช่วงบรรทัดตายตัว — เคยตรึงไว้ที่ 2,14
+      # แล้วตัวเลือกที่เพิ่มทีหลังไม่เคยโผล่ใน --help เลยสักตัว
+      awk 'NR > 1 { if ($0 ~ /^#/) { sub(/^# ?/, ""); print } else { exit } }' "${BASH_SOURCE[0]}"
       exit 0 ;;
     *) die "ไม่รู้จักตัวเลือก: $arg" ;;
   esac
@@ -96,6 +125,24 @@ check_abs_path() {
     *[\'\"\\]*) die "$2 มีอักขระที่ใช้ในไฟล์ตั้งค่าไม่ได้: $1" ;;
   esac
 }
+
+# ค่าของ --dns-* ถูกเขียนลง config.php ที่ถูก include ตอนบูต จึงต้องคัดกรองที่ต้นทาง
+# แบบเดียวกับเส้นทาง — อนุญาตเฉพาะอักขระที่เป็นไปได้จริงของชื่อโฮสต์และอีเมล
+if [ -n "$DNS_NS" ]; then
+  case "$DNS_NS" in
+    *[!A-Za-z0-9.,-]*) die "--dns-ns มีอักขระที่ไม่ใช่ชื่อโฮสต์: $DNS_NS" ;;
+  esac
+fi
+if [ -n "$DNS_EMAIL" ]; then
+  case "$DNS_EMAIL" in
+    *[!A-Za-z0-9.@_-]*) die "--dns-email มีอักขระที่ไม่ใช่อีเมล: $DNS_EMAIL" ;;
+    *@*) ;;
+    *) die "--dns-email ต้องเป็นอีเมล: $DNS_EMAIL" ;;
+  esac
+fi
+if [ -n "$SMOKE_PASSWORD_FILE" ] && [ ! -r "$SMOKE_PASSWORD_FILE" ]; then
+  die "อ่าน --smoke-password-file ไม่ได้: $SMOKE_PASSWORD_FILE"
+fi
 
 SITES_DIR="$(printf '%s' "$SITES_DIR" | sed 's:/*$::')"
 check_abs_path "$SITES_DIR" "--sites-dir"
@@ -177,9 +224,37 @@ if [ "$(id -u)" -eq 0 ] && command -v apt-get >/dev/null 2>&1; then
     apt-get update -qq >/dev/null 2>&1 || true
   fi
 
-  say "กำลังติดตั้งแพ็กเกจ PHP 7.4, PHP 8.4, Apache2, Nginx, BIND9, MariaDB, OpenSSH, UFW, Fail2ban, phpMyAdmin, Cron..."
+  # Postfix ถามค่าตั้งระหว่างติดตั้งถ้าไม่ตอบล่วงหน้า — ตอบให้ก่อนเพื่อไม่ให้ค้างรอคน
+  #
+  # "Internet Site" คือค่าที่ทำให้ส่งเมลออกได้จริง ซึ่งเป็นสิ่งเดียวที่ panel ต้องการ
+  # (แจ้งเตือนขาออก ไม่ใช่รับเมลเข้า) · ผู้ดูแลที่ต้องส่งผ่าน relay ตั้งได้ทีหลังในหน้า
+  # ตั้งค่าของ panel ซึ่งเขียน main.cf ทับให้เองผ่าน MailApply
+  #
+  # ข้ามทั้งชุดถ้าเครื่องมี MTA อื่นอยู่แล้ว — การลง Postfix ทับ exim/sendmail
+  # ที่ผู้ดูแลตั้งใจใช้ ถือเป็นการเปลี่ยนระบบเกินขอบเขตของตัวติดตั้ง panel
+  POSTFIX_PKG=""
+  if [ "$WITH_POSTFIX" = "yes" ]; then
+    OTHER_MTA="no"
+    if ! command -v postfix >/dev/null 2>&1; then
+      # `sendmail` เป็นคำสั่งที่ Postfix เองก็ติดตั้งให้ จึงเช็คได้เฉพาะตอนที่ยังไม่มี Postfix
+      command -v exim4 >/dev/null 2>&1 && OTHER_MTA="yes"
+      command -v sendmail >/dev/null 2>&1 && OTHER_MTA="yes"
+    fi
+
+    if [ "$OTHER_MTA" = "yes" ]; then
+      warn "พบ MTA อื่นบนเครื่องนี้ — ข้ามการติดตั้ง Postfix (ใช้ --no-postfix เพื่อไม่ให้เตือนอีก)"
+    else
+      POSTFIX_PKG="postfix"
+      debconf-set-selections <<EOF >/dev/null 2>&1 || true
+postfix postfix/main_mailer_type select Internet Site
+postfix postfix/mailname string $(hostname -f 2>/dev/null || hostname 2>/dev/null || echo localhost)
+EOF
+    fi
+  fi
+
+  say "กำลังติดตั้งแพ็กเกจ PHP 7.4, PHP 8.4, Apache2, Nginx, BIND9, MariaDB, OpenSSH, UFW, Fail2ban, phpMyAdmin, Cron${POSTFIX_PKG:+, Postfix}..."
   apt-get install -y -qq --no-install-recommends \
-    cron openssh-server bind9 bind9utils \
+    cron openssh-server bind9 bind9utils logrotate $POSTFIX_PKG \
     php7.4-cli php7.4-fpm php7.4-sqlite3 php7.4-mysql php7.4-mbstring php7.4-curl php7.4-zip php7.4-gd php7.4-xml php7.4-intl \
     php8.4-cli php8.4-fpm php8.4-sqlite3 php8.4-mysql php8.4-mbstring php8.4-curl php8.4-zip php8.4-gd php8.4-xml php8.4-intl php8.4-imagick php8.4-opcache \
     apache2 nginx openssl ca-certificates procps ufw fail2ban certbot python3-certbot-apache python3-certbot-nginx mariadb-server phpmyadmin >/dev/null 2>&1 || true
@@ -363,6 +438,72 @@ fi
 chown root:"$PANEL_GROUP" "$CONF_DIR/config.php"
 chmod 640 "$CONF_DIR/config.php"
 
+# ---------------------------------------------------------------------------
+# 5.1 เชื่อม BIND9 (เฉพาะเมื่อบอกชื่อ nameserver มาด้วย)
+#
+# ติดตั้งแพ็กเกจ bind9 ให้ทุกเครื่องอยู่แล้ว แต่ **ไม่เปิด `dns.enabled` เอง** ถ้าไม่มี
+# `--dns-ns` เพราะการเปิดแปลว่า panel จะเขียนทับ `named.conf.local` ทั้งไฟล์ — zone
+# ที่ผู้ดูแลตั้งเองไว้ก่อนจะหายไปเงียบ ๆ · และ BIND9 ปฏิเสธ zone ที่ไม่มี NS record
+# อยู่แล้ว การเปิดโดยไม่รู้ชื่อ nameserver จึงได้ระบบที่สร้าง zone ไม่ได้สักอัน
+# ---------------------------------------------------------------------------
+if [ -n "$DNS_NS" ]; then
+  head_ "5.1 เชื่อม BIND9"
+
+  DNS_EMAIL_FINAL="${DNS_EMAIL:-hostmaster@$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo localhost)}"
+
+  # แทรกบล็อกระหว่างเครื่องหมายของตัวติดตั้งเอง — ติดตั้งซ้ำจะแทนที่ของเดิม ไม่ใช่ต่อท้าย
+  # ซ้อนกันไปเรื่อย ๆ · ไม่ใช้ var_export ทั้งไฟล์เพราะจะล้างคอมเมนต์ทั้งหมดที่อธิบาย
+  # เหตุผลของแต่ละค่าทิ้ง ซึ่งเป็นสิ่งที่ผู้ดูแลคนถัดไปต้องอ่าน
+  "$PHP_BIN" -r '
+    $f = $argv[1];
+    $s = file_get_contents($f);
+
+    $ns = array_values(array_filter(array_map("trim", explode(",", $argv[2]))));
+    $block = "    /* phpcp:dns */\n"
+      . "    // เขียนโดย install.sh --dns-ns — แก้ได้ แต่การติดตั้งซ้ำจะเขียนทับบล็อกนี้\n"
+      . "    \x27dns\x27 => [\n"
+      . "        \x27enabled\x27 => true,\n"
+      . "        \x27nameservers\x27 => [" . implode(", ", array_map(
+          static fn ($n) => var_export($n, true),
+          $ns,
+      )) . "],\n"
+      . "        \x27soa_email\x27 => " . var_export($argv[3], true) . ",\n"
+      . "    ],\n"
+      . "    /* phpcp:dns:end */\n";
+
+    if (str_contains($s, "/* phpcp:dns */")) {
+        $s = preg_replace(
+            "~[ \t]*/\* phpcp:dns \*/.*?/\* phpcp:dns:end \*/\n~s",
+            $block,
+            $s,
+            1,
+        );
+    } else {
+        // คีย์ที่ซ้ำกันใน array literal ตัวหลังชนะ จึงต้องแทรก "ก่อน" ค่าอื่นเสมอ
+        // ไม่ใช่ต่อท้าย เผื่อวันหนึ่ง config.example.php มีคีย์ dns ของตัวเอง
+        $s = preg_replace("~(return\s*\[\R)~", "$1" . $block, $s, 1);
+    }
+
+    file_put_contents($f, $s);
+  ' "$CONF_DIR/config.php" "$DNS_NS" "$DNS_EMAIL_FINAL"
+
+  "$PHP_BIN" -l "$CONF_DIR/config.php" >/dev/null || die "เขียนค่า DNS แล้ว config.php เสีย — ตรวจค่า --dns-ns/--dns-email"
+  ok "เปิด dns.enabled พร้อม nameserver: $DNS_NS (SOA: $DNS_EMAIL_FINAL)"
+
+  mkdir -p /etc/bind/zones
+  chown root:bind /etc/bind/zones 2>/dev/null || true
+  chmod 775 /etc/bind/zones 2>/dev/null || true
+
+  if [ -d /run/systemd/system ]; then
+    systemctl enable --now named >/dev/null 2>&1 \
+      || systemctl enable --now bind9 >/dev/null 2>&1 \
+      || warn "เปิดบริการ BIND9 ไม่สำเร็จ — ตรวจด้วย systemctl status named"
+    ok "เปิดใช้งานบริการ BIND9 และตั้งให้ขึ้นตอนบูต"
+  fi
+
+  warn "โซนที่ตั้งเองไว้ก่อนหน้าใน named.conf.local จะถูก panel เขียนทับ — สำรองไว้ก่อนถ้ามี"
+fi
+
 if [ "$MODE" = "production" ]; then
   # เพิ่ม config สำหรับเครื่องภายในที่มี BIND แต่ยังต้องการ hosts entry
   "$PHP_BIN" -r '
@@ -387,7 +528,7 @@ else
 fi
 
   # ---------------------------------------------------------------------------
-  # 5.1 เชื่อมต่อ phpMyAdmin ที่ติดตั้งไว้แล้วบนเครื่อง
+  # 5.2 เชื่อมต่อ phpMyAdmin ที่ติดตั้งไว้แล้วบนเครื่อง
   #
   # เชื่อมเฉพาะของที่มีอยู่แล้ว ไม่ดาวน์โหลดอะไรจากอินเทอร์เน็ตมาวางในเว็บรูทของ panel
   # ตัวติดตั้งเคยดึง Adminer มาโดยไม่ตรวจ checksum หรือลายเซ็น ซึ่งเป็นความเสี่ยง
@@ -703,6 +844,68 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 10. หมุน log
+#
+# ไม่มีตัวนี้ = /var/log/phpcp โตไม่มีที่สิ้นสุด · panel.log กับ agent.log บนเครื่อง
+# ที่ใช้งานจริงโตเร็วที่สุดเพราะบันทึกทุกคำขอและทุกคำสั่งที่ผ่าน agent
+# ---------------------------------------------------------------------------
+if [ "$WITH_LOGROTATE" = "yes" ]; then
+  head_ "10. หมุน log"
+
+  if [ -d /etc/logrotate.d ]; then
+    render "$SRC_DIR/templates/panel/logrotate.conf.tpl" /etc/logrotate.d/phpcp
+    chown root:root /etc/logrotate.d/phpcp
+    chmod 644 /etc/logrotate.d/phpcp
+
+    # logrotate ข้ามไฟล์ตั้งค่าที่ผิดรูปทั้งไฟล์โดยไม่ทำให้ใครรู้ — ตรวจตั้งแต่ตอนนี้
+    if command -v logrotate >/dev/null 2>&1; then
+      if LOGROTATE_ERR="$(logrotate -d /etc/logrotate.d/phpcp 2>&1)"; then
+        ok "ตั้งค่าหมุน log ที่ /etc/logrotate.d/phpcp (ทั่วไปทุกสัปดาห์ · audit ทุกเดือน)"
+      else
+        # ต้องเก็บข้อความก่อนลบไฟล์ — ตรวจไฟล์ต้นแบบที่ยังมี {{...}} จะได้ error คนละเรื่อง
+        rm -f /etc/logrotate.d/phpcp
+        die "ไฟล์ตั้งค่า logrotate ไม่ผ่านการตรวจ: $(printf '%s' "$LOGROTATE_ERR" | tail -3)"
+      fi
+    else
+      ok "เขียน /etc/logrotate.d/phpcp แล้ว (ไม่พบคำสั่ง logrotate จึงข้ามการตรวจ)"
+    fi
+  else
+    warn "ไม่มี /etc/logrotate.d — ข้ามการตั้งค่าหมุน log"
+  fi
+else
+  say "$C_DIM ข้ามการตั้งค่าหมุน log (--no-logrotate)$C_OFF"
+fi
+
+# ---------------------------------------------------------------------------
+# 11. ตรวจผลการติดตั้ง
+#
+# ตัวติดตั้งที่จบด้วยรหัส 0 ไม่ได้แปลว่าระบบใช้งานได้ — เคยเกิดมาแล้วที่ทุกขั้นรายงาน
+# ผ่านหมดแต่ panel อ่าน config ไม่ได้จึงไม่มีฐานข้อมูลเลย · doctor ตรวจจากมุมของ
+# ผู้ใช้ที่ panel รันจริง (ไม่ใช่ root) ซึ่งเป็นมุมเดียวที่จับปัญหาสิทธิ์แบบนั้นได้
+# ---------------------------------------------------------------------------
+if [ "$RUN_DOCTOR" = "yes" ]; then
+  head_ "11. ตรวจผลการติดตั้ง"
+
+  as_panel "$PHP_BIN" /usr/local/bin/phpcp doctor || DOCTOR_RC=$?
+  if [ "${DOCTOR_RC:-0}" -ne 0 ]; then
+    warn "doctor พบปัญหาข้างต้น — แก้ให้ครบก่อนเปิดใช้งานจริง"
+  fi
+fi
+
+# ยิงทุก endpoint ใส่เครื่องจริง — ต้องมีบัญชีที่ล็อกอินผ่านแล้วจริง จึงเป็นทางเลือก
+# ไม่ใช่ค่าเริ่มต้น (บัญชีที่เพิ่งสร้างติดธง must_change_password จะล็อกอินไม่ผ่าน)
+if [ -n "$SMOKE_USER" ] && [ -n "$SMOKE_PASSWORD_FILE" ]; then
+  head_ "12. ยิงทุก endpoint ใส่เครื่องจริง"
+
+  if as_panel "$PHP_BIN" "$INSTALL_DIR/bin/phpcp-smoke" \
+      --url="https://127.0.0.1:$PORT" --user="$SMOKE_USER" --password-file="$SMOKE_PASSWORD_FILE"; then
+    ok "ทุก endpoint ตอบตามสัญญา"
+  else
+    warn "phpcp-smoke พบปัญหา — ดูผลด้านบน"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # เสร็จสิ้น
 # ---------------------------------------------------------------------------
 head_ "เสร็จสิ้น"
@@ -714,8 +917,15 @@ if [ "$MODE" = "production" ]; then
   printf '\n'
   warn "อย่าลืมทำตามรายการตรวจก่อนขึ้น production ใน docs/SECURITY.md §5"
   printf '\n'
-  warn "ติดตั้ง BIND9 ไว้แล้วแต่ panel ยังไม่เชื่อมให้อัตโนมัติ (dns.enabled = false ในไฟล์ config)"
-  say "เปิดใช้งานได้เองหลังตั้งค่า dns.nameservers ใน config.php แล้ว — ดู PLAN-V2.md §6 เฟส E3"
+  if [ -n "$DNS_NS" ]; then
+    say "DNS  : เชื่อม BIND9 แล้ว — สร้างเรกคอร์ดจากหน้า Domains ได้เลย"
+  else
+    warn "ติดตั้ง BIND9 ไว้แล้วแต่ panel ยังไม่เชื่อมให้ (dns.enabled = false)"
+    say "เปิดได้ด้วยการติดตั้งซ้ำพร้อม ${C_DIM}--dns-ns=ns1.example.com,ns2.example.com${C_OFF}"
+  fi
+  if [ "$WITH_POSTFIX" = "yes" ]; then
+    say "เมล : ตั้งค่า relay/ผู้ส่งได้ในหน้า Settings — ค่าที่ตั้งจะเขียน main.cf ให้เอง"
+  fi
 else
   printf '\n'
   warn "ระบบอยู่ในโหมด $MODE — คำสั่งจะไม่มีผลกับเซิร์ฟเวอร์จริง"
