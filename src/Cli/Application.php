@@ -51,6 +51,7 @@ final class Application
                 'doctor' => $this->doctor(),
                 'setup' => $this->setup($args),
                 'db:migrate' => $this->migrate(),
+                'sites:rebuild' => $this->sitesRebuild(),
                 'key:generate' => $this->keyGenerate(),
                 'user:list' => $this->userList(),
                 'user:create' => $this->userCreate($args),
@@ -98,7 +99,8 @@ final class Application
             'ติดตั้งและฐานข้อมูล' => [
                 'setup' => 'ติดตั้งครั้งแรก — สร้างฐานข้อมูลและผู้ดูแลระบบคนแรก',
                 'db:migrate' => 'อัปเดตโครงสร้างฐานข้อมูล',
-                'key:generate' => 'สร้าง secret key ลงไฟล์ config'
+                'key:generate' => 'สร้าง secret key ลงไฟล์ config',
+                'sites:rebuild' => 'สร้างไฟล์ตั้งค่าของทุกเว็บไซต์ใหม่ (หลังเปลี่ยนค่า webserver)'
             ],
             'ผู้ใช้งาน (กู้ระบบเมื่อเข้าหน้าเว็บไม่ได้)' => [
                 'user:list' => 'รายชื่อผู้ใช้ทั้งหมด',
@@ -578,6 +580,45 @@ final class Application
         }
 
         return 'ไม่พบไฟล์ config — คัดลอก etc/config.example.php เป็น etc/config.php ก่อน';
+    }
+
+    /**
+     * สร้างไฟล์ vhost ของทุกเว็บไซต์ใหม่ตามค่า `webserver` ปัจจุบัน
+     *
+     * ต้องรันหลังเปลี่ยนค่า `webserver` ในไฟล์ตั้งค่า — ไฟล์เดิมเป็นรูปแบบของ
+     * เซิร์ฟเวอร์ตัวเก่า การแก้ค่าเฉย ๆ ไม่ทำให้อะไรเกิดขึ้นเลย
+     *
+     * ส่งผ่าน agent เหมือนที่หน้าเว็บทำ — ชั้น CLI ไม่มีสิทธิ์เขียน /etc/apache2
+     * หรือ /etc/nginx เอง และการตรวจค่ากับ audit log ต้องอยู่ที่เดียวกันทั้งระบบ
+     *
+     * @return int
+     */
+    private function sitesRebuild(): int
+    {
+        $app = App::boot();
+
+        try {
+            $result = $app->agent()->data('site.rebuild', [], $app->systemActor('cli.sites_rebuild'));
+        } catch (AgentException $e) {
+            $this->out->fail($e->getMessage());
+
+            return 1;
+        }
+
+        foreach ((array) ($result['removed_stale'] ?? []) as $path) {
+            $this->out->info('ลบไฟล์ของเซิร์ฟเวอร์ตัวเก่า: ' . $path);
+        }
+
+        $this->out->ok((string) $result['message']);
+
+        // การเปลี่ยนพอร์ตที่ฟังทำตอน reload ไม่ได้ตามการออกแบบของ Apache เอง —
+        // ถ้าไม่บอกตรงนี้ ผู้ดูแลจะเจอ nginx สตาร์ตไม่ขึ้นเพราะพอร์ตชนแล้วหาสาเหตุไม่เจอ
+        if (($result['webserver'] ?? '') === 'nginx-proxy') {
+            $this->out->warn('โหมดนี้ให้ Apache ถอยไปฟัง 127.0.0.1:8080 — ต้องรีสตาร์ตหนึ่งครั้ง ไม่ใช่แค่ reload');
+            $this->out->line('  sudo systemctl restart apache2 && sudo systemctl start nginx');
+        }
+
+        return 0;
     }
 
     /**
