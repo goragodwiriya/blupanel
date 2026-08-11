@@ -210,33 +210,113 @@
    * `GraphComponent` อ่านได้ตรง ๆ) เหลือแค่การ**สลับ url** ที่ประกาศด้วยแอตทริบิวต์ไม่ได้
    * เพราะต้องผูกกับการคลิกและต้องบอกคอมโพเนนต์ให้โหลดใหม่
    */
+  /**
+   * ความถี่ในการโหลดกราฟใหม่ ตามช่วงเวลาที่เลือก (มิลลิวินาที)
+   *
+   * ตัวเก็บข้อมูล (`metrics.record`) เขียนหนึ่งแถวต่อนาที ความถี่ที่มีความหมายที่สุด
+   * จึงเป็นหนึ่งนาที — ถี่กว่านั้นได้ข้อมูลชุดเดิมกลับมา · ช่วงยาวขยับช้าอยู่แล้ว
+   * (จุดหนึ่งจุดในกราฟ 30 วันคือค่าเฉลี่ยหลายชั่วโมง) จึงไม่ต้องถามบ่อยเท่ากัน
+   */
+  const METRICS_REFRESH_MS = {'24h': 60000, '7d': 300000, '30d': 900000, '1y': 900000};
+
   function metricsRanges(root) {
     const holder = root.querySelector('[data-metrics-graph]');
     const buttons = Array.from(root.querySelectorAll('[data-metrics-ranges] [data-range]'));
+    const stamp = root.querySelector('[data-metrics-updated]');
 
-    if (!holder || buttons.length === 0) return;
+    if (!holder || buttons.length === 0) return null;
+
+    let range = (buttons.find(b => b.classList.contains('is-active')) || buttons[0]).dataset.range;
+
+    const load = () => {
+      const instance = window.GraphComponent && window.GraphComponent.getInstance(holder);
+      if (!instance) return false;
+
+      // **ต้องเปลี่ยนที่ `instance.options.url` ไม่ใช่ `data-url` ของ element**
+      // `refresh()` โหลดจาก options ที่จำไว้ตอนสร้าง ไม่ได้อ่าน dataset ใหม่ —
+      // พิสูจน์ในเบราว์เซอร์จริงแล้วว่าแก้ dataset แล้วกราฟไม่เปลี่ยนเลย (2026-08-10)
+      instance.options.url = '/api/v2/metrics/history?range=' + encodeURIComponent(range);
+      instance.refresh();
+
+      if (stamp) {
+        // บอกเวลาที่ข้อมูลถูกโหลดจริง ไม่ใช่แค่ปล่อยให้กราฟขยับเงียบ ๆ —
+        // ผู้ดูแลต้องแยกออกว่า "กราฟนิ่งเพราะโหลดใหม่แล้วค่าเท่าเดิม" กับ
+        // "กราฟนิ่งเพราะมันค้าง" ซึ่งสองอย่างนี้หน้าตาเหมือนกันทุกประการ
+        stamp.hidden = false;
+        stamp.textContent = (window.Now && Now.translate ? Now.translate('Updated') : 'Updated')
+          + ' ' + new Date().toLocaleTimeString();
+      }
+
+      return true;
+    };
 
     buttons.forEach((button) => {
       button.addEventListener('click', () => {
         buttons.forEach(b => b.classList.toggle('is-active', b === button));
-
-        const instance = window.GraphComponent && window.GraphComponent.getInstance(holder);
-        if (!instance) return;
-
-        // **ต้องเปลี่ยนที่ `instance.options.url` ไม่ใช่ `data-url` ของ element**
-        // `refresh()` โหลดจาก options ที่จำไว้ตอนสร้าง ไม่ได้อ่าน dataset ใหม่ —
-        // พิสูจน์ในเบราว์เซอร์จริงแล้วว่าแก้ dataset แล้วกราฟไม่เปลี่ยนเลย (2026-08-10)
-        instance.options.url = '/api/v2/metrics/history?range=' + encodeURIComponent(button.dataset.range);
-        instance.refresh();
+        range = button.dataset.range;
+        load();
       });
     });
+
+    return {
+      load,
+      interval: () => METRICS_REFRESH_MS[range] || 60000,
+    };
+  }
+
+  /**
+   * โหลดกราฟใหม่ตามจังหวะของตัวเก็บข้อมูล
+   *
+   * **หยุดเมื่อแท็บไม่ได้ถูกมองอยู่** — หน้าที่เปิดค้างไว้ข้ามคืนจะยิงคำขอนับพันครั้ง
+   * โดยไม่มีใครเห็นสักครั้งเดียว · กลับมาแล้วโหลดทันทีหนึ่งรอบเพราะข้อมูลเก่าไปแล้ว
+   *
+   * จับเวลาให้ตรงกับวินาทีที่ 5 ของนาทีถัดไป ไม่ใช่ตั้ง setInterval เฉย ๆ —
+   * ตัวเก็บข้อมูลทำงานตอนต้นนาที ถ้าถามก่อนมันเขียนเสร็จจะได้ข้อมูลของนาทีก่อน
+   * แล้วกราฟจะตามหลังอยู่หนึ่งนาทีตลอดเวลา
+   */
+  function metricsAutoRefresh(graph) {
+    if (!graph) return () => {};
+
+    let timer = null;
+
+    const schedule = () => {
+      clearTimeout(timer);
+
+      const step = graph.interval();
+      const now = Date.now();
+      const delay = step === 60000
+        ? (60000 - (now % 60000)) + 5000
+        : step;
+
+      timer = setTimeout(() => {
+        if (document.visibilityState === 'visible') graph.load();
+        schedule();
+      }, delay);
+    };
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        graph.load();
+        schedule();
+      } else {
+        clearTimeout(timer);
+      }
+    };
+
+    document.addEventListener('visibilitychange', onVisible);
+    schedule();
+
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }
 
   window.pageServer = function(root) {
     // EventSource ใช้ตรง ๆ ไม่ผ่าน Now.js ตามที่แผนระบุ (C4) — คุกกี้ session ติดไปเอง
     // เพราะเป็น origin เดียวกัน และเบราว์เซอร์ต่อกลับให้อัตโนมัติเมื่อหลุด
     const stream = new EventSource('/api/v2/metrics/stream');
-    metricsRanges(root);
+    const stopAutoRefresh = metricsAutoRefresh(metricsRanges(root));
 
     const paint = (metrics) => {
       const set = (selector, value) => {
@@ -267,6 +347,9 @@
     // สตรีมล้ม (agent ล่ม/เซสชันหมดอายุ) — ปิดทิ้ง ไม่ปล่อยให้ต่อใหม่ไม่รู้จบ
     stream.addEventListener('error', () => stream.close());
 
-    return () => stream.close();
+    return () => {
+      stream.close();
+      stopAutoRefresh();
+    };
   };
 })();

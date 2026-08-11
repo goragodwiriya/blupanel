@@ -45,6 +45,11 @@
       <div class="content-body">
         <div class="flex justify-between middle">
           <h2 class="icon-meter" data-i18n>Resource history</h2>
+          <!--
+            เวลาที่โหลดข้อมูลรอบล่าสุด — กราฟที่ขยับเองต้องบอกได้ว่ามันยังทำงานอยู่
+            ไม่งั้น "ค่าไม่เปลี่ยนเพราะเครื่องนิ่ง" กับ "ค้างเพราะสตรีมหลุด" หน้าตาเหมือนกัน
+          -->
+          <span class="comment" data-metrics-updated hidden></span>
           <div class="btn-group" data-metrics-ranges>
             <button type="button" class="btn small is-active" data-range="24h" data-i18n>24 hours</button>
             <button type="button" class="btn small" data-range="7d" data-i18n>7 days</button>
