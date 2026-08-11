@@ -409,11 +409,48 @@ final class NginxProxyDriver implements WebServerDriver
         $result = $executor->exec([$executor->path('/usr/sbin/nginx'), '-t'], timeout: 20);
         $output = trim($result->stderr) !== '' ? $result->stderr : $result->stdout;
 
-        if (!$result->ok()) {
+        if (!$result->ok() && !self::isOnlyBindFailure($output)) {
             return [false, "ชั้นหน้า (nginx) ไม่ผ่าน:\n" . $output];
         }
 
         return [true, trim($apacheOut . "\n" . $output)];
+    }
+
+    /**
+     * `nginx -t` ล้มเพราะจองพอร์ตไม่ได้เท่านั้นหรือไม่ — ไม่ใช่เพราะไฟล์ผิด
+     *
+     * **การตรวจ config ของ nginx เปิด listening socket จริง** ไม่ได้อ่านแค่ไวยากรณ์
+     * ระหว่างสลับโหมด Apache ยังถือพอร์ต 80/443 อยู่จนกว่าจะรีสตาร์ต การตรวจจึงล้ม
+     * ด้วย EADDRINUSE ทั้งที่ nginx เพิ่งบอกเองว่า "syntax is ok" — ถ้าถือว่าไม่ผ่าน
+     * ทรานแซกชันจะ rollback ทิ้งทุกครั้งแล้วสลับโหมดไม่ได้เลยสักครั้ง
+     *
+     * ปลอดภัยที่จะผ่านต่อ เพราะการ bind จริงเกิดตอนสตาร์ตอยู่แล้ว และถ้าตอนนั้นยังจอง
+     * ไม่ได้ `ServiceAction` จะบอกว่าใครถือพอร์ตอยู่พร้อมวิธีแก้ (ไม่ใช่ข้อความของ systemd)
+     *
+     * เงื่อนไขเข้มโดยตั้งใจ: ต้องเห็น "syntax is ok" และทุกบรรทัด emerg ต้องเป็นเรื่อง
+     * bind เท่านั้น — ผิดพลาดอย่างอื่นแม้บรรทัดเดียวก็ถือว่าไม่ผ่านตามปกติ
+     */
+    public static function isOnlyBindFailure(string $output): bool
+    {
+        if (!str_contains($output, 'syntax is ok')) {
+            return false;
+        }
+
+        $emergencies = 0;
+
+        foreach (explode("\n", $output) as $line) {
+            if (!str_contains($line, '[emerg]')) {
+                continue;
+            }
+
+            $emergencies++;
+
+            if (!str_contains($line, 'bind() to') && !str_contains($line, 'still could not bind')) {
+                return false;
+            }
+        }
+
+        return $emergencies > 0;
     }
 
     /**

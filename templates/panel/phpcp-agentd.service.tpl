@@ -64,10 +64,16 @@ SystemCallFilter=@system-service @privileged
 # CAP_NET_ADMIN จำเป็นสำหรับ ufw — ทั้งอ่านสถานะและแก้กฎล้วนคุยกับ netfilter ของเคอร์เนล
 # ถ้าไม่มี `ufw status` จะได้ "Could not fetch rule set generation id: Permission denied"
 # แล้วหน้า Firewall จะรายงานว่าปิดอยู่ทั้งที่เปิดอยู่จริง (readable=false)
-CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_SETUID CAP_SETGID CAP_KILL CAP_SYS_ADMIN CAP_NET_ADMIN
+#
+# CAP_NET_BIND_SERVICE จำเป็นสำหรับ `nginx -t` — การตรวจ config ของ nginx **เปิด
+# listening socket จริง** ไม่ได้ตรวจแค่ไวยากรณ์ ถ้าไม่มี capability นี้จะได้
+# "bind() to 0.0.0.0:80 failed (13: Permission denied)" ทั้งที่บรรทัดก่อนหน้า
+# บอกว่า "syntax is ok" แล้ว ผลคือทุกการเขียน config ถูก rollback ทิ้งโดยที่
+# ไฟล์ไม่มีอะไรผิดเลย (เจอจริงตอนกดเปลี่ยนเว็บเซิร์ฟเวอร์จากหน้าจอ 2026-08-11)
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_SETUID CAP_SETGID CAP_KILL CAP_SYS_ADMIN CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 # ต้องเป็น ambient ด้วย ไม่ใช่แค่อยู่ใน bounding set — NoNewPrivileges=yes ทำให้
-# capability ไม่ตกทอดไปยังโปรเซสลูกเอง ซึ่ง ufw/iptables เป็นโปรเซสลูกทั้งคู่
-AmbientCapabilities=CAP_NET_ADMIN
+# capability ไม่ตกทอดไปยังโปรเซสลูกเอง ซึ่ง ufw/iptables/nginx เป็นโปรเซสลูกทั้งหมด
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 
 # หมายเหตุ: RestrictSUIDSGID ต้องเป็น no เพราะ agent ต้อง setuid ลงเป็นเจ้าของเว็บไซต์
 # ก่อนแตะไฟล์ผู้ใช้ (ARCHITECTURE §4.4) ซึ่งเป็นการลดสิทธิ์ ไม่ใช่เพิ่ม

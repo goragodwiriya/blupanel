@@ -305,3 +305,53 @@ test('กฎกันไฟล์ลับต้องยังอยู่ค�
         assertTrue(str_contains($conf, $pattern), "ต้องยังกัน {$pattern} อยู่: " . $conf);
     }
 });
+
+// --- 8. การตรวจ config ของ nginx เปิด socket จริง ------------------------------
+
+test('nginx -t ที่ล้มเพราะจองพอร์ตไม่ได้ ต้องไม่ถือว่า config ผิด', static function (): void {
+    // ระหว่างสลับโหมด Apache ยังถือ 80/443 อยู่ — ถ้าถือว่าไม่ผ่านจะ rollback ทุกครั้ง
+    // แล้วสลับโหมดไม่ได้เลยสักครั้ง
+    $busy = "nginx: the configuration file /etc/nginx/nginx.conf syntax is ok\n"
+        . "nginx: [emerg] bind() to 0.0.0.0:80 failed (98: Address already in use)\n"
+        . "nginx: [emerg] still could not bind()\n";
+
+    assertTrue(NginxProxyDriver::isOnlyBindFailure($busy), 'พอร์ตไม่ว่างต้องไม่นับเป็น config ผิด');
+
+    // เจอตอนกดเปลี่ยนเว็บเซิร์ฟเวอร์จริง: agent ไม่มี CAP_NET_BIND_SERVICE
+    $denied = "nginx: the configuration file /etc/nginx/nginx.conf syntax is ok\n"
+        . "nginx: [emerg] bind() to 0.0.0.0:80 failed (13: Permission denied)\n";
+
+    assertTrue(NginxProxyDriver::isOnlyBindFailure($denied), 'สิทธิ์ไม่พอที่จะ bind ก็ไม่ใช่ config ผิด');
+});
+
+test('ไฟล์ที่ผิดจริงต้องยังถูกปฏิเสธ', static function (): void {
+    $broken = "nginx: [emerg] unknown directive \"proxy_passs\" in /etc/nginx/conf.d/x.conf:12\n"
+        . "nginx: configuration file /etc/nginx/nginx.conf test failed\n";
+
+    assertTrue(!NginxProxyDriver::isOnlyBindFailure($broken), 'directive ผิดต้องไม่ผ่าน');
+
+    // syntax ok แต่มี emerg เรื่องอื่นปนมาด้วย = ไม่ผ่าน
+    $mixed = "nginx: the configuration file /etc/nginx/nginx.conf syntax is ok\n"
+        . "nginx: [emerg] bind() to 0.0.0.0:80 failed (98: Address already in use)\n"
+        . "nginx: [emerg] open() \"/var/log/nginx/x.log\" failed (13: Permission denied)\n";
+
+    assertTrue(!NginxProxyDriver::isOnlyBindFailure($mixed), 'ผิดพลาดอย่างอื่นปนมาต้องไม่ผ่าน');
+});
+
+test('agent ต้องมี CAP_NET_BIND_SERVICE ไม่งั้น nginx -t ล้มทุกครั้ง', static function (): void {
+    $unit = (string) file_get_contents(PHPCP_ROOT . '/templates/panel/phpcp-agentd.service.tpl');
+
+    foreach (['CapabilityBoundingSet', 'AmbientCapabilities'] as $directive) {
+        $line = '';
+        foreach (explode("\n", $unit) as $row) {
+            if (str_starts_with($row, $directive . '=')) {
+                $line = $row;
+            }
+        }
+
+        assertTrue(
+            str_contains($line, 'CAP_NET_BIND_SERVICE'),
+            "{$directive} ต้องมี CAP_NET_BIND_SERVICE — nginx -t เปิด listening socket จริง: " . $line,
+        );
+    }
+});
