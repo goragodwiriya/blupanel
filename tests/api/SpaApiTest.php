@@ -401,6 +401,40 @@ test('ไม่มีตารางไหนมี data-field ซ้ำกั�
     assertSame([], $problems, 'มี data-field ซ้ำในตารางเดียวกัน: ' . implode(', ', $problems));
 });
 
+test('หน้าเว็บทุกหน้าต้องมีเนื้อหา ไม่ใช่มีแต่หัวเรื่องกับปุ่ม', static function (): void {
+    /*
+     * ตอนย้ายฟอร์มออกไปเป็นเทมเพลตของตัวเอง ตารางรายชื่อฐานข้อมูลถูกลบติดไปด้วย
+     * เหลือแต่หัวเรื่องกับปุ่ม "เพิ่มฐานข้อมูล" · แท็กยังปิดครบทุกตัวและทุกเทสต์
+     * ยังเขียว เพราะเทสต์ที่มีอยู่ล้วนตรวจ "ตารางที่มี" ว่าถูกต้องไหม ไม่มีตัวไหน
+     * ถามว่า "หน้านี้ยังมีตารางอยู่หรือเปล่า"
+     *
+     * หน้าเต็ม (หน้าที่มี sidebar) ต้องมีอย่างน้อยหนึ่งอย่างที่เป็นเนื้อหาจริง
+     */
+    $problems = [];
+
+    foreach (glob(PHPCP_ROOT . '/public/assets/spa/templates/*.html') ?: [] as $file) {
+        $html = (string) preg_replace('/<!--.*?-->/s', '', (string) file_get_contents($file));
+
+        // เทมเพลตของฟอร์มและชิ้นส่วนย่อยไม่ใช่หน้าเต็ม จึงไม่มี sidebar
+        if (!str_contains($html, 'data-component="sidebar"')) {
+            continue;
+        }
+
+        // นับเฉพาะสิ่งที่เป็นเนื้อหาของหน้าจริง ๆ — หัวเรื่องกับปุ่มไม่นับ
+        // (แดชบอร์ดใช้การ์ดในกริดแทนตาราง จึงต้องรับรูปแบบนั้นด้วย)
+        $hasContent = str_contains($html, 'data-table')
+            || str_contains($html, '<form')
+            || str_contains($html, 'content-body')
+            || str_contains($html, 'ggrid');
+
+        if (!$hasContent) {
+            $problems[] = basename($file);
+        }
+    }
+
+    assertSame([], $problems, 'หน้าเหล่านี้เปิดมาแล้วว่างเปล่า: ' . implode(', ', $problems));
+});
+
 test('ปุ่มในแถวที่ใช้ GET ต้องบอกว่าไม่ใช่การเปลี่ยนหน้า', static function (): void {
     /*
      * TableManager ตีความ `method: get` ว่า "เปิดหน้าใหม่" มาแต่ไหนแต่ไร (ปุ่มแบบ

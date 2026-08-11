@@ -16,7 +16,39 @@
                   data-api-url="/api/v2/databases/form" data-api-method="get" data-i18n>Add database</button>
         </div>
       </header>
-            </div>
+      <div class="content-body">
+        <div class="tablebody">
+          <table class="table border fullwidth" data-table="databases" data-source="/api/v2/databases" data-default-sort="name asc" data-page-size="25" data-search-columns="name"
+                 data-row-actions='{
+                    "phpmyadmin": {
+                     "title": "Open phpMyAdmin",
+                     "className": "btn btn-success icon-database",
+                     "method": "get",
+                     "target": "_blank",
+                     "url": "/phpmyadmin/index.php?route=/database/structure&db={name}"
+                   },
+                   "delete": {
+                     "title": "Delete",
+                     "className": "btn btn-danger icon-delete",
+                     "method": "delete",
+                     "url": "/api/v2/databases/{name}",
+                     "params": {"confirm": "{name}", "drop_user": "1"},
+                     "condition": "${can_manage}",
+                     "confirm": "Permanently delete this database and its data?"
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="name" data-cell-class="mono" data-i18n>{LNG_Name}</th>
+                <th data-field="size" data-format="bytes" class="center" data-cell-class="center" data-i18n>{LNG_Size}</th>
+                <th data-field="charset" class="center" data-cell-class="center" data-empty-text="—" data-i18n>{LNG_Charset}</th>
+                <th data-field="site" data-empty-text="—" data-i18n>{LNG_Website}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </main>
 </div>

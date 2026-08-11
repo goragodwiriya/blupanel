@@ -4,33 +4,32 @@
   ไม่มี chrome ของหน้า เพราะถูกโหลดเข้า Modal ไม่ใช่เส้นทางของ router ·
   ตารางอยู่ที่ `databases.html` ตามกฎที่ว่าฟอร์มกับตารางต้องไม่ปนกัน
 -->
-<form data-form="databaseCreate" action="/api/v2/databases" method="post" data-ajax-submit="true" data-validate="true" data-reset="true"
-      data-emit-event="phpcp:reload">
-<fieldset>
-  <div>
-    <label for="nd_name" data-i18n>Name</label>
-    <span class="form-control icon-database">
-      <input type="text" id="nd_name" name="name" required maxlength="64" autocomplete="off">
-    </span>
-  </div>
-  <div>
-    <label for="nd_user" data-i18n>Database user</label>
-    <span class="form-control icon-user">
-      <input type="text" id="nd_user" name="username" required maxlength="32" autocomplete="off">
-    </span>
-  </div>
-  <div>
-    <label for="nd_priv" data-i18n>Privileges</label>
-    <span class="form-control icon-menus">
-      <select id="nd_priv" name="privileges" required>
-        <option value="readwrite">readwrite</option>
-        <option value="readonly">readonly</option>
-        <option value="full">full</option>
-      </select>
-    </span>
-  </div>
-</fieldset>
-<fieldset class="submit">
-  <button type="submit" class="btn btn-primary icon-save" data-i18n>Add database</button>
-</fieldset>
-        </form>
+<form data-form="databaseCreate" action="/api/v2/databases" method="post" data-ajax-submit="true" data-validate="true" data-reset="true" data-emit-event="phpcp:reload">
+  <fieldset>
+    <div>
+      <label for="nd_name" data-i18n>Name</label>
+      <span class="form-control icon-database">
+        <input type="text" id="nd_name" name="name" required maxlength="64" autocomplete="off">
+      </span>
+    </div>
+    <div>
+      <label for="nd_user" data-i18n>Database user</label>
+      <span class="form-control icon-user">
+        <input type="text" id="nd_user" name="username" required maxlength="32" autocomplete="off">
+      </span>
+    </div>
+    <div>
+      <label for="nd_priv" data-i18n>Privileges</label>
+      <span class="form-control icon-menus">
+        <select id="nd_priv" name="privileges" required>
+          <option value="readwrite" data-i18n>Readwrite</option>
+          <option value="readonly" data-i18n>Readonly</option>
+          <option value="full" data-i18n>Full</option>
+        </select>
+      </span>
+    </div>
+  </fieldset>
+  <fieldset class="submit">
+    <button type="submit" class="btn btn-primary icon-save" data-i18n>Add database</button>
+  </fieldset>
+</form>
