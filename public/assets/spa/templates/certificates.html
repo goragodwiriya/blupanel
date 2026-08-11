@@ -11,14 +11,16 @@
           <p data-i18n>Issue, renew and remove certificates per website</p>
         </div>
       </header>
-
       <div class="content-body">
         <div class="tablebody">
-          <table class="table border fullwidth"
-                 data-table="certificates"
-                 data-source="/api/v2/certificates"
-                 data-page-size="50"
-                 data-row-actions='{
+          <table class="table border fullwidth" data-table="certificates" data-source="/api/v2/certificates" data-page-size="50" data-row-actions='{
+                    "link": {
+                     "title": "Open",
+                     "className": "btn btn-brown icon-link",
+                     "method": "get",
+                     "target": "_blank",
+                     "url": "https://{domain}"
+                   },
                    "issue": {
                      "title": "Issue",
                      "className": "btn btn-sm btn-primary icon-plus",
@@ -49,12 +51,10 @@
               <tr>
                 <th data-field="domain" data-cell-class="mono" data-i18n>{LNG_Domain}</th>
                 <th data-field="ssl_mode" class="center" data-cell-class="center" data-i18n>{LNG_Mode}</th>
-                <th data-field="status" class="center" data-cell-class="center"
-                    data-template="<span class='pill pill-${status_tone}'>{LNG_${status}}</span>"
-                    data-i18n>{LNG_Status}</th>
+                <th data-field="status" class="center" data-cell-class="center" data-template="<span class='pill pill-${status_tone}'>{LNG_${status}}</span>" data-i18n>{LNG_Status}
+                </th>
                 <th data-field="issuer" data-empty-text="—" data-i18n>{LNG_Issuer}</th>
-                <th data-field="expires_at" class="center" data-cell-class="center"
-                    data-format="date" data-empty-text="—" data-i18n>{LNG_Expires}</th>
+                <th data-field="expires_at" class="center" data-cell-class="center" data-format="date" data-empty-text="—" data-i18n>{LNG_Expires}</th>
               </tr>
             </thead>
             <tbody></tbody>

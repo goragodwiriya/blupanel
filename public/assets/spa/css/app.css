@@ -14,11 +14,17 @@
   --color-primary: #2f6feb;
   --topbar-height: 78px;
   --sidebar-color-text: var(--color-text);
+  --sidebar-color-background: linear-gradient(180deg,
+      color-mix(in srgb, var(--color-primary) 7%, var(--color-background)) 0%,
+      var(--color-background) 60%);
+  --sidebar-link-bg: color-mix(in srgb, var(--color-primary) 6%, transparent);
+  --sidebar-link-hover-bg: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  --sidebar-link-active-bg: var(--primary-gradient);
+  --sidebar-accent: var(--color-primary);
   --auth-bg: var(--color-background);
   --bg_image: linear-gradient(135deg, var(--color-primary) 0%, var(--color-info) 100%);
   --bg_image: url(/assets/spa/images/bg_image.webp);
   --primary-gradient: linear-gradient(135deg, var(--color-primary) 0%, var(--color-purple) 100%);
-  --sidebar-color-background: #F9F9F9;
   --header-color-background: var(--color-surface);
   --header-color-text: var(--color-text);
   --menu-highlight-bg: var(--color-primary);
@@ -43,23 +49,105 @@ body {
   color: var(--sidebar-color-text);
   border-right: 1px solid var(--color-border);
   overflow: hidden;
+  box-shadow: 2px 0 16px -4px rgba(0, 0, 0, 0.08);
 }
 .sidebar-header {
-  padding: 1rem;
-  /* ใช้ตัวแปรของธีม ไม่ใช่ขาวโปร่งแสง — แถบเมนูของ panel เป็นพื้นสว่าง
-     เส้นขาวบนพื้นขาวจะมองไม่เห็นเลย (ค่าเดิมมาจากตัวอย่างที่แถบเมนูเป็นพื้นเข้ม) */
-  border-bottom: 1px solid var(--color-border);
+  padding: 1.25rem 1rem 1rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-primary) 14%, var(--color-border));
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 0.85rem;
+  background: color-mix(in srgb, var(--color-primary) 5%, transparent);
 }
 .sidebar-header .logo {
-  width: 45px;
-  height: 45px;
+  width: 42px;
+  height: 42px;
   background-size: cover;
   display: flex;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px -2px color-mix(in srgb, var(--color-primary) 60%, transparent);
   background-image: url(/assets/spa/images/logo.svg);
 }
+.sidemenu {
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* หักความสูงของส่วนหัวออก ไม่งั้นรายการล่างสุดถูกดันพ้นจอโดยเลื่อนไปไม่ถึง */
+  max-height: calc(100vh - var(--topbar-height));
+}
+.sidemenu ul {
+  list-style: none;
+  margin: 0;
+  padding: 0.6rem 0.75rem 1.25rem;
+}
+.sidemenu li {
+  margin: 0;
+}
+/* รายการเมนู — pill มุมมน มีไอคอนเด่น เด้งขึ้นเล็กน้อยตอน hover */
+.sidemenu li > a {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.72rem 0.9rem;
+  color: var(--sidebar-color-text);
+  text-decoration: none;
+  border-radius: 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  position: relative;
+  transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
+}
+.sidemenu li > a:hover,
+.sidemenu li > a:focus-visible {
+  background: var(--sidebar-link-hover-bg);
+  border-color: color-mix(in srgb, var(--color-primary) 18%, transparent);
+  transform: translateX(2px);
+}
+/* ไอคอนในเมนู — กล่องมุมมน สีจาง ๆ เด้งขึ้นตอน hover/active */
+.sidemenu li > a [class^="icon-"]:before,
+.sidemenu li > a [class*=" icon-"]:before {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  transition: background 0.18s ease, color 0.18s ease;
+}
+.sidemenu li > a:hover [class^="icon-"]:before,
+.sidemenu li > a:hover [class*=" icon-"]:before {
+  background: color-mix(in srgb, var(--color-primary) 20%, transparent);
+  color: var(--color-primary);
+}
+/* รายการที่เปิดอยู่ — แถบเติมสีไล่ระดับ ข้อควาาสว่าง มีเงาอ่อน ๆ */
+.sidemenu li > a.active,
+.sidemenu li > a[aria-current="page"] {
+  background: var(--sidebar-link-active-bg);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 4px 14px -4px color-mix(in srgb, var(--color-primary) 70%, transparent);
+  font-weight: 500;
+}
+.sidemenu li > a.active [class^="icon-"]:before,
+.sidemenu li > a.active [class*=" icon-"]:before {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+/* หัวข้อกลุ่มเมนู — ทำเป็นป้ายเล็กสีจาง ไม่ใช่ข้อความธรรมดา */
+.sidemenu-title {
+  padding: 1.1rem 0.9rem 0.35rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  opacity: 0.55;
+  pointer-events: none;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.sidemenu-title:first-child {
+  padding-top: 0.4rem;
+}
+/* จำกัดบรรทัดข้อความในส่วนหัว */
 .sidemenu-title span,
 .sidebar-header .logo-text,
 .topbar-left h1,
@@ -71,24 +159,28 @@ body {
   overflow: hidden;
 }
 .sidebar-header .logo-text {
-  font-size: 1.25rem;
-  font-weight: 600;
+  font-size: 1.3rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 .logo-text em {
   color: var(--color-primary);
 }
-.sidebar .sidemenu {
-  overflow-x: hidden;
-  overflow-y: auto;
-  /* หักความสูงของส่วนหัวออก ไม่งั้นรายการล่างสุดถูกดันพ้นจอโดยเลื่อนไปไม่ถึง */
-  max-height: calc(100vh - var(--topbar-height));
-}
-.sidemenu-title {
-  padding: 1rem 1rem 0.25rem;
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
-  opacity: 0.65;
-  pointer-events: none;
+/* เมื่อยุบเมนู — ซ่อนข้อความ จัดไอคอนกึ่งกลาง */
+@media (min-width: 769px) {
+  .sidemenu-close .sidemenu li > a {
+    justify-content: center;
+    padding: 0.72rem 0.5rem;
+    transform: none;
+  }
+  .sidemenu-close .sidemenu li > a:hover {
+    transform: none;
+  }
+  .sidemenu-close .sidemenu-title {
+    text-align: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
 }
 /* --------------------------------------------------------------------------
    แถบบน
@@ -133,12 +225,32 @@ body {
   color: inherit;
 }
 /* ไฟสถานะ agent — สีเดียวก็พอ แต่ต้องมี title กำกับเสมอเพื่อคนที่แยกสีไม่ได้ */
+.is-ok::before,
+.is-danger:before,
+.is-warn:before,
+.is-muted:before {
+  content: '\25CF';
+  font-size: 1.5rem;
+  margin-right: 5px;
+}
+.is-ok::before,
 .agent-dot {
   color: var(--color-success);
-  font-size: 0.8rem;
+  text-shadow: 0 0 5px var(--color-success);
+  font-size: 1.5rem;
 }
+.is-danger::before,
 .agent-dot.is-down {
   color: var(--color-error);
+  text-shadow: 0 0 5px var(--color-error);
+}
+.is-warn::before {
+  color: var(--color-warning);
+  text-shadow: 0 0 5px var(--color-warning);
+}
+.is-muted::before {
+  color: var(--color-text-muted);
+  text-shadow: 0 0 5px var(--color-text-muted);
 }
 /* --------------------------------------------------------------------------
    แถบเตือนโหมด — ปิดไม่ได้ จึงต้องอ่านง่ายและไม่บังเนื้อหา
@@ -217,10 +329,19 @@ body {
 }
 .stat-header {
   display: flex;
+  flex-direction: row-reverse;
+  justify-content: space-between;
   align-items: center;
   gap: 0.5rem;
-  color: var(--color-text-muted);
+  color: var(--color-primary);
   font-size: 0.85rem;
+}
+.stat-header:before {
+  border-radius: 0.5rem;
+  padding: 0.5rem;
+  background-color: rgba(0, 0, 0, 0.05);
+  font-size: 1.75rem;
+  opacity: 0.5;
 }
 .stat-value {
   margin-top: 0.35rem;
@@ -241,6 +362,9 @@ body {
   background: var(--color-surface-hover);
   overflow: hidden;
 }
+.meter:before {
+  display: none;
+}
 .meter > span {
   display: block;
   height: 100%;
@@ -253,6 +377,57 @@ body {
 }
 .meter.is-crit > span {
   background: var(--color-error);
+}
+/* --------------------------------------------------------------------------
+   รายการสถานะบริการ (Services) — การ์ดเล็กแสดงสถานะเครื่อง
+   -------------------------------------------------------------------------- */
+.service-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+.service-card {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.85rem 1rem;
+  border-radius: var(--phpcp-radius);
+  font-size: 0.85rem;
+  font-weight: 500;
+  line-height: 1.4;
+  background: var(--color-surface-light);
+  border: 1px solid var(--color-border);
+}
+/* --------------------------------------------------------------------------
+   รายการกิจกรรมล่าสุด (Recent activity) — การ์ดตามสถานะ แทนตาราง
+   -------------------------------------------------------------------------- */
+.activity-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+.activity-card {
+  background: var(--card-bg);
+  border: 1px solid var(--color-border);
+  padding: 0.5rem 1rem;
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.6rem;
+}
+.activity-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+.activity-time {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+.activity-actor {
+  font-weight: 600;
+  font-size: 0.95rem;
 }
 /* --------------------------------------------------------------------------
    ป้ายสถานะ
