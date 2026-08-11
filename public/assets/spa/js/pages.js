@@ -336,7 +336,11 @@
       meter('[data-live-disk-meter]', metrics.disk && metrics.disk.percent);
     };
 
-    stream.addEventListener('message', (event) => {
+    // **ต้องดักชื่อ `metrics` ไม่ใช่ `message`** — เซิร์ฟเวอร์ส่ง `event: metrics`
+    // มาทุกรอบ (MetricsController::send) และตามสเปกของ SSE เหตุการณ์ที่มีชื่อ
+    // จะไม่เข้า listener ของ `message` เลย · `message` มีไว้สำหรับข้อความที่ไม่ระบุชื่อ
+    // เท่านั้น — ที่ผ่านมาการ์ดจึงไม่เคยขยับแม้แต่ครั้งเดียวทั้งที่สตรีมส่งข้อมูลอยู่
+    stream.addEventListener('metrics', (event) => {
       try {
         paint(JSON.parse(event.data));
       } catch (e) {
@@ -344,8 +348,31 @@
       }
     });
 
-    // สตรีมล้ม (agent ล่ม/เซสชันหมดอายุ) — ปิดทิ้ง ไม่ปล่อยให้ต่อใหม่ไม่รู้จบ
-    stream.addEventListener('error', () => stream.close());
+    // เซิร์ฟเวอร์ปิดสตรีมตามกำหนด (30 นาที) แล้วให้เบราว์เซอร์ต่อใหม่เอง —
+    // ไม่ใช่ความล้มเหลว ต้องไม่ปิดทิ้ง ไม่งั้นการ์ดจะหยุดขยับถาวรจนกว่าจะรีโหลดหน้า
+    let expectReconnect = false;
+    stream.addEventListener('bye', () => {
+      expectReconnect = true;
+    });
+
+    /*
+      ชื่อ `error` มาได้สองทางที่ต้องแยกกัน:
+
+        1. เซิร์ฟเวอร์ส่ง `event: error` เพราะ agent สะดุด — **มี** data มาด้วย
+           ฝั่งเซิร์ฟเวอร์ทนให้สามรอบก่อนจะเลิกเอง เราจึงไม่ต้องทำอะไร
+        2. การเชื่อมต่อหลุดจริง (เซสชันหมดอายุ, เครือข่ายขาด) — ไม่มี data
+           ปิดทิ้งเพื่อไม่ให้ต่อใหม่ไม่รู้จบกับปลายทางที่ตอบ 401 ทุกครั้ง
+    */
+    stream.addEventListener('error', (event) => {
+      if (event && typeof event.data === 'string') return;
+
+      if (expectReconnect) {
+        expectReconnect = false;
+        return;
+      }
+
+      stream.close();
+    });
 
     return () => {
       stream.close();
