@@ -302,7 +302,18 @@
 
       if (response && response.status === 204) return {};
 
-      if (body && body.success === true) return body.data;
+      // **ซองของ API ตัวนี้คือ `{ok: true, data, meta}`** ตามที่ ApiController เขียนไว้
+      // ไม่ใช่ `{success: true}` · โค้ดเดิมตรวจแต่ `success` จึงโยน error ให้ทุกคำตอบ
+      // ที่สำเร็จ แล้วผู้เรียกที่ดักไว้เงียบ ๆ ก็แสดงผลว่างเปล่าโดยไม่มีอะไรฟ้อง
+      // (คะแนนความปลอดภัยกับแถบวัดในหน้า Security หายไปทั้งคู่เพราะเรื่องนี้)
+      //
+      // ยังรับ `success` ต่อไปเพื่อไม่ให้ endpoint เก่าหรือของนอกระบบพังตาม
+      if (body && (body.ok === true || body.success === true)) {
+        // คำตอบแบบ "ทำสำเร็จ" ไม่มีคีย์ `data` — ค่าที่ผู้เรียกต้องใช้อยู่ระดับบนสุด
+        // ร่วมกับ `message` (ดู ApiController::done) · คืน body ทั้งก้อนในกรณีนั้น
+        // ไม่ใช่ undefined ซึ่งจะทำให้ `result.url` / `result.message` พังทันที
+        return body.data !== undefined ? body.data : body;
+      }
 
       const error = new Error((body && body.message) || (response && response.statusText) || 'คำขอล้มเหลว');
       error.code = (body && body.code) || 'INTERNAL_ERROR';
