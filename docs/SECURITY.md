@@ -52,7 +52,13 @@
 Session    id 32 byte จาก random_bytes() — เก็บเฉพาะ hash ลง DB
            คุกกี้ __Host-phpcp  Secure · HttpOnly · SameSite=Strict · Path=/
            หมดอายุ 8 ชั่วโมง, idle timeout 30 นาที, rotate id ทุก 15 นาทีและทันทีหลังล็อกอิน
-           ผูกกับ IP + hash ของ User-Agent — เปลี่ยนแล้วตัด session ทิ้ง
+           ผูกกับ IP — คำขอจาก IP อื่น**ถูกปฏิเสธ** แต่ session ไม่ถูกทำลาย
+           (ถ้าทำลาย ใครที่ได้คุกกี้ไปยิงครั้งเดียวก็เตะเจ้าของออกจากระบบได้)
+           **ไม่ผูกกับ User-Agent** — คุกกี้เป็น __Host- + HttpOnly + SameSite=Strict
+           และ CSP ไม่มี unsafe-eval การขโมยจึงต้องมีมัลแวร์บนเครื่องนั้นซึ่งได้ UA
+           เดียวกันไปด้วยอยู่แล้ว · ที่เสียคือของจริง: Chrome อัปเดตทีเดียวทุกคนหลุด
+           และ DevTools โหมดจำลองอุปกรณ์ปลอม UA ทำให้ผู้ดูแลถูกเด้งออกกลางคัน
+           การเปลี่ยน UA ถูกบันทึกลง audit log (`session.user_agent_changed`) แทน
 ```
 
 **ความลับที่ระบบเก็บแบบถอดกลับได้** — มีสองอย่างเท่านั้น ทั้งคู่ใช้ sodium secretbox

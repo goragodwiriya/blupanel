@@ -26,15 +26,14 @@ final class SessionMiddleware implements Middleware
         $rotatedTo = null;
 
         if ($rawId !== '') {
-            $session = $store->load(
-                $rawId,
-                $request->ip,
-                SessionStore::hashUserAgent($request->userAgent),
-            );
+            $userAgent = SessionStore::hashUserAgent($request->userAgent);
+            $session = $store->load($rawId, $request->ip, $userAgent);
 
             if ($session !== null) {
                 $ctx->session = $session;
                 $ctx->sessionId = $rawId;
+
+                $this->noteUserAgentChange($ctx, $request, $store, $rawId, $session, $userAgent);
 
                 $store->touch($rawId);
 
@@ -58,6 +57,48 @@ final class SessionMiddleware implements Middleware
         }
 
         return $response;
+    }
+
+    /**
+     * บันทึกเมื่อคุกกี้ก้อนเดิมถูกใช้จากเบราว์เซอร์ที่ต่างไป
+     *
+     * ตั้งแต่เลิกผูก session กับ User-Agent (2026-08-11) การเปลี่ยน UA ไม่ตัด session
+     * อีกแล้ว — แต่ยัง**ต้องเห็น**ว่ามันเกิดขึ้น เพราะเป็นสัญญาณเดียวที่เหลืออยู่ว่า
+     * คุกกี้อาจถูกนำไปใช้ต่อที่อื่น · ผู้ดูแลตรวจย้อนหลังได้จาก audit log
+     *
+     * อัปเดตค่าที่เก็บไว้ด้วย เพื่อให้บันทึกครั้งเดียวต่อการเปลี่ยนหนึ่งครั้ง
+     * ไม่ใช่ทุกคำขอหลังจากนั้น (หน้าเดียวยิงหลายคำขอพร้อมกันเป็นเรื่องปกติของ SPA)
+     *
+     * @param array<string,mixed> $session
+     */
+    private function noteUserAgentChange(
+        Ctx $ctx,
+        Request $request,
+        SessionStore $store,
+        string $rawId,
+        array $session,
+        string $userAgent,
+    ): void {
+        $stored = (string) ($session['ua_hash'] ?? '');
+
+        if ($stored === '' || hash_equals($stored, $userAgent)) {
+            return;
+        }
+
+        $store->noteUserAgent($rawId, $userAgent);
+
+        try {
+            $ctx->app->audit()->write(
+                $ctx->actor($request),
+                'session.user_agent_changed',
+                (string) ($session['username'] ?? ''),
+                'warn',
+                ['ip' => $request->ip],
+            );
+        } catch (\Throwable) {
+            // เขียน audit ไม่ได้ต้องไม่ทำให้คำขอที่ถูกต้องล้ม — เหตุการณ์นี้เป็นข้อมูล
+            // ประกอบ ไม่ใช่ด่านความปลอดภัย
+        }
     }
 
     private function setCookie(Response $response, Ctx $ctx, string $name, string $value): void

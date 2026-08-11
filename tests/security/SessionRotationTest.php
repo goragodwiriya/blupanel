@@ -80,3 +80,48 @@ test('ออกจากระบบด้วย id เดิมในช่ว�
     assertSame(null, $store->load($new, '127.0.0.1', $ua), 'session ต้องถูกลบแม้สั่งลบด้วย id เดิม');
     assertSame(null, $store->load($id, '127.0.0.1', $ua), 'id เดิมต้องใช้ไม่ได้แล้วเช่นกัน');
 });
+
+// --- การผูก session กับ IP / User-Agent ----------------------------------------
+//
+// **เจอจากการใช้งานจริง (2026-08-11):** ผู้ดูแลย่อหน้าจอทดสอบ responsive ใน DevTools
+// แล้วถูกเด้งไปหน้าล็อกอินเป็นบางครั้ง · โหมดจำลองอุปกรณ์ของ Chrome ปลอม User-Agent
+// ให้ด้วย ซึ่งเดิมทำให้ session **ถูกทำลายทิ้ง** ไม่ใช่แค่ถูกปฏิเสธ
+
+group('SessionStore — ผูกกับ IP อย่างเดียว และห้ามทำลาย session ของคนที่ถูกต้อง');
+
+function bindingStore(): array
+{
+    $app = App::boot();
+
+    return [new SessionStore($app->db(), $app->config), $app];
+}
+
+test('เปลี่ยน User-Agent ต้องใช้งานต่อได้ — ไม่ใช่เด้งออกกลางคัน', static function (): void {
+    [$store, $app] = bindingStore();
+    $userId = (int) $app->db()->value('SELECT id FROM users ORDER BY id LIMIT 1', [], 0);
+
+    $desktop = SessionStore::hashUserAgent('Mozilla/5.0 (X11; Linux x86_64) Chrome/141');
+    $mobile = SessionStore::hashUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) Safari');
+
+    $id = $store->create($userId, '10.0.0.9', $desktop, false);
+
+    assertTrue($store->load($id, '10.0.0.9', $mobile) !== null, 'UA ต่างต้องยังใช้ได้');
+    assertTrue($store->load($id, '10.0.0.9', $desktop) !== null, 'และต้องไม่ถูกทำลายทิ้ง');
+
+    $store->destroy($id);
+});
+
+test('คุกกี้ที่ถูกนำไปใช้จาก IP อื่นต้องใช้ไม่ได้ แต่ต้องไม่เตะเจ้าของออก', static function (): void {
+    [$store, $app] = bindingStore();
+    $userId = (int) $app->db()->value('SELECT id FROM users ORDER BY id LIMIT 1', [], 0);
+    $ua = SessionStore::hashUserAgent('Mozilla/5.0 (X11; Linux x86_64) Chrome/141');
+
+    $id = $store->create($userId, '10.0.0.9', $ua, false);
+
+    assertTrue($store->load($id, '203.0.113.7', $ua) === null, 'IP อื่นต้องใช้ไม่ได้');
+
+    // เดิมการยิงจาก IP อื่นครั้งเดียวทำลาย session ทิ้ง = ใครก็เตะเจ้าของออกได้
+    assertTrue($store->load($id, '10.0.0.9', $ua) !== null, 'เจ้าของต้องยังใช้งานต่อได้');
+
+    $store->destroy($id);
+});
