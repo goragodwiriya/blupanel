@@ -906,6 +906,14 @@ CSRF ปฏิเสธ POST ที่ไม่มี token · rate limit ขอ
 ที่ได้จากเป้าหมายที่สแกน ถ้า panel เสิร์ฟ HTML ก้อนนั้นจาก origin ตัวเอง บั๊ก escaping
 ในอนาคตแม้จุดเดียวจะกลายเป็น XSS ในโดเมนของ panel
 
+**รันครบทุกส่วนแล้ว 2026-08-11** (ก่อนหน้านั้น `--auth-checks` กับ `--aggressive`
+ไม่เคยถูกเปิดเลยสักครั้ง จึงมีสามด่านที่ไม่เคยถูกตรวจ): Critical 0 · High 3 · Medium 0
+โดย High ทั้งสามไม่ใช่ช่องโหว่ของ panel — พอร์ต MariaDB/PostgreSQL ของเครื่องพัฒนา
+เปิดอยู่ และใบรับรอง self-signed ซึ่งอยู่ในเช็กลิสต์ก่อน production อยู่แล้ว
+· ส่วนที่เพิ่งได้ตรวจครั้งแรกและผ่านหมด: คุกกี้ session ครบทั้ง Secure/HttpOnly/
+SameSite=Strict/`__Host-` · CSRF ปฏิเสธ POST ที่ไม่มี token (419) · rate limit
+ตอนล็อกอินทำงานจริง · phpMyAdmin ไม่แสดงฟอร์มให้คนนอก · PUT/DELETE/PATCH ถูกปฏิเสธ
+
 ~~**ยังไม่ได้ทำ (รอเฟส C):**~~ ✅ **เสร็จแล้ว 2026-08-08** — `GET /api/v2/security/audit`
 อ่าน `/var/lib/phpcp/security-audit.json` (ปลายทางของ `--json-out`) แล้วส่ง `results`
 เป็น `data` ส่วน `target`/`scan_time`/`summary` เป็น `meta` ตาม §4.2 · หน้า Security ของ
