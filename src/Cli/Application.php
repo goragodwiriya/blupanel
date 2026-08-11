@@ -13,6 +13,7 @@ use Phpcp\Domain\ScheduledJobRepository;
 use Phpcp\Domain\UserRepository;
 use Phpcp\Driver\Updater;
 use Phpcp\Kernel\App;
+use Phpcp\Kernel\Config;
 use Phpcp\Kernel\Db;
 use Phpcp\Kernel\Mode;
 use Phpcp\Security\Password;
@@ -261,6 +262,20 @@ final class Application
         }
 
         // 3. สิทธิ์ไฟล์ config (มี secret จึงห้าม world-readable)
+        //
+        // เคสอ่านไม่ได้ต้องมาก่อน — sourceFile เป็น null ทั้งตอน "ไม่มีไฟล์" และตอน
+        // "มีไฟล์แต่สิทธิ์ไม่พอ" ถ้าไม่แยกออกมา doctor จะเงียบสนิทในกรณีหลัง
+        // ทั้งที่เป็นสาเหตุที่ทำให้ panel ทั้งตัวถอยไปทำงานในโหมด sandbox
+        if ($config->sourceFile === null && Config::unreadableCandidates() !== []) {
+            foreach (Config::unreadableCandidates() as $candidate) {
+                $this->out->fail(sprintf(
+                    'มีไฟล์ config ที่ %s แต่ผู้ใช้นี้อ่านไม่ได้ — chown root:phpcp แล้ว chmod 640',
+                    $candidate,
+                ));
+                $problems++;
+            }
+        }
+
         if ($config->sourceFile !== null && is_file($config->sourceFile)) {
             $perms = fileperms($config->sourceFile) & 0o777;
             if (($perms & 0o004) !== 0) {
@@ -541,6 +556,31 @@ final class Application
     }
 
     /**
+     * ข้อความบอกสาเหตุที่ไม่มี config — แยก "ไม่มีไฟล์" ออกจาก "มีแต่อ่านไม่ได้"
+     *
+     * สองกรณีนี้แก้คนละวิธีสิ้นเชิง การบอกให้ "คัดลอก config.example.php" ทั้งที่
+     * ไฟล์มีอยู่แล้วจะพาผู้ดูแลไปผิดทางและอาจทับ config เดิมทิ้ง
+     *
+     * @return string
+     */
+    private function missingConfigReason(): string
+    {
+        $unreadable = Config::unreadableCandidates();
+
+        if ($unreadable !== []) {
+            return sprintf(
+                "อ่านไฟล์ config ไม่ได้ (มีไฟล์อยู่แต่สิทธิ์ไม่พอ): %s\n".
+                '  แก้ด้วย: chown root:phpcp %s && chmod 640 %s',
+                implode(', ', $unreadable),
+                $unreadable[0],
+                $unreadable[0],
+            );
+        }
+
+        return 'ไม่พบไฟล์ config — คัดลอก etc/config.example.php เป็น etc/config.php ก่อน';
+    }
+
+    /**
      * @return int
      */
     private function keyGenerate(): int
@@ -549,7 +589,7 @@ final class Application
         $file = $app->config->sourceFile;
 
         if ($file === null) {
-            $this->out->fail('ไม่พบไฟล์ config — คัดลอก etc/config.example.php เป็น etc/config.php ก่อน');
+            $this->out->fail($this->missingConfigReason());
 
             return 1;
         }
@@ -1098,7 +1138,7 @@ final class Application
 
         $file = $app->config->sourceFile;
         if ($file === null) {
-            $this->out->fail('ไม่พบไฟล์ config');
+            $this->out->fail($this->missingConfigReason());
 
             return 1;
         }

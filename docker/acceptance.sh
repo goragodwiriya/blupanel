@@ -12,6 +12,7 @@ ok()  { printf '  \033[32m✔\033[0m %s\n' "$*"; PASS=$((PASS+1)); }
 bad() { printf '  \033[31m✘\033[0m %s\n' "$*"; FAIL=$((FAIL+1)); }
 
 DOMAIN=acceptance.test
+OWNER_USER=acctest
 
 printf '\nเกณฑ์รับงาน: สร้างเว็บไซต์ที่ใช้งานได้จริงพร้อม SSL\n%s\n' "$(printf '─%.0s' $(seq 1 52))"
 
@@ -69,8 +70,32 @@ run_cap() {
   ' "$1" "$2"
 }
 
-# --- 1. สร้างเว็บไซต์ ---
-if run_cap site.create "{\"name\":\"เว็บทดสอบ\",\"domain\":\"${DOMAIN}\",\"php_version\":\"${PHPV}\"}" >/dev/null 2>/tmp/e; then
+# --- 1. สร้างบัญชีโฮสติ้งแล้วสร้างเว็บไซต์ใต้บัญชีนั้น ---
+#
+# ตั้งแต่เฟส M (ยุบ users/customers เป็นตารางเดียว) เว็บไซต์ต้องมีเจ้าของเสมอ —
+# uid, บ้าน และโควตาดิสก์ผูกกับผู้ใช้ ไม่ใช่ผูกกับเว็บ · `site.create` ที่ไม่มี
+# owner_user_id จึงถูกปฏิเสธ ไม่ใช่บั๊ก
+if run_cap customer.create \
+  "{\"username\":\"${OWNER_USER}\",\"password\":\"Acceptance-Test-1234\",\"email\":\"${OWNER_USER}@example.com\"}" \
+  >/dev/null 2>/tmp/e; then
+  ok "สร้างบัญชีโฮสติ้ง ${OWNER_USER}"
+else
+  bad "สร้างบัญชีโฮสติ้งไม่สำเร็จ: $(head -2 /tmp/e | tr '\n' ' ')"
+fi
+
+OWNER_ID=$("$PHP_BIN" -r 'require "/usr/share/phpcp/bootstrap.php";
+  echo (int) Phpcp\Kernel\App::boot()->db()->value("SELECT id FROM users WHERE username=:u",["u"=>$argv[1]],0);' "$OWNER_USER")
+
+if [ "${OWNER_ID:-0}" -gt 0 ]; then
+  ok "บัญชีโฮสติ้งอยู่ในฐานข้อมูล (#${OWNER_ID})"
+else
+  bad "ไม่พบบัญชีโฮสติ้งในฐานข้อมูล"
+  printf '%s\n  ผ่าน %d · ไม่ผ่าน %d — หยุดเพราะไม่มีเจ้าของให้สร้างเว็บ\n\n' \
+    "$(printf '─%.0s' $(seq 1 52))" "$PASS" "$FAIL"
+  exit 1
+fi
+
+if run_cap site.create "{\"name\":\"เว็บทดสอบ\",\"domain\":\"${DOMAIN}\",\"php_version\":\"${PHPV}\",\"owner_user_id\":${OWNER_ID}}" >/dev/null 2>/tmp/e; then
   ok "สร้างเว็บไซต์ ${DOMAIN}"
 else
   bad "สร้างเว็บไซต์ไม่สำเร็จ: $(head -2 /tmp/e | tr '\n' ' ')"
@@ -91,11 +116,33 @@ else
 fi
 
 # --- 2. ผู้ใช้ระบบและสิทธิ์ไฟล์ ---
-SU=$("$PHP_BIN" -r 'require "/usr/share/phpcp/bootstrap.php";
-  echo (string) Phpcp\Kernel\App::boot()->db()->value("SELECT system_user FROM sites WHERE id=:i",["i"=>(int)$argv[1]],"");' "$SITE_ID")
-id "$SU" >/dev/null 2>&1 && ok "สร้างผู้ใช้ระบบ ${SU} แยกเฉพาะเว็บนี้" || bad "ไม่ได้สร้างผู้ใช้ระบบ"
+# ถามเส้นทางจากโค้ดจริง ไม่ใช่เดาเอง — เลย์เอาต์เปลี่ยนไปแล้วตั้งแต่ migration 0006
+# (จาก <sites.dir>/<โดเมน> เป็น <users.dir>/<ผู้ใช้>/domains/<โดเมน>) การฝังเส้นทางไว้
+# ในเทสต์ทำให้เทสต์ตามไม่ทันแล้วฟ้องผิดจุด
+DOCROOT=$("$PHP_BIN" -r 'require "/usr/share/phpcp/bootstrap.php";
+  $app = Phpcp\Kernel\App::boot();
+  $site = (new Phpcp\Domain\SiteRepository($app->db()))->load((int) $argv[1]);
+  echo $site === null ? "" : $site->docroot();' "$SITE_ID")
 
-OWNER=$(stat -c '%U:%G' "/srv/phpcp/sites/${DOMAIN}/public" 2>/dev/null)
+if [ -n "$DOCROOT" ] && [ -d "$DOCROOT" ]; then
+  ok "ไดเรกทอรีของเว็บถูกสร้างจริงที่ ${DOCROOT}"
+else
+  bad "ไม่พบไดเรกทอรีของเว็บ (docroot=${DOCROOT:-ว่าง})"
+  printf '%s\n  ผ่าน %d · ไม่ผ่าน %d — หยุดเพราะไม่มีไฟล์เว็บให้ตรวจต่อ\n\n' \
+    "$(printf '─%.0s' $(seq 1 52))" "$PASS" "$FAIL"
+  exit 1
+fi
+
+# ตั้งแต่เฟส M ไม่มีคอลัมน์ `sites.system_user` แล้ว — บัญชีระบบผูกกับ "เจ้าของ"
+# ไม่ใช่กับเว็บ (หนึ่งลูกค้า = หนึ่ง uid = หนึ่งบ้าน แม้จะมีหลายเว็บ) จึงต้องถาม
+# ผ่านโมเดล ไม่ใช่ query คอลัมน์เดิมที่หายไปแล้ว
+SU=$("$PHP_BIN" -r 'require "/usr/share/phpcp/bootstrap.php";
+  $app = Phpcp\Kernel\App::boot();
+  $site = (new Phpcp\Domain\SiteRepository($app->db()))->load((int) $argv[1]);
+  echo $site === null ? "" : $site->systemUser();' "$SITE_ID")
+id "$SU" >/dev/null 2>&1 && ok "สร้างผู้ใช้ระบบ ${SU} ให้เจ้าของเว็บ" || bad "ไม่ได้สร้างผู้ใช้ระบบ (${SU:-ว่าง})"
+
+OWNER=$(stat -c '%U:%G' "${DOCROOT}" 2>/dev/null)
 [ "$OWNER" = "${SU}:www-data" ] && ok "สิทธิ์ไฟล์ ${OWNER} (เว็บเซิร์ฟเวอร์อ่านได้ เว็บอื่นอ่านไม่ได้)" \
   || bad "สิทธิ์ไฟล์เป็น ${OWNER} ควรเป็น ${SU}:www-data"
 
@@ -115,13 +162,15 @@ fi
 apache2ctl -k graceful 2>/dev/null
 
 # USR2 ของ php-fpm คืนค่าทันทีโดยไม่รอให้ pool ใหม่พร้อม ต้องรอ socket โผล่เอง
+# ชื่อ socket ผูกกับ (ผู้ใช้ × เวอร์ชัน PHP) ตั้งแต่เฟส M3 ไม่ใช่ผูกกับโดเมนอีกแล้ว
+FPM_SOCK="/run/php/phpcp-${SU}-${PHPV}.sock"
 for _ in $(seq 1 20); do
-  [ -S "/run/php/phpcp-${DOMAIN}-${PHPV}.sock" ] && break
+  [ -S "$FPM_SOCK" ] && break
   sleep 0.5
 done
 
-[ -S "/run/php/phpcp-${DOMAIN}-${PHPV}.sock" ] \
-  && ok "FPM pool ของเว็บนี้พร้อมใช้งาน" || bad "ไม่มี socket ของ FPM pool"
+[ -S "$FPM_SOCK" ] \
+  && ok "FPM pool ของเจ้าของเว็บพร้อมใช้งาน (${FPM_SOCK})" || bad "ไม่มี socket ของ FPM pool ที่ ${FPM_SOCK}"
 
 
 # --- 4. เว็บให้บริการได้จริง ---
@@ -132,29 +181,29 @@ grep -q "PHP" /tmp/body 2>/dev/null && ok "PHP ทำงานผ่าน FPM p
 code=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: ${DOMAIN}" http://127.0.0.1/)
 [ "$code" = "301" ] && ok "HTTP redirect ไป HTTPS (301)" || bad "HTTP ตอบ ${code} ควรเป็น 301"
 
-mkdir -p "/srv/phpcp/sites/${DOMAIN}/public/.well-known/acme-challenge"
-echo ok > "/srv/phpcp/sites/${DOMAIN}/public/.well-known/acme-challenge/probe"
-chown -R "${SU}:www-data" "/srv/phpcp/sites/${DOMAIN}/public/.well-known"
+mkdir -p "${DOCROOT}/.well-known/acme-challenge"
+echo ok > "${DOCROOT}/.well-known/acme-challenge/probe"
+chown -R "${SU}:www-data" "${DOCROOT}/.well-known"
 code=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: ${DOMAIN}" "http://127.0.0.1/.well-known/acme-challenge/probe")
 [ "$code" = "200" ] && ok "เส้นทางต่ออายุใบรับรองเข้าถึงได้ (200)" || bad "acme-challenge ตอบ ${code} — ต่ออายุใบรับรองจะล้ม"
 
-echo "SECRET=1" > "/srv/phpcp/sites/${DOMAIN}/public/.env"
-chown "${SU}:www-data" "/srv/phpcp/sites/${DOMAIN}/public/.env"
+echo "SECRET=1" > "${DOCROOT}/.env"
+chown "${SU}:www-data" "${DOCROOT}/.env"
 code=$(curl -sk -o /dev/null -w '%{http_code}' --resolve "${DOMAIN}:443:127.0.0.1" "https://${DOMAIN}/.env")
 [ "$code" = "403" ] && ok ".env ถูกปฏิเสธบน HTTPS (403)" || bad ".env ตอบ ${code} ควรเป็น 403"
 
 # --- 5. การแยกเว็บไซต์ออกจากกัน ---
-cat > "/srv/phpcp/sites/${DOMAIN}/public/esc.php" <<'PHP'
+cat > "${DOCROOT}/esc.php" <<'PHP'
 <?php echo @file_get_contents("/etc/shadow") ? "LEAK" : "BLOCKED";
 PHP
-chown "${SU}:www-data" "/srv/phpcp/sites/${DOMAIN}/public/esc.php"
+chown "${SU}:www-data" "${DOCROOT}/esc.php"
 body=$(curl -sk --resolve "${DOMAIN}:443:127.0.0.1" "https://${DOMAIN}/esc.php")
 [ "$body" = "BLOCKED" ] && ok "open_basedir กันการอ่านไฟล์นอกเว็บไซต์" || bad "อ่าน /etc/shadow ได้ — ${body}"
 
-cat > "/srv/phpcp/sites/${DOMAIN}/public/who.php" <<'PHP'
+cat > "${DOCROOT}/who.php" <<'PHP'
 <?php echo posix_getpwuid(posix_geteuid())["name"];
 PHP
-chown "${SU}:www-data" "/srv/phpcp/sites/${DOMAIN}/public/who.php"
+chown "${SU}:www-data" "${DOCROOT}/who.php"
 who=$(curl -sk --resolve "${DOMAIN}:443:127.0.0.1" "https://${DOMAIN}/who.php")
 [ "$who" = "$SU" ] && ok "PHP รันด้วย uid ของเว็บไซต์ (${who})" || bad "PHP รันด้วย ${who} ควรเป็น ${SU}"
 
@@ -163,10 +212,19 @@ who=$(curl -sk --resolve "${DOMAIN}:443:127.0.0.1" "https://${DOMAIN}/who.php")
 sleep 1
 /usr/sbin/apache2 -f /etc/phpcp/httpd/httpd.conf -DFOREGROUND 2>/dev/null &
 sleep 3
-code=$(curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:8443/login)
-[ "$code" = "200" ] && ok "หน้าเข้าสู่ระบบของ panel ตอบ 200 บน HTTPS" || bad "panel ตอบ ${code}"
+# /login เป็นหน้า HTML ที่ถูกลบไปแล้วตั้งแต่ 2026-08-08 (เฟส D) — ตอนนี้ตัว panel
+# คือ SPA ที่ /app/ และจุดเริ่มต้นของมันคือ /api/v2/session ซึ่งเรียกได้ก่อนล็อกอิน
+code=$(curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:8443/app/)
+[ "$code" = "200" ] && ok "หน้า SPA ของ panel ตอบ 200 บน HTTPS" || bad "SPA ของ panel ตอบ ${code}"
 
-rm -f "/srv/phpcp/sites/${DOMAIN}/public/"{esc,who}.php "/srv/phpcp/sites/${DOMAIN}/public/.env"
+code=$(curl -sk -o /tmp/sess -w '%{http_code}' https://127.0.0.1:8443/api/v2/session)
+if [ "$code" = "200" ] && grep -q '"csrf_token"' /tmp/sess 2>/dev/null; then
+  ok "API ของ panel ตอบ JSON พร้อม CSRF token"
+else
+  bad "API ของ panel ตอบ ${code} — SPA จะเริ่มทำงานไม่ได้"
+fi
+
+rm -f "${DOCROOT}/"{esc,who}.php "${DOCROOT}/.env"
 
 printf '%s\n  ผ่าน %d · ไม่ผ่าน %d\n\n' "$(printf '─%.0s' $(seq 1 52))" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

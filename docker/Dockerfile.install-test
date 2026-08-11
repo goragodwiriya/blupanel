@@ -26,8 +26,10 @@ RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod +x /usr/sbin
 # ค่าเริ่มต้นใช้แพ็กเกจ php ของดิสทริบิวชันเอง — 22.04 ต้องระบุเป็น php8.3 จาก ondrej
 ARG PHP_PKG=php
 
+# gnupg จำเป็นสำหรับ add-apt-repository (import กุญแจของ PPA) — อิมเมจ ubuntu:22.04
+# ไม่มี gpg ติดมา ขั้นตอนนี้จึงล้มทั้งที่ไม่เกี่ยวกับตัวติดตั้งเลย
 RUN . /etc/os-release && if [ "$VERSION_ID" = "22.04" ]; then \
-        apt-get update && apt-get install -y --no-install-recommends software-properties-common \
+        apt-get update && apt-get install -y --no-install-recommends software-properties-common gnupg ca-certificates \
         && add-apt-repository -y ppa:ondrej/php \
         && add-apt-repository -y ppa:ondrej/apache2; \
     fi
@@ -46,6 +48,11 @@ COPY . /usr/local/src/phpcp
 WORKDIR /usr/local/src/phpcp
 
 # นี่คือการทดสอบจริง — ถ้า install.sh คืนค่าไม่เป็น 0 หรือ configtest ไม่ผ่าน build จะล้ม
+#
+# ต้องมี pipefail — /bin/sh คืนรหัสของคำสั่งท้ายท่อคือ `tee` ซึ่งสำเร็จเสมอ
+# ตัวติดตั้งที่ตายกลางคันจึงผ่าน build ไปได้เงียบ ๆ (เกิดขึ้นจริงมาแล้ว: setup ล้ม
+# เพราะอ่าน config ไม่ได้ แต่ build เดินต่อจนไปตกที่ verify-install ขั้นถัดไปแทน)
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN chmod +x install.sh bin/phpcp bin/phpcp-agentd \
     && ./install.sh --mode=production --port=8443 2>&1 | tee /var/log/phpcp-install.log
 

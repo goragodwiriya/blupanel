@@ -160,7 +160,10 @@ if [ "$(id -u)" -eq 0 ] && command -v apt-get >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
   say "กำลังอัปเดตและติดตั้ง PPA / แพ็กเกจที่จำเป็น..."
   apt-get update -qq >/dev/null 2>&1 || true
-  apt-get install -y -qq --no-install-recommends software-properties-common lsb-release ca-certificates curl wget >/dev/null 2>&1 || true
+  # gnupg ต้องมาด้วย — `add-apt-repository` เรียก gpg เพื่อ import กุญแจของ PPA
+  # ระบบที่ติดตั้งแบบ minimal ไม่มี gpg ติดมา ขั้นเพิ่ม PPA จะล้มเงียบ ๆ แล้วเครื่องจะค้าง
+  # อยู่กับ PHP ของดิสทริบิวชัน (8.1 บน Ubuntu 22.04) ซึ่งใหม่ไม่พอสำหรับโค้ดชุดนี้
+  apt-get install -y -qq --no-install-recommends software-properties-common lsb-release ca-certificates gnupg curl wget >/dev/null 2>&1 || true
 
   # เพิ่ม Ondřej Surý PPA (สำหรับ Ubuntu/Debian) เพื่อให้มี PHP 7.4 และ PHP 8.4 พร้อมกัน
   if ! command -v php7.4 >/dev/null 2>&1 || ! command -v php8.4 >/dev/null 2>&1; then
@@ -347,6 +350,18 @@ fi
 
 # ค่าที่เพิ่งเขียนต้อง parse ได้จริง ไม่งั้น panel จะสตาร์ตไม่ขึ้นแล้วหาสาเหตุยาก
 "$PHP_BIN" -l "$CONF_DIR/config.php" >/dev/null || die "เขียน config.php แล้วไฟล์เสีย — ตรวจค่า --sites-dir/--pointer-root"
+
+# root:phpcp 0640 — ห้ามลบสองบรรทัดนี้
+#
+# ไฟล์นี้ถูก `cp` มาโดยตัวติดตั้งซึ่งรันเป็น root จึงได้ root:root ส่วน `key:generate`
+# ตั้งแค่ chmod 0640 ไม่เคยตั้งกลุ่ม ผลคือผู้ใช้ของเว็บ (phpcp-web) **อ่าน config
+# ไม่ได้เลย** แล้ว App::boot() ถอยไปใช้ค่าเริ่มต้นเงียบ ๆ — panel กลายเป็นโหมด
+# sandbox ไม่มีฐานข้อมูล ไม่มีบัญชีผู้ดูแล ทั้งที่ตัวติดตั้งรายงานว่าผ่านทุกขั้น
+# (เคยหายไปช่วงหนึ่งจนติดตั้งบนเครื่องเปล่าไม่สำเร็จ — docker/verify-install.sh จับได้)
+#
+# กลุ่มต้องเป็น phpcp ไม่ใช่ world-readable เพราะไฟล์นี้มี secret_key ของทั้งระบบ
+chown root:"$PANEL_GROUP" "$CONF_DIR/config.php"
+chmod 640 "$CONF_DIR/config.php"
 
 if [ "$MODE" = "production" ]; then
   # เพิ่ม config สำหรับเครื่องภายในที่มี BIND แต่ยังต้องการ hosts entry
@@ -634,14 +649,55 @@ fi
 head_ "9. Firewall (UFW)"
 
 if [ "$MODE" = "production" ] && command -v ufw >/dev/null; then
-  say "กำลังเปิดใช้งาน UFW และเปิดพอร์ตที่จำเป็น (22, 53, 80, 443, $PORT)..."
-  ufw allow 22/tcp comment "SSH" >/dev/null 2>&1 || true
+  # ต้องหาพอร์ต SSH จริงก่อนเปิด firewall — เปิดแค่ 22 ตายตัวแล้วสั่ง enable
+  # เท่ากับตัดผู้ดูแลออกจากเครื่องทันทีถ้าเขาย้าย SSH ไปพอร์ตอื่น ซึ่งเป็นเรื่องปกติมาก
+  # บนเซิร์ฟเวอร์จริง (panel ตัวนี้ยังมีปุ่มให้ย้ายพอร์ต SSH เองด้วยซ้ำ)
+  #
+  # ลำดับความน่าเชื่อถือ: sshd -T (อ่าน config จริงรวม Include ทั้งหมด) → ไฟล์ config
+  # → พอร์ตของ session ที่กำลังใช้ติดตั้งอยู่ตอนนี้ → 22
+  # ทุกบรรทัดต้องมี `|| true` — `set -e` ฆ่าสคริปต์ทั้งตัวเมื่อคำสั่งใน $( ) คืนค่าไม่เป็น 0
+  # และทั้งสองคำสั่งนี้ล้มเป็นปกติบนเครื่องที่ยังไม่มี host key หรือไม่มีไฟล์ config
+  # (เจอจริงตอนทดสอบติดตั้งบน debian:12 — ตัวติดตั้งตายที่ขั้นนี้ด้วยรหัส 255
+  # ทั้งที่ฐานข้อมูลและบัญชีผู้ดูแลสร้างเสร็จไปแล้ว)
+  SSH_PORTS=""
+  if command -v sshd >/dev/null 2>&1; then
+    SSH_PORTS="$(sshd -T 2>/dev/null | awk '$1 == "port" { print $2 }' || true)"
+  fi
+  if [ -z "$SSH_PORTS" ]; then
+    SSH_PORTS="$(awk '/^[[:space:]]*[Pp]ort[[:space:]]+[0-9]+/ { print $2 }' \
+      /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null || true)"
+  fi
+  # พอร์ตปลายทางของ session ปัจจุบัน — ค่าที่ "รู้แน่" ว่าใช้ต่อเข้ามาได้จริง
+  if [ -n "${SSH_CONNECTION:-}" ]; then
+    SSH_PORTS="$SSH_PORTS $(printf '%s' "$SSH_CONNECTION" | awk '{ print $4 }' || true)"
+  fi
+  [ -n "$SSH_PORTS" ] || SSH_PORTS="22"
+
+  SSH_ALLOWED=""
+  for p in $SSH_PORTS; do
+    case "$p" in
+      ''|*[!0-9]*) continue ;;
+    esac
+    [ "$p" -ge 1 ] && [ "$p" -le 65535 ] || continue
+    case " $SSH_ALLOWED " in
+      *" $p "*) continue ;;
+    esac
+    ufw allow "$p/tcp" comment "SSH" >/dev/null 2>&1 || true
+    SSH_ALLOWED="$SSH_ALLOWED $p"
+  done
+  SSH_ALLOWED="${SSH_ALLOWED# }"
+
+  say "กำลังเปิดใช้งาน UFW และเปิดพอร์ตที่จำเป็น (SSH: $SSH_ALLOWED, 53, 80, 443, $PORT)..."
   ufw allow 53 comment "DNS" >/dev/null 2>&1 || true
   ufw allow 80/tcp comment "HTTP Web" >/dev/null 2>&1 || true
   ufw allow 443/tcp comment "HTTPS Web" >/dev/null 2>&1 || true
   ufw allow "$PORT/tcp" comment "PHP Control Panel" >/dev/null 2>&1 || true
   ufw --force enable >/dev/null 2>&1 || true
-  ok "ตั้งค่าและเปิดใช้งาน UFW Firewall เรียบร้อยแล้ว (พอร์ต 22, 53, 80, 443, $PORT)"
+  ok "ตั้งค่าและเปิดใช้งาน UFW Firewall เรียบร้อยแล้ว (SSH: $SSH_ALLOWED, 53, 80, 443, $PORT)"
+  case " $SSH_ALLOWED " in
+    *" 22 "*) ;;
+    *) warn "ไม่ได้เปิดพอร์ต 22 เพราะ sshd ไม่ได้ฟังอยู่ — ถ้าจะย้ายกลับต้อง ufw allow 22/tcp ก่อน" ;;
+  esac
 else
   say "$C_DIM ข้าม (ufw ไม่ได้ติดตั้ง หรือไม่ใช่โหมด production)$C_OFF"
 fi

@@ -15,6 +15,9 @@ namespace Phpcp\Kernel;
  */
 final class Config
 {
+    /** @var list<string> ไฟล์ config ที่มีอยู่แต่อ่านไม่ได้ — ดู locate() */
+    private static array $unreadable = [];
+
     /** @param array<string,mixed> $values */
     private function __construct(
         private readonly array $values,
@@ -74,9 +77,28 @@ final class Config
             if (is_file($candidate) && is_readable($candidate)) {
                 return $candidate;
             }
+
+            // มีไฟล์อยู่แต่อ่านไม่ได้ = ปัญหาสิทธิ์ ไม่ใช่ "ยังไม่ได้ติดตั้ง" — จำไว้บอกผู้ดูแล
+            //
+            // ถ้าเงียบไปเฉย ๆ ระบบจะถอยไปใช้ค่าเริ่มต้นซึ่งเป็น sandbox + ไม่มีฐานข้อมูล
+            // แล้วทุกหน้าจอจะดู "ว่างเปล่าแต่ปกติ" ทั้งที่ config จริงมีอยู่ครบ
+            // (เกิดขึ้นจริงตอน install.sh ลืม chown config.php เป็น root:phpcp)
+            if (is_file($candidate)) {
+                self::$unreadable[] = $candidate;
+            }
         }
 
         return null;
+    }
+
+    /**
+     * ไฟล์ config ที่มีอยู่จริงแต่โปรเซสนี้อ่านไม่ได้ — ว่างเมื่อไม่มีปัญหาสิทธิ์
+     *
+     * @return list<string>
+     */
+    public static function unreadableCandidates(): array
+    {
+        return self::$unreadable;
     }
 
     /** @return array<string,mixed> */
