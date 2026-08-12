@@ -3349,6 +3349,18 @@ paths:
                   data: { type: object }
                   actions: { type: array, items: { type: object } }
 
+  /mail/readiness:
+    get:
+      tags: [mail]
+      summary: ความพร้อมของเมลหกข้อ พร้อมบอกว่าข้อไหน panel แก้ให้ไม่ได้
+      responses:
+        "200":
+          description: ผลตรวจหกข้อ
+          content:
+            application/json:
+              schema:
+                type: object
+
   /mailboxes:
     get:
       tags: [mail]

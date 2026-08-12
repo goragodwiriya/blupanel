@@ -176,6 +176,45 @@ final class MailboxesController extends ApiController
     }
 
     /**
+     * ความพร้อมของเมลหกข้อ — PLAN-MAIL §7
+     *
+     * เติม `fix_label` ให้หน้าจอไม่ต้องรู้จักรหัสภายใน และเติมคำอธิบายของแต่ละข้อ
+     * ที่ฝั่งเซิร์ฟเวอร์ เพราะเป็นความรู้เรื่องเมล ไม่ใช่เรื่องการแสดงผล
+     */
+    public function readiness(Request $request): Response
+    {
+        $result = $this->agent()->data('mail.readiness', [], $this->ctx->actor($request));
+
+        $labels = [
+            'hostname' => 'Mail hostname',
+            'listening' => 'Listening for incoming mail',
+            'outbound' => 'Outgoing port 25',
+            'rdns' => 'Reverse DNS (PTR)',
+            'dkim' => 'DKIM signing key',
+            'tls' => 'TLS certificate',
+        ];
+
+        $rows = array_map(
+            fn (array $check): array => $check + [
+                'label' => $this->t($labels[$check['key']] ?? $check['key']),
+                'tone' => $check['ok'] ? 'ok' : 'danger',
+                'status' => $check['ok'] ? $this->t('Ready') : $this->t('Not ready'),
+                // ข้อที่ panel แก้ให้ไม่ได้ต้องบอกให้ชัดว่าต้องไปทำที่ไหน
+                'fix_label' => $check['fix'] === 'provider'
+                    ? $this->t('Set this at your VPS provider — the panel cannot do it')
+                    : $this->t('The panel can fix this'),
+            ],
+            (array) ($result['checks'] ?? []),
+        );
+
+        return $this->ok($rows, [
+            'ready' => (bool) ($result['ready'] ?? false),
+            'failed' => (int) ($result['failed'] ?? 0),
+            'domains' => (array) ($result['domains'] ?? []),
+        ]);
+    }
+
+    /**
      * คำสั่งให้หน้าจอแสดงรหัสผ่านที่ระบบสุ่มให้
      *
      * รหัสนี้ไม่มีที่อื่นให้ดูย้อนหลังอีกเลย — ระบบเก็บแค่แฮช · ต้องแสดงเป็นกล่อง

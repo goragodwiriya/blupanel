@@ -86,6 +86,7 @@ use Phpcp\Agent\Capability\MailAliasDelete;
 use Phpcp\Agent\Capability\MailAliasSet;
 use Phpcp\Agent\Capability\MailBoxCreate;
 use Phpcp\Agent\Capability\MailBoxUpdate;
+use Phpcp\Agent\Capability\MailReadiness;
 use Phpcp\Agent\Capability\MailBoxDelete;
 use Phpcp\Agent\Capability\MailDomainSet;
 use Phpcp\Agent\Capability\MailTest;
@@ -206,6 +207,7 @@ final class CapabilityRegistry
             MailBoxDelete::class,
             MailAliasSet::class,
             MailAliasDelete::class,
+            MailReadiness::class,
 
             // SSL — ขอ ต่ออายุ และสลับโหมด HTTPS ของเว็บไซต์
             SslIssue::class,

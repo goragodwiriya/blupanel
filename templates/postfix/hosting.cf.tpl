@@ -48,3 +48,14 @@ smtpd_tls_loglevel = 1
 
 # ขนาดกล่องไม่ได้คุมที่นี่ — Dovecot เป็นคนปฏิเสธตอนโควตาเต็ม เพื่อให้ผู้ส่งได้รู้
 virtual_mailbox_limit = 0
+
+# ส่งเมลให้ rspamd ตรวจและเซ็น DKIM ก่อนออกจากเครื่อง (PLAN-MAIL เฟส M3)
+#
+# `milter_default_action = accept` แปลว่า **rspamd ล่มแล้วเมลยังส่งออกได้ปกติ** แค่
+# ไม่มีลายเซ็น · ทางเลือกอื่นคือหยุดรับ-ส่งเมลทั้งเครื่องเมื่อโปรแกรมกรองล่ม ซึ่งเป็น
+# การแลกที่ไม่คุ้มสำหรับเครื่องโฮสติ้ง
+smtpd_milters = inet:127.0.0.1:11332
+non_smtpd_milters = $smtpd_milters
+milter_protocol = 6
+milter_default_action = accept
+milter_mail_macros = i {mail_addr} {client_addr} {client_name} {auth_authen}

@@ -62,6 +62,32 @@
           </table>
         </div>
       </div>
+      <!--
+        ความพร้อมของเมล — PLAN-MAIL §7
+        สามข้อในนี้ panel แก้ให้ไม่ได้ (rDNS · พอร์ต 25 ขาออก · ชื่อเสียง IP) การบอก
+        ตรง ๆ ว่าข้อไหนต้องไปทำที่ไหน คือสิ่งที่ทำให้เมลโฮสติ้งนี้ใช้งานได้จริง
+      -->
+      <div class="content-body" data-component="api" data-endpoint="/api/v2/mail/readiness" data-refresh-event="phpcp:reload">
+        <div class="flex middle fullwidth">
+          <h2 class="icon-shield" data-i18n>Mail readiness</h2>
+          <span class="pill pill-ok" data-show="meta.ready === true" data-i18n>Ready</span>
+          <span class="pill pill-danger" data-show="meta.ready === false" data-text="meta.failed | number"></span>
+        </div>
+        <div class="tablebody">
+          <table class="table border fullwidth" data-table="mailReadiness" data-attr="data:data">
+            <thead>
+              <tr>
+                <th data-field="label" data-i18n>{LNG_Check}</th>
+                <th data-field="status" class="center" data-cell-class="center"
+                    data-template="<span class='pill pill-${tone}'>${status}</span>" data-i18n>{LNG_Status}</th>
+                <th data-field="found" data-cell-class="mono" data-i18n>{LNG_Found}</th>
+                <th data-field="fix_label" data-i18n>{LNG_Who fixes it}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
       <div class="content-body">
         <h2 class="icon-link" data-i18n>Forwarders</h2>
         <p class="muted" data-i18n>An address with no mailbox that sends everything on to somewhere else. A row with only @domain catches every unmatched address.</p>

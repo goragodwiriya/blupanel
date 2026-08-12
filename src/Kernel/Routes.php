@@ -270,6 +270,7 @@ final class Routes
         // เมลโฮสติ้ง — กล่องจดหมายและที่อยู่ส่งต่อ (PLAN-MAIL เฟส M2)
         $router->add(new Route('GET', '/api/v2/mailboxes', MailboxesController::class, 'index', 'mail.view', 'api.v2.mailboxes.index'));
         // ต้องมาก่อน {id} — ไม่งั้น "form" ถูกอ่านเป็นรหัสกล่อง
+        $router->add(new Route('GET', '/api/v2/mail/readiness', MailboxesController::class, 'readiness', 'mail.view', 'api.v2.mail.readiness'));
         $router->add(new Route('GET', '/api/v2/mailboxes/form', MailboxesController::class, 'form', 'mail.manage', 'api.v2.mailboxes.form'));
         $router->add(new Route('POST', '/api/v2/mailboxes', MailboxesController::class, 'store', 'mail.manage', 'api.v2.mailboxes.store'));
         $router->add(new Route('GET', '/api/v2/mailboxes/{id}', MailboxesController::class, 'show', 'mail.view', 'api.v2.mailboxes.show'));

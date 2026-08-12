@@ -249,7 +249,8 @@ if [ "$(id -u)" -eq 0 ] && command -v apt-get >/dev/null 2>&1; then
     else
       # Dovecot มาคู่กับ Postfix เสมอ — เมลโฮสติ้ง (PLAN-MAIL) ต้องมีทั้งคู่ และการ
       # ติดตั้งไว้ล่วงหน้าไม่ได้เปิดรับเมลเข้าเอง (ต้องสั่ง `phpcp mail:enable` ก่อน)
-      POSTFIX_PKG="postfix dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd"
+      # rspamd เซ็น DKIM ให้เมลขาออก — เมลที่ไม่ได้เซ็นเข้าถังขยะของ Gmail แทบทุกฉบับ
+      POSTFIX_PKG="postfix dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd rspamd"
       debconf-set-selections <<EOF >/dev/null 2>&1 || true
 postfix postfix/main_mailer_type select Internet Site
 postfix postfix/mailname string $(hostname -f 2>/dev/null || hostname 2>/dev/null || echo localhost)
@@ -257,7 +258,7 @@ EOF
     fi
   fi
 
-  say "กำลังติดตั้งแพ็กเกจ PHP 7.4, PHP 8.4, Apache2, Nginx, BIND9, MariaDB, OpenSSH, UFW, Fail2ban, phpMyAdmin, Cron${POSTFIX_PKG:+, Postfix, Dovecot}..."
+  say "กำลังติดตั้งแพ็กเกจ PHP 7.4, PHP 8.4, Apache2, Nginx, BIND9, MariaDB, OpenSSH, UFW, Fail2ban, phpMyAdmin, Cron${POSTFIX_PKG:+, Postfix, Dovecot, rspamd}..."
   apt-get install -y -qq --no-install-recommends \
     cron openssh-server bind9 bind9utils logrotate $POSTFIX_PKG \
     php7.4-cli php7.4-fpm php7.4-sqlite3 php7.4-mysql php7.4-mbstring php7.4-curl php7.4-zip php7.4-gd php7.4-xml php7.4-intl \
