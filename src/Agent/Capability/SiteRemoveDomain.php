@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Phpcp\Agent\Capability;
 
 use Phpcp\Agent\Context;
+use Phpcp\Driver\Mail\MailboxManager;
+use Phpcp\Driver\Template;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\ValidationError;
 use Phpcp\Domain\Site;
@@ -95,6 +97,13 @@ final class SiteRemoveDomain extends SiteCapability
 
         // ลบ DNS records ของโดเมนนี้ด้วย — ไม่มีโดเมนแล้วเรกคอร์ดค้างไม่มีประโยชน์
         $context->db->run('DELETE FROM dns_records WHERE domain_id = :id', ['id' => $row['id']]);
+        // ไฟล์เมลของโดเมนนี้ต้องหายไปพร้อมกัน — แถวหายเองตาม CASCADE แต่ไฟล์ไม่หาย
+        // ตาม ทิ้งเมลของลูกค้าไว้บนดิสก์ตลอดไปโดยไม่มีอะไรอ้างถึง (PLAN-MAIL M3)
+        if ((int) ($row['mail_enabled'] ?? 0) === 1) {
+            (new MailboxManager(new Template($context->config->paths->templates())))
+                ->removeDomainDir($executor, (string) $row['domain']);
+        }
+
         $context->db->run('DELETE FROM domains WHERE id = :id', ['id' => $row['id']]);
 
         if ($this->isLocalEnvironment($executor, $context)) {

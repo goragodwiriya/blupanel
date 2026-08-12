@@ -171,6 +171,24 @@ test('สร้างกุญแจ DKIM ต้องไม่พึ่งเ�
     assertTrue(str_contains($code, 'genrsa'), 'ต้องสร้างกุญแจด้วย openssl');
 });
 
+test('ลบโดเมนต้องแตะได้เฉพาะโฟลเดอร์ของโดเมนนั้น', static function (): void {
+    // ชื่อโดเมนผ่าน Validator มาแล้วทุกทาง แต่กันอีกชั้นเพราะพลาดที่นี่คือ rm -rf ผิดที่
+    $manager = new MailboxManager(new Template(PHPCP_ROOT . '/templates'));
+    $executor = new Phpcp\Agent\Executor\SandboxExecutor(sys_get_temp_dir() . '/phpcp-mail-' . getmypid());
+
+    foreach (['', '..', 'a/../..', 'x/y'] as $bad) {
+        $blocked = false;
+
+        try {
+            $manager->removeDomainDir($executor, $bad);
+        } catch (\Throwable) {
+            $blocked = true;
+        }
+
+        assertTrue($blocked, "ต้องปฏิเสธชื่อโดเมน: '{$bad}'");
+    }
+});
+
 test('Dovecot ต้องไม่เปิดพอร์ตที่ไม่เข้ารหัส', static function (): void {
     // รหัสผ่านเมลวิ่งผ่านเน็ตทุกครั้งที่โปรแกรมเมลเช็คกล่อง (ทุกไม่กี่นาที)
     // การเปิด 110/143 ไว้คือการประกาศรหัสผ่านของลูกค้าให้ทั้งวง

@@ -164,6 +164,27 @@ final class MailboxManager
     }
 
     /**
+     * ลบโฟลเดอร์เมลของทั้งโดเมน — ใช้ตอนลบโดเมนหรือลบเว็บไซต์
+     *
+     * แถวในฐานข้อมูลหายเองตาม `ON DELETE CASCADE` อยู่แล้ว แต่**ไฟล์บนดิสก์ไม่หายตาม** ·
+     * กล่องที่ถูกลบพร้อมโดเมนจึงทิ้งเมลของลูกค้าไว้บนเครื่องตลอดไปโดยไม่มีอะไรอ้างถึง —
+     * กินดิสก์ไปเรื่อย ๆ และเป็นข้อมูลส่วนตัวที่ค้างอยู่โดยไม่มีใครรู้ว่ายังอยู่
+     */
+    public function removeDomainDir(Executor $executor, string $domain): void
+    {
+        // ชื่อโดเมนผ่าน Validator มาแล้วทุกทาง แต่กันอีกชั้นเพราะพลาดที่นี่คือ rm -rf ผิดที่
+        if ($domain === '' || str_contains($domain, '/') || str_contains($domain, '..')) {
+            throw new ExecutionFailed('ชื่อโดเมนไม่ถูกต้อง: ' . $domain);
+        }
+
+        $path = self::MAIL_ROOT . '/' . $domain;
+
+        if ($executor->exists($executor->path($path))) {
+            $executor->exec(['/bin/rm', '-rf', $executor->path($path)], timeout: 120);
+        }
+    }
+
+    /**
      * แฮชรหัสผ่านด้วยเครื่องมือของ Dovecot เอง
      *
      * ต้องเป็น `doveadm pw` ไม่ใช่ `password_hash()` ของ PHP — Dovecot ตรวจรหัสจาก
