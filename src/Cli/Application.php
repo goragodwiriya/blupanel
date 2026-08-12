@@ -768,9 +768,22 @@ final class Application
             $this->out->line('  sudo systemctl restart apache2 && sudo systemctl start nginx');
         }
 
+        // **บอกเสมอว่า http://localhost เปิดหรือปิด** ไม่ใช่เงียบเมื่อปิด
+        //
+        // ค่านี้อยู่ในไฟล์ตั้งค่า และวิธีที่พลาดง่ายที่สุดคือใส่ผิดบล็อก (ต้องอยู่ใน
+        // `sites`) ซึ่งอ่านผ่านตาแล้วเหมือนถูกทุกอย่าง · ถ้าไม่รายงานตรงนี้ ผู้ดูแลจะ
+        // เห็นแต่ "สร้างไฟล์ใหม่แล้ว" แล้วไปเจอ 404 ที่เบราว์เซอร์โดยไม่มีเบาะแสเลย
+        $localhost = (string) ($result['localhost'] ?? '');
+
+        if ($localhost === '') {
+            $this->out->info('http://localhost: ปิดอยู่ — ตั้ง sites.localhost_docroot ในบล็อก sites ของ config.php');
+        } else {
+            $this->out->ok('http://localhost เสิร์ฟ ' . $localhost);
+        }
+
         // agent อ่าน config.php ตอนบูตครั้งเดียว — แก้ไฟล์แล้วสั่ง rebuild เลยจะได้
         // ผลลัพธ์ของค่าเก่าเงียบ ๆ · เทียบกับสิ่งที่ agent เห็นจริงแล้วบอกให้รีสตาร์ต
-        if (($result['localhost'] ?? '') !== $app->config->localhostDocroot()) {
+        if ($localhost !== $app->config->localhostDocroot()) {
             $this->out->warn(sprintf(
                 'agent ยังใช้ค่า sites.localhost_docroot เก่า (%s) — รีสตาร์ตแล้วสั่งใหม่',
                 ($result['localhost'] ?? '') === '' ? 'ปิดอยู่' : (string) $result['localhost'],
