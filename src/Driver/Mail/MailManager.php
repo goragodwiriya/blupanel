@@ -178,6 +178,27 @@ final class MailManager
         }
 
         $hosting = (bool) ($config['hosting'] ?? false);
+        $interfaces = $hosting ? 'all' : 'loopback-only';
+
+        /*
+         * **เปลี่ยนหน้าตัดเน็ตที่ฟังต้อง restart ไม่ใช่ reload**
+         *
+         * `postfix reload` อ่านค่าใหม่ทุกค่ายกเว้นค่าที่ต้องเปิด socket ใหม่ · เปิดเมล
+         * ให้โดเมนแรกแล้วสั่งแค่ reload จะได้ main.cf ที่เขียนว่า `all` แต่ Postfix
+         * ยังฟังแค่ loopback อยู่ — เมลจากอินเทอร์เน็ตไม่มีทางถึงเครื่องนี้เลย และ
+         * ไม่มีอะไรฟ้อง เพราะทุกอย่างในไฟล์ถูกต้องหมด (เจอจริงบนเครื่องจริง 2026-08-12)
+         *
+         * อ่านค่าเดิมจากไฟล์ก่อนเขียนทับ เพื่อรู้ว่าครั้งนี้เปลี่ยนหรือไม่
+         */
+        $previous = '';
+
+        try {
+            $previous = $this->directive($executor->readFile($executor->path(self::MAIN_CF)), 'inet_interfaces');
+        } catch (\Throwable) {
+            // อ่านไม่ได้ = ถือว่าเปลี่ยน ปลอดภัยกว่าเดาว่าเหมือนเดิม
+        }
+
+        $restartRequired = $previous !== $interfaces;
 
         $transaction->write(self::MAIN_CF, $this->templates->render('postfix/main.cf.tpl', [
             'HOSTNAME' => self::assertHost($config['hostname']),
@@ -187,7 +208,7 @@ final class MailManager
             'TLS_SECURITY' => $config['relay_tls'] ? 'encrypt' : 'may',
             // เปิดรับเมลเข้าต้องฟังทุกหน้าตัดเน็ต ไม่ใช่แค่ loopback — แต่ mynetworks
             // ยังแคบเท่าเดิม คนนอกที่จะส่งผ่านเราต้องล็อกอินก่อนเสมอ
-            'INET_INTERFACES' => $hosting ? 'all' : 'loopback-only',
+            'INET_INTERFACES' => $interfaces,
             'HOSTING_SECTION' => new SafeBlock($hosting ? $this->hostingSection($config) : ''),
             'GENERATED_AT' => date('Y-m-d H:i:s'),
         ]), 0644);
@@ -219,7 +240,7 @@ final class MailManager
             $this->reload($executor);
         }
 
-        return ['mode' => $mode, 'relay' => $relayLine];
+        return ['mode' => $mode, 'relay' => $relayLine, 'restart_required' => $restartRequired];
     }
 
     /**
@@ -254,6 +275,19 @@ final class MailManager
         $output = trim($result->stderr) !== '' ? $result->stderr : $result->stdout;
 
         return [$result->ok(), $output];
+    }
+
+    /**
+     * สตาร์ต Postfix ใหม่ทั้งตัว — ใช้เมื่อพอร์ตที่ฟังเปลี่ยนเท่านั้น
+     *
+     * แพงกว่า reload (มีช่วงสั้น ๆ ที่ไม่รับเมล) จึงไม่ใช้เป็นค่าเริ่มต้น
+     */
+    public function restart(Executor $executor): void
+    {
+        $executor->exec(
+            [$executor->path('/usr/bin/systemctl'), 'restart', 'postfix'],
+            timeout: 60,
+        );
     }
 
     public function reload(Executor $executor): void

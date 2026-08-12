@@ -85,7 +85,9 @@ abstract class MailCapability implements Capability
             );
         }
 
-        (new MailManager(new Template($context->config->paths->templates())))->apply($executor, [
+        $postfix = new MailManager(new Template($context->config->paths->templates()));
+
+        $outbound = $postfix->apply($executor, [
             'mode' => $settings->get('mail.mode') ?: 'local',
             'hostname' => $hostname,
             'from' => $settings->get('mail.from'),
@@ -99,12 +101,19 @@ abstract class MailCapability implements Capability
             'tls_key' => $settings->get('mail.tls_key'),
         ], reload: false);
 
-        return $this->mailboxes($context)->apply(
+        $result = $this->mailboxes($context)->apply(
             $executor,
             $domains,
             $repository->activeMailboxes(),
             $repository->activeAliases(),
         );
+
+        // เปิดหรือปิดเมลครั้งแรกเปลี่ยนพอร์ตที่ Postfix ฟัง ซึ่ง reload ทำให้ไม่ได้
+        if ($outbound['restart_required'] ?? false) {
+            $postfix->restart($executor);
+        }
+
+        return $result;
     }
 
     /**
