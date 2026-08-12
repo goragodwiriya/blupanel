@@ -47,7 +47,7 @@ final class RollbacksController extends ApiController
             $this->ctx->actor($request),
         );
 
-        return $this->completed((string) ($result['message'] ?? 'ยืนยันการเปลี่ยนแปลงแล้ว'), 'rollbacks', is_array($result) ? $result : []);
+        return $this->completed((string) ($result['message'] ?? 'Change confirmed'), 'rollbacks', is_array($result) ? $result : []);
     }
 
     /**
@@ -64,14 +64,14 @@ final class RollbacksController extends ApiController
         $exists = (int) $db->value('SELECT count(*) FROM pending_rollbacks WHERE id = :id', ['id' => $id], 0);
 
         if ($exists === 0) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบรายการที่รอยืนยัน — อาจถูกคืนค่าไปแล้ว');
+            return $this->problem(ApiProblem::NotFound, 'Nothing is waiting for confirmation — it may have been rolled back already');
         }
 
         $db->run('UPDATE pending_rollbacks SET expires_at = :t WHERE id = :id', ['t' => time() - 1, 'id' => $id]);
 
         $result = $this->agent()->data('rollback.run', [], $this->ctx->actor($request));
 
-        return $this->completed((string) ($result['message'] ?? 'คืนค่าการเปลี่ยนแปลงแล้ว'), 'rollbacks', is_array($result) ? $result : []);
+        return $this->completed((string) ($result['message'] ?? 'Change rolled back'), 'rollbacks', is_array($result) ? $result : []);
     }
 
     /**

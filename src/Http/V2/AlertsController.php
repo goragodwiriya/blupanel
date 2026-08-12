@@ -28,12 +28,12 @@ final class AlertsController extends ApiController
         $now = time();
 
         $alerts = array_map(
-            static function (array $row) use ($now): array {
+            function (array $row) use ($now): array {
                 $level = (string) $row['level'];
 
                 return [
                     'alert_key' => (string) $row['alert_key'],
-                    'label' => self::label((string) $row['alert_key']),
+                    'label' => $this->label((string) $row['alert_key']),
                     'level' => $level,
                     'value' => (float) $row['value'],
                     'first_at' => (int) $row['first_at'],
@@ -62,21 +62,21 @@ final class AlertsController extends ApiController
      * คีย์ถูกออกแบบให้มีรูปแบบ `ชนิด:เป้าหมาย` เพื่อให้แปลงกลับได้โดยไม่ต้องเก็บ
      * ข้อความไว้ในตาราง — ข้อความที่เก็บไว้ตอนสร้างแถวจะกลายเป็นของเก่าทันทีที่แก้คำ
      */
-    private static function label(string $key): string
+    private function label(string $key): string
     {
         if (str_starts_with($key, 'service:')) {
-            return 'บริการ ' . substr($key, 8);
+            return $this->t('Service {name}', ['name' => substr($key, 8)]);
         }
 
         if (str_starts_with($key, 'cert:')) {
-            return 'ใบรับรองของ ' . substr($key, 5);
+            return $this->t('Certificate for {domain}', ['domain' => substr($key, 5)]);
         }
 
-        return match ($key) {
-            'disk' => 'พื้นที่ดิสก์',
-            'memory' => 'หน่วยความจำ',
-            'load' => 'โหลดเฉลี่ย',
+        return $this->t(match ($key) {
+            'disk' => 'Disk space',
+            'memory' => 'Memory',
+            'load' => 'Load average',
             default => $key,
-        };
+        });
     }
 }

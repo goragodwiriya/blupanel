@@ -72,7 +72,7 @@ final class FirewallController extends ApiController
         ], $this->ctx->actor($request));
 
         return $this->refreshed(
-            (string) ($result['message'] ?? 'เพิ่มกฎแล้ว — ต้องกดยืนยันก่อนหมดเวลาคืนค่าอัตโนมัติ'),
+            (string) ($result['message'] ?? 'Rule added — confirm it before the automatic rollback runs out'),
             extra: $result + ['pending_rollback' => $this->pendingRollback()],
         )->withHeader('Location', '/api/v2/firewall');
     }
@@ -92,7 +92,7 @@ final class FirewallController extends ApiController
         ], $this->ctx->actor($request));
 
         return $this->refreshed(
-            'ลบกฎแล้ว — ต้องกดยืนยันก่อนหมดเวลาคืนค่าอัตโนมัติ',
+            'Rule deleted — confirm it before the automatic rollback runs out',
             extra: ['number' => $request->paramInt('number'), 'pending_rollback' => $this->pendingRollback()],
         );
     }
@@ -116,7 +116,7 @@ final class FirewallController extends ApiController
         );
 
         return $this->refreshed(
-            (string) ($result['message'] ?? ($wantEnabled ? 'เปิดไฟร์วอลล์แล้ว' : 'ปิดไฟร์วอลล์แล้ว')),
+            (string) ($result['message'] ?? ($wantEnabled ? 'Firewall enabled' : 'Firewall disabled')),
             extra: $result + ['enabled' => $wantEnabled, 'pending_rollback' => $this->pendingRollback()],
         );
     }

@@ -232,7 +232,16 @@
       root.querySelector('[data-logout]').addEventListener('click', () => window.PhpcpAuth.logout());
 
       const lang = root.querySelector('[data-lang-toggle]');
-      const paintLang = () => {lang.textContent = (window.I18nManager.state.current || 'th').toUpperCase();};
+      const paintLang = () => {
+        const current = window.I18nManager.state.current || 'en';
+        lang.textContent = current.toUpperCase();
+        // บอกภาษาที่เลือกให้ฝั่งเซิร์ฟเวอร์รู้ด้วย — ข้อความที่ API ส่งมา (รวมถึงที่
+        // ส่งไปทางอีเมล) แปลที่นั่น ไม่ได้แปลในเบราว์เซอร์ · เก็บใน localStorage
+        // อย่างเดียวไม่พอเพราะเซิร์ฟเวอร์อ่านไม่ได้
+        document.cookie = 'phpcp_lang=' + encodeURIComponent(current) + '; path=/; max-age=31536000; samesite=lax';
+        // โปรแกรมอ่านหน้าจอและตัวตัดคำของเบราว์เซอร์อ่านค่านี้ ไม่ได้อ่าน localStorage
+        document.documentElement.lang = current;
+      };
       paintLang();
       lang.addEventListener('click', async () => {
         const next = window.I18nManager.state.current === 'th' ? 'en' : 'th';

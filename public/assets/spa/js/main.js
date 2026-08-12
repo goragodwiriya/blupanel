@@ -110,9 +110,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     },
 
+    // ข้อความต้นทางในเทมเพลตเป็นภาษาอังกฤษและเป็นคีย์แปลไปในตัว ภาษาเริ่มต้นจึงเป็น
+    // อังกฤษ — ไทยมาจาก lang/th.json ซึ่งเป็นคลังคำเดียวที่ฝั่งเซิร์ฟเวอร์อ่านด้วย
     i18n: {
       enabled: true,
-      defaultLocale: 'th',
+      defaultLocale: 'en',
       availableLocales: ['th', 'en'],
       storageKey: 'phpcp_lang'
     },

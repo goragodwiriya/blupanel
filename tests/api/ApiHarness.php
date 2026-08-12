@@ -168,6 +168,20 @@ final class ApiHarness
         return $result;
     }
 
+    /**
+     * ตั้งคุกกี้เองเหมือนที่หน้าเว็บเขียนไว้
+     *
+     * ใช้กับคุกกี้ที่ **หน้าเว็บเป็นคนเขียน** ไม่ใช่เซิร์ฟเวอร์ — ตัวที่มีตอนนี้คือ
+     * `phpcp_lang` ที่บอกภาษาที่ผู้ใช้เลือก · ส่งเป็น header `Cookie` ไม่ได้เพราะ
+     * Request รับคุกกี้เป็นรายการแยกต่างหาก เหมือนที่ PHP จริงส่งมาให้
+     */
+    public function withCookie(string $name, string $value): self
+    {
+        $this->cookies[$name] = $value;
+
+        return $this;
+    }
+
     /** ทิ้งคุกกี้และ token ทั้งหมด เหมือนเปิดเบราว์เซอร์ใหม่ */
     public function forget(): void
     {

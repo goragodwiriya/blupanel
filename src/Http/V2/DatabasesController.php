@@ -104,12 +104,12 @@ final class DatabasesController extends ApiController
 
         // รหัสผ่านที่สุ่มให้ต้องอยู่ในกล่องที่ผู้ใช้กดปิดเอง — ไม่มีที่อื่นให้ดูย้อนหลัง
         return $this->done(
-            sprintf('สร้างฐานข้อมูล %s แล้ว', (string) $result['name']),
+            $this->t('Database {name} created', ['name' => (string) $result['name']]),
             [
                 [
                     'type' => 'modal',
                     'action' => 'show',
-                    'title' => 'สร้างฐานข้อมูลแล้ว',
+                    'title' => 'Database created',
                     'content' => sprintf(
                         '<p>ฐานข้อมูล <strong>%s</strong> · ผู้ใช้ <strong>%s</strong></p>'
                         . '<p>รหัสผ่าน — คัดลอกไว้ก่อนปิดหน้าต่างนี้ เพราะระบบไม่เก็บไว้ที่ใดอีก</p>'
@@ -144,7 +144,7 @@ final class DatabasesController extends ApiController
             'drop_user' => in_array($dropUser, [true, '1', 1, 'true'], true) ? '1' : '0',
         ], $this->ctx->actor($request));
 
-        return $this->completed(sprintf('ลบฐานข้อมูล %s แล้ว', $name), 'databases', ['name' => $name]);
+        return $this->completed($this->t('Database {name} deleted', ['name' => $name]), 'databases', ['name' => $name]);
     }
 
     /**
@@ -161,11 +161,11 @@ final class DatabasesController extends ApiController
         ], $this->ctx->actor($request));
 
         return $this->done(
-            sprintf('ตั้งรหัสผ่านใหม่ให้ %s แล้ว', (string) ($result['username'] ?? '')),
+            $this->t('New password set for {user}', ['user' => (string) ($result['username'] ?? '')]),
             [[
                 'type' => 'modal',
                 'action' => 'show',
-                'title' => 'รหัสผ่านใหม่',
+                'title' => 'New password',
                 'content' => sprintf(
                     '<p>รหัสผ่านใหม่ของผู้ใช้ฐานข้อมูล <strong>%s</strong> — คัดลอกไว้ก่อนปิดหน้าต่างนี้</p>'
                     . '<p class="mono selectable">%s</p>',

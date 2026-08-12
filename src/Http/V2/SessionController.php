@@ -72,7 +72,7 @@ final class SessionController extends ApiController
 
             return $this->problem(
                 ApiProblem::RateLimited,
-                sprintf('บัญชีถูกล็อกชั่วคราวจากการเข้าสู่ระบบผิดหลายครั้ง กรุณารออีก %d นาที', (int) ceil($seconds / 60)),
+                $this->t('Too many failed sign-ins — this account is locked for another {minutes} minutes', ['minutes' => (int) ceil($seconds / 60)]),
             )->withHeader('Retry-After', (string) max(1, $seconds));
         }
 
@@ -128,7 +128,7 @@ final class SessionController extends ApiController
         if ($needs2fa) {
             // 401 พร้อมรหัส TWO_FACTOR_REQUIRED — คุกกี้ session ถูกตั้งแล้วแต่ยังใช้ทำอะไรไม่ได้
             // นอกจากยืนยัน 2FA · SPA ใช้รหัสนี้ตัดสินใจแสดงหน้ากรอกรหัส ไม่ใช่หน้าเข้าสู่ระบบใหม่
-            return $this->problem(ApiProblem::TwoFactorRequired, 'ต้องยืนยันรหัส 2FA ก่อนใช้งาน');
+            return $this->problem(ApiProblem::TwoFactorRequired, 'Two-factor verification is required first');
         }
 
         // โหลด session ที่เพิ่งสร้างเข้า ctx เพื่อให้คำตอบสะท้อนสถานะจริงทันที
@@ -141,14 +141,14 @@ final class SessionController extends ApiController
     public function verifyTwoFactor(Request $request): Response
     {
         if (!$this->ctx->awaiting2fa()) {
-            return $this->problem(ApiProblem::Unauthenticated, 'ไม่มีการเข้าสู่ระบบที่รอยืนยัน');
+            return $this->problem(ApiProblem::Unauthenticated, 'No sign-in is waiting for verification');
         }
 
         $users = new UserRepository($this->app->db());
         $user = $users->find($this->ctx->userId());
 
         if ($user === null || $user['totp_secret'] === null) {
-            return $this->problem(ApiProblem::Unauthenticated, 'บัญชีนี้ไม่ได้เปิดใช้งาน 2FA');
+            return $this->problem(ApiProblem::Unauthenticated, 'This account does not have two-factor enabled');
         }
 
         $code = trim($request->payloadString('code'));
@@ -163,7 +163,7 @@ final class SessionController extends ApiController
         if (!$accepted) {
             $this->audit($request, 'auth.2fa', (string) $user['username'], 'denied');
 
-            return $this->problem(ApiProblem::TwoFactorRequired, 'รหัสยืนยันไม่ถูกต้อง', ['code' => 'รหัสยืนยันไม่ถูกต้อง']);
+            return $this->problem(ApiProblem::TwoFactorRequired, 'The verification code is not correct', ['code' => 'The verification code is not correct']);
         }
 
         $store = new SessionStore($this->app->db(), $this->app->config);
@@ -284,7 +284,7 @@ final class SessionController extends ApiController
     {
         $this->audit($request, 'auth.login', $username, 'denied', ['reason' => $reason, 'ip' => $request->ip]);
 
-        return $this->problem(ApiProblem::Unauthenticated, 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
+        return $this->problem(ApiProblem::Unauthenticated, 'The username or password is not correct');
     }
 
     /** @param array<string,mixed> $detail */

@@ -57,7 +57,7 @@ final class MetricsController extends ApiController
         if (!isset(self::RANGES[$range])) {
             return $this->problem(
                 ApiProblem::ValidationError,
-                'ช่วงเวลาไม่ถูกต้อง — ใช้ได้: ' . implode(', ', array_keys(self::RANGES)),
+                $this->t('Unknown range') . ' — ' . $this->t('Allowed: ') . implode(', ', array_keys(self::RANGES)),
                 ['range' => 'ค่าที่ส่งมาไม่อยู่ในรายการ'],
             );
         }
@@ -109,7 +109,7 @@ final class MetricsController extends ApiController
 
         foreach ([
             'CPU' => 'cpu_percent',
-            'หน่วยความจำ' => 'memory_percent',
+            'Memory' => 'memory_percent',
             'ดิสก์' => 'disk_percent',
         ] as $name => $column) {
             $points = [];

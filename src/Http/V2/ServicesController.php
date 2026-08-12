@@ -91,8 +91,8 @@ final class ServicesController extends ApiController
         if (!in_array($action, self::ACTIONS, true)) {
             return $this->problem(
                 ApiProblem::ValidationError,
-                'คำสั่งไม่ถูกต้อง',
-                ['action' => 'ใช้ได้: ' . implode(', ', self::ACTIONS)],
+                'Invalid command',
+                ['action' => 'Allowed: ' . implode(', ', self::ACTIONS)],
             );
         }
 
@@ -103,7 +103,7 @@ final class ServicesController extends ApiController
         );
 
         return $this->completed(
-            (string) ($result['message'] ?? sprintf('สั่ง %s ให้ %s แล้ว', $action, $request->param('unit'))),
+            (string) ($result['message'] ?? $this->t('{action} sent to {unit}', ['action' => $action, 'unit' => $request->param('unit')])),
             'services',
             $result + ['unit' => $request->param('unit'), 'action' => $action],
         );

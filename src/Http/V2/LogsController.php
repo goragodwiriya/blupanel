@@ -60,7 +60,7 @@ final class LogsController extends ApiController
         if (!isset($available[$source])) {
             // 403 ไม่ใช่ 404 — คีย์ของแหล่ง log ไม่ใช่ความลับ (อยู่ในเอกสาร)
             // สิ่งที่ต่างกันคือสิทธิ์ ผู้ดูแลจึงควรรู้ว่าต้องไปแก้ที่สิทธิ์ ไม่ใช่ที่ URL
-            return $this->problem(ApiProblem::Forbidden, 'ไม่มีสิทธิ์อ่าน log นี้ หรือไม่รู้จักแหล่ง log');
+            return $this->problem(ApiProblem::Forbidden, 'Unknown log source, or you may not read it');
         }
 
         $lines = max(self::MIN_LINES, min(self::MAX_LINES, $request->queryInt('per_page', self::DEFAULT_LINES)));

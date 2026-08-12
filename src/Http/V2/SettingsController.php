@@ -66,14 +66,14 @@ final class SettingsController extends ApiController
         if ($args === []) {
             return $this->problem(
                 \Phpcp\Http\ApiProblem::ValidationError,
-                'ต้องระบุค่าที่ต้องการเปลี่ยนอย่างน้อยหนึ่งค่า',
+                'Send at least one value to change',
                 ['keys' => 'ดูรายการคีย์ที่แก้ได้จาก GET /api/v2/settings'],
             );
         }
 
         $result = $this->agent()->data('settings.set', $args, $this->ctx->actor($request));
 
-        return $this->completed((string) ($result['message'] ?? 'บันทึกค่าตั้งแล้ว'), '', is_array($result) ? $result : []);
+        return $this->completed((string) ($result['message'] ?? 'Settings saved'), '', is_array($result) ? $result : []);
     }
 
     /**
@@ -90,7 +90,7 @@ final class SettingsController extends ApiController
             $this->ctx->actor($request),
         );
 
-        return $this->completed((string) ($result['message'] ?? 'ส่งข้อความทดสอบแล้ว'), '', is_array($result) ? $result : []);
+        return $this->completed((string) ($result['message'] ?? 'Test message sent'), '', is_array($result) ? $result : []);
     }
 
     /**
@@ -108,7 +108,7 @@ final class SettingsController extends ApiController
             $this->ctx->actor($request),
         );
 
-        return $this->completed((string) ($result['message'] ?? 'บันทึกค่าอีเมลแล้ว'), '', is_array($result) ? $result : []);
+        return $this->completed((string) ($result['message'] ?? 'Email settings saved'), '', is_array($result) ? $result : []);
     }
 
     /**
@@ -128,7 +128,7 @@ final class SettingsController extends ApiController
             $this->ctx->actor($request),
         );
 
-        return $this->completed((string) ($result['message'] ?? 'เปลี่ยนเว็บเซิร์ฟเวอร์แล้ว'), '', is_array($result) ? $result : []);
+        return $this->completed((string) ($result['message'] ?? 'Web server changed'), '', is_array($result) ? $result : []);
     }
 
     /** ส่งเมลทดสอบ */
@@ -140,6 +140,6 @@ final class SettingsController extends ApiController
             $this->ctx->actor($request),
         );
 
-        return $this->completed((string) ($result['message'] ?? 'ส่งอีเมลทดสอบแล้ว'), '', is_array($result) ? $result : []);
+        return $this->completed((string) ($result['message'] ?? 'Test email sent'), '', is_array($result) ? $result : []);
     }
 }

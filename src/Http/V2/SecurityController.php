@@ -66,7 +66,7 @@ final class SecurityController extends ApiController
         if (!is_file($file)) {
             return $this->problem(
                 ApiProblem::NotFound,
-                'ยังไม่มีผลตรวจจากภายนอก — รัน tools/security-audit.sh พร้อม --json-out',
+                'No external scan results yet — run tools/security-audit.sh with --json-out',
             );
         }
 
@@ -76,7 +76,7 @@ final class SecurityController extends ApiController
         if (!is_array($report)) {
             // ไฟล์เสียหรือถูกเขียนค้างกลางทาง — บอกให้ชัดว่าเป็นปัญหาของไฟล์
             // ไม่ใช่ปล่อยให้หน้าจอแสดงผลตรวจที่ไม่สมบูรณ์เหมือนว่าถูกต้อง
-            return $this->problem(ApiProblem::InternalError, 'อ่านไฟล์ผลตรวจไม่สำเร็จ — ไฟล์อาจเสียหาย');
+            return $this->problem(ApiProblem::InternalError, 'The scan result file could not be read — it may be damaged');
         }
 
         $scannedAt = (int) (strtotime((string) ($report['scan_time'] ?? '')) ?: filemtime($file));

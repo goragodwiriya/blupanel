@@ -120,10 +120,10 @@ final class BackupsController extends HostingController
             : null;
 
         return $this->done(
-            (string) ($result['message'] ?? 'สร้างข้อมูลสำรองแล้ว'),
+            (string) ($result['message'] ?? 'Backup created'),
             [
                 ['type' => 'notification', 'level' => 'success',
-                 'message' => (string) ($result['message'] ?? 'สร้างข้อมูลสำรองแล้ว')],
+                 'message' => (string) ($result['message'] ?? 'Backup created')],
                 ['type' => 'redirect', 'url' => 'reload', 'target' => 'backups'],
             ],
             $result + ['backup_id' => (int) ($backup['id'] ?? 0)],
@@ -142,7 +142,7 @@ final class BackupsController extends HostingController
         $backup = $this->findBackup($request->paramInt('id'));
 
         if ($backup === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบไฟล์สำรองที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'Backup not found');
         }
 
         $result = $this->agent()->data('backup.restore', [
@@ -151,7 +151,7 @@ final class BackupsController extends HostingController
         ], $this->ctx->actor($request));
 
         return $this->completed(
-            (string) ($result['message'] ?? 'กู้คืนข้อมูลแล้ว'),
+            (string) ($result['message'] ?? 'Backup restored'),
             'backups',
             $result,
         );
@@ -168,7 +168,7 @@ final class BackupsController extends HostingController
         $backup = $this->findBackup($request->paramInt('id'));
 
         if ($backup === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบไฟล์สำรองที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'Backup not found');
         }
 
         $result = $this->agent()->data('backup.push', [
@@ -177,7 +177,7 @@ final class BackupsController extends HostingController
         ], $this->ctx->actor($request));
 
         return $this->completed(
-            (string) ($result['message'] ?? 'ส่งไฟล์สำรองออกไปแล้ว'),
+            (string) ($result['message'] ?? 'Backup copied offsite'),
             'backups',
             $result,
         );
@@ -188,14 +188,14 @@ final class BackupsController extends HostingController
         $backup = $this->findBackup($request->paramInt('id'));
 
         if ($backup === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบไฟล์สำรองที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'Backup not found');
         }
 
         $this->agent()->data('backup.delete', [
             'backup_id' => (int) $backup['id'],
         ], $this->ctx->actor($request));
 
-        return $this->completed('ลบไฟล์สำรองแล้ว', 'backups', ['backup_id' => (int) $backup['id']]);
+        return $this->completed('Backup deleted', 'backups', ['backup_id' => (int) $backup['id']]);
     }
 
     /**

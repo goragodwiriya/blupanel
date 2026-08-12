@@ -98,6 +98,9 @@ abstract class ApiController extends Controller
      */
     protected function done(string $message, array $actions = [], array $extra = [], int $status = 200): Response
     {
+        $message = $this->t($message);
+        $actions = $this->translateActions($actions);
+
         $body = ['ok' => true, 'message' => $message] + $extra;
 
         if ($actions !== []) {
@@ -219,7 +222,44 @@ abstract class ApiController extends Controller
     /** @param array<string,string> $fields */
     protected function problem(ApiProblem $problem, string $message, array $fields = []): Response
     {
-        return $problem->response($message, $fields);
+        return $problem->response(
+            $this->t($message),
+            array_map(fn (string $text): string => $this->t($text), $fields),
+        );
+    }
+
+    /**
+     * แปลข้อความที่จะส่งออกไปให้คนอ่าน
+     *
+     * **โค้ดเขียนภาษาอังกฤษเสมอ** — ข้อความอังกฤษคือคีย์ของคลังคำไปในตัว ตามกติกา
+     * เดียวกับที่หน้าเว็บใช้ (`public/assets/spa/lang/th.json` คือไฟล์เดียวกัน)
+     * คีย์ที่ยังไม่มีคำแปลจะออกไปเป็นอังกฤษ ซึ่งอ่านรู้เรื่อง ไม่ใช่รหัสที่ไม่มีความหมาย
+     *
+     * @param array<string,string|int|float> $params ค่าที่แทนที่ `{ชื่อ}` ในข้อความ
+     */
+    protected function t(string $key, array $params = []): string
+    {
+        return $this->app->t($key, $params);
+    }
+
+    /**
+     * แปลข้อความในคำสั่งที่ส่งไปให้หน้าจอทำงานต่อ
+     *
+     * `notification` กับ `alert` มีข้อความที่ผู้ใช้อ่าน ส่วนชนิดอื่น (redirect, event,
+     * modal) ไม่มี · หัวข้อของ modal ใช้รูป `{LNG_...}` ซึ่งหน้าเว็บแปลเองอยู่แล้ว
+     *
+     * @param array<int,array<string,mixed>> $actions
+     * @return array<int,array<string,mixed>>
+     */
+    private function translateActions(array $actions): array
+    {
+        foreach ($actions as $index => $action) {
+            if (is_array($action) && isset($action['message']) && is_string($action['message'])) {
+                $actions[$index]['message'] = $this->t($action['message']);
+            }
+        }
+
+        return $actions;
     }
 
     /**

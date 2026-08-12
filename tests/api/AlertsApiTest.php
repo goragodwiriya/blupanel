@@ -83,9 +83,11 @@ test('เกณฑ์ที่ค้างอยู่ต้องโผล่�
     }
 
     // คีย์ดิบอย่าง `service:mariadb` อ่านรู้เรื่องสำหรับคนเขียนโค้ด ไม่ใช่ผู้ดูแลที่เปิดหน้าเว็บ
-    assertSame('พื้นที่ดิสก์', $byKey['disk']['label'], 'ต้องแปลงคีย์เป็นชื่อ');
-    assertSame('บริการ mariadb', $byKey['service:mariadb']['label'], 'ต้องแยกชื่อบริการออกมา');
-    assertSame('ใบรับรองของ example.com', $byKey['cert:example.com']['label'], 'ต้องแยกชื่อโดเมนออกมา');
+    //
+    // ข้อความในโค้ดเป็นภาษาอังกฤษเสมอ เพราะมันคือคีย์ของคลังคำไปในตัว
+    assertSame('Disk space', $byKey['disk']['label'], 'ต้องแปลงคีย์เป็นชื่อ');
+    assertSame('Service mariadb', $byKey['service:mariadb']['label'], 'ต้องแยกชื่อบริการออกมา');
+    assertSame('Certificate for example.com', $byKey['cert:example.com']['label'], 'ต้องแยกชื่อโดเมนออกมา');
 
     // สีของป้ายมาจากฝั่งเซิร์ฟเวอร์ เทมเพลตจึงเขียน `pill-${level_tone}` ได้ตรง ๆ
     assertSame('danger', $byKey['disk']['level_tone'], 'วิกฤตต้องเป็นสีแดง');

@@ -111,10 +111,10 @@ final class SitesController extends HostingController
         $site = $this->sites()->find($siteId);
 
         return $this->done(
-            sprintf('สร้างเว็บไซต์ %s แล้ว', (string) ($site['primary_domain'] ?? $result['domain'] ?? '')),
+            $this->t('Website {domain} created', ['domain' => (string) ($site['primary_domain'] ?? $result['domain'] ?? '')]),
             [
                 ['type' => 'notification', 'level' => 'success',
-                    'message' => sprintf('สร้างเว็บไซต์ %s แล้ว', (string) ($site['primary_domain'] ?? ''))],
+                    'message' => $this->t('Website {domain} created', ['domain' => (string) ($site['primary_domain'] ?? '')])],
                 ['type' => 'redirect', 'url' => '/app/sites', 'delay' => 800]
             ],
             ['site_id' => $siteId, 'domain' => (string) ($site['primary_domain'] ?? '')],
@@ -234,7 +234,7 @@ final class SitesController extends HostingController
         if ($phpVersion === '') {
             return $this->problem(
                 ApiProblem::ValidationError,
-                'ยังไม่มีฟิลด์ใดที่แก้ไขได้นอกจาก php_version',
+                'php_version is the only field that can be changed here',
                 ['php_version' => 'ต้องระบุเวอร์ชัน PHP ที่ต้องการเปลี่ยนไปใช้'],
             );
         }
@@ -274,7 +274,7 @@ final class SitesController extends HostingController
         if (!is_bool($suspended) && !in_array($suspended, ['1', '0', 'true', 'false', 1, 0], true)) {
             return $this->problem(
                 ApiProblem::ValidationError,
-                'ต้องระบุสถานะที่ต้องการ',
+                'The wanted status is required',
                 ['suspended' => 'ต้องเป็น true (ระงับ) หรือ false (เปิดใช้งาน)'],
             );
         }
@@ -288,7 +288,7 @@ final class SitesController extends HostingController
         );
 
         return $this->refreshed(
-            (string) ($result['message'] ?? ($wantSuspended ? 'ระงับเว็บไซต์แล้ว' : 'เปิดใช้งานเว็บไซต์แล้ว')),
+            (string) ($result['message'] ?? ($wantSuspended ? 'Website suspended' : 'Website resumed')),
             extra: ['site_id' => (int) $site['id'], 'suspended' => $wantSuspended],
         );
     }
@@ -396,7 +396,7 @@ final class SitesController extends HostingController
         ], $this->ctx->actor($request));
 
         return $this->refreshed(
-            (string) ($result['message'] ?? 'บันทึกค่าการจำกัดอัตราแล้ว'),
+            (string) ($result['message'] ?? 'Rate limit saved'),
             extra: is_array($result) ? $result : [],
         );
     }
@@ -421,7 +421,7 @@ final class SitesController extends HostingController
         ], $this->ctx->actor($request));
 
         return $this->refreshed(
-            (string) ($result['message'] ?? 'ปลดแบนแล้ว'),
+            (string) ($result['message'] ?? 'Ban removed'),
             extra: is_array($result) ? $result : [],
         );
     }
@@ -450,10 +450,10 @@ final class SitesController extends HostingController
         // กลับไปหน้ารายการเสมอ — กดลบจากหน้ารายละเอียดแล้วอยู่ที่เดิมจะได้ 404
         // ส่วนกดลบจากหน้ารายการ การไปที่เส้นทางเดิมทำให้ตารางโหลดใหม่พอดี
         return $this->done(
-            sprintf('ลบเว็บไซต์ %s แล้ว', (string) $site['primary_domain']),
+            $this->t('Website {domain} deleted', ['domain' => (string) $site['primary_domain']]),
             [
                 ['type' => 'notification', 'level' => 'success',
-                    'message' => sprintf('ลบเว็บไซต์ %s แล้ว', (string) $site['primary_domain'])],
+                    'message' => $this->t('Website {domain} deleted', ['domain' => (string) $site['primary_domain']])],
                 ['type' => 'redirect', 'url' => 'reload', 'target' => 'sites']
             ],
             ['site_id' => (int) $site['id']],
@@ -474,7 +474,7 @@ final class SitesController extends HostingController
             'fix_permissions' => (bool) $request->payload('fix_permissions', false)
         ], $this->ctx->actor($request));
 
-        return $this->refreshed((string) ($result['message'] ?? 'ตั้งเจ้าของไฟล์ใหม่แล้ว'), extra: $result);
+        return $this->refreshed((string) ($result['message'] ?? 'File ownership reset'), extra: $result);
     }
 
     /** โดเมนทั้งหมดของเว็บไซต์นี้ */
@@ -559,9 +559,9 @@ final class SitesController extends HostingController
         );
 
         return $this->done(
-            sprintf('เพิ่มโดเมน %s แล้ว', $domain),
+            $this->t('Domain {domain} added', ['domain' => $domain]),
             [
-                ['type' => 'notification', 'level' => 'success', 'message' => sprintf('เพิ่มโดเมน %s แล้ว', $domain)],
+                ['type' => 'notification', 'level' => 'success', 'message' => $this->t('Domain {domain} added', ['domain' => $domain])],
                 ['type' => 'redirect', 'url' => 'reload', 'target' => 'sites']
             ],
             ['site_id' => (int) $site['id'], 'domain' => $domain],
@@ -595,7 +595,7 @@ final class SitesController extends HostingController
         ], $this->ctx->actor($request));
 
         return $this->refreshed(
-            (string) ($result['message'] ?? 'บันทึกรายการโดเมนแล้ว'),
+            (string) ($result['message'] ?? 'Domain list saved'),
             extra: $result,
         );
     }
@@ -615,7 +615,7 @@ final class SitesController extends HostingController
             'domain' => rawurldecode($request->param('domain'))
         ], $this->ctx->actor($request));
 
-        return $this->refreshed(sprintf('ลบโดเมน %s แล้ว', rawurldecode($request->param('domain'))), 'sites');
+        return $this->refreshed($this->t('Domain {domain} removed', ['domain' => rawurldecode($request->param('domain'))]), 'sites');
     }
 
     /** ส่งคำสั่งเปลี่ยนเวอร์ชัน PHP ไปที่ agent — ใช้ร่วมกันระหว่าง PATCH และ PUT */
@@ -627,7 +627,7 @@ final class SitesController extends HostingController
         ], $this->ctx->actor($request));
 
         return $this->refreshed(
-            (string) ($result['message'] ?? 'เปลี่ยนเวอร์ชัน PHP แล้ว'),
+            (string) ($result['message'] ?? 'PHP version changed'),
             extra: ['site_id' => $siteId, 'php_version' => $phpVersion],
         );
     }

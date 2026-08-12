@@ -38,12 +38,12 @@ final class CronSchedule
     public static function presets(): array
     {
         return [
-            '*/5 * * * *' => 'ทุก 5 นาที',
-            '*/15 * * * *' => 'ทุก 15 นาที',
-            '0 * * * *' => 'ทุกชั่วโมง',
-            '0 1 * * *' => 'ทุกวัน เวลา 01:00 น.',
-            '0 3 * * 0' => 'ทุกสัปดาห์ (อาทิตย์ 03:00 น.)',
-            '0 4 1 * *' => 'ทุกเดือน (วันที่ 1 เวลา 04:00 น.)',
+            '*/5 * * * *' => 'Every 5 minutes',
+            '*/15 * * * *' => 'Every 15 minutes',
+            '0 * * * *' => 'Every hour',
+            '0 1 * * *' => 'Every day at 01:00',
+            '0 3 * * 0' => 'Every week (Sunday 03:00)',
+            '0 4 1 * *' => 'Every month (the 1st at 04:00)',
         ];
     }
 

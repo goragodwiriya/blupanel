@@ -60,7 +60,7 @@ final class BackupDestinationsController extends ApiController
         $row = $this->repository()->find($id);
 
         return $row === null
-            ? $this->problem(ApiProblem::NotFound, 'ไม่พบปลายทางที่ระบุ')
+            ? $this->problem(ApiProblem::NotFound, 'Destination not found')
             : $this->ok($this->present($row, $this->ctx->can('backup.offsite')));
     }
 
@@ -125,12 +125,12 @@ final class BackupDestinationsController extends ApiController
         $count = (int) ($row['retention_count'] ?? 0);
         $parts = [];
         if ($days > 0) {
-            $parts[] = $days . ' วัน';
+            $parts[] = $this->t('{days} days', ['days' => $days]);
         }
         if ($count > 0) {
-            $parts[] = 'เก็บอย่างน้อย ' . $count . ' ชุด';
+            $parts[] = $this->t('Keep at least {count} copies', ['count' => $count]);
         }
-        $row['retention_label'] = $parts === [] ? 'ไม่จำกัด' : implode(' · ', $parts);
+        $row['retention_label'] = $parts === [] ? $this->t('Unlimited') : implode(' · ', $parts);
 
         // ปลายทางที่ล้มเงียบอันตรายพอ ๆ กับไม่มีปลายทางเลย — แยก "ยังไม่เคยตรวจ"
         // ออกจาก "ตรวจแล้วล้ม" ให้ชัดเจน ไม่ใช่แค่ "ไม่มีเวลาล่าสุด"
@@ -181,9 +181,9 @@ final class BackupDestinationsController extends ApiController
         );
 
         return $this->done(
-            'เพิ่มปลายทางแล้ว',
+            'Destination added',
             [
-                ['type' => 'notification', 'level' => 'success', 'message' => 'เพิ่มปลายทางแล้ว'],
+                ['type' => 'notification', 'level' => 'success', 'message' => 'Destination added'],
                 // ฟอร์มอยู่คนละหน้ากับตารางแล้ว — พากลับไปหน้ารายการ ไม่ใช่รีโหลด
                 // ตารางที่ไม่ได้อยู่ในหน้าเดียวกัน
                 ['type' => 'redirect', 'url' => '/app/backups', 'delay' => 800],
@@ -204,7 +204,7 @@ final class BackupDestinationsController extends ApiController
         $row = $repository->find($id);
 
         if ($row === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบปลายทางที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'Destination not found');
         }
 
         $changes = [];
@@ -225,7 +225,7 @@ final class BackupDestinationsController extends ApiController
         }
 
         if ($changes === []) {
-            return $this->problem(ApiProblem::ValidationError, 'ต้องระบุค่าที่ต้องการเปลี่ยนอย่างน้อยหนึ่งค่า');
+            return $this->problem(ApiProblem::ValidationError, 'Send at least one value to change');
         }
 
         $repository->update($id, $changes);
@@ -233,9 +233,9 @@ final class BackupDestinationsController extends ApiController
         $result = $repository->find($id) ?? [];
 
         return $this->done(
-            'บันทึกปลายทางแล้ว',
+            'Destination saved',
             [
-                ['type' => 'notification', 'level' => 'success', 'message' => 'บันทึกปลายทางแล้ว'],
+                ['type' => 'notification', 'level' => 'success', 'message' => 'Destination saved'],
                 ['type' => 'redirect', 'url' => '/app/backups', 'delay' => 800],
                 ['type' => 'event', 'event' => self::RELOAD_EVENT],
             ],
@@ -249,7 +249,7 @@ final class BackupDestinationsController extends ApiController
         $id = $request->paramInt('id');
 
         if ($repository->find($id) === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบปลายทางที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'Destination not found');
         }
 
         // ไฟล์ที่ส่งไปแล้วยังอยู่ที่ปลายทาง — เราแค่เลิกรู้จักมัน
@@ -267,11 +267,11 @@ final class BackupDestinationsController extends ApiController
             'deleted' => true,
             'remote_files_left' => $orphans,
             'message' => $orphans > 0
-                ? sprintf('ลบปลายทางแล้ว — ไฟล์ %d รายการที่ส่งไปแล้วยังอยู่ที่นั่น ต้องไปลบเองถ้าไม่ต้องการ', $orphans)
-                : 'ลบปลายทางแล้ว',
+                ? $this->t('Destination removed — the {count} files already copied there are left alone, delete them yourself if you do not want them', ['count' => $orphans])
+                : 'Destination removed',
         ];
 
-        $message = (string) ($result['message'] ?? 'ลบปลายทางแล้ว');
+        $message = (string) ($result['message'] ?? 'Destination removed');
 
         return $this->done(
             $message,
@@ -294,14 +294,14 @@ final class BackupDestinationsController extends ApiController
         $id = $request->paramInt('id');
 
         if ($this->repository()->find($id) === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบปลายทางที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'Destination not found');
         }
 
         $result = $this->agent()->data('backup.destination_test', [
             'destination_id' => $id,
         ], $this->ctx->actor($request));
 
-        return $this->completed((string) ($result['message'] ?? 'ปลายทางใช้งานได้'), 'destinations', is_array($result) ? $result : []);
+        return $this->completed((string) ($result['message'] ?? 'The destination works'), 'destinations', is_array($result) ? $result : []);
     }
 
     /**
@@ -353,7 +353,7 @@ final class BackupDestinationsController extends ApiController
 
         foreach (DestinationFactory::requiredFields()[$driver] ?? [] as $field) {
             if (($config[$field] ?? '') === '') {
-                $missing[$field] = 'ต้องระบุ';
+                $missing[$field] = 'Required';
             }
         }
 
@@ -363,7 +363,7 @@ final class BackupDestinationsController extends ApiController
 
         return $missing === []
             ? null
-            : $this->problem(ApiProblem::ValidationError, 'ข้อมูลปลายทางไม่ครบ', $missing);
+            : $this->problem(ApiProblem::ValidationError, 'The destination details are incomplete', $missing);
     }
 
     private function repository(): BackupDestinationRepository

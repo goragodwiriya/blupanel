@@ -90,9 +90,9 @@ final class CronJobsController extends HostingController
         );
 
         return $this->done(
-            'เพิ่มงานอัตโนมัติแล้ว',
+            'Cron job added',
             [
-                ['type' => 'notification', 'level' => 'success', 'message' => 'เพิ่มงานอัตโนมัติแล้ว'],
+                ['type' => 'notification', 'level' => 'success', 'message' => 'Cron job added'],
                 ['type' => 'redirect', 'url' => 'reload', 'target' => 'cronJobs']
             ],
             ['cron_job_id' => $id],
@@ -124,7 +124,7 @@ final class CronJobsController extends HostingController
          */
         if ($id === 0) {
             if (!$this->ctx->can('cron.manage')) {
-                return $this->problem(ApiProblem::Forbidden, 'ไม่มีสิทธิ์สร้างงานอัตโนมัติ');
+                return $this->problem(ApiProblem::Forbidden, 'You may not create cron jobs');
             }
 
             return $this->ok(
@@ -137,7 +137,7 @@ final class CronJobsController extends HostingController
         $job = $this->findJob($id);
 
         if ($job === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบงานที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'Cron job not found');
         }
 
         return $this->ok(
@@ -176,7 +176,7 @@ final class CronJobsController extends HostingController
         $job = $this->findJob($request->paramInt('id'));
 
         if ($job === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบงานที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'Cron job not found');
         }
 
         // PATCH = แก้เฉพาะที่ส่งมา · ค่าที่ไม่ส่งมาต้องคงเดิม
@@ -200,7 +200,7 @@ final class CronJobsController extends HostingController
             },
         );
 
-        return $this->completed('บันทึกงานอัตโนมัติแล้ว', 'cronJobs', ['cron_job_id' => $id]);
+        return $this->completed('Cron job saved', 'cronJobs', ['cron_job_id' => $id]);
     }
 
     /**
@@ -213,7 +213,7 @@ final class CronJobsController extends HostingController
         $job = $this->findJob($request->paramInt('id'));
 
         if ($job === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบงานที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'Cron job not found');
         }
 
         $id = (int) $job['id'];
@@ -229,7 +229,7 @@ final class CronJobsController extends HostingController
             },
         );
 
-        return $this->completed('ลบงานอัตโนมัติแล้ว', 'cronJobs', ['cron_job_id' => $id]);
+        return $this->completed('Cron job deleted', 'cronJobs', ['cron_job_id' => $id]);
     }
 
     private function repository(): CronJobRepository

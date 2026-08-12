@@ -70,16 +70,16 @@ final class SshConfigController extends ApiController
         if ($unknown !== []) {
             return $this->problem(
                 ApiProblem::ValidationError,
-                'มีคีย์ที่แก้ไขไม่ได้: ' . implode(', ', $unknown),
-                ['keys' => 'แก้ได้เฉพาะ: ' . implode(', ', SshManager::keys())],
+                $this->t('These keys cannot be changed') . ': ' . implode(', ', $unknown),
+                ['keys' => 'Editable keys: ' . implode(', ', SshManager::keys())],
             );
         }
 
         if ($changes === []) {
             return $this->problem(
                 ApiProblem::ValidationError,
-                'ต้องระบุค่าที่ต้องการเปลี่ยนอย่างน้อยหนึ่งค่า',
-                ['keys' => 'แก้ได้เฉพาะ: ' . implode(', ', SshManager::keys())],
+                'Send at least one value to change',
+                ['keys' => 'Editable keys: ' . implode(', ', SshManager::keys())],
             );
         }
 
@@ -91,7 +91,7 @@ final class SshConfigController extends ApiController
 
         $result = $result + ['pending_rollback' => $this->pendingRollback()];
 
-        return $this->completed((string) ($result['message'] ?? 'บันทึกค่า SSH แล้ว — ต้องกดยืนยันก่อนหมดเวลาคืนค่าอัตโนมัติ'), '', is_array($result) ? $result : []);
+        return $this->completed((string) ($result['message'] ?? 'SSH settings saved — confirm them before the automatic rollback runs out'), '', is_array($result) ? $result : []);
     }
 
     /** @return array<string,mixed>|null */

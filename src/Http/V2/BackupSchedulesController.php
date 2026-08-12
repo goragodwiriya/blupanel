@@ -77,26 +77,26 @@ final class BackupSchedulesController extends ApiController
         $label = trim($request->payloadString('label'));
 
         if ($label === '') {
-            return $this->problem(ApiProblem::ValidationError, 'ต้องตั้งชื่อตารางเวลา', ['label' => 'ต้องระบุ']);
+            return $this->problem(ApiProblem::ValidationError, 'The schedule needs a name', ['label' => 'Required']);
         }
 
         $type = $request->payloadString('type');
 
         if (!in_array($type, \Phpcp\Driver\BackupManager::TYPES, true)) {
-            return $this->problem(ApiProblem::ValidationError, 'ชนิดข้อมูลสำรองไม่ถูกต้อง', ['type' => 'ต้องระบุ']);
+            return $this->problem(ApiProblem::ValidationError, 'Invalid backup type', ['type' => 'Required']);
         }
 
         try {
             $schedule = CronSchedule::normalize($request->payloadString('schedule'));
         } catch (\Throwable $e) {
-            return $this->problem(ApiProblem::ValidationError, $e->getMessage(), ['schedule' => 'รูปแบบไม่ถูกต้อง']);
+            return $this->problem(ApiProblem::ValidationError, $e->getMessage(), ['schedule' => 'Invalid format']);
         }
 
         $name = $this->nameFor($label);
         $jobs = new ScheduledJobRepository($this->app->db());
 
         if ($jobs->find($name) !== null) {
-            return $this->problem(ApiProblem::Conflict, 'มีตารางเวลาชื่อนี้อยู่แล้ว');
+            return $this->problem(ApiProblem::Conflict, 'A schedule with this name already exists');
         }
 
         $this->app->db()->insert('scheduled_jobs', [
@@ -112,9 +112,9 @@ final class BackupSchedulesController extends ApiController
         $this->audit($request, 'backup.schedule_create', $name, ['schedule' => $schedule, 'type' => $type]);
 
         return $this->done(
-            'เพิ่มตารางเวลาแล้ว',
+            'Schedule added',
             [
-                ['type' => 'notification', 'level' => 'success', 'message' => 'เพิ่มตารางเวลาแล้ว'],
+                ['type' => 'notification', 'level' => 'success', 'message' => 'Schedule added'],
                 ['type' => 'redirect', 'url' => 'reload', 'target' => 'schedules'],
             ],
             ['name' => $name],
@@ -127,7 +127,7 @@ final class BackupSchedulesController extends ApiController
         $row = $this->findOwned($request->paramInt('id'));
 
         if ($row === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบตารางเวลาที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'Schedule not found');
         }
 
         $fields = ['updated_at' => time()];
@@ -140,7 +140,7 @@ final class BackupSchedulesController extends ApiController
             try {
                 $fields['schedule'] = CronSchedule::normalize($request->payloadString('schedule'));
             } catch (\Throwable $e) {
-                return $this->problem(ApiProblem::ValidationError, $e->getMessage(), ['schedule' => 'รูปแบบไม่ถูกต้อง']);
+                return $this->problem(ApiProblem::ValidationError, $e->getMessage(), ['schedule' => 'Invalid format']);
             }
         }
 
@@ -152,7 +152,7 @@ final class BackupSchedulesController extends ApiController
         }
 
         if (count($fields) === 1) {
-            return $this->problem(ApiProblem::ValidationError, 'ต้องระบุค่าที่ต้องการเปลี่ยนอย่างน้อยหนึ่งค่า');
+            return $this->problem(ApiProblem::ValidationError, 'Send at least one value to change');
         }
 
         $this->app->db()->update('scheduled_jobs', $fields, ['id' => (int) $row['id']]);
@@ -163,7 +163,7 @@ final class BackupSchedulesController extends ApiController
             ['id' => (int) $row['id']],
         ) ?? []);
 
-        return $this->completed('บันทึกตารางเวลาแล้ว', 'schedules', is_array($result) ? $result : []);
+        return $this->completed('Schedule saved', 'schedules', is_array($result) ? $result : []);
     }
 
     public function destroy(Request $request): Response
@@ -171,13 +171,13 @@ final class BackupSchedulesController extends ApiController
         $row = $this->findOwned($request->paramInt('id'));
 
         if ($row === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบตารางเวลาที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'Schedule not found');
         }
 
         $this->app->db()->run('DELETE FROM scheduled_jobs WHERE id = :id', ['id' => (int) $row['id']]);
         $this->audit($request, 'backup.schedule_delete', (string) $row['name'], []);
 
-        return $this->completed('ลบตารางเวลาแล้ว', 'schedules', ['id' => (int) $row['id']]);
+        return $this->completed('Schedule removed', 'schedules', ['id' => (int) $row['id']]);
     }
 
     /**
@@ -209,7 +209,7 @@ final class BackupSchedulesController extends ApiController
             'type' => $type,
             'site_id' => (int) $request->payload('site_id', 0),
             'database' => trim($request->payloadString('database')),
-            'note' => 'สำรองอัตโนมัติ',
+            'note' => 'Automatic backup',
             'destination_id' => (int) $request->payload('destination_id', 0),
         ];
     }

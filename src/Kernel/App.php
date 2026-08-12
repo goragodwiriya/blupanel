@@ -8,6 +8,7 @@ use Phpcp\Agent\Actor;
 use Phpcp\Agent\Client;
 use Phpcp\Agent\SelfProtection;
 use Phpcp\Security\AuditLog;
+use Phpcp\Support\Translator;
 
 /**
  * ที่รวมของทุกบริการในระบบ สร้างแบบ lazy
@@ -23,8 +24,52 @@ final class App
     private ?Client $agent = null;
     private ?AuditLog $audit = null;
 
+    /**
+     * ภาษาของคำขอที่กำลังทำงานอยู่ — ตั้งโดย HttpKernel จากคุกกี้ที่หน้าเว็บเขียนไว้
+     *
+     * ค่าตั้งต้นเป็นภาษาของเครื่อง (config `locale`) เพราะงานที่ไม่ได้มาจากเบราว์เซอร์
+     * — อีเมลแจ้งเตือน คำสั่งบรรทัดคำสั่ง งานตามเวลา — ไม่มีผู้ใช้ให้ถาม
+     */
+    private ?string $locale = null;
+
     private function __construct(public readonly Config $config)
     {
+    }
+
+    /** ภาษาที่ใช้ตอบคำขอนี้ */
+    public function locale(): string
+    {
+        return $this->locale ?? $this->config->string('locale', 'en');
+    }
+
+    /**
+     * ตั้งภาษาของคำขอ — ค่าที่ไม่รู้จักกลับไปใช้ภาษาของเครื่อง ไม่ใช่ทำให้คำขอล้ม
+     *
+     * ค่านี้มาจากคุกกี้ที่ผู้ใช้เป็นคนกำหนดได้ จึงต้องผ่านตัวกรองรูปแบบก่อนเสมอ
+     * ก่อนถูกเอาไปประกอบเป็นชื่อไฟล์คลังคำ
+     *
+     * **เขียนทับทุกครั้งแม้ค่าจะใช้ไม่ได้** — ในโปรเซสที่รับหลายคำขอ (ชุดทดสอบ หรือ
+     * worker ในอนาคต) การเงียบ ๆ ไม่เขียนทับแปลว่าคำขอถัดไปได้ภาษาของคำขอก่อนหน้า
+     */
+    public function setLocale(string $locale): void
+    {
+        $this->locale = preg_match('/^[a-z]{2}$/', $locale) === 1 ? $locale : null;
+    }
+
+    /** คลังคำของภาษาที่ใช้อยู่ — ไฟล์เดียวกับที่หน้าเว็บใช้ */
+    public function translator(): Translator
+    {
+        return Translator::load($this->locale(), $this->config->paths->spa() . '/lang');
+    }
+
+    /**
+     * แปลข้อความที่จะส่งออกไปให้คนอ่าน
+     *
+     * @param array<string,string|int|float> $params
+     */
+    public function t(string $key, array $params = []): string
+    {
+        return $this->translator()->get($key, $params);
     }
 
     public static function boot(string $root = PHPCP_ROOT): self

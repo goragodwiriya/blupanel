@@ -117,10 +117,10 @@ final class CertificatesController extends HostingController
         ], $this->ctx->actor($request));
 
         return $this->done(
-            (string) ($result['message'] ?? 'ออกใบรับรองแล้ว'),
+            (string) ($result['message'] ?? 'Certificate issued'),
             [
                 ['type' => 'notification', 'level' => 'success',
-                 'message' => (string) ($result['message'] ?? 'ออกใบรับรองแล้ว')],
+                 'message' => (string) ($result['message'] ?? 'Certificate issued')],
                 ['type' => 'redirect', 'url' => 'reload', 'target' => 'certificates'],
             ],
             $result,
@@ -143,7 +143,7 @@ final class CertificatesController extends HostingController
         ], $this->ctx->actor($request));
 
         return $this->completed(
-            (string) ($result['message'] ?? 'ต่ออายุใบรับรองแล้ว'),
+            (string) ($result['message'] ?? 'Certificate renewed'),
             'certificates',
             $result,
         );
@@ -168,7 +168,7 @@ final class CertificatesController extends HostingController
         ], $this->ctx->actor($request));
 
         return $this->completed(
-            (string) ($result['message'] ?? 'เปลี่ยนโหมด HTTPS แล้ว'),
+            (string) ($result['message'] ?? 'HTTPS mode changed'),
             'certificates',
             $result,
         );
@@ -195,6 +195,6 @@ final class CertificatesController extends HostingController
             'confirm_domain' => $confirm,
         ], $this->ctx->actor($request));
 
-        return $this->completed('ลบใบรับรองแล้ว', 'certificates', ['site_id' => $siteId]);
+        return $this->completed('Certificate deleted', 'certificates', ['site_id' => $siteId]);
     }
 }

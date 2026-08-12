@@ -86,9 +86,9 @@ final class DomainsController extends HostingController
         $domain = (string) ($result['domain'] ?? '');
 
         return $this->done(
-            sprintf('เพิ่มโดเมน %s แล้ว', $domain),
+            $this->t('Domain {domain} added', ['domain' => $domain]),
             [
-                ['type' => 'notification', 'level' => 'success', 'message' => sprintf('เพิ่มโดเมน %s แล้ว', $domain)],
+                ['type' => 'notification', 'level' => 'success', 'message' => $this->t('Domain {domain} added', ['domain' => $domain])],
                 ['type' => 'redirect', 'url' => 'reload', 'target' => 'domains'],
             ],
             ['domain_id' => (int) ($row['id'] ?? 0), 'domain' => $domain],
@@ -102,13 +102,13 @@ final class DomainsController extends HostingController
         $domain = $this->findDomain($request->paramInt('id'));
 
         if ($domain === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบโดเมนที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'Domain not found');
         }
 
         if (!in_array($domain['type'], ['subdomain', 'alias', 'redirect'], true)) {
             return $this->problem(
                 ApiProblem::Conflict,
-                'ลบโดเมนหลักของเว็บไซต์แยกไม่ได้ — ต้องลบทั้งเว็บไซต์',
+                'The primary domain cannot be removed on its own — delete the website instead',
             );
         }
 
@@ -118,7 +118,7 @@ final class DomainsController extends HostingController
         ], $this->ctx->actor($request));
 
         return $this->completed(
-            sprintf('ลบโดเมน %s แล้ว', (string) $domain['domain']),
+            $this->t('Domain {domain} removed', ['domain' => (string) $domain['domain']]),
             'domains',
             ['domain_id' => (int) $domain['id']],
         );
@@ -130,7 +130,7 @@ final class DomainsController extends HostingController
         $domain = $this->findDomain($request->paramInt('id'));
 
         if ($domain === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบโดเมนที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'Domain not found');
         }
 
         $rows = $this->app->db()->all(
@@ -164,7 +164,7 @@ final class DomainsController extends HostingController
         $domain = $this->findDomain($request->paramInt('id'));
 
         if ($domain === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบโดเมนที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'Domain not found');
         }
 
         return $this->ok(
@@ -191,7 +191,7 @@ final class DomainsController extends HostingController
         $domain = $this->findDomain($request->paramInt('id'));
 
         if ($domain === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบโดเมนที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'Domain not found');
         }
 
         // ValidationError ที่โยนออกไปถูกแปลงเป็น 422 โดย HttpKernel ให้แล้ว
@@ -216,10 +216,10 @@ final class DomainsController extends HostingController
         $sync = $this->syncZone($request, (int) $domain['id']);
 
         return $this->done(
-            sprintf('เพิ่มเรกคอร์ด %s แล้ว', $clean['type']),
+            $this->t('{type} record added', ['type' => $clean['type']]),
             [
                 ['type' => 'notification', 'level' => 'success',
-                 'message' => sprintf('เพิ่มเรกคอร์ด %s แล้ว', $clean['type'])],
+                 'message' => $this->t('{type} record added', ['type' => $clean['type']])],
                 ...$this->dnsSyncWarning($sync),
                 ['type' => 'redirect', 'url' => 'reload', 'target' => 'dnsRecords'],
             ],
@@ -243,7 +243,7 @@ final class DomainsController extends HostingController
             return [];
         }
 
-        return [['type' => 'notification', 'level' => 'warning', 'message' => 'ซิงก์ไปยัง BIND9 ไม่สำเร็จ: ' . $sync['dns_message']]];
+        return [['type' => 'notification', 'level' => 'warning', 'message' => $this->t('Sync to BIND9 failed') . ': ' . $sync['dns_message']]];
     }
 
     /** ลบ DNS record — ใช้ id ของเรกคอร์ดตรง ๆ ตาม §4.6 */
@@ -255,14 +255,14 @@ final class DomainsController extends HostingController
         );
 
         if ($record === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบเรกคอร์ดที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'DNS record not found');
         }
 
         $domain = $this->findDomain((int) $record['domain_id']);
 
         if ($domain === null) {
             // เรกคอร์ดมีอยู่จริงแต่โดเมนไม่ใช่ของผู้เรียก — ตอบ 404 เหมือนกรณีไม่มีอยู่
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบเรกคอร์ดที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'DNS record not found');
         }
 
         $this->app->db()->run('DELETE FROM dns_records WHERE id = :id', ['id' => $record['id']]);
@@ -276,7 +276,7 @@ final class DomainsController extends HostingController
         );
 
         $sync = $this->syncZone($request, (int) $domain['id']);
-        $message = sprintf('ลบเรกคอร์ด %s แล้ว', (string) $record['type']);
+        $message = $this->t('{type} record removed', ['type' => (string) $record['type']]);
 
         return $this->done(
             $message,
@@ -324,7 +324,7 @@ final class DomainsController extends HostingController
         $domain = $this->findDomain($request->paramInt('id'));
 
         if ($domain === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบโดเมนที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'Domain not found');
         }
 
         $records = $this->app->db()->all(
@@ -349,7 +349,7 @@ final class DomainsController extends HostingController
     public function reloadAll(Request $request): Response
     {
         $result = $this->agent()->data('dns.reload', [], $this->ctx->actor($request));
-        $message = (string) ($result['message'] ?? 'ซิงก์ zone ทุกโดเมนแล้ว');
+        $message = (string) ($result['message'] ?? 'All DNS zones synced');
 
         // ล้มบางโดเมน = ต้องขึ้นแถบเหลือง ไม่ใช่เขียว · ล้มทั้งหมด agent โยน error ออกมาแล้ว
         // (`completed()` ใส่ level success ตายตัว จึงประกอบ actions เองตรงนี้)

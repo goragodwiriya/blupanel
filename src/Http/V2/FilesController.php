@@ -180,7 +180,7 @@ final class FilesController extends ApiController
         ], $this->ctx->actor($request));
 
         return $this->refreshed(
-            (string) ($result['message'] ?? 'บันทึกไฟล์แล้ว'),
+            (string) ($result['message'] ?? 'File saved'),
             extra: is_array($result) ? $result : [],
         );
     }
@@ -213,7 +213,7 @@ final class FilesController extends ApiController
         $content = base64_decode((string) ($data['content'] ?? ''), true);
 
         if ($content === false) {
-            return $this->problem(ApiProblem::InternalError, 'ถอดรหัสไฟล์ไม่สำเร็จ');
+            return $this->problem(ApiProblem::InternalError, 'The file could not be decoded');
         }
 
         return Response::text($content)
@@ -254,13 +254,13 @@ final class FilesController extends ApiController
 
             // is_uploaded_file กันไม่ให้ tmp_name ที่ถูกปลอมชี้ไปยังไฟล์อื่นบนเครื่อง
             if (!is_uploaded_file($file['tmp_name'])) {
-                return $this->problem(ApiProblem::ValidationError, 'ไฟล์ที่อัปโหลดไม่ถูกต้อง');
+                return $this->problem(ApiProblem::ValidationError, 'The uploaded file is not valid');
             }
 
             $content = file_get_contents($file['tmp_name']);
 
             if ($content === false) {
-                return $this->problem(ApiProblem::ValidationError, 'อ่านไฟล์ที่อัปโหลดไม่สำเร็จ');
+                return $this->problem(ApiProblem::ValidationError, 'The uploaded file could not be read');
             }
 
             $uploaded[] = $this->sendFile($request, $root, $path, (string) $file['name'], base64_encode($content), $overwrite);
@@ -282,13 +282,13 @@ final class FilesController extends ApiController
         if ($uploaded === []) {
             return $this->problem(
                 ApiProblem::ValidationError,
-                'ไม่พบไฟล์ที่อัปโหลด',
+                'No uploaded file was received',
                 ['files' => 'ส่งไฟล์มาทาง multipart `files[]` หรือส่ง `name` + `content_base64` มาทาง JSON'],
             );
         }
 
         return $this->completed(
-            sprintf('อัปโหลด %d ไฟล์แล้ว', count($uploaded)),
+            $this->t('{count} files uploaded', ['count' => count($uploaded)]),
             'files',
             ['uploaded' => $uploaded, 'count' => count($uploaded)],
         );
@@ -309,7 +309,7 @@ final class FilesController extends ApiController
             'name' => $request->payloadString('name')
         ], $this->ctx->actor($request));
 
-        return $this->completed((string) ($result['message'] ?? 'สร้างโฟลเดอร์แล้ว'), 'files', $result);
+        return $this->completed((string) ($result['message'] ?? 'Folder created'), 'files', $result);
     }
 
     /** ย้ายหรือเปลี่ยนชื่อ */
@@ -347,7 +347,7 @@ final class FilesController extends ApiController
         ], $this->ctx->actor($request));
 
         return $this->completed(
-            sprintf('ลบ %d รายการแล้ว', count($items)),
+            $this->t('{count} items deleted', ['count' => count($items)]),
             'files',
             ['root' => $root, 'removed' => count($items)],
         );
@@ -369,7 +369,7 @@ final class FilesController extends ApiController
             'recursive' => $this->flag($request, 'recursive')
         ], $this->ctx->actor($request));
 
-        return $this->completed((string) ($result['message'] ?? 'เปลี่ยนสิทธิ์ไฟล์แล้ว'), 'files', is_array($result) ? $result : []);
+        return $this->completed((string) ($result['message'] ?? 'Permissions changed'), 'files', is_array($result) ? $result : []);
     }
 
     /** สร้างไฟล์บีบอัดจากรายการที่เลือก */
@@ -388,7 +388,7 @@ final class FilesController extends ApiController
             'archive' => $request->payloadString('archive')
         ], $this->ctx->actor($request));
 
-        return $this->completed((string) ($result['message'] ?? 'บีบอัดไฟล์แล้ว'), 'files', $result);
+        return $this->completed((string) ($result['message'] ?? 'Files compressed'), 'files', $result);
     }
 
     /** แตกไฟล์บีบอัด */
@@ -406,7 +406,7 @@ final class FilesController extends ApiController
             'destination' => $request->payloadString('destination')
         ], $this->ctx->actor($request));
 
-        return $this->completed((string) ($result['message'] ?? 'แตกไฟล์แล้ว'), 'files', is_array($result) ? $result : []);
+        return $this->completed((string) ($result['message'] ?? 'Archive extracted'), 'files', is_array($result) ? $result : []);
     }
 
     /** ย้าย/คัดลอก — ต่างกันแค่แฟล็กเดียวที่ส่งให้ capability */
@@ -428,7 +428,7 @@ final class FilesController extends ApiController
         ], $this->ctx->actor($request));
 
         return $this->completed(
-            (string) ($result['message'] ?? ($copy ? 'คัดลอกแล้ว' : 'ย้ายแล้ว')),
+            (string) ($result['message'] ?? ($copy ? 'Copied' : 'Moved')),
             'files',
             is_array($result) ? $result : [],
         );
@@ -544,7 +544,7 @@ final class FilesController extends ApiController
     {
         // 403 ไม่ใช่ 404 — คีย์ของขอบเขตไม่ใช่ความลับ (มันคือ site-<id> ที่เดาได้อยู่แล้ว)
         // และการบอกให้ชัดว่า "ไม่มีสิทธิ์" ช่วยให้ผู้ดูแลรู้ว่าต้องไปแก้ที่สิทธิ์ ไม่ใช่ที่ URL
-        return $this->problem(ApiProblem::Forbidden, 'คุณไม่มีสิทธิ์เข้าถึงขอบเขตไฟล์นี้');
+        return $this->problem(ApiProblem::Forbidden, 'You may not access this file area');
     }
 
     /** @param array{name:string,error:int,size:int} $file */
@@ -554,7 +554,7 @@ final class FilesController extends ApiController
             UPLOAD_ERR_OK => null,
             UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => 'ไฟล์ใหญ่เกินที่เซิร์ฟเวอร์รับได้',
             UPLOAD_ERR_PARTIAL => 'อัปโหลดไม่ครบไฟล์',
-            UPLOAD_ERR_NO_FILE => 'ไม่พบไฟล์ที่อัปโหลด',
+            UPLOAD_ERR_NO_FILE => 'No uploaded file was received',
             default => 'อัปโหลดไม่สำเร็จ (รหัส '.$file['error'].')',
         };
     }

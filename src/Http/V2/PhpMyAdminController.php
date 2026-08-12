@@ -41,19 +41,19 @@ final class PhpMyAdminController extends ApiController
     public function create(Request $request): Response
     {
         if (!$this->app->config->paths->hasPhpMyAdmin()) {
-            return $this->problem(ApiProblem::NotFound, 'เครื่องนี้ยังไม่ได้ติดตั้ง phpMyAdmin');
+            return $this->problem(ApiProblem::NotFound, 'phpMyAdmin is not installed on this machine');
         }
 
         try {
             $credentials = $this->agent()->data('db.account_credentials', [], $this->ctx->actor($request));
         } catch (AgentException $e) {
-            return $this->problem(ApiProblem::InternalError, 'เตรียมบัญชีฐานข้อมูลไม่สำเร็จ: '.$e->getMessage());
+            return $this->problem(ApiProblem::InternalError, $this->t('The database account could not be prepared') . ': '.$e->getMessage());
         }
 
         if (!$this->writeSignonSession((string) $credentials['user'], (string) $credentials['password'])) {
             return $this->problem(
                 ApiProblem::InternalError,
-                'เปิด session ของ phpMyAdmin ไม่ได้ — ตรวจว่า session.save_path ของ pool '
+                $this->t('The phpMyAdmin session could not be opened — check that session.save_path of pool ')
                 .'ชี้ไปยังโฟลเดอร์ที่อยู่ใน open_basedir และเขียนได้',
             );
         }

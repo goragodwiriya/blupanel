@@ -28,7 +28,7 @@ final class MeController extends ApiController
         $user = (new UserRepository($this->app->db()))->find($this->ctx->userId());
 
         if ($user === null) {
-            return $this->problem(ApiProblem::Unauthenticated, 'ไม่พบบัญชีของคุณ');
+            return $this->problem(ApiProblem::Unauthenticated, 'Your account was not found');
         }
 
         return $this->ok(UserResource::withPermissions($user));
@@ -46,7 +46,7 @@ final class MeController extends ApiController
         $user = $users->find($this->ctx->userId());
 
         if ($user === null) {
-            return $this->problem(ApiProblem::Unauthenticated, 'ไม่พบบัญชีของคุณ');
+            return $this->problem(ApiProblem::Unauthenticated, 'Your account was not found');
         }
 
         $current = $request->payloadString('current_password');
@@ -71,7 +71,7 @@ final class MeController extends ApiController
         }
 
         if ($fields !== []) {
-            return $this->problem(ApiProblem::ValidationError, 'รหัสผ่านใหม่ใช้ไม่ได้', $fields);
+            return $this->problem(ApiProblem::ValidationError, 'The new password cannot be used', $fields);
         }
 
         $users->setPassword((int) $user['id'], $new);
@@ -103,9 +103,9 @@ final class MeController extends ApiController
         $result = [
             'changed' => true,
             'sessions_revoked' => $revoked,
-            'message' => 'เปลี่ยนรหัสผ่านแล้ว',
+            'message' => 'Password changed',
         ];
 
-        return $this->completed('เปลี่ยนรหัสผ่านแล้ว', '', is_array($result) ? $result : []);
+        return $this->completed('Password changed', '', is_array($result) ? $result : []);
     }
 }

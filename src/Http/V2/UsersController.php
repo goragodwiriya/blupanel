@@ -122,7 +122,7 @@ final class UsersController extends ApiController
             $user = $users->find($id);
 
             if ($user === null) {
-                return $this->problem(ApiProblem::NotFound, 'ไม่พบผู้ใช้ที่ระบุ');
+                return $this->problem(ApiProblem::NotFound, 'User not found');
             }
 
             $body = $this->present($user, $users, new QuotaChecker($users));
@@ -154,8 +154,8 @@ final class UsersController extends ApiController
         $displayName = trim($request->payloadString('display_name'));
 
         if (!Permissions::isValidRole($role)) {
-            return $this->problem(ApiProblem::ValidationError, 'บทบาทไม่ถูกต้อง', [
-                'role' => 'ใช้ได้: '.implode(', ', array_keys(Permissions::roleLabels()))
+            return $this->problem(ApiProblem::ValidationError, 'Invalid role', [
+                'role' => 'Allowed: '.implode(', ', array_keys(Permissions::roleLabels()))
             ]);
         }
 
@@ -166,11 +166,11 @@ final class UsersController extends ApiController
         try {
             UserRepository::assertUsername($username);
         } catch (\InvalidArgumentException $e) {
-            return $this->problem(ApiProblem::ValidationError, 'ชื่อผู้ใช้ไม่ถูกต้อง', ['username' => $e->getMessage()]);
+            return $this->problem(ApiProblem::ValidationError, 'Invalid username', ['username' => $e->getMessage()]);
         }
 
         if ($users->findByUsername($username) !== null) {
-            return $this->problem(ApiProblem::Conflict, 'มีชื่อผู้ใช้นี้อยู่แล้ว');
+            return $this->problem(ApiProblem::Conflict, 'That username is already taken');
         }
 
         $password = $request->payloadString('password');
@@ -248,7 +248,7 @@ final class UsersController extends ApiController
         // คำตอบของ**คำสั่ง** — ไม่มีคีย์ `data` · ค่าที่ผู้เรียกต้องใช้อยู่ระดับบนสุด
         // (รหัสที่สุ่มให้ไม่มีที่อื่นให้ดูย้อนหลัง จึงต้องอยู่ในคำตอบและในกล่องที่กดปิดเอง)
         return $this->done(
-            "สร้างบัญชี {$username} แล้ว",
+            $this->t('Account {user} created', ['user' => $username]),
             $this->createdActions($username, $password, $wasRandom, $createdSite, $siteError),
             ['user_id' => $id, 'username' => $username, 'must_change_password' => $wasRandom]
              + ($wasRandom ? ['password' => $password] : [])
@@ -272,7 +272,7 @@ final class UsersController extends ApiController
         $user = $users->find($id);
 
         if ($user === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบผู้ใช้ที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'User not found');
         }
 
         if (($denied = $this->assertMayManage($user)) !== null) {
@@ -288,7 +288,7 @@ final class UsersController extends ApiController
 
         if ($role === '' && $status === '' && $service === ''
             && $displayName === '' && $email === '' && !$hasExpiry) {
-            return $this->problem(ApiProblem::ValidationError, 'ต้องระบุค่าที่ต้องการเปลี่ยนอย่างน้อยหนึ่งค่า');
+            return $this->problem(ApiProblem::ValidationError, 'Send at least one value to change');
         }
 
         // การเปลี่ยนบทบาทและสถานะล็อกอินของตัวเองคือทางลัดไปสู่การล็อกตัวเองออกจากระบบ
@@ -296,7 +296,7 @@ final class UsersController extends ApiController
         if ($id === $this->ctx->userId() && ($role !== '' || $status !== '')) {
             return $this->problem(
                 ApiProblem::Forbidden,
-                'เปลี่ยนบทบาทหรือสถานะของตัวเองไม่ได้ — ให้ผู้ดูแลระบบคนอื่นเป็นผู้เปลี่ยนให้',
+                'You cannot change your own role or status — ask another administrator to do it',
             );
         }
 
@@ -304,8 +304,8 @@ final class UsersController extends ApiController
 
         if ($role !== '') {
             if (!Permissions::isValidRole($role)) {
-                return $this->problem(ApiProblem::ValidationError, 'บทบาทไม่ถูกต้อง', [
-                    'role' => 'ใช้ได้: '.implode(', ', array_keys(Permissions::roleLabels()))
+                return $this->problem(ApiProblem::ValidationError, 'Invalid role', [
+                    'role' => 'Allowed: '.implode(', ', array_keys(Permissions::roleLabels()))
                 ]);
             }
 
@@ -315,7 +315,7 @@ final class UsersController extends ApiController
             }
 
             if ($role !== Permissions::SUPERADMIN && $users->wouldRemoveLastSuperadmin($id)) {
-                return $this->problem(ApiProblem::Conflict, 'ต้องมีผู้ดูแลระบบที่ใช้งานได้อย่างน้อยหนึ่งบัญชีเสมอ');
+                return $this->problem(ApiProblem::Conflict, 'At least one working administrator account must remain');
             }
 
             $users->setRole($id, $role);
@@ -324,13 +324,13 @@ final class UsersController extends ApiController
 
         if ($status !== '') {
             if (!in_array($status, ['active', 'disabled'], true)) {
-                return $this->problem(ApiProblem::ValidationError, 'สถานะไม่ถูกต้อง', [
-                    'status' => 'ใช้ได้: active, disabled'
+                return $this->problem(ApiProblem::ValidationError, 'Invalid status', [
+                    'status' => 'Allowed: active, disabled'
                 ]);
             }
 
             if ($status !== 'active' && $users->wouldRemoveLastSuperadmin($id)) {
-                return $this->problem(ApiProblem::Conflict, 'ต้องมีผู้ดูแลระบบที่ใช้งานได้อย่างน้อยหนึ่งบัญชีเสมอ');
+                return $this->problem(ApiProblem::Conflict, 'At least one working administrator account must remain');
             }
 
             $users->setStatus($id, $status);
@@ -339,8 +339,8 @@ final class UsersController extends ApiController
 
         if ($service !== '') {
             if (!in_array($service, ['active', 'suspended', 'expired'], true)) {
-                return $this->problem(ApiProblem::ValidationError, 'สถานะบริการไม่ถูกต้อง', [
-                    'service_status' => 'ใช้ได้: active, suspended, expired'
+                return $this->problem(ApiProblem::ValidationError, 'Invalid service status', [
+                    'service_status' => 'Allowed: active, suspended, expired'
                 ]);
             }
 
@@ -366,8 +366,8 @@ final class UsersController extends ApiController
             $expiry = $this->expiryFrom($request);
 
             if ($expiry !== null && $expiry < time()) {
-                return $this->problem(ApiProblem::ValidationError, 'วันหมดอายุต้องเป็นเวลาในอนาคต', [
-                    'expiry_at' => 'ต้องเป็นเวลาในอนาคต'
+                return $this->problem(ApiProblem::ValidationError, 'The expiry date must be in the future', [
+                    'expiry_at' => 'Must be a time in the future'
                 ]);
             }
 
@@ -386,7 +386,7 @@ final class UsersController extends ApiController
 
         $result = ['user_id' => $id, 'sessions_revoked' => $revoked] + $changes;
 
-        return $this->completed('บันทึกข้อมูลบัญชีแล้ว', 'users', is_array($result) ? $result : []);
+        return $this->completed('Account saved', 'users', is_array($result) ? $result : []);
     }
 
     /** อัปเดตโควตา — ผ่าน capability เสมอ (กฎ -1 = ไม่จำกัด อยู่ที่นั่นที่เดียว) */
@@ -412,7 +412,7 @@ final class UsersController extends ApiController
         // ใช้ข้อความจาก capability ไม่ใช่ข้อความตายตัว — capability เป็นฝ่ายรู้ว่ามีผลข้างเคียง
         // อะไรเกิดขึ้นบ้าง เช่นการตัดสิทธิ์ SFTP ตามแพ็กเกจซึ่งปิดการเข้าถึงที่เปิดค้างอยู่ด้วย
         // (เดิมเขียนทับด้วย "บันทึกโควตาแล้ว" ผู้ดูแลจึงไม่รู้ว่าเพิ่งตัดการเข้าถึงของลูกค้าไป)
-        $message = (string) ($result['message'] ?? 'บันทึกโควตาแล้ว');
+        $message = (string) ($result['message'] ?? 'Quota saved');
         $revoked = (bool) ($result['sftp_revoked'] ?? false);
 
         return $this->done(
@@ -441,7 +441,7 @@ final class UsersController extends ApiController
         ], $this->ctx->actor($request));
 
         return $this->completed(
-            (string) ($result['message'] ?? 'เปิด SFTP แล้ว'),
+            (string) ($result['message'] ?? 'SFTP enabled'),
             '',
             is_array($result) ? $result : [],
         );
@@ -456,7 +456,7 @@ final class UsersController extends ApiController
         );
 
         return $this->completed(
-            (string) ($result['message'] ?? 'ปิด SFTP แล้ว'),
+            (string) ($result['message'] ?? 'SFTP disabled'),
             '',
             is_array($result) ? $result : [],
         );
@@ -474,8 +474,8 @@ final class UsersController extends ApiController
         $siteIds = array_values(array_unique(array_map('intval', $siteIds)));
 
         if ($siteIds === []) {
-            return $this->problem(ApiProblem::ValidationError, 'ต้องระบุอย่างน้อย 1 เว็บไซต์ที่จะเชื่อม', [
-                'site_ids' => 'ส่งเป็นรายการของ id เว็บไซต์'
+            return $this->problem(ApiProblem::ValidationError, 'Choose at least one website to attach', [
+                'site_ids' => 'Send a list of website ids'
             ]);
         }
 
@@ -504,14 +504,14 @@ final class UsersController extends ApiController
         $user = $users->find($id);
 
         if ($user === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบผู้ใช้ที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'User not found');
         }
 
         $siteId = $request->paramInt('site_id');
         $site = $this->app->db()->first('SELECT id, owner_user_id FROM sites WHERE id = :id', ['id' => $siteId]);
 
         if ($site === null || (int) $site['owner_user_id'] !== $id) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบเว็บไซต์นี้ในบัญชีที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'That website is not in this account');
         }
 
         $newOwner = $this->ctx->userId();
@@ -528,7 +528,7 @@ final class UsersController extends ApiController
         ]);
 
         return $this->completed(
-            "ถอนเว็บไซต์ออกจาก {$user['username']} แล้ว — เจ้าของใหม่คือ {$this->ctx->username()}",
+            $this->t('Websites moved away from {user} — the new owner is {owner}', ['user' => (string) $user['username'], 'owner' => $this->ctx->username()]),
             'userSites',
             [
                 'site_id' => $siteId,
@@ -546,7 +546,7 @@ final class UsersController extends ApiController
         $user = $users->find($id);
 
         if ($user === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบผู้ใช้ที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'User not found');
         }
 
         if (($denied = $this->assertMayManage($user)) !== null) {
@@ -574,7 +574,7 @@ final class UsersController extends ApiController
         ]);
 
         return $this->done(
-            "ตั้งรหัสผ่านใหม่ให้ {$user['username']} แล้ว",
+            $this->t('New password set for {user}', ['user' => (string) $user['username']]),
             // รหัสที่ระบบสุ่มให้ **ไม่มีที่อื่นให้ดูย้อนหลังอีกเลย** — ถ้าผู้ดูแลพลาดตา
             // ต้องรีเซ็ตใหม่ทั้งรอบ · จึงสั่งให้หน้าจอเปิดกล่องที่ต้องกดปิดเอง ไม่ใช่
             // toast ที่หายไปเองใน 3 วินาที · ตารางถูกโหลดใหม่หลังจากนั้น
@@ -582,7 +582,7 @@ final class UsersController extends ApiController
                 [
                     'type' => 'modal',
                     'action' => 'show',
-                    'title' => 'รหัสผ่านใหม่',
+                    'title' => 'New password',
                     'content' => sprintf(
                         '<p>รหัสผ่านใหม่ของ <strong>%s</strong> — คัดลอกไว้ก่อนปิดหน้าต่างนี้'
                         .' เพราะระบบไม่เก็บไว้ที่ใดอีก</p><p class="mono selectable">%s</p>'
@@ -595,7 +595,7 @@ final class UsersController extends ApiController
                 ],
                 ['type' => 'redirect', 'url' => 'reload', 'target' => 'users']
             ] : [
-                ['type' => 'notification', 'level' => 'success', 'message' => "ตั้งรหัสผ่านใหม่ให้ {$user['username']} แล้ว"],
+                ['type' => 'notification', 'level' => 'success', 'message' => $this->t('New password set for {user}', ['user' => (string) $user['username']])],
                 ['type' => 'redirect', 'url' => 'reload', 'target' => 'users']
             ],
             [
@@ -622,7 +622,7 @@ final class UsersController extends ApiController
         $user = $users->find($id);
 
         if ($user === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบผู้ใช้ที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'User not found');
         }
 
         if (($denied = $this->assertMayManage($user)) !== null) {
@@ -634,7 +634,7 @@ final class UsersController extends ApiController
         $this->audit($request, 'user.disable_2fa', (string) $user['username'], []);
 
         return $this->completed(
-            sprintf('ปิด 2FA ของ %s แล้ว', (string) $user['username']),
+            $this->t('Two-factor disabled for {user}', ['user' => (string) $user['username']]),
             'users',
             ['user_id' => $id],
         );
@@ -651,7 +651,7 @@ final class UsersController extends ApiController
         $user = $users->find($id);
 
         if ($user === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบผู้ใช้ที่ระบุ');
+            return $this->problem(ApiProblem::NotFound, 'User not found');
         }
 
         if (($denied = $this->assertMayManage($user)) !== null) {
@@ -659,11 +659,11 @@ final class UsersController extends ApiController
         }
 
         if ($id === $this->ctx->userId()) {
-            return $this->problem(ApiProblem::Forbidden, 'ลบบัญชีของตัวเองไม่ได้');
+            return $this->problem(ApiProblem::Forbidden, 'You cannot delete your own account');
         }
 
         if ($users->wouldRemoveLastSuperadmin($id)) {
-            return $this->problem(ApiProblem::Conflict, 'ต้องมีผู้ดูแลระบบที่ใช้งานได้อย่างน้อยหนึ่งบัญชีเสมอ');
+            return $this->problem(ApiProblem::Conflict, 'At least one working administrator account must remain');
         }
 
         // ฐานข้อมูลกันไว้อีกชั้นด้วย trigger แต่ตอบที่นี่ก่อนเพื่อให้ได้ข้อความที่อธิบายได้
@@ -671,7 +671,7 @@ final class UsersController extends ApiController
         if ($users->siteIds($id) !== []) {
             return $this->problem(
                 ApiProblem::Conflict,
-                'ลบผู้ใช้ที่ยังเป็นเจ้าของเว็บไซต์อยู่ไม่ได้ — ต้องลบเว็บหรือย้ายเจ้าของก่อน',
+                'A user who still owns websites cannot be deleted — delete the websites or move them to another owner first',
             );
         }
 
@@ -686,7 +686,7 @@ final class UsersController extends ApiController
         // · ให้เซิร์ฟเวอร์สั่งแจ้งผลและโหลดตารางใหม่ไปเลย เป็นรูปแบบเดียวกับที่
         // การสร้างและการรีเซ็ตรหัสผ่านใช้
         return $this->completed(
-            "ลบบัญชี {$user['username']} แล้ว",
+            $this->t('Account {user} deleted', ['user' => (string) $user['username']]),
             'users',
             ['user_id' => $id, 'username' => (string) $user['username']],
         );
@@ -711,19 +711,19 @@ final class UsersController extends ApiController
                 'type' => 'notification',
                 'level' => 'warning',
                 'duration' => 15000,
-                'message' => "สร้างบัญชี {$username} แล้ว แต่สร้างเว็บไซต์ไม่สำเร็จ: {$siteError}"
+                'message' => $this->t('Account {user} created, but the website could not be created: {error}', ['user' => $username, 'error' => $siteError])
             ];
         }
 
         if ($wasRandom) {
             $summary = $site === null
                 ? ''
-                : sprintf('<p class="muted">สร้างเว็บไซต์ %s ให้แล้ว</p>', htmlspecialchars((string) $site['domain'], ENT_QUOTES, 'UTF-8'));
+                : '<p class="muted">' . $this->t('Website {domain} was created too', ['domain' => htmlspecialchars((string) $site['domain'], ENT_QUOTES, 'UTF-8')]) . '</p>';
 
             $actions[] = [
                 'type' => 'modal',
                 'action' => 'show',
-                'title' => 'สร้างบัญชีแล้ว',
+                'title' => 'Account created',
                 'content' => sprintf(
                     '<p>รหัสผ่านของ <strong>%s</strong> — คัดลอกไว้ก่อนปิดหน้าต่างนี้'
                     .' เพราะระบบไม่เก็บไว้ที่ใดอีก</p><p class="mono selectable">%s</p>%s',
@@ -740,8 +740,8 @@ final class UsersController extends ApiController
             'type' => 'notification',
             'level' => 'success',
             'message' => $site === null
-                ? "สร้างบัญชี {$username} แล้ว"
-                : sprintf('สร้างบัญชี %s พร้อมเว็บไซต์ %s แล้ว', $username, (string) $site['domain'])
+                ? $this->t('Account {user} created', ['user' => $username])
+                : $this->t('Account {user} created with website {domain}', ['user' => $username, 'domain' => (string) $site['domain']])
         ];
 
         // พากลับหน้ารายการได้เฉพาะตอนที่ไม่มีกล่องรหัสผ่านค้างอยู่
@@ -789,7 +789,7 @@ final class UsersController extends ApiController
 
         return $this->ctx->can('user.manage')
             ? null
-            : $this->problem(ApiProblem::Forbidden, 'ต้องมีสิทธิ์จัดการผู้ใช้ระบบจึงจะแก้ไขบัญชีผู้ดูแลได้');
+            : $this->problem(ApiProblem::Forbidden, 'Managing system users is required to edit an administrator account');
     }
 
     /** ตั้งบทบาทที่ไม่ใช่ webadmin ต้องมีสิทธิ์จัดการผู้ใช้ระบบ */
@@ -801,7 +801,7 @@ final class UsersController extends ApiController
 
         return $this->ctx->can('user.manage')
             ? null
-            : $this->problem(ApiProblem::Forbidden, 'ต้องมีสิทธิ์จัดการผู้ใช้ระบบจึงจะกำหนดบทบาทผู้ดูแลได้');
+            : $this->problem(ApiProblem::Forbidden, 'Managing system users is required to assign an administrator role');
     }
 
     /** วันหมดอายุที่รับได้ทั้ง unix timestamp และข้อความวันที่ */

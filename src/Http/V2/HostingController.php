@@ -60,6 +60,6 @@ abstract class HostingController extends ApiController
 
     protected function siteNotFound(): \Phpcp\Kernel\Response
     {
-        return $this->problem(ApiProblem::NotFound, 'ไม่พบเว็บไซต์ที่ระบุ');
+        return $this->problem(ApiProblem::NotFound, 'Website not found');
     }
 }

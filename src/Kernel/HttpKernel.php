@@ -46,6 +46,11 @@ final class HttpKernel
      */
     public function handle(Request $request): Response
     {
+        // ภาษาของคำขอนี้มาจากคุกกี้ที่หน้าเว็บเขียนไว้ตอนผู้ใช้กดสลับภาษา —
+        // เป็นแหล่งเดียวที่ตรงกับสิ่งที่ผู้ใช้เลือกจริง (`Accept-Language` บอกภาษาของ
+        // เบราว์เซอร์ ไม่ใช่ภาษาที่เลือกในแผงควบคุม)
+        $this->app->setLocale($request->cookie('phpcp_lang'));
+
         $ctx = new Ctx($this->app);
 
         $match = $this->router->match($request->method, $request->path);
