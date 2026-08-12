@@ -333,6 +333,9 @@ final class Application
 
             // 7.1 ไฟล์ตั้งค่าของเว็บไซต์ตรงกับเว็บเซิร์ฟเวอร์ที่เลือกไว้หรือไม่
             $problems += $this->checkWebserverConfigs($app);
+
+            // 7.2 มีใครฟังพอร์ต 80 อยู่จริงไหม
+            $problems += $this->checkHttpPort();
         }
 
         // 8. ไฟล์ของ Now.js ที่ commit เข้ามาในโปรเจกต์ (การตัดสินใจ N8)
@@ -506,6 +509,38 @@ final class Application
             $mode,
             implode(', ', array_slice($missing, 0, 3)) . (count($missing) > 3 ? ' …' : ''),
         ));
+
+        return 1;
+    }
+
+    /**
+     * มีเว็บเซิร์ฟเวอร์ฟังพอร์ต 80 อยู่จริงหรือไม่
+     *
+     * **สภาพที่ตรวจจับ:** apache2 กับ nginx ขึ้นครบทั้งคู่ ไฟล์ vhost ครบทุกเว็บ
+     * แต่ไม่มีใครฟังพอร์ต 80 เลย — เกิดจากการสลับโหมดที่ทิ้ง `ports.conf` ไว้ที่
+     * 127.0.0.1:8080 ขณะที่ vhost ทั้งหมดประกาศ `*:80` (เจอจริง 2026-08-12)
+     *
+     * ทุกอย่างที่ผู้ดูแลมองเห็นดูปกติหมด: `systemctl status` เขียว · configtest ผ่าน ·
+     * หน้าจอ panel ใช้งานได้ทุกหน้า เพราะ panel ฟังพอร์ตของตัวเองแยกต่างหาก · สิ่งเดียว
+     * ที่ผิดคือทุกเว็บบนเครื่องเงียบไปพร้อมกัน
+     *
+     * @return int จำนวนปัญหาที่พบ
+     */
+    private function checkHttpPort(): int
+    {
+        $socket = @stream_socket_client('tcp://127.0.0.1:80', $errno, $error, 2);
+
+        if (is_resource($socket)) {
+            fclose($socket);
+            $this->out->ok('มีเว็บเซิร์ฟเวอร์ฟังพอร์ต 80 อยู่');
+
+            return 0;
+        }
+
+        $this->out->fail(
+            'ไม่มีใครฟังพอร์ต 80 — ทุกเว็บบนเครื่องนี้เข้าไม่ได้ · รัน `phpcp sites:rebuild` '
+            . 'แล้ว `systemctl restart apache2` (การเปลี่ยนพอร์ตที่ฟังใช้ reload ไม่ได้)',
+        );
 
         return 1;
     }
@@ -685,6 +720,13 @@ final class Application
         if (($result['webserver'] ?? '') === 'nginx-proxy') {
             $this->out->warn('โหมดนี้ให้ Apache ถอยไปฟัง 127.0.0.1:8080 — ต้องรีสตาร์ตหนึ่งครั้ง ไม่ใช่แค่ reload');
             $this->out->line('  sudo systemctl restart apache2 && sudo systemctl start nginx');
+        }
+
+        // ทางกลับก็เปลี่ยนพอร์ตที่ฟังเหมือนกัน — ports.conf เพิ่งถูกเขียนคืนให้ฟัง 80
+        // ถ้าไม่รีสตาร์ต Apache จะยังติดอยู่ที่ 8080 แล้วทั้งเครื่องเงียบต่อไปเหมือนเดิม
+        if (($result['webserver'] ?? '') === 'apache') {
+            $this->out->warn('ถ้าเพิ่งสลับกลับมาจาก nginx-proxy ต้องรีสตาร์ตหนึ่งครั้ง ไม่ใช่แค่ reload');
+            $this->out->line('  sudo systemctl stop nginx && sudo systemctl restart apache2');
         }
 
         return 0;

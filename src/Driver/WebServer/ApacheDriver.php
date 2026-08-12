@@ -22,6 +22,7 @@ final class ApacheDriver implements WebServerDriver
 {
     private const CONFIG_ROOT = '/etc/apache2';
     private const SITES_DIR = self::CONFIG_ROOT . '/sites-enabled';
+    private const PORTS_FILE = self::CONFIG_ROOT . '/ports.conf';
     private const HTTP_PORT = 80;
     private const HTTPS_PORT = 443;
 
@@ -112,10 +113,33 @@ final class ApacheDriver implements WebServerDriver
         return [$this->vhostPath($site)];
     }
 
+    /**
+     * ไฟล์ที่ทั้งเครื่องใช้ร่วมกัน — พอร์ตที่ Apache ฟัง
+     *
+     * **ต้องเขียนคืนเสมอ ไม่ใช่เขียนตอนเปลี่ยนโหมดเท่านั้น** เพราะโหมด nginx-proxy
+     * เขียนทับไฟล์นี้ให้ Apache ถอยไปฟัง 127.0.0.1:8080 · เครื่องที่เคยผ่านโหมดนั้น
+     * แล้วสลับกลับมา จะเหลือ vhost ที่ประกาศ *:80 ทั้งเครื่องแต่ไม่มีใครฟังพอร์ต 80
+     *
+     * เจอจริงบนเครื่องพัฒนา (2026-08-12): http://localhost หายไปทั้งเครื่อง ทั้งที่
+     * apache2 กับ nginx ขึ้นครบทั้งคู่ ไม่มี error ที่ไหนเลย — nginx ไม่มี vhost
+     * (ถูกเก็บกวาดตอนสลับโหมดแล้ว) ส่วน Apache ยังติดอยู่ที่ 8080
+     *
+     * @return array<string,string>
+     */
+    public function globalFiles(): array
+    {
+        return [
+            self::PORTS_FILE => $this->templates->render('apache/standalone-ports.conf.tpl', [
+                'HTTP_PORT' => self::HTTP_PORT,
+                'HTTPS_PORT' => self::HTTPS_PORT
+            ])
+        ];
+    }
+
     /** @return array<string,string> */
     public function vhostFiles(Site $site, Executor $executor): array
     {
-        return [$this->vhostPath($site) => $this->renderVhost($site, $executor)];
+        return $this->globalFiles() + [$this->vhostPath($site) => $this->renderVhost($site, $executor)];
     }
 
     public function renderVhost(Site $site, Executor $executor): string

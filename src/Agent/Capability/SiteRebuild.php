@@ -7,7 +7,6 @@ namespace Phpcp\Agent\Capability;
 use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Driver\ConfigTransaction;
-use Phpcp\Driver\WebServer\NginxProxyDriver;
 
 /**
  * สร้างไฟล์ตั้งค่าของทุกเว็บไซต์ใหม่ตามค่า `webserver` ปัจจุบัน
@@ -105,12 +104,13 @@ final class SiteRebuild extends SiteCapability
             $last = $site;
         }
 
-        // ไม่มีเว็บสักเว็บก็ยังต้องเขียนไฟล์กลางของโหมด (map ของ nginx, ports.conf)
-        // ไม่งั้นเครื่องที่เพิ่งเปลี่ยนโหมดก่อนสร้างเว็บแรกจะสตาร์ตเซิร์ฟเวอร์ไม่ขึ้น
-        if ($last === null && $webserver instanceof NginxProxyDriver) {
-            foreach ($webserver->globalFiles() as $path => $contents) {
-                $transaction->write($path, $contents, 0644);
-            }
+        // ไฟล์กลางของโหมดต้องถูกเขียนเสมอ ไม่ว่าจะมีเว็บกี่เว็บหรือโหมดไหน
+        //
+        // คำสั่งนี้คือทางกลับของการเปลี่ยนโหมด — สิ่งที่โหมดก่อนหน้าเขียนทับไว้ต้องถูก
+        // เขียนคืนที่นี่ · ตอนที่เขียนเฉพาะ nginx-proxy การสลับกลับมา apache ทิ้ง
+        // `ports.conf` ไว้ที่ 127.0.0.1:8080 แล้วทั้งเครื่องไม่มีใครฟังพอร์ต 80 อีกเลย
+        foreach ($webserver->globalFiles() as $path => $contents) {
+            $transaction->write($path, $contents, 0644);
         }
 
         $transaction->commit(static fn (): array => $webserver->testConfig($executor));

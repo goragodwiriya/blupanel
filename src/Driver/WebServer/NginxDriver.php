@@ -87,6 +87,20 @@ final class NginxDriver implements WebServerDriver
     }
 
     /** @return array<string,string> */
+    /**
+     * โหมดนี้ไม่มีไฟล์ระดับเครื่องของตัวเอง
+     *
+     * ไม่แตะ `ports.conf` ของ Apache ด้วย — โหมดนี้ไม่ได้ใช้ Apache เลย และ nginx
+     * ถือพอร์ต 80 อยู่ · การเขียนคืนให้ Apache ฟัง 80 มีแต่จะทำให้ Apache
+     * (ถ้ายังเปิดอยู่) สตาร์ตไม่ขึ้นเพราะพอร์ตชน
+     *
+     * @return array<string,string>
+     */
+    public function globalFiles(): array
+    {
+        return [];
+    }
+
     public function vhostFiles(Site $site, Executor $executor): array
     {
         return [$this->vhostPath($site) => $this->renderVhost($site, $executor)];

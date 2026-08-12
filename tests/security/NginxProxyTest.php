@@ -18,6 +18,8 @@ use Phpcp\Agent\Executor\SandboxExecutor;
 use Phpcp\Domain\Site;
 use Phpcp\Domain\UserAccount;
 use Phpcp\Driver\Template;
+use Phpcp\Driver\WebServer\ApacheDriver;
+use Phpcp\Driver\WebServer\NginxDriver;
 use Phpcp\Driver\WebServer\NginxProxyDriver;
 
 group('NginxProxyDriver — .htaccess ต้องใช้งานได้จริงหลัง nginx');
@@ -182,6 +184,46 @@ test('ports.conf ที่เขียนให้ Apache ต้องไม่�
             "เหลือ {$public} ไว้ = nginx จะจองพอร์ตไม่ได้ และมีทางลัดข้าม TLS: " . $ports,
         );
     }
+});
+
+test('สลับกลับมาโหมด apache ต้องเขียน ports.conf คืนให้ฟังพอร์ต 80', static function (): void {
+    /*
+     * **เจอจริงบนเครื่องพัฒนา (2026-08-12): http://localhost หายไปทั้งเครื่อง**
+     *
+     * โหมด nginx-proxy เขียนทับ ports.conf ให้ Apache ถอยไปฟัง 127.0.0.1:8080
+     * พอสลับกลับมาโหมด apache ไฟล์ vhost ถูกเขียนใหม่เป็น `*:80` ครบทุกเว็บ และ
+     * vhost ของ nginx ถูกเก็บกวาดไปแล้ว — แต่ไม่มีใครเขียน ports.conf คืน
+     *
+     * ผลคือ apache2 กับ nginx ขึ้นเขียวทั้งคู่ configtest ผ่านทั้งคู่ หน้าจอ panel
+     * ปกติทุกหน้า แต่ไม่มีใครฟังพอร์ต 80 เลย · ทุกเว็บบนเครื่องเงียบพร้อมกัน
+     * โดยไม่มี error ที่ไหนสักจุดเดียว
+     */
+    $apache = new ApacheDriver(new Template(PHPCP_ROOT . '/templates'));
+    $ports = $apache->globalFiles()['/etc/apache2/ports.conf'] ?? '';
+
+    assertTrue($ports !== '', 'โหมด apache ต้องเป็นเจ้าของ ports.conf ด้วย ไม่งั้นไม่มีทางกลับ');
+    assertTrue(str_contains($ports, 'Listen 80'), 'ต้องฟังพอร์ต 80 จริง: ' . $ports);
+    assertTrue(str_contains($ports, 'Listen 443'), 'ต้องฟัง 443 ด้วย ไม่งั้นเว็บที่เปิด HTTPS ดับ');
+    assertTrue(
+        !str_contains(withoutComments($ports), '8080'),
+        'ต้องไม่เหลือพอร์ตของชั้นหลังไว้: ' . $ports,
+    );
+
+    // เขียนคืนทุกครั้งที่แตะเว็บใดก็ตาม ไม่ใช่เฉพาะตอนสั่ง rebuild —
+    // เครื่องที่ ports.conf หายไป (อัปเกรดแพ็กเกจ apache2) ต้องกลับมาเองด้วย
+    $files = $apache->vhostFiles(proxySite(), proxyExecutor());
+
+    assertTrue(
+        isset($files['/etc/apache2/ports.conf']),
+        'vhostFiles() ของโหมด apache ต้องมี ports.conf ติดมาด้วย',
+    );
+});
+
+test('โหมด nginx ล้วนต้องไม่แตะ ports.conf ของ Apache', static function (): void {
+    // nginx ถือพอร์ต 80 อยู่ · เขียนคืนให้ Apache ฟัง 80 = Apache สตาร์ตไม่ขึ้นเพราะพอร์ตชน
+    $files = (new NginxDriver(new Template(PHPCP_ROOT . '/templates')))->globalFiles();
+
+    assertSame([], $files, 'โหมดนี้ไม่ควรมีไฟล์ระดับเครื่องของตัวเอง');
 });
 
 // --- 3. ที่อยู่ผู้ใช้จริงต้องไปถึงชั้นหลัง ---------------------------------------
