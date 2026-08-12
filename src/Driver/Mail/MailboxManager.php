@@ -86,7 +86,7 @@ final class MailboxManager
 
         $transaction->write(self::VDOMAINS, $this->renderDomains($domains), 0644);
         $transaction->write(self::VMAILBOX, $this->renderMailboxes($boxes), 0644);
-        $transaction->write(self::VALIAS, $this->renderAliases($aliases), 0644);
+        $transaction->write(self::VALIAS, $this->renderAliases($aliases, $boxes), 0644);
 
         // ไฟล์นี้มีแฮชรหัสผ่านของทุกกล่อง — กลุ่ม dovecot อ่านได้ ผู้ใช้อื่นห้ามแตะ
         $transaction->write(self::DOVECOT_USERS, $this->renderDovecotUsers($boxes), 0640);
@@ -260,10 +260,30 @@ final class MailboxManager
         return implode("\n", $lines) . "\n";
     }
 
-    /** @param list<array{source:string,destination:string}> $aliases */
-    private function renderAliases(array $aliases): string
+    /**
+     * @param list<array{source:string,destination:string}> $aliases
+     * @param list<array{address:string,maildir:string,password:string,quota_mb:int}> $boxes
+     */
+    private function renderAliases(array $aliases, array $boxes): string
     {
         $lines = [$this->header('ที่อยู่ที่ส่งต่อไปที่อื่น · `@โดเมน` คือ catch-all ของโดเมนนั้น')];
+
+        /*
+         * **ทุกกล่องต้องมีบรรทัดชี้กลับหาตัวเองก่อน** — ไม่ใช่ของเกิน
+         *
+         * Postfix แปลง virtual alias **ซ้ำจนกว่าจะไม่มีอะไรตรง** · โดเมนที่มี catch-all
+         * (`@example.com`) จะกลืนกล่องจริงทุกกล่องไปด้วย: เมลถึง `sales@` ถูกแปลงเป็น
+         * `somchai@` ตาม alias แล้ว `somchai@` ถูกแปลงต่อด้วย catch-all จนไปโผล่ที่
+         * กล่องของ catch-all แทน — กล่องจริงไม่ได้รับเมลเลยสักฉบับ
+         *
+         * บรรทัดที่ชี้กลับหาตัวเองหยุดการแปลงรอบสองไว้ตรงนั้น
+         *
+         * เจอจากการส่งเมลจริงเท่านั้น — ไฟล์ตั้งค่าทุกไฟล์ถูกต้องหมดและ `postmap -q`
+         * ก็ตอบถูก แต่เมลไปผิดกล่อง (PLAN-MAIL M2, 2026-08-12)
+         */
+        foreach ($boxes as $box) {
+            $lines[] = $box['address'] . ' ' . $box['address'];
+        }
 
         foreach ($aliases as $alias) {
             $lines[] = $alias['source'] . ' ' . $alias['destination'];

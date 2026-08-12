@@ -1,0 +1,61 @@
+<!--
+  ฟอร์มกล่องจดหมาย — ใช้ทั้งสร้างใหม่และแก้ไข (FRAMEWORK_GUIDE Pattern 3)
+
+  **ที่อยู่เปลี่ยนไม่ได้ตอนแก้ไข** — การเปลี่ยนที่อยู่คือการย้ายเมลทั้งกล่องไปที่ใหม่
+  ซึ่งเป็นคนละเรื่องกับการแก้ค่า · ตอนแก้ไขจึงแสดงเป็นข้อความ ไม่ใช่ช่องกรอกที่แก้แล้ว
+  ไม่มีผล
+
+  รหัสผ่านเว้นว่างได้เสมอ: ตอนสร้าง = ให้ระบบสุ่มให้ · ตอนแก้ = ไม่เปลี่ยนของเดิม
+  ระบบเก็บแค่แฮช จึงไม่มีทางเติมค่าเดิมกลับมาให้เห็น
+-->
+<form data-form="mailbox"
+      action="/api/v2/mailboxes"
+      method="post"
+      data-ajax-submit="true"
+      data-validate="true">
+  <fieldset>
+    <div data-show="id === 0">
+      <label for="mb_local" data-i18n>Address</label>
+      <div class="form-group">
+        <div class="width50">
+          <span class="form-control icon-email">
+            <input type="text" id="mb_local" name="local_part" maxlength="64"
+                   autocomplete="off" placeholder="sales" data-attr="value:local_part">
+          </span>
+        </div>
+        <div class="width50">
+          <span class="form-control icon-link">
+            <select id="mb_domain" name="domain" data-for="d in domains" data-value="domain">
+              <template>
+                <option data-attr="value:d.domain" data-text="d.domain"></option>
+              </template>
+            </select>
+          </span>
+        </div>
+      </div>
+      <div class="comment" data-i18n>Letters, digits, dot, underscore, plus and dash only</div>
+    </div>
+    <div data-show="id > 0">
+      <label data-i18n>Address</label>
+      <p class="mono" data-text="address"></p>
+    </div>
+    <div>
+      <label for="mb_password" data-i18n>Password</label>
+      <span class="form-control icon-lock">
+        <input type="text" id="mb_password" name="password" maxlength="128" autocomplete="off">
+      </span>
+      <div class="comment" data-i18n>Leave blank to have one generated. It is shown once and never stored.</div>
+    </div>
+    <div>
+      <label for="mb_quota" data-i18n>Quota (MB)</label>
+      <span class="form-control icon-stack">
+        <input type="number" id="mb_quota" name="quota_mb" min="1" max="102400" data-attr="value:quota_mb">
+      </span>
+      <div class="comment" data-i18n>Mail is refused while the mailbox is full, so the sender knows it did not arrive</div>
+    </div>
+  </fieldset>
+  <fieldset class="submit right">
+    <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
+    <input type="hidden" name="id" data-attr="value:id">
+  </fieldset>
+</form>

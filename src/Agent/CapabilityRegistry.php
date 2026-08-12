@@ -82,7 +82,10 @@ use Phpcp\Agent\Capability\SslList;
 use Phpcp\Agent\Capability\SslRenew;
 use Phpcp\Agent\Capability\SslSetMode;
 use Phpcp\Agent\Capability\MailApply;
+use Phpcp\Agent\Capability\MailAliasDelete;
+use Phpcp\Agent\Capability\MailAliasSet;
 use Phpcp\Agent\Capability\MailBoxCreate;
+use Phpcp\Agent\Capability\MailBoxUpdate;
 use Phpcp\Agent\Capability\MailBoxDelete;
 use Phpcp\Agent\Capability\MailDomainSet;
 use Phpcp\Agent\Capability\MailTest;
@@ -199,7 +202,10 @@ final class CapabilityRegistry
             // เมลโฮสติ้ง — กล่องจดหมายจริงบนเครื่องนี้ (PLAN-MAIL เฟส M1)
             MailDomainSet::class,
             MailBoxCreate::class,
+            MailBoxUpdate::class,
             MailBoxDelete::class,
+            MailAliasSet::class,
+            MailAliasDelete::class,
 
             // SSL — ขอ ต่ออายุ และสลับโหมด HTTPS ของเว็บไซต์
             SslIssue::class,

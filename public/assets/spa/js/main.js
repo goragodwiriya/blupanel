@@ -48,6 +48,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // จึงไม่มีเมนูข้างและแถบบนในเทมเพลตของมัน — เหมือน login.html ที่ไม่มี chrome เช่นกัน
     '/filemanager': { template: 'filemanager.html', title: '{LNG_File Manager}', permission: 'file.view' },
     '/cron-jobs': { template: 'cron-jobs.html', title: '{LNG_Cron Jobs}', permission: 'cron.view' },
+    '/mailboxes': { template: 'mailboxes.html', title: '{LNG_Mailboxes}', permission: 'mail.view' },
     '/cron-job': { template: 'cron-job.html', title: '{LNG_Cron Jobs}', permission: 'cron.view' },
     '/backups': { template: 'backups.html', title: '{LNG_Backups}', permission: 'backup.view' },
     // ฟอร์มปลายทางมีสิบกว่าช่อง จึงเป็นหน้าของตัวเองแทน Modal ตาม FRAMEWORK_GUIDE

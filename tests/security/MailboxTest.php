@@ -86,6 +86,44 @@ test('ตารางของ Postfix ต้องเขียนใหม่�
     assertTrue(!str_contains($second, 'b@example.com'), 'กล่องที่ถูกลบต้องหายจากไฟล์: ' . $second);
 });
 
+test('catch-all ต้องไม่กลืนกล่องจริงของโดเมนเดียวกัน', static function (): void {
+    /*
+     * **บั๊กที่เจอจากการส่งเมลจริงเท่านั้น (2026-08-12)**
+     *
+     * Postfix แปลง virtual alias ซ้ำจนกว่าจะไม่มีอะไรตรง · โดเมนที่มี catch-all
+     * จะกลืนกล่องจริงทุกกล่อง: เมลถึง `sales@` แปลงเป็น `webbox@` ตาม alias แล้ว
+     * `webbox@` โดน catch-all แปลงต่อไปที่กล่องของ catch-all — กล่องจริงไม่ได้รับเลย
+     *
+     * ไฟล์ตั้งค่าทุกไฟล์ถูกต้องหมดและ `postmap -q` ก็ตอบถูก · จับได้ตอนเปิดกล่อง
+     * แล้วพบว่าเมลไปโผล่ผิดที่เท่านั้น
+     */
+    $manager = new MailboxManager(new Template(PHPCP_ROOT . '/templates'));
+    $render = new ReflectionMethod(MailboxManager::class, 'renderAliases');
+
+    $aliases = (string) $render->invoke(
+        $manager,
+        [
+            ['source' => '@example.com', 'destination' => 'catchall@example.com'],
+            ['source' => 'sales@example.com', 'destination' => 'somchai@example.com'],
+        ],
+        [
+            ['address' => 'somchai@example.com', 'maildir' => '/x/', 'password' => 'x', 'quota_mb' => 100],
+            ['address' => 'catchall@example.com', 'maildir' => '/y/', 'password' => 'x', 'quota_mb' => 100],
+        ],
+    );
+
+    assertTrue(
+        str_contains($aliases, 'somchai@example.com somchai@example.com'),
+        'กล่องจริงต้องมีบรรทัดชี้กลับหาตัวเอง เพื่อหยุดการแปลงรอบสอง: ' . $aliases,
+    );
+
+    // บรรทัดของกล่องต้องมาก่อน catch-all เสมอ — อ่านไฟล์แล้วต้องเห็นเจตนาได้ทันที
+    assertTrue(
+        strpos($aliases, 'somchai@example.com somchai') < strpos($aliases, '@example.com catchall'),
+        'บรรทัดของกล่องต้องอยู่ก่อน catch-all',
+    );
+});
+
 test('ไฟล์ผู้ใช้ของ Dovecot ต้องมีโควตาต่อกล่องเสมอ', static function (): void {
     // กล่องที่ไม่มีโควตาคือกล่องที่โตได้จนดิสก์เต็ม ซึ่งทำให้**ทุกบริการ**บนเครื่องล้ม
     $manager = new MailboxManager(new Template(PHPCP_ROOT . '/templates'));

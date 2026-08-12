@@ -546,8 +546,18 @@ final class UserRepository
             0,
         );
 
-        // อีเมลยังไม่มีตารางของตัวเอง (mail hosting เต็มรูปแบบไม่อยู่ในขอบเขต — §2.1)
-        // ส่วน SFTP นับไปแล้วด้านบนจาก `sftp_enabled`
+        // กล่องจดหมายนับจากตารางจริงตั้งแต่ PLAN-MAIL เฟส M2 — ก่อนหน้านี้ค่านี้เป็น 0
+        // ตายตัว ทำให้ช่องโควตาในหน้าลูกค้าแสดงตัวเลขที่ไม่มีความหมายมาตลอด
+        $usage['emails'] = (int) $this->db->value(
+            "SELECT count(*)
+               FROM mailboxes m
+               JOIN domains d ON d.id = m.domain_id
+              WHERE d.site_id IN ($in)",
+            $siteIds,
+            0,
+        );
+
+        // SFTP นับไปแล้วด้านบนจาก `sftp_enabled`
         return $usage;
     }
 

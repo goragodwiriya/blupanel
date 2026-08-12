@@ -8,6 +8,8 @@ use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\ValidationError;
 use Phpcp\Domain\MailAddress;
+use Phpcp\Domain\QuotaChecker;
+use Phpcp\Domain\UserRepository;
 use Phpcp\Driver\Mail\MailboxManager;
 use Phpcp\Security\Password;
 use Phpcp\Support\Validator;
@@ -67,6 +69,21 @@ final class MailBoxCreate extends MailCapability
 
         if ($repository->findMailbox((int) $domain['id'], $args['local_part']) !== null) {
             throw new ValidationError('มีกล่อง ' . $args['local_part'] . '@' . $args['domain'] . ' อยู่แล้ว');
+        }
+
+        /*
+         * โควตาจำนวนกล่องของเจ้าของ — ช่อง `quota_emails` ในหน้าลูกค้ามีมาตั้งแต่ต้น
+         * แต่ไม่เคยมีอะไรบังคับ เพราะยังไม่มีระบบเมลจริง · ตรวจที่นี่จุดเดียว ทั้ง
+         * หน้าเว็บและ CLI จึงได้กติกาเดียวกัน
+         */
+        $owner = $repository->ownerOf((int) $domain['id']);
+
+        if ($owner > 0) {
+            $quota = (new QuotaChecker(new UserRepository($context->db)))->canCreate($owner, 'emails');
+
+            if (!$quota['ok']) {
+                throw new ValidationError((string) $quota['message']);
+            }
         }
 
         // สุ่มให้ถ้าไม่ได้ระบุมา — ผู้ดูแลไม่ต้องคิดรหัสเอง (ซึ่งมักจะได้รหัสที่อ่อน)

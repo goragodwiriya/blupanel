@@ -16,6 +16,8 @@ use Phpcp\Http\V2\DomainsController;
 use Phpcp\Http\V2\FilesController;
 use Phpcp\Http\V2\FirewallController as V2FirewallController;
 use Phpcp\Http\V2\LogsController;
+use Phpcp\Http\V2\MailAliasesController;
+use Phpcp\Http\V2\MailboxesController;
 use Phpcp\Http\V2\MetricsController as V2MetricsController;
 use Phpcp\Http\V2\RollbacksController;
 use Phpcp\Http\V2\SecurityController as V2SecurityController;
@@ -265,6 +267,19 @@ final class Routes
         $router->add(new Route('DELETE', '/api/v2/cron-jobs/{id}', CronJobsController::class, 'destroy', 'cron.manage', 'api.v2.cron.destroy'));
 
         // --- ข้อมูลสำรอง ---
+        // เมลโฮสติ้ง — กล่องจดหมายและที่อยู่ส่งต่อ (PLAN-MAIL เฟส M2)
+        $router->add(new Route('GET', '/api/v2/mailboxes', MailboxesController::class, 'index', 'mail.view', 'api.v2.mailboxes.index'));
+        // ต้องมาก่อน {id} — ไม่งั้น "form" ถูกอ่านเป็นรหัสกล่อง
+        $router->add(new Route('GET', '/api/v2/mailboxes/form', MailboxesController::class, 'form', 'mail.manage', 'api.v2.mailboxes.form'));
+        $router->add(new Route('POST', '/api/v2/mailboxes', MailboxesController::class, 'store', 'mail.manage', 'api.v2.mailboxes.store'));
+        $router->add(new Route('GET', '/api/v2/mailboxes/{id}', MailboxesController::class, 'show', 'mail.view', 'api.v2.mailboxes.show'));
+        $router->add(new Route('PATCH', '/api/v2/mailboxes/{id}', MailboxesController::class, 'update', 'mail.manage', 'api.v2.mailboxes.update'));
+        $router->add(new Route('DELETE', '/api/v2/mailboxes/{id}', MailboxesController::class, 'destroy', 'mail.manage', 'api.v2.mailboxes.destroy'));
+
+        $router->add(new Route('GET', '/api/v2/mail-aliases/form', MailAliasesController::class, 'form', 'mail.manage', 'api.v2.mail_aliases.form'));
+        $router->add(new Route('POST', '/api/v2/mail-aliases', MailAliasesController::class, 'store', 'mail.manage', 'api.v2.mail_aliases.store'));
+        $router->add(new Route('DELETE', '/api/v2/mail-aliases/{id}', MailAliasesController::class, 'destroy', 'mail.manage', 'api.v2.mail_aliases.destroy'));
+
         $router->add(new Route('GET', '/api/v2/backups', BackupsController::class, 'index', 'backup.view', 'api.v2.backups.index'));
         // ต้องมาก่อน {id} — ไม่งั้น "form" ถูกอ่านเป็นรหัสไฟล์สำรอง
         $router->add(new Route('GET', '/api/v2/backups/form', BackupsController::class, 'form', 'backup.manage', 'api.v2.backups.form'));

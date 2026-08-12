@@ -147,6 +147,127 @@ final class MailboxRepository
         $this->db->update('mailboxes', ['password_hash' => $passwordHash], ['id' => $mailboxId]);
     }
 
+    public function setQuota(int $mailboxId, int $quotaMb): void
+    {
+        $this->db->update('mailboxes', ['quota_mb' => $quotaMb], ['id' => $mailboxId]);
+    }
+
+    /** @return array<string,mixed>|null */
+    public function findAlias(int $id): ?array
+    {
+        $row = $this->db->first(
+            'SELECT a.*, d.domain FROM mail_aliases a JOIN domains d ON d.id = a.domain_id WHERE a.id = :id',
+            ['id' => $id],
+        );
+
+        return is_array($row) ? $row : null;
+    }
+
+    /**
+     * ตั้งที่อยู่ส่งต่อ — ชื่อเดิมของโดเมนเดียวกันคือการแก้ ไม่ใช่การเพิ่มซ้ำ
+     *
+     * ตาราง unique ที่ (domain_id, source) อยู่แล้ว การ insert ซ้ำจะล้ม · ที่นี่จึง
+     * อัปเดตแทน เพื่อให้ฟอร์มเดียวใช้ได้ทั้งเพิ่มและแก้ เหมือนฟอร์มอื่นในระบบ
+     */
+    public function setAlias(int $domainId, string $source, string $destination): int
+    {
+        $existing = $this->db->first(
+            'SELECT id FROM mail_aliases WHERE domain_id = :d AND source = :s',
+            ['d' => $domainId, 's' => $source],
+        );
+
+        if (is_array($existing)) {
+            $this->db->update('mail_aliases', ['destination' => $destination], ['id' => (int) $existing['id']]);
+
+            return (int) $existing['id'];
+        }
+
+        return $this->db->insert('mail_aliases', [
+            'domain_id' => $domainId,
+            'source' => $source,
+            'destination' => $destination,
+            'created_at' => time(),
+        ]);
+    }
+
+    public function deleteAlias(int $id): void
+    {
+        $this->db->run('DELETE FROM mail_aliases WHERE id = :id', ['id' => $id]);
+    }
+
+    /**
+     * กล่องและที่อยู่ส่งต่อทั้งหมดของเจ้าของคนหนึ่ง — ใช้แสดงบนหน้าเว็บ
+     *
+     * `$ownerUserId` เป็น 0 = ผู้ดูแลระบบ เห็นของทุกคน · ค่าอื่น = เห็นเฉพาะของตัวเอง
+     * การกรองทำที่ query ไม่ใช่กรองหลังดึงมาแล้ว — กล่องของลูกค้ารายอื่นต้องไม่ถูก
+     * อ่านขึ้นมาในหน่วยความจำตั้งแต่แรก
+     *
+     * @return list<array<string,mixed>>
+     */
+    public function listMailboxes(int $ownerUserId = 0): array
+    {
+        $sql = 'SELECT m.id, m.local_part, m.quota_mb, m.enabled, m.created_at, d.domain, d.id AS domain_id
+                  FROM mailboxes m
+                  JOIN domains d ON d.id = m.domain_id
+                  JOIN sites s   ON s.id = d.site_id';
+        $params = [];
+
+        if ($ownerUserId > 0) {
+            $sql .= ' WHERE s.owner_user_id = :o';
+            $params['o'] = $ownerUserId;
+        }
+
+        return $this->db->all($sql . ' ORDER BY d.domain, m.local_part', $params);
+    }
+
+    /** @return list<array<string,mixed>> */
+    public function listAliases(int $ownerUserId = 0): array
+    {
+        $sql = 'SELECT a.id, a.source, a.destination, a.created_at, d.domain
+                  FROM mail_aliases a
+                  JOIN domains d ON d.id = a.domain_id
+                  JOIN sites s   ON s.id = d.site_id';
+        $params = [];
+
+        if ($ownerUserId > 0) {
+            $sql .= ' WHERE s.owner_user_id = :o';
+            $params['o'] = $ownerUserId;
+        }
+
+        return $this->db->all($sql . ' ORDER BY d.domain, a.source', $params);
+    }
+
+    /**
+     * โดเมนที่เปิดเมลแล้วและผู้เรียกเป็นเจ้าของ — ใช้เติมตัวเลือกในฟอร์ม
+     *
+     * @return list<array<string,mixed>>
+     */
+    public function selectableDomains(int $ownerUserId = 0): array
+    {
+        $sql = 'SELECT d.id, d.domain
+                  FROM domains d
+                  JOIN sites s ON s.id = d.site_id
+                 WHERE d.mail_enabled = 1';
+        $params = [];
+
+        if ($ownerUserId > 0) {
+            $sql .= ' AND s.owner_user_id = :o';
+            $params['o'] = $ownerUserId;
+        }
+
+        return $this->db->all($sql . ' ORDER BY d.domain', $params);
+    }
+
+    /** เจ้าของโดเมนนี้คือใคร — ใช้ตรวจสิทธิ์ก่อนแตะกล่องของโดเมน */
+    public function ownerOf(int $domainId): int
+    {
+        return (int) $this->db->value(
+            'SELECT s.owner_user_id FROM domains d JOIN sites s ON s.id = d.site_id WHERE d.id = :d',
+            ['d' => $domainId],
+            0,
+        );
+    }
+
     public function deleteMailbox(int $mailboxId): void
     {
         $this->db->run('DELETE FROM mailboxes WHERE id = :id', ['id' => $mailboxId]);

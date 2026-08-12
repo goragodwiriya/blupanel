@@ -3349,6 +3349,117 @@ paths:
                   data: { type: object }
                   actions: { type: array, items: { type: object } }
 
+  /mailboxes:
+    get:
+      tags: [mail]
+      summary: รายการกล่องจดหมาย พร้อมที่อยู่ส่งต่อและโดเมนที่เลือกได้ใน meta
+      responses:
+        "200":
+          description: รายการกล่องจดหมาย
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      tags: [mail]
+      summary: สร้างกล่องจดหมาย (มี id ในเนื้อคำขอ = แก้ของเดิม)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                local_part: { type: string }
+                domain: { type: string }
+                quota_mb: { type: integer }
+                password: { type: string }
+      responses:
+        "201":
+          description: สร้างแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /mailboxes/form:
+    get:
+      tags: [mail]
+      summary: โครงเปล่าของฟอร์มสร้างกล่อง พร้อมคำสั่งเปิด modal
+      responses:
+        "200":
+          description: สำเร็จ
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /mailboxes/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+    get:
+      tags: [mail]
+      summary: กล่องหนึ่งกล่องพร้อมคำสั่งเปิดฟอร์มแก้ไข
+      responses:
+        "200": { description: สำเร็จ, content: { application/json: { schema: { type: object } } } }
+    patch:
+      tags: [mail]
+      summary: ตั้งรหัสผ่านใหม่หรือเปลี่ยนโควตา
+      responses:
+        "200": { description: บันทึกแล้ว, content: { application/json: { schema: { type: object } } } }
+    delete:
+      tags: [mail]
+      summary: ลบกล่องพร้อมเมลทั้งหมด
+      responses:
+        "200": { description: ลบแล้ว, content: { application/json: { schema: { type: object } } } }
+
+  /mail-aliases/form:
+    get:
+      tags: [mail]
+      summary: โครงเปล่าของฟอร์มที่อยู่ส่งต่อ พร้อมคำสั่งเปิด modal
+      responses:
+        "200":
+          description: สำเร็จ
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /mail-aliases:
+    post:
+      tags: [mail]
+      summary: ตั้งที่อยู่ส่งต่อหรือ catch-all
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                domain: { type: string }
+                source: { type: string }
+                destination: { type: string }
+      responses:
+        "200":
+          description: บันทึกแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /mail-aliases/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+    delete:
+      tags: [mail]
+      summary: ลบที่อยู่ส่งต่อ
+      responses:
+        "200": { description: ลบแล้ว, content: { application/json: { schema: { type: object } } } }
+
   /backups:
     get:
       tags: [backups]

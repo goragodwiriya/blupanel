@@ -37,6 +37,7 @@
         // ชื่อไฟล์ไม่พอ · และการทำงานกับไฟล์มักต้องสลับกลับไปดูหน้าอื่นของ panel ไปด้วย
         {key: 'files', label: 'File Manager', url: '/filemanager', icon: 'icon-folder', permission: 'file.view', newTab: true},
         {key: 'cron', label: 'Cron Jobs', url: '/cron-jobs', icon: 'icon-clock', permission: 'cron.view'},
+        {key: 'mail', label: 'Mailboxes', url: '/mailboxes', icon: 'icon-email', permission: 'mail.view'},
         {key: 'backups', label: 'Backups', url: '/backups', icon: 'icon-stack', permission: 'backup.view'}
       ]
     },

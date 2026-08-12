@@ -1,0 +1,91 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <main class="content" data-component="api" data-endpoint="/api/v2/mailboxes" data-refresh-event="phpcp:reload">
+    <div class="card-groups">
+      <header>
+        <div>
+          <h1 class="icon-email" data-i18n>Mailboxes</h1>
+          <p data-i18n>Email accounts for domains that have mail enabled</p>
+        </div>
+        <div class="header-actions" data-if="permissions['mail.manage']">
+          <!--
+            ฟอร์มอยู่คนละเทมเพลตตาม FRAMEWORK_GUIDE Pattern 3 — หน้านี้มีแต่ตาราง
+            สามช่องกรอกถือว่าน้อย จึงเปิดใน Modal ที่เซิร์ฟเวอร์เป็นคนสั่ง
+          -->
+          <button type="button" class="btn btn-primary icon-plus" data-action="click.prevent:requestApi"
+                  data-api-url="/api/v2/mailboxes/form" data-api-method="get" data-i18n>Add mailbox</button>
+          <button type="button" class="btn icon-link" data-action="click.prevent:requestApi"
+                  data-api-url="/api/v2/mail-aliases/form" data-api-method="get" data-i18n>Add forwarder</button>
+        </div>
+      </header>
+      <!--
+        ยังไม่มีโดเมนไหนเปิดเมล = สร้างกล่องไม่ได้เลย · บอกวิธีเปิดตรงนี้ ดีกว่าปล่อยให้
+        กดปุ่มแล้วเจอตัวเลือกโดเมนว่างเปล่าโดยไม่รู้ว่าต้องไปทำอะไรก่อน
+      -->
+      <div class="content-body" data-show="meta.domains.length === 0">
+        <p class="muted" data-i18n>No domain has mail enabled yet. Open a domain and turn mail on before creating mailboxes.</p>
+      </div>
+      <div class="content-body">
+        <div class="tablebody">
+          <table class="table border fullwidth" data-table="mailboxes" data-attr="data:data" data-page-size="50" data-search-columns="address" data-row-actions='{
+                   "edit": {
+                     "title": "Edit",
+                     "className": "btn btn-sm btn-success icon-edit",
+                     "method": "get",
+                     "navigate": false,
+                     "url": "/api/v2/mailboxes/{id}",
+                     "condition": "${can_manage}"
+                   },
+                   "delete": {
+                     "title": "Delete",
+                     "className": "btn btn-sm btn-danger icon-delete",
+                     "method": "delete",
+                     "url": "/api/v2/mailboxes/{id}",
+                     "condition": "${can_manage}",
+                     "confirm": "Delete this mailbox and every message in it?"
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="address" data-cell-class="mono" data-i18n>{LNG_Address}</th>
+                <th data-field="domain" data-i18n>{LNG_Domain}</th>
+                <th data-field="quota_mb" class="center" data-cell-class="center" data-i18n>{LNG_Quota} (MB)</th>
+                <th data-field="enabled" class="center" data-cell-class="center" data-format="boolean"
+                    data-true-text="{LNG_Yes}" data-false-text="{LNG_No}" data-i18n>{LNG_Enabled}</th>
+                <th data-field="created_at" class="center" data-cell-class="center" data-format="datetime" data-i18n>{LNG_Created}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="content-body">
+        <h2 class="icon-link" data-i18n>Forwarders</h2>
+        <p class="muted" data-i18n>An address with no mailbox that sends everything on to somewhere else. A row with only @domain catches every unmatched address.</p>
+        <div class="tablebody">
+          <table class="table border fullwidth" data-table="mailAliases" data-attr="data:meta.aliases" data-page-size="50" data-row-actions='{
+                   "delete": {
+                     "title": "Delete",
+                     "className": "btn btn-sm btn-danger icon-delete",
+                     "method": "delete",
+                     "url": "/api/v2/mail-aliases/{id}",
+                     "condition": "${can_manage}",
+                     "confirm": "Delete this forwarder?"
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="source" data-cell-class="mono" data-i18n>{LNG_Address}</th>
+                <th data-field="destination" data-cell-class="mono" data-i18n>{LNG_Forwards to}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
