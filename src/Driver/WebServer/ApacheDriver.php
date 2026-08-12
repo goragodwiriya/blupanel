@@ -23,11 +23,22 @@ final class ApacheDriver implements WebServerDriver
     private const CONFIG_ROOT = '/etc/apache2';
     private const SITES_DIR = self::CONFIG_ROOT . '/sites-enabled';
     private const PORTS_FILE = self::CONFIG_ROOT . '/ports.conf';
+
+    /**
+     * ชื่อขึ้นต้นด้วย `phpcp-000-` เพื่อให้ถูกอ่านก่อน vhost ของเว็บจริง — ไม่ได้มีผล
+     * ต่อการเลือก vhost (Apache เลือกจาก ServerName) แต่ทำให้ไฟล์ระดับเครื่อง
+     * อยู่รวมกลุ่มกันด้านบนเวลาไล่ดูไดเรกทอรี
+     */
+    public const LOCALHOST_FILE = self::SITES_DIR . '/phpcp-000-localhost.conf';
+
     private const HTTP_PORT = 80;
     private const HTTPS_PORT = 443;
 
-    public function __construct(private readonly Template $templates)
-    {
+    public function __construct(
+        private readonly Template $templates,
+        /** null = ไม่เปิด http://localhost (ค่าเริ่มต้นของเครื่องที่ให้บริการจริง) */
+        private readonly ?LocalhostSite $localhost = null,
+    ) {
     }
 
     public function name(): string
@@ -126,20 +137,46 @@ final class ApacheDriver implements WebServerDriver
      *
      * @return array<string,string>
      */
-    public function globalFiles(): array
+    public function globalFiles(Executor $executor): array
     {
-        return [
+        $files = [
             self::PORTS_FILE => $this->templates->render('apache/standalone-ports.conf.tpl', [
                 'HTTP_PORT' => self::HTTP_PORT,
                 'HTTPS_PORT' => self::HTTPS_PORT
             ])
         ];
+
+        if ($this->localhost !== null) {
+            $files[self::LOCALHOST_FILE] = $this->renderLocalhost($executor, '*:' . self::HTTP_PORT);
+        }
+
+        return $files;
+    }
+
+    /**
+     * vhost ของ http://localhost — โหมด nginx-proxy ยืมไปใช้เป็นชั้นหลังด้วย
+     *
+     * @param string $listen ที่อยู่ที่ vhost นี้ผูก (`*:80` หรือ `127.0.0.1:8080`)
+     */
+    public function renderLocalhost(Executor $executor, string $listen): string
+    {
+        if ($this->localhost === null) {
+            return '';
+        }
+
+        return $this->templates->render('apache/localhost.conf.tpl', [
+            'LISTEN' => $listen,
+            'DOCROOT' => $executor->path($this->localhost->docroot),
+            'FPM_SOCKET' => $executor->path($this->localhost->fpmSocket()),
+            'ERROR_LOG' => $executor->path($this->localhost->errorLog()),
+            'ACCESS_LOG' => $executor->path($this->localhost->accessLog())
+        ]);
     }
 
     /** @return array<string,string> */
     public function vhostFiles(Site $site, Executor $executor): array
     {
-        return $this->globalFiles() + [$this->vhostPath($site) => $this->renderVhost($site, $executor)];
+        return $this->globalFiles($executor) + [$this->vhostPath($site) => $this->renderVhost($site, $executor)];
     }
 
     public function renderVhost(Site $site, Executor $executor): string

@@ -7,6 +7,8 @@ namespace Phpcp\Agent\Capability;
 use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Driver\ConfigTransaction;
+use Phpcp\Driver\WebServer\ApacheDriver;
+use Phpcp\Driver\WebServer\NginxDriver;
 
 /**
  * สร้างไฟล์ตั้งค่าของทุกเว็บไซต์ใหม่ตามค่า `webserver` ปัจจุบัน
@@ -34,6 +36,12 @@ final class SiteRebuild extends SiteCapability
     private const VHOST_DIRS = [
         'apache' => '/etc/apache2/sites-enabled',
         'nginx' => '/etc/nginx/conf.d',
+    ];
+
+    /** @var list<string> ไฟล์ของ http://localhost ทุกโหมด — ใช้ตอนปิดฟีเจอร์ */
+    private const LOCALHOST_FILES = [
+        ApacheDriver::LOCALHOST_FILE,
+        NginxDriver::LOCALHOST_FILE,
     ];
 
     public static function name(): string
@@ -79,6 +87,17 @@ final class SiteRebuild extends SiteCapability
         $transaction = new ConfigTransaction($executor);
 
         $stale = $this->staleFiles($executor, $webserver->name());
+
+        // ปิด http://localhost แล้วไฟล์ต้องหายไปจริง ๆ ไม่ใช่ค้างอยู่จนกว่าจะมีคนสังเกต
+        // — ค่านี้อยู่ในไฟล์ตั้งค่า การลบบรรทัดออกคือวิธีเดียวที่ผู้ดูแลใช้ปิดมัน
+        if (self::localhostSite($context) === null) {
+            foreach (self::LOCALHOST_FILES as $path) {
+                if ($executor->exists($executor->path($path))) {
+                    $stale[] = $path;
+                }
+            }
+        }
+
         foreach ($stale as $path) {
             $transaction->delete($path);
         }
@@ -109,7 +128,12 @@ final class SiteRebuild extends SiteCapability
         // คำสั่งนี้คือทางกลับของการเปลี่ยนโหมด — สิ่งที่โหมดก่อนหน้าเขียนทับไว้ต้องถูก
         // เขียนคืนที่นี่ · ตอนที่เขียนเฉพาะ nginx-proxy การสลับกลับมา apache ทิ้ง
         // `ports.conf` ไว้ที่ 127.0.0.1:8080 แล้วทั้งเครื่องไม่มีใครฟังพอร์ต 80 อีกเลย
-        foreach ($webserver->globalFiles() as $path => $contents) {
+        // โมดูลต้องพร้อมก่อน configtest เสมอ — ไฟล์กลางบางไฟล์ (vhost ของ localhost)
+        // ใช้ directive ของโมดูลด้วย · เดิมเรียกเฉพาะตอน stage เว็บแต่ละเว็บ เครื่องที่
+        // ยังไม่มีเว็บสักเว็บจึงไม่เคยเปิดโมดูลเลย แล้ว configtest ล้มทั้งชุด
+        $webserver->ensureModules($executor);
+
+        foreach ($webserver->globalFiles($executor) as $path => $contents) {
             $transaction->write($path, $contents, 0644);
         }
 
@@ -127,6 +151,9 @@ final class SiteRebuild extends SiteCapability
             'rebuilt' => $rebuilt,
             'count' => count($rebuilt),
             'removed_stale' => array_values($stale),
+            // ผู้เรียกใช้เทียบกับไฟล์ตั้งค่าที่ตัวเองอ่านได้ — agent อ่าน config ตอนบูต
+            // ครั้งเดียว แก้ไฟล์แล้วไม่รีสตาร์ตจะได้ผลลัพธ์ของค่าเก่าโดยไม่มีอะไรบอก
+            'localhost' => self::localhostSite($context)?->docroot ?? '',
             'message' => sprintf(
                 'สร้างไฟล์ตั้งค่าใหม่ให้ %d เว็บไซต์ตามรูปแบบของ %s แล้ว%s',
                 count($rebuilt),

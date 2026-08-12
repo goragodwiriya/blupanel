@@ -336,6 +336,9 @@ final class Application
 
             // 7.2 มีใครฟังพอร์ต 80 อยู่จริงไหม
             $problems += $this->checkHttpPort();
+
+            // 7.3 http://localhost ของเครื่องพัฒนา (ถ้าเปิดไว้) ใช้งานได้จริงไหม
+            $problems += $this->checkLocalhostSite($config);
         }
 
         // 8. ไฟล์ของ Now.js ที่ commit เข้ามาในโปรเจกต์ (การตัดสินใจ N8)
@@ -545,6 +548,49 @@ final class Application
         return 1;
     }
 
+    /**
+     * http://localhost ของเครื่องพัฒนา — ตรวจเฉพาะเครื่องที่เปิดไว้
+     *
+     * เครื่องที่ให้บริการจริงไม่ตั้ง `sites.localhost_docroot` จึงไม่มีอะไรให้ตรวจ
+     * และไม่มีบรรทัดรบกวนใน doctor
+     *
+     * @return int จำนวนปัญหาที่พบ
+     */
+    private function checkLocalhostSite(Config $config): int
+    {
+        $docroot = $config->localhostDocroot();
+
+        if ($docroot === '') {
+            return 0;
+        }
+
+        $problems = 0;
+
+        if (!is_dir($docroot)) {
+            $this->out->fail(sprintf('sites.localhost_docroot ชี้ไปที่ %s ซึ่งไม่มีอยู่จริง', $docroot));
+            $problems++;
+        }
+
+        // pool มาตรฐานของดิสโทร — ถ้าไม่มี ไฟล์ .php จะตอบ 503 ส่วนไฟล์ static ยังปกติ
+        // ซึ่งเป็นอาการที่หลอกที่สุด เพราะหน้าแรกที่เป็น index.html ยังเปิดได้
+        $socket = '/run/php/php' . $config->localhostPhp() . '-fpm.sock';
+
+        if (!file_exists($socket)) {
+            $this->out->fail(sprintf(
+                'http://localhost ใช้ %s แต่ไม่มี socket นั้น — ติดตั้ง php%s-fpm หรือแก้ sites.localhost_php',
+                $socket,
+                $config->localhostPhp(),
+            ));
+            $problems++;
+        }
+
+        if ($problems === 0) {
+            $this->out->ok(sprintf('http://localhost เสิร์ฟ %s (PHP %s)', $docroot, $config->localhostPhp()));
+        }
+
+        return $problems;
+    }
+
     private function checkScheduler(App $app): int
     {
         $problems = 0;
@@ -720,6 +766,16 @@ final class Application
         if (($result['webserver'] ?? '') === 'nginx-proxy') {
             $this->out->warn('โหมดนี้ให้ Apache ถอยไปฟัง 127.0.0.1:8080 — ต้องรีสตาร์ตหนึ่งครั้ง ไม่ใช่แค่ reload');
             $this->out->line('  sudo systemctl restart apache2 && sudo systemctl start nginx');
+        }
+
+        // agent อ่าน config.php ตอนบูตครั้งเดียว — แก้ไฟล์แล้วสั่ง rebuild เลยจะได้
+        // ผลลัพธ์ของค่าเก่าเงียบ ๆ · เทียบกับสิ่งที่ agent เห็นจริงแล้วบอกให้รีสตาร์ต
+        if (($result['localhost'] ?? '') !== $app->config->localhostDocroot()) {
+            $this->out->warn(sprintf(
+                'agent ยังใช้ค่า sites.localhost_docroot เก่า (%s) — รีสตาร์ตแล้วสั่งใหม่',
+                ($result['localhost'] ?? '') === '' ? 'ปิดอยู่' : (string) $result['localhost'],
+            ));
+            $this->out->line('  sudo systemctl restart phpcp-agentd && sudo phpcp sites:rebuild');
         }
 
         // ทางกลับก็เปลี่ยนพอร์ตที่ฟังเหมือนกัน — ports.conf เพิ่งถูกเขียนคืนให้ฟัง 80

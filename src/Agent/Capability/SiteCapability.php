@@ -17,6 +17,7 @@ use Phpcp\Driver\SiteProvisioner;
 use Phpcp\Domain\SettingsRepository;
 use Phpcp\Driver\Template;
 use Phpcp\Driver\WebServer\ApacheDriver;
+use Phpcp\Driver\WebServer\LocalhostSite;
 use Phpcp\Driver\WebServer\NginxDriver;
 use Phpcp\Driver\WebServer\NginxProxyDriver;
 use Phpcp\Driver\WebServer\WebServerDriver;
@@ -57,15 +58,33 @@ abstract class SiteCapability implements Capability
      */
     protected static function webServer(Context $context, Template $templates): WebServerDriver
     {
+        $localhost = self::localhostSite($context);
+
         return match (self::webServerMode($context)) {
-            'nginx' => new NginxDriver($templates),
+            'nginx' => new NginxDriver($templates, $localhost),
             // nginx ชั้นหน้า + Apache ชั้นหลัง — โหมดเดียวที่ .htaccess ใช้งานได้บน nginx
             'nginx-proxy' => new NginxProxyDriver(
                 $templates,
                 (new SettingsRepository($context->db))->bool('webserver.static_by_nginx'),
+                $localhost,
             ),
-            default => new ApacheDriver($templates),
+            default => new ApacheDriver($templates, $localhost),
         };
+    }
+
+    /**
+     * http://localhost ของเครื่องพัฒนา — null เมื่อไม่ได้ตั้ง `sites.localhost_docroot`
+     *
+     * อ่านจากไฟล์ตั้งค่าอย่างเดียว ไม่ใช่ตารางตั้งค่า เพราะเป็นคุณสมบัติของ**เครื่อง**
+     * ไม่ใช่ของผู้ใช้ — และไม่ควรมีปุ่มบนหน้าเว็บที่กดแล้วเสิร์ฟโฟลเดอร์ไหนก็ได้บนเครื่อง
+     */
+    protected static function localhostSite(Context $context): ?LocalhostSite
+    {
+        $docroot = $context->config->localhostDocroot();
+
+        return $docroot === ''
+            ? null
+            : new LocalhostSite($docroot, $context->config->localhostPhp());
     }
 
     /** โหมดที่ใช้งานอยู่จริง — ตารางตั้งค่ามาก่อน แล้วค่อยถอยไป config.php */

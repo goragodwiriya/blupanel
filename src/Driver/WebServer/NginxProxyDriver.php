@@ -45,6 +45,12 @@ final class NginxProxyDriver implements WebServerDriver
     private const NGINX_SITES_DIR = self::NGINX_ROOT . '/conf.d';
     private const NGINX_MAP_FILE = self::NGINX_SITES_DIR . '/00-phpcp-proxy.conf';
 
+    /** ชั้นหน้าของ http://localhost — ชั้นหลังใช้ไฟล์เดียวกับโหมด apache */
+    private const NGINX_LOCALHOST_FILE = NginxDriver::LOCALHOST_FILE;
+
+    /** เท่ากับค่าเริ่มต้นของเว็บทั่วไป — โฟลเดอร์พัฒนาไม่ได้ตั้งโควตาอัปโหลดไว้ */
+    private const LOCALHOST_UPLOAD_LIMIT_MB = 64;
+
     private const APACHE_ROOT = '/etc/apache2';
     private const APACHE_SITES_DIR = self::APACHE_ROOT . '/sites-enabled';
     private const APACHE_PORTS_FILE = self::APACHE_ROOT . '/ports.conf';
@@ -72,8 +78,10 @@ final class NginxProxyDriver implements WebServerDriver
     public function __construct(
         private readonly Template $templates,
         private readonly bool $staticByNginx = true,
+        /** null = ไม่เปิด http://localhost (ค่าเริ่มต้นของเครื่องที่ให้บริการจริง) */
+        private readonly ?LocalhostSite $localhost = null,
     ) {
-        $this->apache = new ApacheDriver($templates);
+        $this->apache = new ApacheDriver($templates, $localhost);
     }
 
     public function name(): string
@@ -139,15 +147,30 @@ final class NginxProxyDriver implements WebServerDriver
      *
      * @return array<string,string>
      */
-    public function globalFiles(): array
+    public function globalFiles(Executor $executor): array
     {
-        return [
+        $files = [
             self::NGINX_MAP_FILE => $this->templates->render('nginx/proxy-map.conf.tpl', []),
             self::APACHE_PORTS_FILE => $this->templates->render('apache/backend-ports.conf.tpl', [
                 'BACKEND_PORT' => self::BACKEND_PORT,
                 'BACKUP_NOTE' => 'ถังพักของ ConfigTransaction ตอนเปลี่ยนโหมด',
             ]),
         ];
+
+        // http://localhost ต้องมีสองไฟล์เหมือนเว็บอื่นในโหมดนี้ — ชั้นหน้าที่ nginx
+        // กับชั้นหลังที่ Apache · ขาดไฟล์ชั้นหลังคือได้ 502 ขาดไฟล์ชั้นหน้าคือไม่มีใครรับ
+        if ($this->localhost !== null) {
+            $files[self::NGINX_LOCALHOST_FILE] = $this->templates->render('nginx/localhost.conf.tpl', [
+                'HTTP_PORT' => self::HTTP_PORT,
+                'BACKEND' => self::BACKEND,
+                'ERROR_LOG' => $executor->path($this->localhost->errorLog()),
+                'ACCESS_LOG' => $executor->path($this->localhost->accessLog()),
+                'UPLOAD_LIMIT' => self::LOCALHOST_UPLOAD_LIMIT_MB
+            ]);
+            $files[ApacheDriver::LOCALHOST_FILE] = $this->apache->renderLocalhost($executor, self::BACKEND);
+        }
+
+        return $files;
     }
 
     public function vhostPath(Site $site): string
@@ -181,7 +204,7 @@ final class NginxProxyDriver implements WebServerDriver
      */
     public function vhostFiles(Site $site, Executor $executor): array
     {
-        return $this->globalFiles() + [
+        return $this->globalFiles($executor) + [
             $this->vhostPath($site) => $this->renderVhost($site, $executor),
             $this->backendVhostPath($site) => $this->renderBackendVhost($site, $executor),
         ];

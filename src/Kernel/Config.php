@@ -340,6 +340,40 @@ final class Config
     }
 
     /**
+     * โฟลเดอร์ที่เสิร์ฟที่ http://localhost — ว่าง = ปิดฟีเจอร์
+     *
+     * ฟีเจอร์ของเครื่องพัฒนา · ปิดไว้เป็นค่าเริ่มต้นเพราะการเสิร์ฟโฟลเดอร์รวมงาน
+     * ทุกโปรเจกต์ผ่านเว็บไม่ใช่สิ่งที่เครื่องให้บริการจริงควรทำ
+     *
+     * ต้องเป็นพาธสัมบูรณ์และไม่มี `..` — ค่านี้กลายเป็น DocumentRoot ตรง ๆ
+     */
+    public function localhostDocroot(): string
+    {
+        $value = rtrim(trim($this->string('sites.localhost_docroot')), '/');
+
+        if ($value === '' || !str_starts_with($value, '/') || in_array('..', explode('/', $value), true)) {
+            return '';
+        }
+
+        return $value;
+    }
+
+    /**
+     * เวอร์ชัน PHP ของ localhost — ว่างในไฟล์ตั้งค่า = เวอร์ชันที่ panel รันอยู่
+     *
+     * ค่าเริ่มต้นมาจากโปรเซสตัวเอง เพราะ pool มาตรฐานของดิสโทรที่ติดตั้งมาพร้อมกัน
+     * ก็เป็นเวอร์ชันนั้น — เดาถูกโดยไม่ต้องให้ใครมากรอก
+     */
+    public function localhostPhp(): string
+    {
+        $value = trim($this->string('sites.localhost_php'));
+
+        return preg_match('/^\d+\.\d+$/', $value) === 1
+            ? $value
+            : PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;
+    }
+
+    /**
      * คีย์สำหรับเข้ารหัสข้อมูลอ่อนไหวใน DB (TOTP secret)
      * ไม่มีคีย์ = ยอมให้ระบบเดินต่อไม่ได้ เพราะจะเก็บ secret แบบ plaintext
      */

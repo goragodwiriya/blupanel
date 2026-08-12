@@ -73,7 +73,7 @@ interface WebServerDriver
      *
      * @return array<string,string> เส้นทาง => เนื้อหา
      */
-    public function globalFiles(): array;
+    public function globalFiles(Executor $executor): array;
 
     /**
      * เส้นทางไฟล์ทั้งหมดของเว็บไซต์นี้ — ใช้ตอนลบ

@@ -28,11 +28,21 @@ final class NginxDriver implements WebServerDriver
 {
     private const CONFIG_ROOT = '/etc/nginx';
     private const SITES_DIR = self::CONFIG_ROOT . '/conf.d';
+
+    /** ไฟล์ระดับเครื่อง ไม่ใช่ของเว็บใดเว็บหนึ่ง — ชื่อเดียวกันทุกโหมด */
+    public const LOCALHOST_FILE = self::SITES_DIR . '/phpcp-000-localhost.conf';
+
     private const HTTP_PORT = 80;
     private const HTTPS_PORT = 443;
 
-    public function __construct(private readonly Template $templates)
-    {
+    /** เท่ากับค่าเริ่มต้นของเว็บทั่วไป — โฟลเดอร์พัฒนาไม่ได้ตั้งโควตาอัปโหลดไว้ */
+    private const UPLOAD_LIMIT_MB = 64;
+
+    public function __construct(
+        private readonly Template $templates,
+        /** null = ไม่เปิด http://localhost (ค่าเริ่มต้นของเครื่องที่ให้บริการจริง) */
+        private readonly ?LocalhostSite $localhost = null,
+    ) {
     }
 
     public function name(): string
@@ -88,22 +98,33 @@ final class NginxDriver implements WebServerDriver
 
     /** @return array<string,string> */
     /**
-     * โหมดนี้ไม่มีไฟล์ระดับเครื่องของตัวเอง
-     *
-     * ไม่แตะ `ports.conf` ของ Apache ด้วย — โหมดนี้ไม่ได้ใช้ Apache เลย และ nginx
-     * ถือพอร์ต 80 อยู่ · การเขียนคืนให้ Apache ฟัง 80 มีแต่จะทำให้ Apache
+     * ไม่แตะ `ports.conf` ของ Apache โดยตั้งใจ — โหมดนี้ไม่ได้ใช้ Apache เลย และ
+     * nginx ถือพอร์ต 80 อยู่ · การเขียนคืนให้ Apache ฟัง 80 มีแต่จะทำให้ Apache
      * (ถ้ายังเปิดอยู่) สตาร์ตไม่ขึ้นเพราะพอร์ตชน
      *
      * @return array<string,string>
      */
-    public function globalFiles(): array
+    public function globalFiles(Executor $executor): array
     {
-        return [];
+        if ($this->localhost === null) {
+            return [];
+        }
+
+        return [
+            self::LOCALHOST_FILE => $this->templates->render('nginx/localhost-standalone.conf.tpl', [
+                'HTTP_PORT' => self::HTTP_PORT,
+                'DOCROOT' => $executor->path($this->localhost->docroot),
+                'FPM_SOCKET' => $executor->path($this->localhost->fpmSocket()),
+                'ERROR_LOG' => $executor->path($this->localhost->errorLog()),
+                'ACCESS_LOG' => $executor->path($this->localhost->accessLog()),
+                'UPLOAD_LIMIT' => self::UPLOAD_LIMIT_MB
+            ])
+        ];
     }
 
     public function vhostFiles(Site $site, Executor $executor): array
     {
-        return [$this->vhostPath($site) => $this->renderVhost($site, $executor)];
+        return $this->globalFiles($executor) + [$this->vhostPath($site) => $this->renderVhost($site, $executor)];
     }
 
     public function renderVhost(Site $site, Executor $executor): string

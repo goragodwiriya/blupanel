@@ -199,7 +199,7 @@ test('สลับกลับมาโหมด apache ต้องเขีย
      * โดยไม่มี error ที่ไหนสักจุดเดียว
      */
     $apache = new ApacheDriver(new Template(PHPCP_ROOT . '/templates'));
-    $ports = $apache->globalFiles()['/etc/apache2/ports.conf'] ?? '';
+    $ports = $apache->globalFiles(proxyExecutor())['/etc/apache2/ports.conf'] ?? '';
 
     assertTrue($ports !== '', 'โหมด apache ต้องเป็นเจ้าของ ports.conf ด้วย ไม่งั้นไม่มีทางกลับ');
     assertTrue(str_contains($ports, 'Listen 80'), 'ต้องฟังพอร์ต 80 จริง: ' . $ports);
@@ -221,7 +221,7 @@ test('สลับกลับมาโหมด apache ต้องเขีย
 
 test('โหมด nginx ล้วนต้องไม่แตะ ports.conf ของ Apache', static function (): void {
     // nginx ถือพอร์ต 80 อยู่ · เขียนคืนให้ Apache ฟัง 80 = Apache สตาร์ตไม่ขึ้นเพราะพอร์ตชน
-    $files = (new NginxDriver(new Template(PHPCP_ROOT . '/templates')))->globalFiles();
+    $files = (new NginxDriver(new Template(PHPCP_ROOT . '/templates')))->globalFiles(proxyExecutor());
 
     assertSame([], $files, 'โหมดนี้ไม่ควรมีไฟล์ระดับเครื่องของตัวเอง');
 });
