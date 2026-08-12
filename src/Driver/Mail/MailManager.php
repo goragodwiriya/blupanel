@@ -40,6 +40,9 @@ final class MailManager
 {
     private const MAIN_CF = '/etc/postfix/main.cf';
     private const MASTER_CF = '/etc/postfix/master.cf';
+
+    /** พอร์ตที่เซิร์ฟเวอร์เมลอื่นใช้ส่งเมลมาหาเรา */
+    private const SMTP_PORT = 25;
     private const SASL_FILE = '/etc/postfix/sasl_passwd';
     private const POSTFIX = '/usr/sbin/postfix';
     private const POSTMAP = '/usr/sbin/postmap';
@@ -190,15 +193,7 @@ final class MailManager
          *
          * อ่านค่าเดิมจากไฟล์ก่อนเขียนทับ เพื่อรู้ว่าครั้งนี้เปลี่ยนหรือไม่
          */
-        $previous = '';
-
-        try {
-            $previous = $this->directive($executor->readFile($executor->path(self::MAIN_CF)), 'inet_interfaces');
-        } catch (\Throwable) {
-            // อ่านไม่ได้ = ถือว่าเปลี่ยน ปลอดภัยกว่าเดาว่าเหมือนเดิม
-        }
-
-        $restartRequired = $previous !== $interfaces;
+        $restartRequired = $this->needsRestart($executor, $hosting);
 
         $transaction->write(self::MAIN_CF, $this->templates->render('postfix/main.cf.tpl', [
             'HOSTNAME' => self::assertHost($config['hostname']),
@@ -275,6 +270,46 @@ final class MailManager
         $output = trim($result->stderr) !== '' ? $result->stderr : $result->stdout;
 
         return [$result->ok(), $output];
+    }
+
+    /**
+     * ต้องสตาร์ตใหม่ไหม — **เทียบกับสิ่งที่เดมอนทำอยู่จริง ไม่ใช่กับไฟล์เดิม**
+     *
+     * เทียบ "ค่าเก่าในไฟล์ กับ ค่าใหม่ที่จะเขียน" ดูสมเหตุสมผล แต่พลาดกรณีที่สำคัญ
+     * ที่สุด: เครื่องที่ไฟล์เขียนว่า `all` อยู่แล้วจากรอบก่อน แต่ Postfix ไม่เคยถูก
+     * สตาร์ตใหม่ จึงยังฟังแค่ loopback · รอบถัดไปจะเห็นว่า "ค่าไม่เปลี่ยน" แล้วไม่
+     * สตาร์ตใหม่อีก — ค้างอยู่แบบนั้นตลอดไปโดยไม่มีอะไรฟ้อง (เจอจริงบนเครื่องจริง)
+     *
+     * ตรวจจากพอร์ตที่เปิดอยู่จริงแทน · ตรวจไม่ได้ = สตาร์ตใหม่ไว้ก่อน ซึ่งแพงกว่า
+     * แต่ไม่ทำให้เมลหาย
+     */
+    private function needsRestart(Executor $executor, bool $hosting): bool
+    {
+        $result = $executor->exec([$executor->path('/usr/bin/ss'), '-ltnH'], timeout: 10);
+
+        if (!$result->ok()) {
+            return true;
+        }
+
+        $public = false;
+
+        foreach (explode("\n", $result->stdout) as $line) {
+            $fields = preg_split('/\s+/', trim($line)) ?: [];
+            $local = $fields[3] ?? '';
+
+            if (!str_ends_with($local, ':' . self::SMTP_PORT)) {
+                continue;
+            }
+
+            $address = trim(substr($local, 0, -strlen(':' . self::SMTP_PORT)), '[]');
+
+            if ($address !== '127.0.0.1' && $address !== '::1') {
+                $public = true;
+                break;
+            }
+        }
+
+        return $public !== $hosting;
     }
 
     /**
