@@ -32,7 +32,6 @@ final class DkimManager
 
     private const KEY_DIR = '/var/lib/rspamd/dkim';
     private const SIGNING_CONF = '/etc/rspamd/local.d/dkim_signing.conf';
-    private const RSPAMADM = '/usr/bin/rspamadm';
 
     public function __construct(private readonly Template $templates)
     {
@@ -64,12 +63,23 @@ final class DkimManager
         if (!$executor->exists($path)) {
             $executor->makeDirectory($executor->path(self::KEY_DIR), 0750);
 
+            /*
+             * **สร้างด้วย openssl ไม่ใช่ `rspamadm dkim_keygen`**
+             *
+             * `rspamadm` เขียนด้วย LuaJIT ซึ่งต้องขอหน่วยความจำที่ทั้งเขียนและรันได้ ·
+             * agent รันภายใต้ `MemoryDenyWriteExecute=yes` จึงระเบิดเป็น
+             * "PANIC: unprotected error in call to Lua API (runtime code generation
+             * failed, restricted kernel?)" ทันที (เจอจริงบนเครื่องจริง 2026-08-12)
+             *
+             * ผ่อน MemoryDenyWriteExecute เพื่อเครื่องมือตัวเดียวไม่คุ้ม — กุญแจ DKIM
+             * เป็นกุญแจ RSA ธรรมดา `openssl genrsa` สร้างได้เหมือนกันทุกประการ และ
+             * rspamd อ่านไฟล์ PEM นั้นได้ตรง ๆ อยู่แล้ว · เหตุผลเดียวกับที่ agent ปิด
+             * pcre.jit แทนที่จะผ่อนกฎเดียวกันนี้
+             */
             $result = $executor->exec([
-                $executor->path(self::RSPAMADM), 'dkim_keygen',
-                '-s', self::SELECTOR,
-                '-d', $domain,
-                '-b', '2048',
-                '-k', $path,
+                $executor->path('/usr/bin/openssl'), 'genrsa',
+                '-out', $path,
+                '2048',
             ], timeout: 60);
 
             if (!$result->ok()) {

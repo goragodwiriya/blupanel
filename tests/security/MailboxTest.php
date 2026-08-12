@@ -155,6 +155,22 @@ test('ลบกล่องต้องแตะได้เฉพาะใต�
     }
 });
 
+test('สร้างกุญแจ DKIM ต้องไม่พึ่งเครื่องมือที่ใช้ JIT', static function (): void {
+    /*
+     * **เจอจริงบนเครื่องจริง (2026-08-12):** `rspamadm dkim_keygen` เขียนด้วย LuaJIT
+     * ซึ่งต้องขอหน่วยความจำที่ทั้งเขียนและรันได้ · agent รันภายใต้
+     * `MemoryDenyWriteExecute=yes` จึงระเบิดทันทีเป็น "PANIC: ... restricted kernel?"
+     *
+     * ผ่อนกฎนั้นเพื่อเครื่องมือตัวเดียวไม่คุ้ม — เหตุผลเดียวกับที่ agent ปิด pcre.jit
+     * แทนที่จะผ่อน MemoryDenyWriteExecute · กุญแจ DKIM เป็นกุญแจ RSA ธรรมดา
+     */
+    $source = (string) file_get_contents(PHPCP_ROOT . '/src/Driver/Mail/DkimManager.php');
+    $code = (string) preg_replace('~/\*.*?\*/|//[^\n]*~s', '', $source);
+
+    assertTrue(!str_contains($code, 'rspamadm'), 'ห้ามเรียก rspamadm ซึ่งใช้ LuaJIT');
+    assertTrue(str_contains($code, 'genrsa'), 'ต้องสร้างกุญแจด้วย openssl');
+});
+
 test('Dovecot ต้องไม่เปิดพอร์ตที่ไม่เข้ารหัส', static function (): void {
     // รหัสผ่านเมลวิ่งผ่านเน็ตทุกครั้งที่โปรแกรมเมลเช็คกล่อง (ทุกไม่กี่นาที)
     // การเปิด 110/143 ไว้คือการประกาศรหัสผ่านของลูกค้าให้ทั้งวง
