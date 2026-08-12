@@ -52,6 +52,11 @@ final class Application
                 'setup' => $this->setup($args),
                 'db:migrate' => $this->migrate(),
                 'sites:rebuild' => $this->sitesRebuild(),
+                'mail:enable' => $this->mailDomain($args, true),
+                'mail:disable' => $this->mailDomain($args, false),
+                'mail:box-add' => $this->mailBoxAdd($args),
+                'mail:box-del' => $this->mailBoxDelete($args),
+                'mail:list' => $this->mailList(),
                 'key:generate' => $this->keyGenerate(),
                 'user:list' => $this->userList(),
                 'user:create' => $this->userCreate($args),
@@ -101,6 +106,13 @@ final class Application
                 'db:migrate' => 'อัปเดตโครงสร้างฐานข้อมูล',
                 'key:generate' => 'สร้าง secret key ลงไฟล์ config',
                 'sites:rebuild' => 'สร้างไฟล์ตั้งค่าของทุกเว็บไซต์ใหม่ (หลังเปลี่ยนค่า webserver)'
+            ],
+            'เมล (กล่องจดหมายจริงบนเครื่องนี้)' => [
+                'mail:enable' => 'เปิดเมลของโดเมน — `phpcp mail:enable example.com`',
+                'mail:disable' => 'ปิดเมลของโดเมน (กล่องยังอยู่ แต่ไม่รับเมล)',
+                'mail:box-add' => 'สร้างกล่อง — `phpcp mail:box-add me@example.com [--quota=1024] [--password=...]`',
+                'mail:box-del' => 'ลบกล่องพร้อมเมลทั้งหมด',
+                'mail:list' => 'รายชื่อโดเมนที่เปิดเมลและกล่องทั้งหมด'
             ],
             'ผู้ใช้งาน (กู้ระบบเมื่อเข้าหน้าเว็บไม่ได้)' => [
                 'user:list' => 'รายชื่อผู้ใช้ทั้งหมด',
@@ -799,6 +811,129 @@ final class Application
         }
 
         return 0;
+    }
+
+    /**
+     * เปิด/ปิดเมลของโดเมน
+     *
+     * เดินผ่าน agent เหมือนที่หน้าเว็บทำ — ชั้น CLI ไม่มีสิทธิ์เขียน /etc/postfix เอง
+     * และการตรวจค่ากับ audit log ต้องอยู่ที่เดียวกันทั้งระบบ
+     *
+     * @param list<string> $args
+     */
+    private function mailDomain(array $args, bool $enabled): int
+    {
+        $domain = $this->firstValue($args);
+
+        if ($domain === '') {
+            $this->out->fail('ต้องระบุโดเมน — `phpcp mail:' . ($enabled ? 'enable' : 'disable') . ' example.com`');
+
+            return 1;
+        }
+
+        return $this->runMailCapability('mail.domain_set', ['domain' => $domain, 'enabled' => $enabled]);
+    }
+
+    /** @param list<string> $args */
+    private function mailBoxAdd(array $args): int
+    {
+        $address = $this->firstValue($args);
+
+        if ($address === '') {
+            $this->out->fail('ต้องระบุที่อยู่ — `phpcp mail:box-add me@example.com`');
+
+            return 1;
+        }
+
+        $quota = (int) ($this->argValue($args, '--quota') ?: 1024);
+
+        // ระบุรหัสเองได้ — ใช้ตอนย้ายกล่องมาจากที่อื่นและต้องใช้รหัสเดิม
+        // ไม่ระบุ = ระบบสุ่มให้แล้วแสดงครั้งเดียว ซึ่งเป็นทางที่ปลอดภัยกว่า
+        return $this->runMailCapability('mail.box_create', [
+            'address' => $address,
+            'quota_mb' => $quota,
+            'password' => $this->argValue($args, '--password'),
+        ], 'password');
+    }
+
+    /** @param list<string> $args */
+    private function mailBoxDelete(array $args): int
+    {
+        $address = $this->firstValue($args);
+
+        if ($address === '') {
+            $this->out->fail('ต้องระบุที่อยู่ — `phpcp mail:box-del me@example.com`');
+
+            return 1;
+        }
+
+        return $this->runMailCapability('mail.box_delete', ['address' => $address]);
+    }
+
+    /**
+     * เรียก capability ของเมลแล้วรายงานผลแบบเดียวกันทุกคำสั่ง
+     *
+     * @param array<string,mixed> $payload
+     * @param string $secretKey คีย์ในผลลัพธ์ที่ต้องแสดงในกรอบ "ครั้งเดียวเท่านั้น"
+     */
+    private function runMailCapability(string $capability, array $payload, string $secretKey = ''): int
+    {
+        $app = App::boot();
+
+        try {
+            $result = $app->agent()->data($capability, $payload, $app->systemActor('cli.' . $capability));
+        } catch (AgentException $e) {
+            $this->out->fail($e->getMessage());
+
+            return 1;
+        }
+
+        $this->out->ok((string) ($result['message'] ?? 'สำเร็จ'));
+
+        if ($secretKey !== '' && ($result[$secretKey] ?? '') !== '') {
+            $this->out->box('รหัสผ่านของกล่อง (แสดงครั้งเดียวเท่านั้น)', (string) $result[$secretKey]);
+        }
+
+        return 0;
+    }
+
+    /** รายชื่อโดเมนที่เปิดเมลและกล่องทั้งหมด — อ่านอย่างเดียว ไม่ต้องผ่าน agent */
+    private function mailList(): int
+    {
+        $app = App::boot();
+        $repository = new \Phpcp\Domain\MailboxRepository($app->db());
+
+        $domains = $repository->enabledDomains();
+
+        if ($domains === []) {
+            $this->out->info('ยังไม่มีโดเมนไหนเปิดเมล — `phpcp mail:enable example.com`');
+
+            return 0;
+        }
+
+        $this->out->ok('โดเมนที่เปิดเมล: ' . implode(', ', $domains));
+
+        foreach ($repository->activeMailboxes() as $box) {
+            $this->out->line(sprintf('  %s  (%d MB)', $box['address'], $box['quota_mb']));
+        }
+
+        return 0;
+    }
+
+    /**
+     * ค่าแรกที่ไม่ใช่ตัวเลือก — ใช้กับคำสั่งที่รับอาร์กิวเมนต์เดียว
+     *
+     * @param list<string> $args
+     */
+    private function firstValue(array $args): string
+    {
+        foreach ($args as $arg) {
+            if (!str_starts_with($arg, '-')) {
+                return $arg;
+            }
+        }
+
+        return '';
     }
 
     /**

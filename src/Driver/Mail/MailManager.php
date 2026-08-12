@@ -8,6 +8,7 @@ use Phpcp\Agent\ExecutionFailed;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\ValidationError;
 use Phpcp\Driver\ConfigTransaction;
+use Phpcp\Driver\SafeBlock;
 use Phpcp\Driver\Template;
 
 /**
@@ -38,6 +39,7 @@ use Phpcp\Driver\Template;
 final class MailManager
 {
     private const MAIN_CF = '/etc/postfix/main.cf';
+    private const MASTER_CF = '/etc/postfix/master.cf';
     private const SASL_FILE = '/etc/postfix/sasl_passwd';
     private const POSTFIX = '/usr/sbin/postfix';
     private const POSTMAP = '/usr/sbin/postmap';
@@ -134,7 +136,7 @@ final class MailManager
      *
      * @param array{mode:string,hostname:string,from:string,relay_host:string,relay_port:int,relay_user:string,relay_password:string,relay_tls:bool} $config
      */
-    public function apply(Executor $executor, array $config): array
+    public function apply(Executor $executor, array $config, bool $reload = true): array
     {
         if (!$this->isInstalled($executor)) {
             throw new ValidationError(
@@ -175,12 +177,25 @@ final class MailManager
             }
         }
 
+        $hosting = (bool) ($config['hosting'] ?? false);
+
         $transaction->write(self::MAIN_CF, $this->templates->render('postfix/main.cf.tpl', [
             'HOSTNAME' => self::assertHost($config['hostname']),
             'ORIGIN' => self::assertHost($config['hostname']),
             'RELAY_HOST' => $relayLine,
             'SASL_ENABLED' => $mode === 'relay' && $config['relay_user'] !== '' ? 'yes' : 'no',
             'TLS_SECURITY' => $config['relay_tls'] ? 'encrypt' : 'may',
+            // เปิดรับเมลเข้าต้องฟังทุกหน้าตัดเน็ต ไม่ใช่แค่ loopback — แต่ mynetworks
+            // ยังแคบเท่าเดิม คนนอกที่จะส่งผ่านเราต้องล็อกอินก่อนเสมอ
+            'INET_INTERFACES' => $hosting ? 'all' : 'loopback-only',
+            'HOSTING_SECTION' => new SafeBlock($hosting ? $this->hostingSection($config) : ''),
+            'GENERATED_AT' => date('Y-m-d H:i:s'),
+        ]), 0644);
+
+        $transaction->write(self::MASTER_CF, $this->templates->render('postfix/master.cf.tpl', [
+            'SUBMISSION_SECTION' => new SafeBlock(
+                $hosting ? $this->templates->render('postfix/submission.cf.tpl', []) : '',
+            ),
             'GENERATED_AT' => date('Y-m-d H:i:s'),
         ]), 0644);
 
@@ -197,9 +212,35 @@ final class MailManager
             $executor->changeMode($executor->path(self::SASL_FILE . '.db'), 0600);
         }
 
-        $this->reload($executor);
+        // ผู้เรียกที่กำลังทำงานใหญ่กว่านี้ (เปิดเมลให้โดเมน ซึ่งต้องเขียนตารางค้นหาต่อ)
+        // สั่ง reload เองครั้งเดียวตอนจบ — reload กลางทางแล้วล้มจะทำให้ขั้นที่เหลือ
+        // ไม่ได้ทำงาน ทั้งที่ไฟล์ที่เขียนไปแล้วถูกต้องทุกไฟล์
+        if ($reload) {
+            $this->reload($executor);
+        }
 
         return ['mode' => $mode, 'relay' => $relayLine];
+    }
+
+    /**
+     * ส่วนของ main.cf ที่มีอยู่เฉพาะตอนเปิดรับเมลเข้า
+     *
+     * แยกเป็นเทมเพลตของตัวเองเพราะเป็นคนละเรื่องกับการส่งออก และเครื่องส่วนใหญ่
+     * จะไม่มีส่วนนี้เลย — ไฟล์ตั้งค่าที่สั้นกว่าคือไฟล์ที่ตรวจสอบง่ายกว่า
+     *
+     * @param array<string,mixed> $config
+     */
+    private function hostingSection(array $config): string
+    {
+        // ใบรับรองของ mail hostname ถ้ายังไม่มี ใช้ใบที่ดิสโทรสร้างให้ไปก่อน —
+        // ดีกว่าไม่มี TLS เลย และหน้าความพร้อมของเมลจะฟ้องว่ายังไม่ได้ขอใบจริง
+        $cert = (string) ($config['tls_cert'] ?? '');
+        $key = (string) ($config['tls_key'] ?? '');
+
+        return $this->templates->render('postfix/hosting.cf.tpl', [
+            'TLS_CERT' => $cert !== '' ? $cert : '/etc/ssl/certs/ssl-cert-snakeoil.pem',
+            'TLS_KEY' => $key !== '' ? $key : '/etc/ssl/private/ssl-cert-snakeoil.key',
+        ]);
     }
 
     /**

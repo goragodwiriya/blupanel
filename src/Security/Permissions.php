@@ -63,6 +63,8 @@ final class Permissions
             'file.manage' => 'แก้ไขไฟล์',
             'cron.view' => 'ดูงานอัตโนมัติ',
             'cron.manage' => 'จัดการงานอัตโนมัติ',
+            'mail.view' => 'ดูกล่องจดหมาย',
+            'mail.manage' => 'จัดการกล่องจดหมายและที่อยู่ส่งต่อ',
             'backup.view' => 'ดูข้อมูลสำรอง',
             'backup.manage' => 'สร้างและลบข้อมูลสำรอง',
             'backup.restore' => 'กู้คืนข้อมูล',
@@ -117,7 +119,7 @@ final class Permissions
             self::SYSADMIN => [
                 'dashboard.view',
                 'site.view', 'domain.view', 'ssl.view', 'php.view', 'php.manage',
-                'db.view', 'file.view', 'cron.view', 'backup.view',
+                'db.view', 'file.view', 'cron.view', 'backup.view', 'mail.view',
                 'customer.view', 'customer.manage',
                 'server.view',
                 'service.view', 'service.control',
@@ -142,6 +144,7 @@ final class Permissions
                 'db.view', 'db.manage',
                 'file.view', 'file.manage',
                 'cron.view', 'cron.manage',
+                'mail.view', 'mail.manage',
                 'backup.view', 'backup.manage'
             ],
 

@@ -67,6 +67,12 @@ final class SettingsRepository
         'mail.relay_password' => 'secret',
         'mail.relay_tls' => 'bool',
 
+        // เมลโฮสติ้ง (PLAN-MAIL) — ชื่อโฮสต์ที่ประกาศตัวตอนคุยกับเซิร์ฟเวอร์อื่น และ
+        // ใบรับรองของชื่อนั้น · ว่าง = อนุมานจาก mail.from แล้วใช้ใบของดิสโทรไปก่อน
+        'mail.hostname' => 'string',
+        'mail.tls_cert' => 'string',
+        'mail.tls_key' => 'string',
+
         // เว็บเซิร์ฟเวอร์ที่โฮสต์เว็บของลูกค้า — ย้ายมาจาก config.php เพื่อให้เปลี่ยนได้
         // จากหน้าจอ · ค่าว่าง = ใช้ค่าใน config.php (เครื่องที่ติดตั้งไว้ก่อนหน้านี้)
         'webserver.mode' => 'string',       // 'apache' | 'nginx' | 'nginx-proxy'
@@ -103,6 +109,9 @@ final class SettingsRepository
         'mail.relay_user' => '',
         'mail.relay_password' => '',
         'mail.relay_tls' => '1',
+        'mail.hostname' => '',
+        'mail.tls_cert' => '',
+        'mail.tls_key' => '',
 
         // ว่าง = ยังไม่เคยเลือกจากหน้าจอ ให้ถอยไปอ่านค่าใน config.php ตามเดิม
         'webserver.mode' => '',

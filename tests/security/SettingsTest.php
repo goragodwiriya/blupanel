@@ -16,6 +16,8 @@ use Phpcp\Agent\ValidationError;
 use Phpcp\Domain\Notifier;
 use Phpcp\Domain\SettingsRepository;
 use Phpcp\Driver\Mail\MailManager;
+use Phpcp\Driver\SafeBlock;
+use Phpcp\Driver\Template;
 use Phpcp\Driver\Notify\TelegramNotifier;
 
 group('ค่าตั้ง การแจ้งเตือน และเมล');
@@ -116,15 +118,64 @@ test('ชื่อโฮสต์และพอร์ตของเมลต�
     }
 });
 
-test('เทมเพลตของ Postfix ต้องไม่เปิดรับจากภายนอก', static function (): void {
+test('เมลขาออกอย่างเดียวต้องไม่เปิดรับจากภายนอก', static function (): void {
     // ค่าสองบรรทัดนี้คือเส้นแบ่งระหว่าง "เมลขาออกที่ปลอดภัย" กับ "เครื่องส่งสแปม"
     // ถ้าเผลอเปลี่ยน ไอพีจะติดบัญชีดำภายในไม่กี่ชั่วโมง และกระทบทุกเว็บบนเครื่อง
-    $tpl = (string) file_get_contents(PHPCP_ROOT . '/templates/postfix/main.cf.tpl');
+    //
+    // ตั้งแต่มีเมลโฮสติ้ง (PLAN-MAIL) `inet_interfaces` เป็นค่าที่เปลี่ยนตามโหมด
+    // จึงต้องตรวจ**ผลที่เรนเดอร์ออกมาจริง** ไม่ใช่ตัวเทมเพลตที่ยังเป็นช่องว่างอยู่
+    $conf = postfixMainCf(hosting: false);
 
-    assertTrue(str_contains($tpl, 'inet_interfaces = loopback-only'), 'ต้องฟังเฉพาะ loopback');
-    assertTrue(!str_contains($tpl, '0.0.0.0/0'), 'mynetworks ต้องไม่กว้างถึงทั้งอินเทอร์เน็ต');
-    assertTrue(!str_contains($tpl, 'inet_interfaces = all'), 'ต้องไม่ฟังทุกอินเทอร์เฟซ');
+    assertTrue(str_contains($conf, 'inet_interfaces = loopback-only'), 'เครื่องที่ไม่ได้เปิดเมลต้องฟังเฉพาะ loopback');
+    assertTrue(!str_contains($conf, 'inet_interfaces = all'), 'ต้องไม่ฟังทุกอินเทอร์เฟซ');
+    assertTrue(!str_contains($conf, '0.0.0.0/0'), 'mynetworks ต้องไม่กว้างถึงทั้งอินเทอร์เน็ต');
+    assertTrue(!str_contains($conf, 'virtual_mailbox_domains'), 'ยังไม่เปิดเมลก็ต้องไม่มีส่วนของการรับเมล');
 });
+
+test('เปิดเมลโฮสติ้งแล้วยังต้องไม่เป็น open relay', static function (): void {
+    /*
+     * เปิดรับเมลเข้าแปลว่าต้องฟังทุกหน้าตัดเน็ต — ซึ่งเป็นจุดที่พลาดแล้วราคาแพงที่สุด
+     * ของทั้งระบบ · สิ่งที่กันไว้ไม่ใช่ "ไม่ฟัง" แต่เป็นกฎสามชั้นนี้:
+     *
+     *   1. mynetworks ยังแคบเท่าเดิม (เชื่อเฉพาะเครื่องนี้)
+     *   2. smtpd_relay_restrictions ปิดท้ายด้วย reject_unauth_destination
+     *   3. ทางที่ผู้ใช้ส่งออก (587/465) ต้องล็อกอินอย่างเดียว ไม่มีข้อยกเว้นให้ mynetworks
+     */
+    $conf = postfixMainCf(hosting: true);
+
+    assertTrue(str_contains($conf, 'inet_interfaces = all'), 'เปิดเมลต้องฟังทุกหน้าตัดเน็ต');
+    assertTrue(!str_contains($conf, '0.0.0.0/0'), 'mynetworks ต้องไม่กว้างถึงทั้งอินเทอร์เน็ต');
+    assertTrue(str_contains($conf, 'reject_unauth_destination'), 'ต้องปฏิเสธปลายทางที่ไม่ใช่ของเรา');
+    assertTrue(str_contains($conf, 'permit_sasl_authenticated'), 'คนที่ล็อกอินแล้วต้องส่งได้');
+    assertTrue(str_contains($conf, 'smtpd_tls_auth_only = yes'), 'ห้ามล็อกอินแบบไม่เข้ารหัส');
+
+    $submission = (new Template(PHPCP_ROOT . '/templates'))->render('postfix/submission.cf.tpl', []);
+
+    assertTrue(
+        str_contains($submission, 'smtpd_relay_restrictions=permit_sasl_authenticated,reject'),
+        'ทางส่งออกของผู้ใช้ต้องล็อกอินอย่างเดียว ไม่มีข้อยกเว้นให้ mynetworks: ' . $submission,
+    );
+});
+
+/** main.cf ที่เรนเดอร์จริงตามโหมดที่ระบุ */
+function postfixMainCf(bool $hosting): string
+{
+    $templates = new Template(PHPCP_ROOT . '/templates');
+
+    return $templates->render('postfix/main.cf.tpl', [
+        'HOSTNAME' => 'mail.example.com',
+        'ORIGIN' => 'mail.example.com',
+        'RELAY_HOST' => '',
+        'SASL_ENABLED' => 'no',
+        'TLS_SECURITY' => 'may',
+        'INET_INTERFACES' => $hosting ? 'all' : 'loopback-only',
+        'HOSTING_SECTION' => new SafeBlock($hosting ? $templates->render('postfix/hosting.cf.tpl', [
+            'TLS_CERT' => '/etc/ssl/certs/x.pem',
+            'TLS_KEY' => '/etc/ssl/private/x.key',
+        ]) : ''),
+        'GENERATED_AT' => '2026-01-01 00:00:00',
+    ]);
+}
 
 test('การแจ้งเตือนต้องไม่ทำให้งานหลักล้ม', static function (): void {
     // ถ้า Telegram ล่มแล้วการสร้างเว็บไซต์ล้มตาม ผู้ใช้จะเห็นว่างานที่สำเร็จแล้ว "ล้มเหลว"
@@ -176,7 +227,10 @@ test('capability ของค่าตั้งต้องใช้สิทธ
     $registry = new CapabilityRegistry();
 
     foreach ($registry->describe() as $name => $meta) {
-        if (!preg_match('/^(settings|notify|mail)\./', $name)) {
+        // `mail.apply`/`mail.test` คือค่าตั้งเมล**ขาออกของทั้งเครื่อง** จึงเป็นสิทธิ์
+        // ระดับเซิร์ฟเวอร์ · ส่วน `mail.box_*`/`mail.domain_set` เป็นการจัดการกล่อง
+        // ของโดเมนที่ลูกค้าเป็นเจ้าของ ใช้ `mail.manage` ซึ่งเจ้าของเว็บมีได้ (PLAN-MAIL)
+        if (!preg_match('/^(settings|notify)\.|^mail\.(apply|test)$/', $name)) {
             continue;
         }
 

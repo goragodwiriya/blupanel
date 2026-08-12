@@ -167,15 +167,33 @@ CREATE TABLE mail_aliases (
 
 ### M1 — รากฐาน (รับเมลได้จริง)
 
-- [ ] ผู้ใช้ระบบ `vmail` + โครงไดเรกทอรี `/srv/phpcp/mail` (ติดตั้งโดย install.sh)
-- [ ] แพ็กเกจ: `dovecot-imapd dovecot-pop3d dovecot-lmtpd` (+ `rspamd` ใน M3)
-- [ ] `MailDriver` ใหม่: เขียน vmailbox/valias/vdomains + `postmap` + ตรวจ + reload
-- [ ] `DovecotManager`: เขียน `99-phpcp.conf` + `phpcp-users` + `doveconf -n`
-- [ ] Postfix main.cf เพิ่มส่วน virtual + LMTP + TLS ของ submission (ต่อจาก `MailManager` เดิม)
-- [ ] ใบรับรองของ mail hostname ผ่าน certbot ที่มีอยู่
-- [ ] เปิดพอร์ต 25/465/587/993/995 ผ่านโมดูลไฟร์วอลล์ที่มีอยู่
-- [ ] **เกณฑ์ผ่าน:** สร้างกล่องด้วย CLI แล้วส่งเมลจากภายนอกเข้าถึงกล่อง · อ่านผ่าน IMAP ได้ ·
-      `swaks` ทดสอบ open relay ต้องถูกปฏิเสธ
+**เสร็จแล้ว (2026-08-12)** — ผ่านเกณฑ์ทั้งหมดในคอนเทนเนอร์จริง 11/11
+
+- [x] ผู้ใช้ระบบ `vmail` + โครงไดเรกทอรี `/srv/phpcp/mail` (ติดตั้งโดย install.sh)
+- [x] แพ็กเกจ: `dovecot-core/imapd/pop3d/lmtpd` ติดไปกับ Postfix
+- [x] `MailboxManager`: เขียน vmailbox/valias/vdomains + `phpcp-users` + `99-phpcp.conf`
+      → `postmap` → `postfix check` + `doveconf -n` → reload ทั้งชุดใน ConfigTransaction เดียว
+- [x] `main.cf`/`master.cf` มีโหมด "รับเมล" ที่เปิดเฉพาะเมื่อมีโดเมนเปิดเมลจริง
+- [x] เปิดพอร์ต 25/465/587/993/995 ตอนติดตั้ง
+- [x] ตาราง `mailboxes`/`mail_aliases` + `domains.mail_enabled` (migration 0018)
+- [x] capability `mail.domain_set` · `mail.box_create` · `mail.box_delete` + สิทธิ์ `mail.view`/`mail.manage`
+- [x] CLI: `mail:enable` · `mail:disable` · `mail:box-add` · `mail:box-del` · `mail:list`
+- [ ] ใบรับรองของ mail hostname ผ่าน certbot — **ยกไป M3** (ตอนนี้ใช้ใบของดิสโทรไปก่อน
+      ซึ่งใช้งานได้แต่โปรแกรมเมลจะเตือนเรื่องใบรับรอง)
+
+**สามบั๊กที่เจอเพราะยิงจริง ไม่มีทางเจอจากเทสต์ในโปรเซส:**
+
+1. `systemctl restart` ของสองเดมอนช้าเกิน 30 วินาทีที่ agent รอ — คำสั่งเมลทุกคำสั่ง
+   ล้มด้วย "agent ไม่ตอบกลับ" · เปลี่ยนมาใช้ `postfix reload`/`doveadm reload` ที่เสร็จ
+   ในเสี้ยววินาทีและไม่ตัดการเชื่อมต่อที่ใช้งานอยู่
+2. ไฟล์ผู้ใช้เป็นของ `root:root` 0640 — Dovecot อ่านไม่ได้ ได้ "Temporary authentication
+   failure" ตอนล็อกอิน และเมลถูกตีกลับ · ทั้งสองข้อความไม่มีคำว่า permission เลย
+3. โฟลเดอร์ของ**โดเมน** ถูกสร้างเป็นของ root (mkdir -p) ทั้งที่โฟลเดอร์ของกล่องถูกต้อง —
+   Dovecot เดินผ่านเข้าไปไม่ได้ เมลตีกลับด้วย "Temporary internal error"
+
+**และหนึ่งบั๊กในตัวเทสต์เอง:** ทดสอบ open relay จาก 127.0.0.1 ซึ่ง `permit_mynetworks`
+อนุญาตอยู่แล้วโดยตั้งใจ — ผ่านเสมอไม่ว่าค่าตั้งจะถูกหรือผิด · ตอนนี้ยิงจากที่อยู่จริง
+ของเครื่อง และแยก "ต่อไม่ได้" ออกจาก "เป็น open relay" ให้ชัด
 
 ### M2 — จัดการบนแผงควบคุม
 

@@ -50,6 +50,9 @@ POINTER_ROOTS=""  # ว่าง = ใช้ค่าจาก sites_dir อั�
 SANDBOX_DIR="/opt/phpcp-sandbox"
 PANEL_USER="phpcp-web"
 PANEL_GROUP="phpcp"
+# เจ้าของกล่องจดหมายทุกกล่อง — ดูเหตุผลในหัวข้อ 3
+VMAIL_USER="vmail"
+MAIL_ROOT="/srv/phpcp/mail"
 
 WITH_POSTFIX="yes"
 WITH_LOGROTATE="yes"
@@ -244,7 +247,9 @@ if [ "$(id -u)" -eq 0 ] && command -v apt-get >/dev/null 2>&1; then
     if [ "$OTHER_MTA" = "yes" ]; then
       warn "พบ MTA อื่นบนเครื่องนี้ — ข้ามการติดตั้ง Postfix (ใช้ --no-postfix เพื่อไม่ให้เตือนอีก)"
     else
-      POSTFIX_PKG="postfix"
+      # Dovecot มาคู่กับ Postfix เสมอ — เมลโฮสติ้ง (PLAN-MAIL) ต้องมีทั้งคู่ และการ
+      # ติดตั้งไว้ล่วงหน้าไม่ได้เปิดรับเมลเข้าเอง (ต้องสั่ง `phpcp mail:enable` ก่อน)
+      POSTFIX_PKG="postfix dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd"
       debconf-set-selections <<EOF >/dev/null 2>&1 || true
 postfix postfix/main_mailer_type select Internet Site
 postfix postfix/mailname string $(hostname -f 2>/dev/null || hostname 2>/dev/null || echo localhost)
@@ -252,7 +257,7 @@ EOF
     fi
   fi
 
-  say "กำลังติดตั้งแพ็กเกจ PHP 7.4, PHP 8.4, Apache2, Nginx, BIND9, MariaDB, OpenSSH, UFW, Fail2ban, phpMyAdmin, Cron${POSTFIX_PKG:+, Postfix}..."
+  say "กำลังติดตั้งแพ็กเกจ PHP 7.4, PHP 8.4, Apache2, Nginx, BIND9, MariaDB, OpenSSH, UFW, Fail2ban, phpMyAdmin, Cron${POSTFIX_PKG:+, Postfix, Dovecot}..."
   apt-get install -y -qq --no-install-recommends \
     cron openssh-server bind9 bind9utils logrotate $POSTFIX_PKG \
     php7.4-cli php7.4-fpm php7.4-sqlite3 php7.4-mysql php7.4-mbstring php7.4-curl php7.4-zip php7.4-gd php7.4-xml php7.4-intl \
@@ -330,6 +335,26 @@ getent passwd "$PANEL_USER" >/dev/null || {
   ok "สร้างผู้ใช้ $PANEL_USER"
 }
 ok "ผู้ใช้ $PANEL_USER อยู่ในกลุ่ม $PANEL_GROUP"
+
+# บัญชีที่เป็นเจ้าของกล่องจดหมายทุกกล่อง (PLAN-MAIL M-A)
+#
+# **หนึ่งบัญชีสำหรับทุกกล่อง** ไม่ใช่บัญชีต่อกล่อง — กล่อง 500 กล่องไม่ควรทำให้
+# /etc/passwd บวมและกลายเป็นทางเข้าเครื่อง · การแยกสิทธิ์ระหว่างกล่องเป็นหน้าที่
+# ของ Dovecot ที่จำกัดแต่ละ session ไว้ที่โฟลเดอร์ของกล่องนั้น
+#
+# สร้างไว้เสมอแม้ยังไม่เปิดเมล — ราคาของบัญชีที่ไม่ได้ใช้คือศูนย์ ส่วนราคาของการ
+# ลืมสร้างคือ `phpcp mail:enable` ล้มบนเครื่องจริงตอนที่ผู้ดูแลกำลังรีบ
+if ! getent group "$VMAIL_USER" >/dev/null; then
+  groupadd --system "$VMAIL_USER"
+fi
+if ! getent passwd "$VMAIL_USER" >/dev/null; then
+  useradd --system --gid "$VMAIL_USER" --home-dir "$MAIL_ROOT" \
+          --shell /usr/sbin/nologin --comment "phpcp virtual mailboxes" "$VMAIL_USER"
+fi
+mkdir -p "$MAIL_ROOT"
+chown "$VMAIL_USER:$VMAIL_USER" "$MAIL_ROOT"
+chmod 0750 "$MAIL_ROOT"
+ok "ผู้ใช้ $VMAIL_USER และที่เก็บกล่องจดหมาย $MAIL_ROOT พร้อมแล้"
 
 # ---------------------------------------------------------------------------
 # 4. วางไฟล์
@@ -833,6 +858,18 @@ if [ "$MODE" = "production" ] && command -v ufw >/dev/null; then
   ufw allow 80/tcp comment "HTTP Web" >/dev/null 2>&1 || true
   ufw allow 443/tcp comment "HTTPS Web" >/dev/null 2>&1 || true
   ufw allow "$PORT/tcp" comment "PHP Control Panel" >/dev/null 2>&1 || true
+  # พอร์ตเมล — เปิดไว้ตั้งแต่ติดตั้ง แม้ยังไม่ได้เปิดเมลให้โดเมนไหน
+  #
+  # ไม่มีอะไรฟังพอร์ตเหล่านี้จนกว่าจะสั่ง `phpcp mail:enable` จึงไม่ได้เพิ่มพื้นที่
+  # โจมตีอะไรตอนนี้ · แต่การเปิดทีหลังบนเครื่องที่รับเมลอยู่แล้วแปลว่ามีช่วงที่เมล
+  # ขาเข้าถูกไฟร์วอลล์ตัดทิ้งเงียบ ๆ ซึ่งหาสาเหตุยากมาก
+  if [ "$WITH_POSTFIX" = "yes" ]; then
+    ufw allow 25/tcp comment "SMTP" >/dev/null 2>&1 || true
+    ufw allow 465/tcp comment "SMTP submission (TLS)" >/dev/null 2>&1 || true
+    ufw allow 587/tcp comment "SMTP submission (STARTTLS)" >/dev/null 2>&1 || true
+    ufw allow 993/tcp comment "IMAP over TLS" >/dev/null 2>&1 || true
+    ufw allow 995/tcp comment "POP3 over TLS" >/dev/null 2>&1 || true
+  fi
   ufw --force enable >/dev/null 2>&1 || true
   ok "ตั้งค่าและเปิดใช้งาน UFW Firewall เรียบร้อยแล้ว (SSH: $SSH_ALLOWED, 53, 80, 443, $PORT)"
   case " $SSH_ALLOWED " in
