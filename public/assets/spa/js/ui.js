@@ -117,7 +117,8 @@
       visibleSections().forEach((section) => {
         if (section.label) {
           const heading = el('li', 'sidemenu-title');
-          heading.appendChild(el('span', null, section.label));
+          heading.dataset.navSection = section.label;
+          heading.appendChild(el('span', null, t(section.label)));
           list.appendChild(heading);
         }
 
@@ -176,10 +177,41 @@
 
       markActive();
       this._offRoute = window.EventManager.on('route:changed', markActive);
+
+      /*
+       * ป้ายของเมนูสร้างด้วย JS จึงไม่มี `data-i18n` ให้ตัวแปลภาษาไล่เก็บ
+       *
+       * `I18nManager.updateElements()` แปลเฉพาะ element ที่มี `data-i18n` ติดอยู่ ·
+       * เมนูข้างจึงค้างเป็นภาษาเดิมทั้งแถบตอนกดสลับภาษา ทั้งที่ทุกอย่างรอบตัวเปลี่ยนหมด
+       * — เขียนป้ายใหม่เองเมื่อได้รับสัญญาณ แทนที่จะไปแปะ data-i18n ให้ทุกป้าย
+       * (ซึ่งจะทำให้ต้องจำว่าคีย์คืออะไรอีกที่หนึ่ง)
+       */
+      const repaintLabels = () => {
+        visibleSections().forEach((section) => {
+          section.items.forEach((item) => {
+            const label = nav.querySelector(`a[data-nav-key="${item.key}"] span`);
+
+            if (label) {
+              label.textContent = t(item.label);
+            }
+          });
+        });
+
+        nav.querySelectorAll('.sidemenu-title').forEach((heading) => {
+          const span = heading.querySelector('span');
+
+          if (span) {
+            span.textContent = t(heading.dataset.navSection || '');
+          }
+        });
+      };
+
+      this._offLocale = window.EventManager.on('i18n:updated', repaintLabels);
     },
 
     destroyed() {
       if (typeof this._offRoute === 'function') this._offRoute();
+      if (typeof this._offLocale === 'function') this._offLocale();
     }
   });
 
