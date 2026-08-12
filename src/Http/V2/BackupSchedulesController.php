@@ -50,6 +50,28 @@ final class BackupSchedulesController extends ApiController
         ]);
     }
 
+    /**
+     * โครงเปล่าของฟอร์มตั้งเวลาสำรอง พร้อมคำสั่งเปิด modal
+     *
+     * แก้ตารางเวลาที่มีอยู่ยังทำผ่านปุ่มเปิด/ปิดในตารางเท่านั้น (PATCH เฉพาะ `enabled`)
+     * ที่นี่จึงมีแต่ฟอร์มของใหม่ — ถ้าเพิ่มการแก้ไขเต็มรูปแบบเมื่อไหร่ ใช้ไฟล์เดียวกันนี้
+     * ได้ทันทีด้วย `id` ที่ซ่อนไว้ แบบเดียวกับงานอัตโนมัติ
+     */
+    public function form(Request $request): Response
+    {
+        return $this->ok(
+            ['label' => '', 'type' => 'site', 'site_id' => 0, 'schedule' => '0 1 * * *', 'destination_id' => 0],
+            ['presets' => CronSchedule::presets()],
+            [[
+                'type' => 'modal',
+                'action' => 'show',
+                'template' => 'backup-schedule-form.html',
+                'title' => '{LNG_Add schedule}',
+                'titleClass' => 'icon-clock',
+            ]],
+        );
+    }
+
     public function store(Request $request): Response
     {
         $label = trim($request->payloadString('label'));

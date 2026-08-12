@@ -39,13 +39,57 @@ final class BackupDestinationsController extends ApiController
         );
     }
 
+    /**
+     * ปลายทางหนึ่งที่ — **id = 0 คือ "ของใหม่" ไม่ใช่ 404**
+     *
+     * ฟอร์มเพิ่มกับฟอร์มแก้ไขเป็นไฟล์เดียวกัน (`backup-destination.html`) ทั้งสองทาง
+     * จึงถามข้อมูลจากที่นี่เหมือนกัน ต่างกันแค่ได้โครงว่างหรือได้ค่าเดิม
+     *
+     * ที่นี่ไม่สั่งเปิด modal เหมือนฟอร์มอื่น เพราะช่องกรอกเยอะเกินกว่าจะอยู่ใน modal
+     * ได้อย่างสบายตา (สิบกว่าช่อง รวม textarea ของกุญแจลับ) — FRAMEWORK_GUIDE ให้
+     * ใช้หน้าเว็บของตัวเองในกรณีแบบนี้
+     */
     public function show(Request $request): Response
     {
-        $row = $this->repository()->find($request->paramInt('id'));
+        $id = $request->paramInt('id');
+
+        if ($id === 0) {
+            return $this->ok($this->blank() + ['can_manage' => $this->ctx->can('backup.offsite')]);
+        }
+
+        $row = $this->repository()->find($id);
 
         return $row === null
             ? $this->problem(ApiProblem::NotFound, 'ไม่พบปลายทางที่ระบุ')
             : $this->ok($this->present($row, $this->ctx->can('backup.offsite')));
+    }
+
+    /**
+     * โครงเปล่าที่มีคีย์ครบเท่ากับของจริง — ฟอร์มเดียวกันผูกค่าได้ทั้งสองกรณี
+     *
+     * @return array<string,mixed>
+     */
+    private function blank(): array
+    {
+        return [
+            'id' => 0,
+            'name' => '',
+            'driver' => 'local',
+            'enabled' => 1,
+            'retention_days' => 30,
+            'retention_count' => 7,
+            'config' => [
+                'host' => '',
+                'port' => 22,
+                'user' => '',
+                'path' => '',
+                'bucket' => '',
+                'region' => '',
+                'access_key' => '',
+                'endpoint' => '',
+                'path_style' => 0,
+            ],
+        ];
     }
 
     /**
@@ -108,6 +152,16 @@ final class BackupDestinationsController extends ApiController
 
     public function store(Request $request): Response
     {
+        /*
+         * ฟอร์มเดียวทำทั้งเพิ่มและแก้ไข จึงยิงมาที่ปลายทางเดียวเสมอ แล้วให้ `id`
+         * ที่ซ่อนอยู่ในฟอร์มเป็นตัวตัดสิน — หน้าเว็บไม่ต้องสลับ method เองตามสถานะ
+         */
+        $id = (int) $request->payload('id', 0);
+
+        if ($id > 0) {
+            return $this->update($request->withParams(['id' => $id]));
+        }
+
         $repository = $this->repository();
         $driver = $request->payloadString('driver');
 
@@ -130,7 +184,9 @@ final class BackupDestinationsController extends ApiController
             'เพิ่มปลายทางแล้ว',
             [
                 ['type' => 'notification', 'level' => 'success', 'message' => 'เพิ่มปลายทางแล้ว'],
-                ['type' => 'redirect', 'url' => 'reload', 'target' => 'destinations'],
+                // ฟอร์มอยู่คนละหน้ากับตารางแล้ว — พากลับไปหน้ารายการ ไม่ใช่รีโหลด
+                // ตารางที่ไม่ได้อยู่ในหน้าเดียวกัน
+                ['type' => 'redirect', 'url' => '/app/backups', 'delay' => 800],
                 // ตารางปลายทางเองรีโหลดจาก target ด้านบนแล้ว แต่ <select> ตัวเลือกปลายทาง
                 // ในฟอร์มตั้งเวลา/ฟอร์มส่งออก (backups.html) ผูกกับเหตุการณ์นี้ต่างหาก
                 // เพราะไม่ใช่ตารางที่มี id ให้ target อ้างถึง
@@ -180,7 +236,7 @@ final class BackupDestinationsController extends ApiController
             'บันทึกปลายทางแล้ว',
             [
                 ['type' => 'notification', 'level' => 'success', 'message' => 'บันทึกปลายทางแล้ว'],
-                ['type' => 'redirect', 'url' => 'reload', 'target' => 'destinations'],
+                ['type' => 'redirect', 'url' => '/app/backups', 'delay' => 800],
                 ['type' => 'event', 'event' => self::RELOAD_EVENT],
             ],
             is_array($result) ? $result : [],

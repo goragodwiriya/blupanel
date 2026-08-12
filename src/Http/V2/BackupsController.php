@@ -73,6 +73,26 @@ final class BackupsController extends HostingController
     }
 
     /**
+     * โครงเปล่าของฟอร์มสร้างไฟล์สำรอง พร้อมคำสั่งเปิด modal
+     *
+     * ไฟล์สำรองแก้ไม่ได้ (สร้าง · กู้คืน · ลบ) จึงมีแต่ฟอร์มของใหม่
+     */
+    public function form(Request $request): Response
+    {
+        return $this->ok(
+            ['type' => 'site', 'site_id' => 0, 'database' => '', 'note' => ''],
+            [],
+            [[
+                'type' => 'modal',
+                'action' => 'show',
+                'template' => 'backup-form.html',
+                'title' => '{LNG_Create backup}',
+                'titleClass' => 'icon-stack',
+            ]],
+        );
+    }
+
+    /**
      * สร้างไฟล์สำรอง
      *
      * ตอบ 201 ไม่ใช่ 202 เพราะ capability ทำงานแบบ synchronous จริง ๆ — ไฟล์พร้อมใช้

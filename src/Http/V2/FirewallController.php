@@ -37,6 +37,28 @@ final class FirewallController extends ApiController
         return $this->ok($status, ['pending_rollback' => $this->pendingRollback()]);
     }
 
+    /**
+     * โครงเปล่าของฟอร์มเพิ่มกฎ พร้อมคำสั่งเปิด modal
+     *
+     * กฎของ ufw แก้ไม่ได้ (เพิ่มกับลบเท่านั้น — หมายเลขกฎเลื่อนเมื่อลบตัวก่อนหน้า)
+     * จึงมีแต่ฟอร์มของใหม่ · เส้นทางยังเป็นรูปเดียวกับหน้าอื่นเพื่อให้หน้าเว็บทำ
+     * สิ่งเดียวกันทุกหน้า: ยิงคำขอแล้วส่งคำตอบต่อให้ ResponseHandler
+     */
+    public function form(Request $request): Response
+    {
+        return $this->ok(
+            ['action' => 'allow', 'port' => '', 'protocol' => 'tcp', 'source' => ''],
+            [],
+            [[
+                'type' => 'modal',
+                'action' => 'show',
+                'template' => 'firewall-rule-form.html',
+                'title' => '{LNG_Add rule}',
+                'titleClass' => 'icon-fire',
+            ]],
+        );
+    }
+
     /** เพิ่มกฎ — ต้องยืนยันภายใน `window` วินาที ไม่งั้นถูกถอนคืนอัตโนมัติ */
     public function addRule(Request $request): Response
     {

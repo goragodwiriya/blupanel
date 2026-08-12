@@ -17,6 +17,14 @@
         </div>
         <div class="header-actions">
           <a class="btn icon-arrow-left" href="/app/domains" data-route="/domains" data-i18n>Domains</a>
+          <!--
+            ฟอร์มอยู่คนละเทมเพลตตาม FRAMEWORK_GUIDE Pattern 3 — สี่ช่องกรอกถือว่าน้อย
+            จึงเปิดใน Modal · `{id}` ตรงนี้ถูกแทนด้วย id ของโดเมนโดย RouterManager
+          -->
+          <button type="button" class="btn btn-primary icon-plus" data-if="permissions['domain.manage']"
+                  data-action="click.prevent:requestApi"
+                  data-api-url="/api/v2/domains/{id}/dns-records/form" data-api-method="get"
+                  data-i18n>Add DNS record</button>
           <button type="button" class="btn icon-document" data-action="click.prevent:toggleClass" data-toggle-target="[data-zone-panel]" data-toggle-class="is-open" data-i18n>Zone
             file</button>
         </div>
@@ -49,37 +57,6 @@
             </thead>
             <tbody></tbody>
           </table>
-          <form data-form="dnsRecordAdd" class="table_nav" action="/api/v2/domains/{id}/dns-records" method="post" data-ajax-submit="true" data-validate="true" data-reset="true"
-                data-if="permissions['domain.manage']">
-            <div>
-              <label for="rec_type" data-i18n>Type</label>
-              <span class="form-control">
-                <select id="rec_type" name="type" required>
-                  <option value="A">A</option>
-                  <option value="AAAA">AAAA</option>
-                  <option value="CNAME">CNAME</option>
-                  <option value="MX">MX</option>
-                  <option value="TXT">TXT</option>
-                  <option value="SRV">SRV</option>
-                  <option value="NS">NS</option>
-                  <option value="CAA">CAA</option>
-                </select>
-              </span>
-            </div>
-            <div>
-              <label for="rec_name" data-i18n>Name</label>
-              <span class="form-control"><input type="text" id="rec_name" name="name" required maxlength="253" autocomplete="off"></span>
-            </div>
-            <div>
-              <label for="rec_value" data-i18n>Value</label>
-              <span class="form-control"><input type="text" id="rec_value" name="value" required maxlength="512" autocomplete="off"></span>
-            </div>
-            <div>
-              <label for="rec_ttl" data-i18n>TTL</label>
-              <span class="form-control"><input type="number" id="rec_ttl" name="ttl" value="3600" min="60" max="604800"></span>
-            </div>
-            <button type="submit" class="btn btn-primary icon-plus" data-i18n>Add</button>
-          </form>
         </div>
       </div>
       <!-- zone file ประกอบจากค่าที่ผู้ใช้กรอกทั้งหมด — data-text ผูกแบบข้อความเสมอ -->

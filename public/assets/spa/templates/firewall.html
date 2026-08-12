@@ -18,6 +18,14 @@
             <span class="pill pill-ok" data-show="active === true" data-i18n>Enabled</span>
             <span class="pill pill-danger" data-show="active === false" data-i18n>Disabled</span>
             <div class="header-actions" data-if="permissions['firewall.manage']">
+              <!--
+                ฟอร์มอยู่คนละเทมเพลตตาม FRAMEWORK_GUIDE Pattern 3 — หน้านี้มีแต่ตาราง
+                สี่ช่องกรอกถือว่าน้อย จึงเปิดใน Modal ที่เซิร์ฟเวอร์เป็นคนสั่ง
+              -->
+              <button type="button" class="btn small icon-plus"
+                      data-action="click.prevent:requestApi"
+                      data-api-url="/api/v2/firewall/rules/form" data-api-method="get"
+                      data-i18n>Add rule</button>
               <button type="button" class="btn small btn-primary icon-power" data-show="active === false" data-action="click.prevent:requestApi"
                       data-api-url="/api/v2/firewall/enabled" data-api-method="put" data-param-enabled="true"
                       data-confirm="Enabling the firewall can lock you out if a needed port isn't allowed yet — the panel and SSH ports are opened automatically first."
@@ -51,36 +59,6 @@
             </thead>
             <tbody></tbody>
           </table>
-          <form data-form="firewallRule" class="table_nav" action="/api/v2/firewall/rules" method="post" data-ajax-submit="true" data-validate="true" data-reset="true"
-                data-if="permissions['firewall.manage']">
-            <div>
-              <label for="fw_action" data-i18n>Action</label>
-              <span class="form-control">
-                <select id="fw_action" name="action" required>
-                  <option value="allow">allow</option>
-                  <option value="deny">deny</option>
-                </select>
-              </span>
-            </div>
-            <div>
-              <label for="fw_port" data-i18n>Port</label>
-              <span class="form-control"><input type="text" id="fw_port" name="port" required maxlength="16" autocomplete="off"></span>
-            </div>
-            <div>
-              <label for="fw_protocol" data-i18n>Protocol</label>
-              <span class="form-control">
-                <select id="fw_protocol" name="protocol">
-                  <option value="tcp">tcp</option>
-                  <option value="udp">udp</option>
-                </select>
-              </span>
-            </div>
-            <div>
-              <label for="fw_source" data-i18n>Source</label>
-              <span class="form-control"><input type="text" id="fw_source" name="source" maxlength="64" placeholder="any" autocomplete="off"></span>
-            </div>
-            <button type="submit" class="btn btn-primary icon-plus" data-i18n>Add rule</button>
-          </form>
         </div>
       </div>
     </div>

@@ -506,6 +506,38 @@ final class SitesController extends HostingController
     }
 
     /** เพิ่มโดเมนย่อยหรือ alias ให้เว็บไซต์นี้ */
+    /**
+     * โครงเปล่าของฟอร์มเพิ่มโดเมนให้เว็บนี้ พร้อมคำสั่งเปิด modal
+     *
+     * ปลายทางของฟอร์มขึ้นกับเว็บไซต์ จึงส่ง `form_action` มาให้ผูกกับแอตทริบิวต์
+     * action ตรง ๆ — เทมเพลตของ modal ถูกโหลดทีหลังจึงไม่ผ่านการแทนค่า `{id}`
+     * ของ RouterManager เหมือน HTML ของหน้า
+     */
+    public function domainForm(Request $request): Response
+    {
+        $site = $this->findSite($request->paramInt('id'));
+
+        if ($site === null) {
+            return $this->siteNotFound();
+        }
+
+        return $this->ok(
+            [
+                'form_action' => '/api/v2/sites/' . (int) $site['id'] . '/domains',
+                'host' => '',
+                'path' => '',
+            ],
+            [],
+            [[
+                'type' => 'modal',
+                'action' => 'show',
+                'template' => 'site-domain-form.html',
+                'title' => '{LNG_Add domain}',
+                'titleClass' => 'icon-link',
+            ]],
+        );
+    }
+
     public function addDomain(Request $request): Response
     {
         $site = $this->findSite($request->paramInt('id'));

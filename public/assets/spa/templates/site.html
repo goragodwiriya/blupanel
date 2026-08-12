@@ -176,7 +176,17 @@
         </div>
       </div>
       <div class="content-body">
-        <h2 data-i18n>Domains</h2>
+        <div class="flex middle fullwidth">
+          <h2 data-i18n>Domains</h2>
+          <!--
+            ฟอร์มอยู่คนละเทมเพลตตาม FRAMEWORK_GUIDE Pattern 3 — ส่วนนี้มีแต่ตาราง
+            สองช่องกรอกถือว่าน้อย จึงเปิดใน Modal ที่เซิร์ฟเวอร์เป็นคนสั่ง
+          -->
+          <button type="button" class="btn icon-plus" data-if="permissions['domain.manage']"
+                  data-action="click.prevent:requestApi"
+                  data-api-url="/api/v2/sites/{id}/domains/form" data-api-method="get"
+                  data-i18n>Add domain</button>
+        </div>
         <!--
           data-row-actions ใช้ {row_id} ไม่ใช่ {id} โดยตั้งใจ — URL ของหน้านี้เองมี ?id=
           (id ของเว็บไซต์) RouterManager.render (js/ui.js) แทนค่า {id} ทุกจุดในหน้าด้วย
@@ -184,29 +194,6 @@
           ปุ่ม "DNS records" ทุกแถวจะพาไปที่โดเมนแถวแรกเหมือนกันหมด
         -->
         <div class="tablebody">
-          <form class="table_nav" data-form="siteDomainAdd" action="/api/v2/sites/{id}/domains" method="post" data-ajax-submit="true" data-validate="true" data-reset="true">
-            <div>
-              <label for="new_host" data-i18n>Add domain</label>
-              <span class="form-control icon-link">
-                <input type="text" id="new_host" name="host" required maxlength="253" placeholder="sub.example.com {LNG_or} *.example.com" autocomplete="off">
-              </span>
-              <!--
-                คำเตือนต้องอยู่ตรงนี้ ไม่ใช่หลังกดเพิ่ม (เฟส E7) — `*.example.com` แปลว่า
-                subdomain ที่ยังไม่มีใครจดก็เข้าเว็บนี้ได้ ซึ่งเป็นการตัดสินใจด้านความปลอดภัย
-                ที่ผู้ดูแลต้องรู้ก่อนกด ไม่ใช่รู้ตอนที่มีคนใช้ชื่อที่ไม่ได้ตั้งใจเข้ามาแล้ว
-              -->
-              <div class="comment" data-i18n>Wildcard (*.example.com) accepts every subdomain that is not defined elsewhere, including ones nobody registered. It needs a DNS zone on this server and is verified through DNS, not HTTP.</div>
-            </div>
-            <div>
-              <label for="new_path" data-i18n>Path</label>
-              <span class="form-control icon-folder">
-                <input type="text" id="new_path" name="path" maxlength="253" placeholder="/shop {LNG_or leave blank If you want to use it as Alias}" autocomplete="off">
-              </span>
-            </div>
-            <div>
-              <button type="submit" class="btn btn-primary fullwidth icon-plus" data-i18n>Add</button>
-            </div>
-          </form>
           <table class="table border fullwidth" data-table="siteDomains" data-attr="data:domains" data-row-actions='{
                     "link": {
                      "title": "Open",

@@ -1,0 +1,57 @@
+<!--
+  ฟอร์มสร้างไฟล์สำรอง — คนละเทมเพลตกับตารางตาม FRAMEWORK_GUIDE Pattern 3
+
+  สี่ช่องกรอกถือว่าน้อย จึงเปิดใน Modal ตามคำสั่งที่มากับคำตอบของ API
+  ไม่มีฟอร์มแก้ไขคู่กัน เพราะไฟล์สำรองแก้ไม่ได้ — สร้าง กู้คืน หรือลบเท่านั้น
+-->
+<form data-form="backupCreate"
+      action="/api/v2/backups"
+      method="post"
+      data-ajax-submit="true"
+      data-validate="true">
+  <fieldset>
+    <div>
+      <label for="nb_type" data-i18n>Type</label>
+      <span class="form-control icon-menus">
+        <select id="nb_type" name="type" required data-value="type">
+          <option value="site">site</option>
+          <option value="database">database</option>
+          <option value="config">config</option>
+          <option value="full">full</option>
+        </select>
+      </span>
+    </div>
+    <!--
+      เลือกเว็บไซต์จากรายการจริง ไม่ใช่ให้กรอกเลข id เอง — รายการมาจาก endpoint
+      ของมันเอง ผ่าน ApiComponent ที่ครอบ <select> ไว้
+    -->
+    <div data-component="api" data-endpoint="/api/v2/sites">
+      <label for="nb_site" data-i18n>Website</label>
+      <div class="comment" data-i18n>Used only when the type is site</div>
+      <span class="form-control icon-website">
+        <select id="nb_site" name="site_id" data-for="site in data" data-value="site_id">
+          <template>
+            <option data-attr="value:site.id" data-text="site.domain"></option>
+          </template>
+        </select>
+      </span>
+    </div>
+    <div>
+      <label for="nb_db" data-i18n>Database name</label>
+      <span class="form-control icon-database">
+        <input type="text" id="nb_db" name="database" maxlength="64"
+               autocomplete="off" data-attr="value:database">
+      </span>
+    </div>
+    <div>
+      <label for="nb_note" data-i18n>Note</label>
+      <span class="form-control icon-edit">
+        <input type="text" id="nb_note" name="note" maxlength="200"
+               autocomplete="off" data-attr="value:note">
+      </span>
+    </div>
+  </fieldset>
+  <fieldset class="submit right">
+    <button type="submit" class="btn btn-primary icon-save" data-i18n>Create backup</button>
+  </fieldset>
+</form>

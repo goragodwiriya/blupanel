@@ -1,0 +1,172 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <!--
+    ฟอร์มปลายทางนอกเครื่อง — **หน้าเว็บของตัวเอง ไม่ใช่ Modal**
+
+    FRAMEWORK_GUIDE ให้ใช้ Modal เมื่อช่องกรอกไม่เยอะ · ฟอร์มนี้มีสิบกว่าช่องรวม
+    textarea ของกุญแจลับ จึงเข้าเกณฑ์ "หน้าเว็บ" ตามกฎเดียวกัน
+
+    ไฟล์เดียวทำทั้งเพิ่มและแก้ไข — `id` ที่ซ่อนอยู่ท้ายฟอร์มเป็นตัวบอก และเซิร์ฟเวอร์
+    เป็นคนตัดสิน (`POST /api/v2/backup-destinations` ส่งต่อให้ update() เองเมื่อ id > 0)
+    ปลายทางเดียวเสมอ จึงไม่ต้องผูก action หรือ method ตามเงื่อนไขในเทมเพลต
+  -->
+  <main class="content" data-script="pageDetail" data-fallback="/backups">
+    <div class="card-groups" data-component="api" data-endpoint="/api/v2/backup-destinations/{id}">
+      <header>
+        <div>
+          <h1 class="icon-cloud" data-i18n>Offsite destination</h1>
+          <p data-i18n>Backups stay on the same disk as the live data until they are copied somewhere else</p>
+        </div>
+        <div class="header-actions">
+          <a class="btn icon-arrow-left" href="/app/backups" data-route="/backups" data-i18n>Backups</a>
+        </div>
+      </header>
+      <div class="content-body">
+        <form data-form="backupDestination"
+              action="/api/v2/backup-destinations"
+              method="post"
+              data-ajax-submit="true"
+              data-validate="true">
+          <fieldset>
+            <div class="form-group">
+              <div class="width50">
+                <label for="nd_name" data-i18n>Name</label>
+                <span class="form-control icon-cloud">
+                  <input type="text" id="nd_name" name="name" required maxlength="100"
+                         autocomplete="off" data-attr="value:name">
+                </span>
+              </div>
+              <div class="width50">
+                <!--
+                  ชนิดของปลายทางเปลี่ยนทีหลังไม่ได้ — ค่าที่ตั้งไว้ผูกกับรูปแบบของ config
+                  ที่เก็บไว้แล้ว · ตอนแก้ไขจึงแสดงเป็นข้อความ ไม่ใช่ตัวเลือกที่กดได้แล้ว
+                  ไม่มีผล
+                -->
+                <label for="nd_driver" data-i18n>Type</label>
+                <span class="form-control icon-menus" data-show="id === 0">
+                  <select id="nd_driver" name="driver" data-value="driver">
+                    <option value="local">local</option>
+                    <option value="sftp">sftp</option>
+                    <option value="rsync">rsync</option>
+                    <option value="s3">s3</option>
+                  </select>
+                </span>
+                <p class="mono" data-show="id > 0" data-text="driver"></p>
+                <div class="comment" data-i18n>local = another path on this machine, such as a mounted NAS. s3 = AWS S3 or a compatible service (MinIO, Backblaze B2, DigitalOcean
+                  Spaces, Cloudflare R2)</div>
+              </div>
+            </div>
+            <div class="form-group">
+              <div class="width50">
+                <label for="nd_host" data-i18n>Host</label>
+                <span class="form-control icon-cpu">
+                  <input type="text" id="nd_host" name="host" maxlength="255"
+                         autocomplete="off" data-attr="value:config.host">
+                </span>
+                <div class="comment" data-i18n>sftp/rsync only</div>
+              </div>
+              <div class="width25">
+                <label for="nd_port" data-i18n>Port</label>
+                <span class="form-control">
+                  <input type="number" id="nd_port" name="port" min="1" max="65535" data-attr="value:config.port">
+                </span>
+              </div>
+              <div class="width25">
+                <label for="nd_user" data-i18n>User</label>
+                <span class="form-control icon-user">
+                  <input type="text" id="nd_user" name="user" maxlength="64"
+                         autocomplete="off" data-attr="value:config.user">
+                </span>
+              </div>
+            </div>
+            <div>
+              <label for="nd_path" data-i18n>Path</label>
+              <span class="form-control icon-folder">
+                <input type="text" id="nd_path" name="path" maxlength="512" autocomplete="off"
+                       placeholder="/srv/backups" data-attr="value:config.path">
+              </span>
+              <div class="comment" data-i18n>Required for local/sftp/rsync. Optional key prefix for s3</div>
+            </div>
+            <!-- ฟิลด์เฉพาะ s3 — ฟอร์มเดียวกันแสดงทุกช่องตลอด ไม่มี JS สลับตามชนิดที่เลือก
+                 เหมือนช่อง host/port/user ด้านบนที่ก็ไม่ผูกกับ driver เหมือนกัน -->
+            <div class="form-group">
+              <div class="width50">
+                <label for="nd_bucket" data-i18n>Bucket</label>
+                <span class="form-control icon-stack">
+                  <input type="text" id="nd_bucket" name="bucket" maxlength="63"
+                         autocomplete="off" data-attr="value:config.bucket">
+                </span>
+                <div class="comment" data-i18n>s3 only</div>
+              </div>
+              <div class="width50">
+                <label for="nd_region" data-i18n>Region</label>
+                <span class="form-control icon-world">
+                  <input type="text" id="nd_region" name="region" maxlength="64" autocomplete="off"
+                         placeholder="us-east-1" data-attr="value:config.region">
+                </span>
+              </div>
+            </div>
+            <div class="form-group">
+              <div class="width50">
+                <label for="nd_access_key" data-i18n>Access key</label>
+                <span class="form-control icon-user">
+                  <input type="text" id="nd_access_key" name="access_key" maxlength="128"
+                         autocomplete="off" data-attr="value:config.access_key">
+                </span>
+              </div>
+              <div class="width50">
+                <label for="nd_endpoint" data-i18n>Endpoint</label>
+                <span class="form-control icon-link">
+                  <input type="text" id="nd_endpoint" name="endpoint" maxlength="255" autocomplete="off"
+                         placeholder="https://s3.us-west-000.backblazeb2.com" data-attr="value:config.endpoint">
+                </span>
+                <div class="comment" data-i18n>Leave blank for AWS S3. Required for other s3-compatible services</div>
+              </div>
+            </div>
+            <div>
+              <input type="checkbox" class="switch" id="nd_path_style" name="path_style" value="1"
+                     data-attr="checked:config.path_style">
+              <label for="nd_path_style" data-i18n>Path-style addressing</label>
+              <div class="comment" data-i18n>Turn on for services without wildcard DNS per bucket, such as self-hosted MinIO</div>
+            </div>
+            <div>
+              <!--
+                กุญแจลับไม่เคยถูกส่งกลับมาแสดง — เก็บแบบเข้ารหัสและอ่านคืนไม่ได้
+                ตอนแก้ไขจึงเว้นว่างไว้ได้ เซิร์ฟเวอร์จะเปลี่ยนก็ต่อเมื่อกรอกค่าใหม่มา
+              -->
+              <label for="nd_secret" data-i18n>Private key / secret key</label>
+              <span class="form-control">
+                <textarea id="nd_secret" name="secret" rows="4" class="mono" autocomplete="off"></textarea>
+              </span>
+              <div class="comment" data-i18n>Needed for sftp, rsync and s3 (secret access key). Stored encrypted and never shown again. Leave blank to keep the current one. Password
+                authentication is not supported for sftp/rsync</div>
+            </div>
+            <div class="form-group">
+              <div class="width50">
+                <label for="nd_days" data-i18n>Keep for (days)</label>
+                <span class="form-control icon-clock">
+                  <input type="number" id="nd_days" name="retention_days" min="0" data-attr="value:retention_days">
+                </span>
+                <div class="comment" data-i18n>0 = keep forever</div>
+              </div>
+              <div class="width50">
+                <label for="nd_count" data-i18n>Always keep (copies)</label>
+                <span class="form-control icon-stack">
+                  <input type="number" id="nd_count" name="retention_count" min="0" data-attr="value:retention_count">
+                </span>
+                <div class="comment" data-i18n>Newest copies are kept even when older than the day limit</div>
+              </div>
+            </div>
+          </fieldset>
+          <fieldset class="submit right">
+            <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
+            <input type="hidden" name="id" data-attr="value:id">
+          </fieldset>
+        </form>
+      </div>
+    </div>
+  </main>
+</div>

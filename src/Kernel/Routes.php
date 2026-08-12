@@ -122,6 +122,7 @@ final class Routes
         $router->add(new Route('GET', '/api/v2/sites/{id}/rate-limit/bans', SitesController::class, 'rateLimitBans', 'site.view', 'api.v2.sites.rate_limit.bans'));
         $router->add(new Route('POST', '/api/v2/sites/{id}/rate-limit/unban', SitesController::class, 'unbanIp', 'site.edit', 'api.v2.sites.rate_limit.unban'));
         $router->add(new Route('GET', '/api/v2/sites/{id}/domains', SitesController::class, 'domains', 'domain.view', 'api.v2.sites.domains'));
+        $router->add(new Route('GET', '/api/v2/sites/{id}/domains/form', SitesController::class, 'domainForm', 'domain.manage', 'api.v2.sites.domains.form'));
         $router->add(new Route('POST', '/api/v2/sites/{id}/domains', SitesController::class, 'addDomain', 'domain.manage', 'api.v2.sites.domains.add'));
         $router->add(new Route('PUT', '/api/v2/sites/{id}/domains', SitesController::class, 'setDomains', 'domain.manage', 'api.v2.sites.domains.set'));
         $router->add(new Route('DELETE', '/api/v2/sites/{id}/domains/{domain}', SitesController::class, 'removeDomain', 'domain.manage', 'api.v2.sites.domains.remove'));
@@ -131,6 +132,7 @@ final class Routes
         $router->add(new Route('POST', '/api/v2/domains', DomainsController::class, 'store', 'domain.manage', 'api.v2.domains.store'));
         $router->add(new Route('DELETE', '/api/v2/domains/{id}', DomainsController::class, 'destroy', 'domain.manage', 'api.v2.domains.destroy'));
         $router->add(new Route('GET', '/api/v2/domains/{id}/dns-records', DomainsController::class, 'records', 'domain.view', 'api.v2.dns.index'));
+        $router->add(new Route('GET', '/api/v2/domains/{id}/dns-records/form', DomainsController::class, 'recordForm', 'domain.manage', 'api.v2.dns.form'));
         $router->add(new Route('POST', '/api/v2/domains/{id}/dns-records', DomainsController::class, 'addRecord', 'domain.manage', 'api.v2.dns.store'));
         $router->add(new Route('GET', '/api/v2/domains/{id}/zone-file', DomainsController::class, 'zoneFile', 'domain.view', 'api.v2.domains.zone'));
         $router->add(new Route('DELETE', '/api/v2/dns-records/{id}', DomainsController::class, 'deleteRecord', 'domain.manage', 'api.v2.dns.destroy'));
@@ -185,6 +187,8 @@ final class Routes
         $router->add(new Route('POST', '/api/v2/services/{unit}/actions', ServicesController::class, 'action', 'service.control', 'api.v2.services.action'));
 
         $router->add(new Route('GET', '/api/v2/firewall', V2FirewallController::class, 'index', 'firewall.view', 'api.v2.firewall.index'));
+        // ต้องมาก่อน {number} — ไม่งั้น "form" ถูกอ่านเป็นหมายเลขกฎ
+        $router->add(new Route('GET', '/api/v2/firewall/rules/form', V2FirewallController::class, 'form', 'firewall.manage', 'api.v2.firewall.rules.form'));
         $router->add(new Route('POST', '/api/v2/firewall/rules', V2FirewallController::class, 'addRule', 'firewall.manage', 'api.v2.firewall.rules.add'));
         $router->add(new Route('DELETE', '/api/v2/firewall/rules/{number}', V2FirewallController::class, 'deleteRule', 'firewall.manage', 'api.v2.firewall.rules.delete'));
         $router->add(new Route('PUT', '/api/v2/firewall/enabled', V2FirewallController::class, 'setEnabled', 'firewall.manage', 'api.v2.firewall.enabled'));
@@ -262,6 +266,8 @@ final class Routes
 
         // --- ข้อมูลสำรอง ---
         $router->add(new Route('GET', '/api/v2/backups', BackupsController::class, 'index', 'backup.view', 'api.v2.backups.index'));
+        // ต้องมาก่อน {id} — ไม่งั้น "form" ถูกอ่านเป็นรหัสไฟล์สำรอง
+        $router->add(new Route('GET', '/api/v2/backups/form', BackupsController::class, 'form', 'backup.manage', 'api.v2.backups.form'));
         $router->add(new Route('POST', '/api/v2/backups', BackupsController::class, 'store', 'backup.manage', 'api.v2.backups.store'));
         $router->add(new Route('DELETE', '/api/v2/backups/{id}', BackupsController::class, 'destroy', 'backup.manage', 'api.v2.backups.destroy'));
         // กู้คืนใช้สิทธิ์แยกจากการสร้าง/ลบ — เป็นคำสั่งที่เขียนทับข้อมูลปัจจุบันทั้งหมด
@@ -279,6 +285,7 @@ final class Routes
 
         // --- ตารางเวลาสำรองอัตโนมัติ — แตะได้เฉพาะงานที่ทรัพยากรนี้สร้างเอง ---
         $router->add(new Route('GET', '/api/v2/backup-schedules', BackupSchedulesController::class, 'index', 'backup.offsite', 'api.v2.backup_schedules.index'));
+        $router->add(new Route('GET', '/api/v2/backup-schedules/form', BackupSchedulesController::class, 'form', 'backup.offsite', 'api.v2.backup_schedules.form'));
         $router->add(new Route('POST', '/api/v2/backup-schedules', BackupSchedulesController::class, 'store', 'backup.offsite', 'api.v2.backup_schedules.store'));
         $router->add(new Route('PATCH', '/api/v2/backup-schedules/{id}', BackupSchedulesController::class, 'update', 'backup.offsite', 'api.v2.backup_schedules.update'));
         $router->add(new Route('DELETE', '/api/v2/backup-schedules/{id}', BackupSchedulesController::class, 'destroy', 'backup.offsite', 'api.v2.backup_schedules.destroy'));

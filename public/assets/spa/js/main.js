@@ -50,6 +50,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     '/cron-jobs': { template: 'cron-jobs.html', title: '{LNG_Cron Jobs}', permission: 'cron.view' },
     '/cron-job': { template: 'cron-job.html', title: '{LNG_Cron Jobs}', permission: 'cron.view' },
     '/backups': { template: 'backups.html', title: '{LNG_Backups}', permission: 'backup.view' },
+    // ฟอร์มปลายทางมีสิบกว่าช่อง จึงเป็นหน้าของตัวเองแทน Modal ตาม FRAMEWORK_GUIDE
+    // ไฟล์เดียวทำทั้งเพิ่ม (id=0) และแก้ไข
+    '/backup-destination': { template: 'backup-destination.html', title: '{LNG_Offsite destination}', permission: 'backup.offsite' },
 
     // --- SERVER ---
     '/server': { template: 'server.html', title: '{LNG_Server Overview}', permission: 'server.view' },

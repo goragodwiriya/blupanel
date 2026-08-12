@@ -150,6 +150,42 @@ final class DomainsController extends HostingController
     }
 
     /** เพิ่ม DNS record */
+    /**
+     * โครงเปล่าของฟอร์มเพิ่มเรกคอร์ด พร้อมคำสั่งเปิด modal
+     *
+     * ปลายทางของฟอร์มขึ้นกับโดเมน จึงส่ง `form_action` มาให้ผูกกับแอตทริบิวต์ action
+     * ตรง ๆ — เทมเพลตของ modal ถูกโหลดทีหลังจึงไม่ผ่านการแทนค่า `{id}` ของ
+     * RouterManager เหมือน HTML ของหน้า (ดูหมายเหตุใน domain.html)
+     *
+     * เรกคอร์ด DNS แก้ไม่ได้ (เพิ่มกับลบเท่านั้น) จึงมีแต่ฟอร์มของใหม่
+     */
+    public function recordForm(Request $request): Response
+    {
+        $domain = $this->findDomain($request->paramInt('id'));
+
+        if ($domain === null) {
+            return $this->problem(ApiProblem::NotFound, 'ไม่พบโดเมนที่ระบุ');
+        }
+
+        return $this->ok(
+            [
+                'form_action' => '/api/v2/domains/' . (int) $domain['id'] . '/dns-records',
+                'type' => 'A',
+                'name' => '',
+                'value' => '',
+                'ttl' => 3600,
+            ],
+            [],
+            [[
+                'type' => 'modal',
+                'action' => 'show',
+                'template' => 'dns-record-form.html',
+                'title' => '{LNG_Add DNS record}',
+                'titleClass' => 'icon-list',
+            ]],
+        );
+    }
+
     public function addRecord(Request $request): Response
     {
         $domain = $this->findDomain($request->paramInt('id'));

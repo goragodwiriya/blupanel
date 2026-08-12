@@ -1,0 +1,55 @@
+<!--
+  ฟอร์มเพิ่มกฎไฟร์วอลล์ — คนละเทมเพลตกับตารางตาม FRAMEWORK_GUIDE Pattern 3
+
+  สี่ช่องกรอกถือว่าน้อย จึงเปิดใน Modal ตามคำสั่งที่มากับคำตอบของ API
+  (`actions: [{type:'modal', template:'firewall-rule-form.html'}]`)
+
+  ไม่มีฟอร์มแก้ไขคู่กัน เพราะกฎของ ufw แก้ไม่ได้ — หมายเลขกฎเลื่อนเมื่อลบตัวก่อนหน้า
+  การ "แก้" จึงเป็นการลบแล้วเพิ่มใหม่เสมอ
+-->
+<form data-form="firewallRule"
+      action="/api/v2/firewall/rules"
+      method="post"
+      data-ajax-submit="true"
+      data-validate="true">
+  <fieldset>
+    <div class="form-group">
+      <div class="width50">
+        <label for="fw_action" data-i18n>Action</label>
+        <span class="form-control">
+          <select id="fw_action" name="action" required data-value="action">
+            <option value="allow">allow</option>
+            <option value="deny">deny</option>
+          </select>
+        </span>
+      </div>
+      <div class="width50">
+        <label for="fw_protocol" data-i18n>Protocol</label>
+        <span class="form-control">
+          <select id="fw_protocol" name="protocol" data-value="protocol">
+            <option value="tcp">tcp</option>
+            <option value="udp">udp</option>
+          </select>
+        </span>
+      </div>
+    </div>
+    <div>
+      <label for="fw_port" data-i18n>Port</label>
+      <span class="form-control">
+        <input type="text" id="fw_port" name="port" required maxlength="16"
+               autocomplete="off" data-attr="value:port">
+      </span>
+    </div>
+    <div>
+      <label for="fw_source" data-i18n>Source</label>
+      <span class="form-control">
+        <input type="text" id="fw_source" name="source" maxlength="64"
+               placeholder="any" autocomplete="off" data-attr="value:source">
+      </span>
+      <div class="comment" data-i18n>Leave blank to allow from anywhere</div>
+    </div>
+  </fieldset>
+  <fieldset class="submit right">
+    <button type="submit" class="btn btn-primary icon-save" data-i18n>Add rule</button>
+  </fieldset>
+</form>

@@ -706,6 +706,31 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
 
+  /sites/{id}/domains/form:
+    get:
+      tags: [sites]
+      summary: โครงเปล่าของฟอร์มเพิ่มโดเมนให้เว็บไซต์ พร้อมคำสั่งเปิด modal
+      description: |
+        คืนค่าเริ่มต้นของฟอร์มพร้อม `actions: [{type: modal, template: ...}]`
+        และ `form_action` ที่แก้ไขแล้วตามเว็บไซต์ — เทมเพลตของ modal ถูกโหลดทีหลัง
+        จึงไม่ผ่านการแทนค่า `{id}` ของ RouterManager เหมือน HTML ของหน้า
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: โครงเปล่าและคำสั่งเปิด modal
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { type: object }
+                  actions: { type: array, items: { type: object } }
+
   /sites/{id}/domains:
     parameters:
       - { $ref: "#/components/parameters/SiteId" }
@@ -876,6 +901,31 @@ paths:
         "409":
           description: "`CONFLICT` — เป็นโดเมนหลักของเว็บไซต์ ลบแยกไม่ได้ ต้องลบทั้งเว็บ"
           $ref: "#/components/responses/Error"
+
+  /domains/{id}/dns-records/form:
+    get:
+      tags: [domains]
+      summary: โครงเปล่าของฟอร์มเพิ่มเรกคอร์ด DNS พร้อมคำสั่งเปิด modal
+      description: |
+        คืนค่าเริ่มต้นของฟอร์มพร้อม `actions: [{type: modal, template: ...}]`
+        หน้าเว็บจึงยิงคำขอเดียวแล้วส่งคำตอบต่อให้ ResponseHandler โดยไม่ต้องรู้ว่า
+        เทมเพลตของฟอร์มชื่ออะไร — รูปแบบเดียวกับ `GET /databases/form`
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: โครงเปล่าและคำสั่งเปิด modal
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { type: object }
+                  actions: { type: array, items: { type: object } }
 
   /domains/{id}/dns-records:
     parameters:
@@ -1687,6 +1737,26 @@ paths:
                           - { type: "null" }
         "403": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
+
+  /firewall/rules/form:
+    get:
+      tags: [firewall]
+      summary: โครงเปล่าของฟอร์มเพิ่มกฎไฟร์วอลล์ พร้อมคำสั่งเปิด modal
+      description: |
+        คืนค่าเริ่มต้นของฟอร์มพร้อม `actions: [{type: modal, template: ...}]`
+        หน้าเว็บจึงยิงคำขอเดียวแล้วส่งคำตอบต่อให้ ResponseHandler โดยไม่ต้องรู้ว่า
+        เทมเพลตของฟอร์มชื่ออะไร — รูปแบบเดียวกับ `GET /databases/form`
+      responses:
+        "200":
+          description: โครงเปล่าและคำสั่งเปิด modal
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { type: object }
+                  actions: { type: array, items: { type: object } }
 
   /firewall/rules:
     post:
@@ -3259,6 +3329,26 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
 
+  /backups/form:
+    get:
+      tags: [backups]
+      summary: โครงเปล่าของฟอร์มสร้างไฟล์สำรอง พร้อมคำสั่งเปิด modal
+      description: |
+        คืนค่าเริ่มต้นของฟอร์มพร้อม `actions: [{type: modal, template: ...}]`
+        หน้าเว็บจึงยิงคำขอเดียวแล้วส่งคำตอบต่อให้ ResponseHandler โดยไม่ต้องรู้ว่า
+        เทมเพลตของฟอร์มชื่ออะไร — รูปแบบเดียวกับ `GET /databases/form`
+      responses:
+        "200":
+          description: โครงเปล่าและคำสั่งเปิด modal
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { type: object }
+                  actions: { type: array, items: { type: object } }
+
   /backups:
     get:
       tags: [backups]
@@ -3584,6 +3674,26 @@ paths:
                       remote_files_left: { type: integer }
                       message: { type: string }
         "404": { $ref: "#/components/responses/Error" }
+
+  /backup-schedules/form:
+    get:
+      tags: [backups]
+      summary: โครงเปล่าของฟอร์มตั้งเวลาสำรอง พร้อมคำสั่งเปิด modal
+      description: |
+        คืนค่าเริ่มต้นของฟอร์มพร้อม `actions: [{type: modal, template: ...}]`
+        หน้าเว็บจึงยิงคำขอเดียวแล้วส่งคำตอบต่อให้ ResponseHandler โดยไม่ต้องรู้ว่า
+        เทมเพลตของฟอร์มชื่ออะไร — รูปแบบเดียวกับ `GET /databases/form`
+      responses:
+        "200":
+          description: โครงเปล่าและคำสั่งเปิด modal
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data: { type: object }
+                  actions: { type: array, items: { type: object } }
 
   /backup-schedules:
     get:
