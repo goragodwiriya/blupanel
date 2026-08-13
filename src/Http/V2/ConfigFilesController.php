@@ -112,9 +112,15 @@ final class ConfigFilesController extends HostingController
             return $this->siteNotFound();
         }
 
+        /*
+         * คีย์มาจากเนื้อคำขอ ไม่ใช่เส้นทาง — ดูเหตุผลที่ตารางเส้นทาง
+         *
+         * ว่างได้: เว็บไซต์หนึ่งมีไฟล์ที่แก้ได้ไฟล์เดียวอยู่แล้ว capability จึงรู้ปลายทาง
+         * เอง · แต่ถ้าส่งมา ต้องเป็นคีย์ของไฟล์ที่แก้ได้จริง ไม่งั้นถูกปฏิเสธที่ชั้นล่างสุด
+         */
         $result = $this->agent()->data('site.custom_config', [
             'site_id' => $siteId,
-            'key' => $request->param('key'),
+            'key' => $request->payloadString('key'),
             'content' => $request->payloadString('content'),
             'window' => (int) $request->payload('window', 0),
         ], $this->ctx->actor($request));

@@ -543,6 +543,31 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
 
   /config-files:
+    put:
+      tags: [sites]
+      summary: เขียนไฟล์ที่แก้ได้
+      description: >-
+        คีย์ส่งมาในเนื้อคำขอ **ไม่ใช่ในเส้นทาง** — ฟอร์มอยู่ใน Modal ซึ่งไม่มีใครเติมค่าลง
+        ตัวแปรในเส้นทางให้ · ว่างได้เพราะเว็บไซต์หนึ่งมีไฟล์ที่แก้ได้ไฟล์เดียว แต่ถ้าส่งมา
+        ต้องเป็นคีย์ของไฟล์ที่แก้ได้จริง · ตัวเขียนตรวจจากทะเบียนอีกรอบก่อนลงมือ
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                site_id: { type: integer }
+                key: { type: string }
+                content: { type: string }
+                window: { type: integer, description: วินาทีก่อนถอนคืนอัตโนมัติ }
+      responses:
+        "200":
+          description: บันทึกแล้ว รอการยืนยัน
+          content:
+            application/json:
+              schema:
+                type: object
+        "422": { $ref: "#/components/responses/Error" }
     get:
       tags: [sites]
       summary: รายการไฟล์ตั้งค่าของขอบเขตหนึ่ง พร้อมบอกว่าไฟล์ไหนแก้ได้
@@ -581,31 +606,6 @@ paths:
               schema:
                 type: object
         "422": { $ref: "#/components/responses/Error" }
-    put:
-      tags: [sites]
-      summary: เขียนไฟล์ที่แก้ได้
-      description: >-
-        ตัวเขียนตรวจจากทะเบียนอีกรอบว่าไฟล์นี้แก้ได้จริง — คีย์ของไฟล์ที่ระบบสร้างถูก
-        ปฏิเสธที่ชั้นล่างสุด ไม่ใช่แค่ปุ่มไม่ขึ้นบนหน้าจอ · เขียนผ่าน ConfigTransaction
-        แล้วให้ตัวตรวจของเว็บเซิร์ฟเวอร์เองตัดสิน · ผ่านแล้วยังตั้งเวลาถอนคืนไว้
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                site_id: { type: integer }
-                content: { type: string }
-                window: { type: integer, description: วินาทีก่อนถอนคืนอัตโนมัติ }
-      responses:
-        "200":
-          description: บันทึกแล้ว รอการยืนยัน
-          content:
-            application/json:
-              schema:
-                type: object
-        "422": { $ref: "#/components/responses/Error" }
-
   /sites/{id}/rate-limit:
     parameters:
       - { $ref: "#/components/parameters/SiteId" }

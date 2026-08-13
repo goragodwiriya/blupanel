@@ -489,7 +489,7 @@ test('เจ้าของเว็บไซต์แตะไฟล์ตั�
     foreach ([
         ['GET', '/api/v2/config-files'],
         ['GET', '/api/v2/config-files/site.' . $siteId . '.custom'],
-        ['PUT', '/api/v2/config-files/site.' . $siteId . '.custom'],
+        ['PUT', '/api/v2/config-files'],
     ] as [$method, $path]) {
         $response = $harness->request(
             $method,

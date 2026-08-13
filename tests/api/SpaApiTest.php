@@ -227,6 +227,55 @@ test('ทุกแถวของตารางในเทมเพลตม�
     assertSame([], $problems, "เทมเพลตเสียรูป:\n  " . implode("\n  ", $problems));
 });
 
+test('ฟอร์มใน Modal ต้องไม่มีตัวแปรค้างในเส้นทางที่ส่ง', static function (): void {
+    /*
+     * **`{id}` ถูกเติมตอนเทมเพลตของ*หน้า*ยังเป็นสตริง** (`RouterManager.render`) ·
+     * เทมเพลตที่ถูกเปิดเป็น Modal ทีหลังไม่ผ่านขั้นนั้น ตัวแปรในเส้นทางจึงถูกส่งไป
+     * ตรง ๆ เป็นตัวอักษร แล้วปลายทางปฏิเสธด้วยข้อความที่ชวนงงอย่าง "รหัสไม่ถูกต้อง"
+     *
+     * เจอจริงตอนทำหน้าไฟล์ตั้งค่า: กดบันทึกแล้วขึ้น "รหัสไฟล์ตั้งค่าไม่ถูกต้อง" ทุกครั้ง
+     * ไม่ว่าจะกรอกอะไร เพราะสิ่งที่ส่งไปคือสตริง `{key}` ตามตัวอักษร
+     *
+     * ค่าที่ต้องส่งให้ใช้ช่องซ่อนที่ผูกค่าด้วยกลไกเดียวกับช่องอื่นในฟอร์มแทน
+     */
+    $problems = [];
+
+    // เทมเพลตที่ถูกเปิดเป็น Modal — ประกาศไว้ฝั่ง controller
+    $modalTemplates = [];
+
+    foreach (glob(PHPCP_ROOT . '/src/Http/V2/*.php') ?: [] as $file) {
+        preg_match_all("/'template'\s*=>\s*'([\w.-]+\.html)'/", (string) file_get_contents($file), $matches);
+        $modalTemplates = array_merge($modalTemplates, $matches[1]);
+    }
+
+    foreach (array_unique($modalTemplates) as $template) {
+        $path = PHPCP_ROOT . '/public/assets/spa/templates/' . $template;
+
+        if (!is_file($path)) {
+            continue;
+        }
+
+        $html = (string) preg_replace('/<!--.*?-->/s', '', (string) file_get_contents($path));
+
+        if (preg_match_all('/<form[^>]*action="([^"]*)"/i', $html, $forms) === 0) {
+            continue;
+        }
+
+        foreach ($forms[1] as $action) {
+            if (str_contains($action, '{')) {
+                $problems[] = $template . ': ' . $action;
+            }
+        }
+    }
+
+    assertSame(
+        [],
+        array_values(array_unique($problems)),
+        "ฟอร์มใน Modal เหล่านี้มีตัวแปรค้างในเส้นทาง ไม่มีใครเติมค่าให้ — ส่งเป็นช่องซ่อนแทน:\n  "
+        . implode("\n  ", array_unique($problems)),
+    );
+});
+
 test('ฟอร์มที่เปิดใน Modal ต้องสั่งปิด Modal เมื่อบันทึกสำเร็จ', static function (): void {
     /*
      * **Modal ถูกเปิดด้วยคำสั่งจากเซิร์ฟเวอร์ การปิดจึงต้องเป็นคำสั่งจากเซิร์ฟเวอร์ด้วย**

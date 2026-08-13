@@ -10,9 +10,15 @@
   <!-- แก้ได้ — ฟอร์มพร้อมคำเตือนว่าต้องยืนยันหลังบันทึก -->
   <div data-if="writable">
     <div class="alert alert-warning" data-i18n>After saving, open the website and check it really works, then confirm. The configuration test only proves the syntax is valid — rules that block every request pass it too. Without confirmation the previous version is restored automatically.</div>
-    <form data-form="configFile" action="/api/v2/config-files/{key}" method="post" data-method="PUT"
+    <!--
+      **เส้นทางต้องไม่มี `{key}`** — ไม่มีใครเติมค่าลงไปให้ใน Modal ที่เปิดทีหลัง
+      (`RouterManager` เติม `{id}` ตอนเทมเพลตของ*หน้า*ยังเป็นสตริงเท่านั้น) · ส่งคีย์
+      เป็นช่องซ่อนแทน ซึ่งผูกค่าด้วยกลไกเดียวกับช่องอื่นในฟอร์ม
+    -->
+    <form data-form="configFile" action="/api/v2/config-files" method="post" data-method="PUT"
           data-ajax-submit="true" data-reload-table="configFiles" data-emit-event="phpcp:reload">
       <input type="hidden" name="site_id" data-attr="value:site_id">
+      <input type="hidden" name="key" data-attr="value:key">
       <fieldset>
         <div>
           <span class="form-control">

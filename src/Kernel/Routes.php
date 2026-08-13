@@ -278,7 +278,12 @@ final class Routes
          */
         $router->add(new Route('GET', '/api/v2/config-files', ConfigFilesController::class, 'index', 'settings.manage', 'api.v2.config_files.index'));
         $router->add(new Route('GET', '/api/v2/config-files/{key}', ConfigFilesController::class, 'show', 'settings.manage', 'api.v2.config_files.show'));
-        $router->add(new Route('PUT', '/api/v2/config-files/{key}', ConfigFilesController::class, 'update', 'settings.manage', 'api.v2.config_files.update'));
+        /*
+         * **เขียนยิงไปที่ collection ไม่ใช่ `/{key}`** — ฟอร์มอยู่ใน Modal ซึ่งไม่มีใคร
+         * เติมค่าลง `{key}` ในเส้นทางให้ (`RouterManager` เติม `{id}` ตอนเทมเพลตยังเป็น
+         * สตริงของหน้า ไม่ใช่ของ Modal ที่เปิดทีหลัง) · คีย์จึงส่งมาในเนื้อคำขอแทน
+         */
+        $router->add(new Route('PUT', '/api/v2/config-files', ConfigFilesController::class, 'update', 'settings.manage', 'api.v2.config_files.update'));
 
         // --- ข้อมูลสำรอง ---
         // เมลโฮสติ้ง — กล่องจดหมายและที่อยู่ส่งต่อ (PLAN-MAIL เฟส M2)
