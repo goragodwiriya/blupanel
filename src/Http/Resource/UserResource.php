@@ -85,7 +85,37 @@ final class UserResource extends Resource
             'sftp_enabled' => self::bool($row['sftp_enabled'] ?? 0),
             'sftp_available' => (int) ($row['quota_ftp_users'] ?? 0) !== 0,
             'sftp_enabled_at' => self::intOrNull($row['sftp_enabled_at'] ?? null),
+
+            /*
+             * รูปทรงไฟล์ — ส่งสามค่าเพราะหน้าจอต้องบอกสามเรื่องที่ต่างกัน
+             *
+             *   site_layout        ค่าที่บัญชีนี้เลือกไว้ (ว่าง = ยังไม่เคยเลือก) → ใช้ตั้งค่า select
+             *   site_layout_actual ค่าที่ใช้จริงหลังเติมค่าเริ่มต้นของระบบ → ใช้บอกผู้ดูแลว่าตอนนี้เป็นอะไร
+             *   site_layout_docroot ตัวอย่างเส้นทางจริงของบัญชีนี้ → คำตอบที่ผู้ดูแลอยากรู้ที่สุด
+             *
+             * ถ้าส่งแค่ค่าแรก หน้าจอจะแสดงช่องว่างให้บัญชีที่ยังไม่เคยเลือก โดยไม่บอกว่า
+             * "ว่าง" หมายถึงอะไร ซึ่งเป็นคำถามแรกที่ผู้ดูแลจะถาม
+             */
+            'site_layout' => (string) ($row['site_layout'] ?? ''),
+            'site_layout_actual' => self::account($row)->layout()->value,
+            'site_layout_docroot' => self::account($row)->siteDocroot(
+                (string) ($row['main_domain'] ?? '') !== '' ? (string) $row['main_domain'] : 'example.com',
+            ),
+            'main_domain' => (string) ($row['main_domain'] ?? ''),
         ];
+    }
+
+    /**
+     * บัญชีระบบของแถวนี้ — คืน null ไม่ได้เพราะหน้าจอต้องแสดงเส้นทางเสมอ
+     *
+     * ผู้ใช้ที่ยังไม่มีบัญชีระบบ (`system_user` ว่าง) ใช้ชื่อผู้ใช้แทน ซึ่งเป็นชื่อเดียวกับ
+     * ที่จะถูกใช้ตอน provision จริง — เส้นทางที่แสดงจึงเป็นเส้นทางที่จะได้จริง ไม่ใช่ค่าหลอก
+     *
+     * @param array<string,mixed> $row
+     */
+    private static function account(array $row): \Phpcp\Domain\UserAccount
+    {
+        return \Phpcp\Domain\UserAccount::fromRow($row);
     }
 
     /**

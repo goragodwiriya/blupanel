@@ -276,6 +276,51 @@
         </form>
       </div>
       <!--
+        รูปทรงไฟล์ — แยกฟอร์มออกจากโควตาโดยเจตนา เพราะการกดบันทึกที่นี่**ย้ายไฟล์จริง**
+        ของทุกเว็บในบัญชี ผู้ที่มาแก้โควตาไม่ควรย้ายไฟล์ลูกค้าไปด้วยโดยไม่ตั้งใจ
+      -->
+      <div class="content-body" data-if="sites && permissions['customer.manage']">
+        <h2 class="icon-folder" data-i18n>File layout</h2>
+        <table class="table border fullwidth">
+          <tbody>
+            <tr>
+              <th data-i18n>Currently using</th>
+              <td>
+                <span class="pill pill-ok" data-text="site_layout_actual"></span>
+                <span class="pill pill-muted" data-if="site_layout === ''" data-i18n>system default</span>
+              </td>
+            </tr>
+            <tr>
+              <th data-i18n>Document root</th>
+              <td><code data-text="site_layout_docroot"></code></td>
+            </tr>
+          </tbody>
+        </table>
+        <form data-form="userLayout" action="/api/v2/users/{id}/layout" method="post" data-method="PUT" data-ajax-submit="true" data-emit-event="phpcp:reload">
+          <fieldset>
+            <div class="form-group">
+              <div class="width50">
+                <label for="ul_layout" data-i18n>Layout</label>
+                <span class="form-control icon-folder">
+                  <select id="ul_layout" name="layout" data-value="site_layout">
+                    <option value="" data-i18n>Follow the system default</option>
+                    <option value="phpcp">phpcp — &lt;home&gt;/domains/&lt;domain&gt;/public</option>
+                    <option value="cpanel">cPanel — &lt;home&gt;/public_html</option>
+                  </select>
+                </span>
+              </div>
+            </div>
+            <fieldset class="notice notice-warning" data-if="site_count > 0">
+              <legend class="icon-warning" data-i18n>This moves real files</legend>
+              <p data-i18n>Saving moves the directories of every site in this account and rewrites their web server config. The sites go offline for a moment, and any full path written into the customer's own scripts or cron jobs will stop working.</p>
+            </fieldset>
+          </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
+          </fieldset>
+        </form>
+      </div>
+      <!--
         SFTP — PLAN-V2 เฟส E4 · หนึ่งบัญชีโฮสติ้ง = หนึ่ง login (ไม่มีบัญชีย่อยต่อเว็บ)
         เห็นเฉพาะบัญชีโฮสติ้ง (`sites` มีเฉพาะ webadmin) และผู้ที่มีสิทธิ์จัดการลูกค้า
       -->

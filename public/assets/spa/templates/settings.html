@@ -94,6 +94,29 @@
 
       <div class="content-body">
         <!--
+          รูปทรงไฟล์เริ่มต้น — มีผลกับ**บัญชีที่สร้างหลังจากนี้**เท่านั้น
+          บัญชีที่มีเว็บอยู่แล้วต้องสั่งย้ายเป็นรายคนจากหน้าผู้ใช้ เพราะการย้ายแตะไฟล์จริง
+        -->
+        <form data-form="siteLayout" action="/api/v2/settings" method="post" data-method="PATCH" data-ajax-submit="true" data-load-api="/api/v2/settings">
+          <fieldset>
+            <legend class="icon-folder" data-i18n>Default file layout</legend>
+            <div>
+              <label for="sites_layout" data-i18n>Where site files go</label>
+              <span class="form-control icon-folder">
+                <select id="sites_layout" name="sites.layout" data-value="values['sites.layout'] || 'phpcp'">
+                  <option value="phpcp">phpcp — &lt;home&gt;/domains/&lt;domain&gt;/public</option>
+                  <option value="cpanel">cPanel — &lt;home&gt;/public_html</option>
+                </select>
+              </span>
+            </div>
+            <div class="comment" data-i18n>Applies to accounts created from now on. Accounts that already have sites keep their current layout until you change it on their own page — that one moves real files.</div>
+          </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
+          </fieldset>
+        </form>
+
+        <!--
           DNS — ค่าพวกนี้เคยอยู่ใน config.php ซึ่งแปลว่าต้อง ssh เข้าไปแก้ไฟล์เอง
           ทั้งที่เป็นค่าที่ผู้ดูแลต้องตั้งตั้งแต่วันแรกที่จะใช้ DNS ของเครื่องนี้
         -->
