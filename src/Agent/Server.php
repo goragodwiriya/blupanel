@@ -288,6 +288,9 @@ final class Server
             $result = $dispatcher->dispatch($request['cap'], $request['args'], $actor);
 
             $this->respond($connection, Protocol::encodeSuccess($result['data'], $result['meta']));
+        } catch (EmptyConnection) {
+            // ไม่ใช่ความล้มเหลว ไม่ต้องบันทึก — ดูเหตุผลที่ readLine()
+            return;
         } catch (AgentException $e) {
             $this->logger->warn('คำสั่งถูกปฏิเสธ', [
                 'code' => $e->code(),
@@ -330,7 +333,17 @@ final class Server
         }
 
         if (trim($buffer) === '') {
-            throw new TransportError('ไม่ได้รับข้อมูล');
+            /*
+             * เชื่อมต่อเข้ามาแล้วปิดโดยไม่ส่งอะไร — นี่คือ **การตรวจว่า agent ยังอยู่ไหม**
+             * ไม่ใช่คำสั่งที่ผิดพลาด · {@see Client::isAvailable()} เปิดซ็อกเก็ตแล้ว fclose()
+             * ทันที ซึ่งเป็นวิธีที่ถูกต้องในการถามว่า "รับการเชื่อมต่อได้ไหม"
+             *
+             * เดิมกรณีนี้ถูกบันทึกเป็น WARN "คำสั่งถูกปฏิเสธ" ทุกครั้ง — ตัวจับเวลาเรียกทุกนาที
+             * และหน้าเว็บเรียกทุกครั้งที่โหลด ผลคือ agent.log เต็มไปด้วยคำเตือนปลอมนาทีละบรรทัด
+             * จนความล้มเหลวจริงจมหายไปในนั้น · **นั่นคือสาเหตุที่ไล่ปัญหาบนเครื่องจริงไม่เจอ**
+             * ผู้ดูแลเปิด log มาเห็นแต่ "คำสั่งถูกปฏิเสธ" แล้วสรุปว่าระบบพังทั้งที่มันปกติดี
+             */
+            throw new EmptyConnection();
         }
 
         return $buffer;

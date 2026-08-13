@@ -44,7 +44,8 @@ server {
     }
 
     # โฟลเดอร์พัฒนามักมีทั้งซอร์ส ไฟล์ตั้งค่า และฐานข้อมูลปนกัน
-    location ~ /\. {
+    # (ยกเว้น `.well-known` ด้วยเหตุผลเดียวกับ vhost จริง — ดู proxy-static.conf.tpl)
+    location ~ /\.(?!well-known/) {
         deny all;
     }
 

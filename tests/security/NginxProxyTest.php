@@ -397,3 +397,45 @@ test('agent ต้องมี CAP_NET_BIND_SERVICE ไม่งั้น nginx 
         );
     }
 });
+
+// --- 5. ACME: กฎกันไฟล์ซ่อนต้องไม่ปิดทางขอใบรับรอง ---------------------------
+
+test('กฎกันไฟล์ซ่อนต้องยกเว้น .well-known — ไม่งั้นขอใบรับรองไม่สำเร็จตลอดกาล', static function (): void {
+    /*
+     * **เจอบนเซิร์ฟเวอร์จริง (2026-08-13):** `location ~ /\.` จับทุกเส้นทางที่มี `/.`
+     * ซึ่งรวม `/.well-known/acme-challenge/<token>` ที่ Let's Encrypt ต้องดาวน์โหลด
+     * · regex location ถูกพิจารณาก่อน `location /` เสมอ nginx จึงตอบ 403 ตั้งแต่ชั้นหน้า
+     * โดยที่ Apache กับ certbot ไม่เคยเห็นคำขอนั้น
+     *
+     * อาการที่ผู้ดูแลเห็นคือ certbot บอกว่า "Some challenges have failed" ซึ่งไม่ได้
+     * ชี้มาที่ nginx สักคำ — ใบรับรองจึงขอไม่ได้เลยในโหมด nginx-proxy โดยไม่มีใครรู้สาเหตุ
+     */
+    $executor = proxyExecutor();
+    $site = proxyDocroot($executor, ['.htaccess' => "RewriteEngine On\nRewriteRule . /index.php [L]\n"]);
+    $conf = withoutComments(proxyDriver()->renderVhost($site, $executor));
+
+    assertTrue(
+        !str_contains($conf, 'location ~ /\. {'),
+        'ต้องไม่มีกฎที่จับ /. ทั้งหมดโดยไม่ยกเว้นอะไรเลย',
+    );
+    assertTrue(
+        str_contains($conf, 'well-known'),
+        'กฎกันไฟล์ซ่อนต้องยกเว้น .well-known · ได้: ' . $conf,
+    );
+
+    // พิสูจน์ด้วยตัว regex เอง ไม่ใช่แค่ดูว่ามีคำนั้นอยู่ในไฟล์
+    $pattern = '~/\.(?!well-known/)~';
+
+    assertTrue(
+        preg_match($pattern, '/.well-known/acme-challenge/abc123') !== 1,
+        'เส้นทางของ ACME ต้องไม่ถูกกฎนี้จับ',
+    );
+
+    // ไฟล์ซ่อนอื่นต้องยังถูกปฏิเสธเหมือนเดิม — การยกเว้นต้องแคบจริง
+    foreach (['/.env', '/.git/config', '/sub/.htpasswd', '/.well-knownx/y'] as $blocked) {
+        assertTrue(
+            preg_match($pattern, $blocked) === 1,
+            "{$blocked} ต้องยังถูกปฏิเสธ — การยกเว้นกว้างเกินไป",
+        );
+    }
+});
