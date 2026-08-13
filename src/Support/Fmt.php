@@ -26,11 +26,16 @@ final class Fmt
         return number_format($value, $power === 0 ? 0 : $decimals).' '.$units[$power];
     }
 
-    /** ระยะเวลาเป็นข้อความไทย เช่น "12 วัน 3 ชั่วโมง" */
+    /**
+     * ระยะเวลาเป็นข้อความ เช่น "12d 3h"
+     *
+     * เป็นภาษาอังกฤษเพราะผู้เรียกมีแต่ CLI ซึ่งออกทางเทอร์มินัลของเครื่องปลายทาง
+     * ที่วางสระ/วรรณยุกต์ไทยไม่ได้ (เหตุผลเดียวกับที่ install.sh เป็นอังกฤษทั้งไฟล์)
+     */
     public static function duration(int $seconds): string
     {
         if ($seconds < 60) {
-            return $seconds.' วินาที';
+            return $seconds.'s';
         }
 
         $days = intdiv($seconds, 86400);
@@ -38,42 +43,45 @@ final class Fmt
         $minutes = intdiv($seconds % 3600, 60);
 
         if ($days > 0) {
-            return $hours > 0 ? "{$days} วัน {$hours} ชั่วโมง" : "{$days} วัน";
+            return $hours > 0 ? "{$days}d {$hours}h" : "{$days}d";
         }
 
         if ($hours > 0) {
-            return $minutes > 0 ? "{$hours} ชั่วโมง {$minutes} นาที" : "{$hours} ชั่วโมง";
+            return $minutes > 0 ? "{$hours}h {$minutes}m" : "{$hours}h";
         }
 
-        return "{$minutes} นาที";
+        return "{$minutes}m";
     }
 
-    /** เวลาแบบสัมพัทธ์ เช่น "3 นาทีที่แล้ว" */
+    /** เวลาแบบสัมพัทธ์ เช่น "3 minutes ago" — เป็นอังกฤษด้วยเหตุผลเดียวกับ duration() */
     public static function ago(?int $timestamp): string
     {
         if ($timestamp === null || $timestamp <= 0) {
-            return '—';
+            return '-';
         }
 
         $diff = time() - $timestamp;
 
         if ($diff < 0) {
-            return 'อีกสักครู่';
+            return 'in a moment';
         }
         if ($diff < 60) {
-            return 'เมื่อสักครู่';
+            return 'just now';
         }
         if ($diff < 3600) {
-            return intdiv($diff, 60).' นาทีที่แล้ว';
+            return intdiv($diff, 60).' minutes ago';
         }
         if ($diff < 86400) {
-            return intdiv($diff, 3600).' ชั่วโมงที่แล้ว';
+            return intdiv($diff, 3600).' hours ago';
         }
         if ($diff < 2592000) {
-            return intdiv($diff, 86400).' วันที่แล้ว';
+            return intdiv($diff, 86400).' days ago';
         }
 
-        return self::date($timestamp);
+        // ไม่เรียก self::date() ตรงนี้ — มันคืนชื่อเดือนไทยแบบ พ.ศ. ซึ่งจะทำให้
+        // ผลของ ago() กลับไปเป็นไทยเฉพาะรายการที่เก่ากว่า 30 วัน คือเคสที่หลุด
+        // ตาการทดสอบง่ายที่สุด เพราะเครื่องที่เพิ่งติดตั้งยังไม่มีข้อมูลเก่าขนาดนั้น
+        return date('Y-m-d', $timestamp);
     }
 
     /** วันที่แบบไทย พ.ศ. */
