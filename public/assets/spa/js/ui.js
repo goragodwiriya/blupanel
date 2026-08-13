@@ -498,6 +498,18 @@
 
     window.EventManager.emit(element.dataset.emitEvent || 'phpcp:reload', {trigger: element});
 
+    /*
+     * **ถามแถบ "รอการยืนยัน" ใหม่ทุกครั้งด้วย**
+     *
+     * คำสั่งที่ตั้งเวลาถอนคืนไว้ (กฎไฟร์วอลล์ · ค่าตั้ง SSH · ไฟล์ตั้งค่าของบริการ)
+     * ต้องให้ผู้ใช้เห็นแถบทันที ไม่ใช่รอรอบ poll ถัดไปซึ่งห่างถึง 15 วินาที · ถ้าเขา
+     * ปิดหน้าไปก่อนจะไม่มีวันรู้เลยว่าต้องกดยืนยัน แล้วค่าที่เพิ่งตั้งจะถูกคืนกลับเงียบ ๆ
+     *
+     * ยิงทุกครั้งโดยไม่ดูว่าคำสั่งนี้ตั้งเวลาไว้หรือเปล่า — `load()` ของแถบข้ามให้เอง
+     * เมื่อผู้ใช้ไม่มีสิทธิ์ และการถามเกินมาหนึ่งครั้งถูกกว่าการพลาดไปหนึ่งครั้งมาก
+     */
+    window.EventManager.emit('phpcp:rollback', {trigger: element});
+
     if (element.dataset.go) {
       window.RouterManager.navigate(element.dataset.go);
     }
@@ -630,6 +642,20 @@
 
     if (form && form.dataset.emitEvent) {
       window.EventManager.emit(form.dataset.emitEvent, {form: form});
+    }
+
+    /*
+     * คำตอบที่แนบผลของการตั้งเวลาถอนคืนมาด้วย = มีอะไรรอการยืนยันอยู่ ต้องให้แถบ
+     * ขึ้นทันที · ดูจากข้อมูลในคำตอบ ไม่ใช่จากว่าใครเป็นคนยิง — ครอบทั้งฟอร์มและ
+     * ปุ่มในแถวตาราง และครอบคำสั่งใหม่ที่จะเพิ่มในอนาคตโดยไม่ต้องมาแก้ที่นี่อีก
+     *
+     * สองชื่อเพราะสองชั้นตั้งชื่อต่างกัน: capability คืน `rollback_id`
+     * ส่วน controller แนบ `pending_rollback` มาให้หน้าจอนับถอยหลัง
+     */
+    const body = (payload && payload.data) || payload || {};
+
+    if (body.rollback_id || body.pending_rollback) {
+      window.EventManager.emit('phpcp:rollback', {});
     }
 
     return result;

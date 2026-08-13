@@ -227,6 +227,51 @@ test('ทุกแถวของตารางในเทมเพลตม�
     assertSame([], $problems, "เทมเพลตเสียรูป:\n  " . implode("\n  ", $problems));
 });
 
+test('คำสั่งที่ตั้งเวลาถอนคืนต้องทำให้แถบรอการยืนยันขึ้นทันที', static function (): void {
+    /*
+     * **กลไกความปลอดภัยทั้งหมดของ RollbackGuard พังทันทีถ้าผู้ใช้ไม่เห็นแถบ**
+     *
+     * แถบถามสถานะเองทุก 15 วินาที ซึ่งนานพอที่ผู้ใช้จะกดบันทึกแล้วปิดหน้าไปก่อน —
+     * แล้วค่าที่เพิ่งตั้งจะถูกคืนกลับเงียบ ๆ โดยเขาไม่รู้เลยว่าต้องกดยืนยัน และไม่รู้ว่า
+     * ทำไมค่าที่ตั้งไว้หายไป
+     *
+     * ต้องยิงสัญญาณให้แถบถามใหม่ทันทีทั้งสองเส้นทาง เพราะสองเส้นทางนี้ไม่ผ่านโค้ด
+     * ชุดเดียวกันเลย: `requestApi` **ไม่เรียก ResponseHandler**, ส่วนฟอร์มกับปุ่มในแถว
+     * ตารางเรียก
+     */
+    $ui = (string) file_get_contents(PHPCP_ROOT . '/public/assets/spa/js/ui.js');
+
+    // เส้นทางที่ 1 — ปุ่มที่เปลี่ยนแปลงข้อมูล (apiRefresh)
+    // ตัดตั้งแต่ต้นฟังก์ชันจนถึง action ตัวถัดไป — ไม่ผูกกับความยาวคอมเมนต์ที่เปลี่ยนได้
+    $start = strpos($ui, "registerAction('apiRefresh'") ?: 0;
+    $next = strpos($ui, 'registerAction(', $start + 20);
+    $apiRefresh = substr($ui, $start, ($next === false ? strlen($ui) : $next) - $start);
+
+    assertTrue(
+        str_contains($apiRefresh, "emit('phpcp:rollback'"),
+        'apiRefresh ต้องยิงสัญญาณให้แถบรอการยืนยันถามสถานะใหม่',
+    );
+
+    // เส้นทางที่ 2 — ฟอร์มและปุ่มในแถวตาราง (ResponseHandler.process)
+    $begin = strpos($ui, 'ResponseHandler.process = async function') ?: 0;
+    $process = substr($ui, $begin, (strpos($ui, 'const Ui = {', $begin) ?: strlen($ui)) - $begin);
+
+    assertTrue(
+        str_contains($process, "emit('phpcp:rollback'"),
+        'คำตอบที่แนบผลการตั้งเวลาถอนคืนต้องทำให้แถบขึ้นทันที',
+    );
+    assertTrue(
+        str_contains($process, 'rollback_id') && str_contains($process, 'pending_rollback'),
+        'ต้องรู้จักทั้งสองชื่อ — capability คืน rollback_id ส่วน controller แนบ pending_rollback',
+    );
+
+    // และแถบต้องฟังสัญญาณนั้นจริง ไม่ใช่ยิงไปแล้วไม่มีใครรับ
+    assertTrue(
+        str_contains($ui, "EventManager.on('phpcp:rollback'"),
+        'แถบรอการยืนยันต้องฟังสัญญาณนี้',
+    );
+});
+
 test('ฟอร์มใน Modal ต้องไม่มีตัวแปรค้างในเส้นทางที่ส่ง', static function (): void {
     /*
      * **`{id}` ถูกเติมตอนเทมเพลตของ*หน้า*ยังเป็นสตริง** (`RouterManager.render`) ·
