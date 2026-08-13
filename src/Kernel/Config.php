@@ -48,6 +48,9 @@ final class Config
         // ต้องมาก่อนสร้าง Paths — ทั้ง Paths และ Site อ่านค่านี้จากที่เดียวกัน
         Paths::useSitesDir((string) (($values['sites'] ?? [])['dir'] ?? ''));
         Paths::useUsersDir((string) (($values['sites'] ?? [])['users_dir'] ?? ''));
+        // ระวัง: `sites.layout` (รูปทรงไฟล์ของเว็บ) คนละเรื่องกับ `layout` ระดับบนสุด
+        // ซึ่งเป็นเลย์เอาต์ของ**การติดตั้ง** (system/portable) — ชื่อใกล้กันแต่ไม่เกี่ยวกันเลย
+        Paths::useSiteLayout((string) (($values['sites'] ?? [])['layout'] ?? ''));
 
         $layout = (string) ($values['layout'] ?? '');
         $paths = $layout !== ''
@@ -131,6 +134,9 @@ final class Config
                 'dir' => Paths::DEFAULT_SITES_DIR,
                 // บ้านของผู้ใช้โฮสติ้ง — ไฟล์เว็บอยู่ที่ <users_dir>/<ผู้ใช้>/domains/<โดเมน>/
                 'users_dir' => Paths::DEFAULT_USERS_DIR,
+                // รูปทรงไฟล์เริ่มต้นของบัญชีที่ยังไม่ได้เลือกเอง — 'phpcp' หรือ 'cpanel'
+                // ดู Phpcp\Domain\SiteLayout · แก้จากหน้าตั้งค่าได้ ค่านั้นทับค่านี้
+                'layout' => '',
                 'shared_owner' => false, // ดูคำอธิบายที่ sharedOwner()
                 'pointer_roots' => [] // โฟลเดอร์นอก sites.dir ที่ยอมให้ชี้ docroot เข้าไปได้
             ],
@@ -272,6 +278,12 @@ final class Config
     public static function useStoredSettings(array $values): void
     {
         self::$stored = $values;
+
+        // รูปทรงไฟล์ที่ผู้ดูแลเลือกจากหน้าจอ ทับค่าใน config.php — ต้องผลักเข้า Paths
+        // ที่นี่ด้วย เพราะ `UserAccount` อ่านจากที่นั่น ไม่ได้ถือ Config ไว้
+        if (array_key_exists('sites.layout', $values)) {
+            Paths::useSiteLayout((string) $values['sites.layout']);
+        }
     }
 
     /**

@@ -120,11 +120,41 @@ final class SiteProvisioner
 
         $owner = $site->systemUser().':'.$this->webserver->runAsGroup();
 
+        $root = rtrim($site->root(), '/');
+        $targets = [$root];
+
+        /*
+         * ไดเรกทอรีของเว็บที่อยู่**นอก** root() ต้อง chown แยกอีกที
+         *
+         * เลย์เอาต์ phpcp เก็บทุกอย่างไว้ใต้กล่องเดียวกัน (`<บ้าน>/domains/<โดเมน>/`)
+         * `chown -R` ที่นั่นครอบทั้ง docroot, log และ backup ในคำสั่งเดียว — วนลูปนี้
+         * จึงไม่เพิ่มอะไรเลย พฤติกรรมเดิมไม่ขยับแม้แต่คำสั่งเดียว
+         *
+         * **เลย์เอาต์ cpanel ไม่เป็นแบบนั้น**: docroot อยู่ที่ `<บ้าน>/public_html`
+         * และ log อยู่ที่ `<บ้าน>/logs/<โดเมน>` ซึ่งไม่ได้อยู่ใต้ root() เลย · ถ้าไม่เก็บ
+         * เพิ่ม ไฟล์เว็บจะยังเป็นของ root แล้วลูกค้าอัปโหลดอะไรไม่ได้ผ่าน SFTP
+         * ทั้งที่หน้าจอบอกว่าสร้างเว็บสำเร็จทุกขั้นตอน
+         */
+        $layoutDirs = $site->owner->layout()->requiredDirectories(
+            $site->owner->home(),
+            $site->domain,
+            $site->owner->isMainDomain($site->domain),
+        );
+
+        foreach (array_keys($layoutDirs) as $dir) {
+            $dir = rtrim($dir, '/');
+
+            if ($dir !== $root && !str_starts_with($dir.'/', $root.'/')) {
+                $targets[] = $dir;
+            }
+        }
+
         // docroot ที่ชี้ออกนอกบ้านต้อง chown แยกต่างหาก — chown -R ที่บ้านไปไม่ถึง
-        $targets = [$site->root()];
         if ($site->docrootOverride !== '') {
             $targets[] = $site->docrootOverride;
         }
+
+        $targets = array_values(array_unique($targets));
 
         foreach ($targets as $target) {
             $executor->exec([

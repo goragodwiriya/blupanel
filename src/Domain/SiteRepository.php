@@ -32,7 +32,8 @@ final class SiteRepository
      *
      * owner_user_id เป็น NOT NULL และมี FK อยู่แล้ว การ join จึงไม่ทำให้แถวหายไปไหน
      */
-    private const WITH_OWNER = 'SELECT s.*, u.username AS owner_username, u.system_user AS owner_system_user
+    private const WITH_OWNER = 'SELECT s.*, u.username AS owner_username, u.system_user AS owner_system_user,
+                    u.site_layout AS owner_site_layout, u.main_domain AS owner_main_domain
              FROM sites s JOIN users u ON u.id = s.owner_user_id';
 
     /** @return array<string,mixed>|null */
@@ -127,6 +128,8 @@ final class SiteRepository
             'SELECT s.*,
                     u.username     AS owner_username,
                     u.system_user  AS owner_system_user,
+                    u.site_layout  AS owner_site_layout,
+                    u.main_domain  AS owner_main_domain,
                     (SELECT count(*) FROM domains d WHERE d.site_id = s.id)      AS domain_count,
                     (SELECT count(*) FROM databases_ b WHERE b.site_id = s.id)   AS database_count,
                     (SELECT count(*) FROM cron_jobs c WHERE c.site_id = s.id)    AS cron_count,

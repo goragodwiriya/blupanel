@@ -99,8 +99,22 @@ test('คีย์ที่ไม่อยู่ในรายการต้�
      */
     $allowedKeys = ['panel.cert_domain'];
 
+    /*
+     * ข้อยกเว้นชั้นที่สอง: อยู่นอกคำนำหน้าที่อนุญาต **แต่แก้ผ่านฟอร์มได้**
+     *
+     * ต่างจาก `$allowedKeys` ตรงที่อันนั้นคือ "ยกเว้นกฎคำนำหน้า แต่ยังห้ามแก้ผ่านฟอร์ม"
+     * — สองความหมายนี้เคยปนกันอยู่ในรายการเดียว ซึ่งใช้ไม่ได้ทันทีที่มีคีย์แรกที่
+     * ต้องยกเว้นกฎคำนำหน้าและควรแก้ได้จริง
+     *
+     * `sites.layout` เข้าข่ายเพราะ**ค่าที่ถูกนำไปใช้ไม่ได้มาจากผู้ใช้โดยตรง** —
+     * `SiteLayout::tryFrom()` รับแค่ 'phpcp' กับ 'cpanel' อะไรที่ไม่ตรงตกไปที่ค่าเริ่มต้น
+     * · ต่างจาก `sites.users_dir` ที่เป็นข้อความอิสระซึ่งถูกเอาไปประกอบเป็น open_basedir
+     * และเส้นทางใน vhost ที่รันด้วยสิทธิ์ root — อันนั้นต้องอยู่ใน config.php ต่อไป
+     */
+    $allowedEditableKeys = ['sites.layout'];
+
     foreach (array_keys($keys) as $key) {
-        if (in_array($key, $allowedKeys, true)) {
+        if (in_array($key, $allowedKeys, true) || in_array($key, $allowedEditableKeys, true)) {
             continue;
         }
 
@@ -115,6 +129,16 @@ test('คีย์ที่ไม่อยู่ในรายการต้�
         assertTrue(
             !isset(SettingsRepository::webEditableKeys()[$key]),
             "คีย์ {$key} ต้องเขียนผ่านฟอร์มตั้งค่าทั่วไปไม่ได้",
+        );
+    }
+
+    // ค่าที่ไม่รู้จักต้องไม่กลายเป็นเส้นทางแปลก ๆ — นี่คือเหตุผลเดียวที่คีย์นี้แก้จากเว็บได้
+    foreach (['../../etc', 'cpanel; rm -rf /', '', 'ไม่มีอยู่จริง'] as $bad) {
+        $resolved = Phpcp\Domain\SiteLayout::parse($bad);
+
+        assertTrue(
+            in_array($resolved, [Phpcp\Domain\SiteLayout::Phpcp, Phpcp\Domain\SiteLayout::Cpanel], true),
+            "ค่า {$bad} ต้องตกไปที่เลย์เอาต์ที่รู้จัก ไม่ใช่ถูกใช้ตรง ๆ",
         );
     }
 });

@@ -44,6 +44,14 @@ final class Paths
     /** บ้านของผู้ใช้ที่ใช้จริง — static ด้วยเหตุผลเดียวกับ $sitesDir */
     private static string $usersDir = self::DEFAULT_USERS_DIR;
 
+    /**
+     * รูปทรงของไฟล์ใต้บ้านผู้ใช้ที่ใช้เป็นค่าเริ่มต้น — ดู {@see \Phpcp\Domain\SiteLayout}
+     *
+     * เก็บเป็นข้อความดิบไม่ใช่ตัว enum เพราะ `Paths` อยู่ชั้น Kernel ซึ่งต้องไม่พึ่ง Domain
+     * · ตัว enum เป็นคนแปลค่าและตัดสินว่าค่าที่ไม่รู้จักตกไปที่ไหน
+     */
+    private static string $siteLayout = '';
+
     private function __construct(
         public readonly string $layout,
         public readonly string $root,
@@ -115,6 +123,18 @@ final class Paths
     public static function useUsersDir(string $dir): void
     {
         self::$usersDir = self::assertHostingDir($dir, 'sites.users_dir') ?? self::DEFAULT_USERS_DIR;
+    }
+
+    /** ค่าเริ่มต้นของรูปทรงไฟล์ — ค่าว่างแปลว่ายังไม่ได้ตั้ง ให้ SiteLayout เลือกเอง */
+    public static function siteLayout(): string
+    {
+        return self::$siteLayout;
+    }
+
+    /** เรียกจาก Config::load() จุดเดียว — ไม่ตรวจค่าที่นี่ ตัว enum เป็นคนตัดสิน */
+    public static function useSiteLayout(string $value): void
+    {
+        self::$siteLayout = trim($value);
     }
 
     /**

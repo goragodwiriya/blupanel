@@ -147,6 +147,29 @@ final class SiteCreate extends SiteCapability
     }
 
     /**
+     * ตรึงโดเมนหลักของบัญชีไว้ที่เว็บแรก — ตัวตัดสินว่าใครได้ `public_html`
+     *
+     * **เขียนเฉพาะตอนที่ยังว่าง** เพราะค่านี้คือเส้นทางไฟล์ของเว็บที่ให้บริการอยู่
+     * ในเลย์เอาต์ cpanel · ถ้าเขียนทับทุกครั้งที่สร้างเว็บใหม่ เว็บเดิมจะย้ายจาก
+     * `public_html` ไปเป็น `<บ้าน>/<โดเมน>` เงียบ ๆ แล้วเว็บที่เคยใช้งานได้จะ 404
+     * ทันทีโดยที่ไม่มีใครสั่งอะไรกับมันเลย
+     *
+     * มีความหมายเฉพาะเลย์เอาต์ cpanel แต่บันทึกทุกเลย์เอาต์ เพราะบัญชีที่เปลี่ยนมา
+     * ใช้ cpanel ภายหลังต้องมีคำตอบพร้อมอยู่แล้ว ไม่ใช่ต้องเดาย้อนหลังตอนนั้น
+     */
+    private function rememberMainDomain(Context $context, UserAccount $owner, string $domain): void
+    {
+        if ($owner->mainDomain !== '') {
+            return;
+        }
+
+        $context->db->run(
+            "UPDATE users SET main_domain = :d, updated_at = :t WHERE id = :id AND main_domain = ''",
+            ['d' => $domain, 't' => time(), 'id' => $owner->userId],
+        );
+    }
+
+    /**
      * @param array $args
      * @param Executor $executor
      * @param Context $context
@@ -210,6 +233,7 @@ final class SiteCreate extends SiteCapability
             // เรียกซ้ำได้โดยไม่มีผลข้างเคียง เพราะ ensure() เป็น idempotent
             $identity = $provisioner->account()->ensure($executor, $owner);
             $this->rememberSystemUser($context, $owner, $identity);
+            $this->rememberMainDomain($context, $owner, $site->domain);
 
             $provisioner->createDirectories($executor, $site);
 

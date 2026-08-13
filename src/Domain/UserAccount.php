@@ -25,6 +25,16 @@ final readonly class UserAccount
     public function __construct(
         public int $userId,
         public string $username,
+        /**
+         * รูปทรงของไฟล์ใต้บ้านคนนี้ — null = ตามค่าเริ่มต้นของระบบ
+         *
+         * เก็บเป็น nullable ไม่ใช่เติมค่าเริ่มต้นให้ตั้งแต่ตรงนี้ เพราะ "ยังไม่เคยเลือก"
+         * กับ "เลือก phpcp ไว้" เป็นคนละเรื่อง: อันแรกต้องขยับตามเมื่อผู้ดูแลเปลี่ยน
+         * ค่าเริ่มต้นของระบบ อันหลังต้องไม่ขยับ · ดู SiteLayout::parse()
+         */
+        public ?SiteLayout $layout = null,
+        /** โดเมนที่ได้ `public_html` ไปในเลย์เอาต์ cpanel — ว่าง = ยังไม่มีเว็บ */
+        public string $mainDomain = '',
     ) {
     }
 
@@ -40,7 +50,27 @@ final readonly class UserAccount
         return new self(
             userId: (int) $row['id'],
             username: self::assertSystemUser($name !== '' ? $name : (string) ($row['username'] ?? '')),
+            layout: SiteLayout::tryFrom(trim((string) ($row['site_layout'] ?? ''))),
+            mainDomain: trim((string) ($row['main_domain'] ?? '')),
         );
+    }
+
+    /** เลย์เอาต์ที่ใช้จริง — เติมค่าเริ่มต้นของระบบให้เมื่อผู้ใช้ยังไม่เคยเลือก */
+    public function layout(): SiteLayout
+    {
+        return $this->layout ?? SiteLayout::systemDefault();
+    }
+
+    /**
+     * โดเมนนี้คือโดเมนหลักของบัญชีหรือไม่ — ตัวตัดสินว่าใครได้ `public_html`
+     *
+     * บัญชีที่ยังไม่มี `main_domain` (เว็บแรกกำลังจะถูกสร้าง) ให้ถือว่าโดเมนที่ถามมา
+     * **คือ**โดเมนหลัก — ไม่งั้นเว็บแรกของบัญชี cpanel จะไปลงที่ `<home>/<domain>`
+     * แล้ว `public_html` จะไม่มีวันถูกสร้างเลย
+     */
+    public function isMainDomain(string $domain): bool
+    {
+        return $this->mainDomain === '' || $this->mainDomain === $domain;
     }
 
     /**
@@ -67,16 +97,28 @@ final readonly class UserAccount
         return Paths::usersDir().'/'.$this->username;
     }
 
-    /** โฟลเดอร์แม่ของเว็บทุกแห่ง */
+    /**
+     * โฟลเดอร์แม่ของเว็บทุกแห่ง — มีเฉพาะเลย์เอาต์ phpcp
+     *
+     * เลย์เอาต์ cpanel ไม่มีชั้นนี้ (ไฟล์เว็บอยู่ที่ `public_html` กับ `<domain>` ใต้บ้าน
+     * โดยตรง) จึงคืนบ้านไปเลย · ผู้เรียกที่ต้องการ "ที่เก็บของเว็บนี้" ต้องใช้
+     * `siteRoot()` ไม่ใช่ประกอบเส้นทางเองจากค่านี้
+     */
     public function domainsDir(): string
     {
-        return $this->home().'/domains';
+        return $this->layout() === SiteLayout::Phpcp ? $this->home().'/domains' : $this->home();
     }
 
-    /** บ้านของเว็บหนึ่งแห่ง */
+    /** ที่เก็บของประจำเว็บหนึ่งแห่งที่ไม่ใช่ไฟล์เว็บ — log, backup, หน้าระงับบริการ */
     public function siteRoot(string $domain): string
     {
-        return $this->domainsDir().'/'.$domain;
+        return $this->layout()->stateDir($this->home(), $domain);
+    }
+
+    /** ไดเรกทอรีที่เว็บเซิร์ฟเวอร์เสิร์ฟจริงสำหรับโดเมนนี้ */
+    public function siteDocroot(string $domain): string
+    {
+        return $this->layout()->docroot($this->home(), $domain, $this->isMainDomain($domain));
     }
 
     /** ที่พักไฟล์ชั่วคราวของ pool — ใช้ร่วมกันทุกเว็บของผู้ใช้คนนี้ */

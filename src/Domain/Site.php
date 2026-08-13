@@ -60,6 +60,10 @@ final readonly class Site
                 // ซึ่งผิดแต่ไม่มีอะไรฟ้อง — เคยหลุดไปโผล่บน API จริงมาแล้ว
                 'system_user' => $row['owner_system_user'] ?? null,
                 'username' => $row['owner_username'] ?? '',
+                // เลย์เอาต์กับโดเมนหลักต้องมาด้วย ไม่งั้น docroot ตกกลับไปเป็น phpcp
+                // เงียบ ๆ ทั้งที่เจ้าของตั้ง cpanel ไว้ — vhost จะชี้ผิดที่ทั้งเว็บ
+                'site_layout' => $row['owner_site_layout'] ?? '',
+                'main_domain' => $row['owner_main_domain'] ?? '',
             ]),
             phpVersion: Validator::phpVersion((string) $row['php_version']),
             sslMode: (string) ($row['ssl_mode'] ?? 'off'),
@@ -91,15 +95,18 @@ final readonly class Site
     /**
      * ไดเรกทอรีที่เว็บเซิร์ฟเวอร์เสิร์ฟจริง
      *
-     * ปกติคือ <บ้าน>/public — ตั้ง docrootOverride ได้เมื่อต้องการชี้โดเมนไปที่
-     * โฟลเดอร์ที่มีอยู่ก่อนแล้ว (Domain Pointer) เส้นทางที่ชี้ได้ถูกจำกัดด้วย
-     * Config::docrootRoots() ตอนสร้าง/แก้ไขเสมอ
+     * รูปทรงมาจากเลย์เอาต์ของ**เจ้าของ** ({@see SiteLayout}) ไม่ใช่สูตรตายตัว —
+     * phpcp ได้ `<บ้าน>/domains/<โดเมน>/public` ส่วน cpanel ได้ `<บ้าน>/public_html`
+     *
+     * ตั้ง docrootOverride ได้เมื่อต้องการชี้โดเมนไปที่โฟลเดอร์ที่มีอยู่ก่อนแล้ว
+     * (Domain Pointer) เส้นทางที่ชี้ได้ถูกจำกัดด้วย Config::docrootRoots()
+     * ตอนสร้าง/แก้ไขเสมอ · override มาก่อนเลย์เอาต์เสมอเพราะเป็นคำสั่งที่ชัดเจนกว่า
      */
     public function docroot(): string
     {
         return $this->docrootOverride !== ''
             ? $this->docrootOverride
-            : $this->root().'/public';
+            : $this->owner->siteDocroot($this->domain);
     }
 
     /**
@@ -121,7 +128,7 @@ final readonly class Site
      */
     public function logDir(): string
     {
-        return $this->root().'/logs';
+        return $this->owner->layout()->logDir($this->owner->home(), $this->domain);
     }
 
     /**
@@ -129,7 +136,7 @@ final readonly class Site
      */
     public function backupDir(): string
     {
-        return $this->root().'/backups';
+        return $this->owner->layout()->backupDir($this->owner->home(), $this->domain);
     }
 
     /**

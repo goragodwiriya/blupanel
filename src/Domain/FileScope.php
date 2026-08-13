@@ -55,7 +55,27 @@ final readonly class FileScope
      */
     private static function siteRoot(array $site): string
     {
-        return (new UserAccount(0, (string) $site['system_user']))->siteRoot((string) $site['primary_domain']);
+        return self::owner($site)->siteRoot((string) $site['primary_domain']);
+    }
+
+    /**
+     * เจ้าของเว็บพร้อมเลย์เอาต์ — **ต้องมีเลย์เอาต์เสมอ ไม่ใช่สร้าง UserAccount เปล่า**
+     *
+     * เดิมสร้างด้วย `new UserAccount(0, $systemUser)` ซึ่งได้เลย์เอาต์เริ่มต้นของระบบ
+     * ติดมาด้วยเสมอ · เจ้าของที่ตั้ง cpanel ไว้จึงถูกมองเป็น phpcp ที่นี่ที่เดียว
+     * แล้วตัวจัดการไฟล์จะเปิดไปที่ `<บ้าน>/domains/<โดเมน>` ที่ไม่มีอยู่จริง
+     * — ผู้ใช้เห็นโฟลเดอร์ว่างเปล่าและไม่มีอะไรบอกว่าทำไม
+     *
+     * @param array<string,mixed> $site แถวที่ join users มาแล้ว
+     */
+    private static function owner(array $site): UserAccount
+    {
+        return new UserAccount(
+            (int) ($site['owner_user_id'] ?? 0),
+            (string) $site['system_user'],
+            SiteLayout::tryFrom(trim((string) ($site['site_layout'] ?? ''))),
+            trim((string) ($site['main_domain'] ?? '')),
+        );
     }
 
     /**
