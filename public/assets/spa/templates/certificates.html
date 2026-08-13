@@ -23,16 +23,25 @@
                    },
                    "issue": {
                      "title": "Issue",
-                     "className": "btn btn-sm btn-primary icon-plus",
+                     "className": "btn btn-primary icon-plus",
                      "method": "post",
                      "url": "/api/v2/certificates",
                      "params": {"site_id": "{site_id}", "method": "letsencrypt"},
                      "condition": "${can_manage && status === \"none\"}",
                      "confirm": "Issue a free TLS certificate for this website?"
                    },
+                   "self_signed": {
+                     "title": "Self-signed",
+                     "className": "btn icon-lock",
+                     "method": "post",
+                     "url": "/api/v2/certificates",
+                     "params": {"site_id": "{site_id}", "method": "self-signed"},
+                     "condition": "${can_manage && status === \"none\"}",
+                     "confirm": "Create a self-signed certificate? Browsers and mail clients will warn about it, but it works — use it for names no public authority can issue for, such as .test or .local."
+                   },
                    "renew": {
                      "title": "Renew",
-                     "className": "btn btn-sm btn-primary icon-refresh",
+                     "className": "btn btn-primary icon-refresh",
                      "method": "post",
                      "url": "/api/v2/certificates/{site_id}/renewal",
                      "condition": "${can_manage && status !== \"none\"}",
@@ -40,9 +49,10 @@
                    },
                    "delete": {
                      "title": "Remove",
-                     "className": "btn btn-sm btn-danger icon-delete",
+                     "className": "btn btn-danger icon-delete",
                      "method": "delete",
                      "url": "/api/v2/certificates/{site_id}",
+                     "params": {"confirm_domain": "{domain}"},
                      "condition": "${can_manage && status !== \"none\"}",
                      "confirm": "Remove this certificate? The website falls back to plain HTTP."
                    }

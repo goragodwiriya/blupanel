@@ -92,6 +92,19 @@ final class CertbotManager
     }
 
     /**
+     * อ่านรายละเอียดของไฟล์ใบรับรองใบใดก็ได้บนเครื่อง
+     *
+     * มีไว้ให้ผู้ใช้นอกหน้าจอ SSL — ใบรับรองของ mail hostname ไม่ผูกกับเว็บไซต์
+     * ใดเว็บไซต์หนึ่ง (PLAN-MAIL เฟส M3) จึงเรียก inspect() ที่รับ Site ไม่ได้
+     *
+     * @return array<string,mixed>
+     */
+    public function inspectFile(Executor $executor, string $path): array
+    {
+        return $this->readCertificate($executor, $path);
+    }
+
+    /**
      * อ่านรายละเอียดจากไฟล์ PEM ด้วย openssl
      *
      * @return array<string,mixed>
@@ -282,14 +295,38 @@ final class CertbotManager
      *
      * เบราว์เซอร์จะขึ้นคำเตือนเสมอ ซึ่งถูกต้องแล้ว — หน้าจอต้องบอกเรื่องนี้ให้ชัด
      * ไม่ใช่ทำให้ดูเหมือนใบรับรองปกติ
+     *
+     * @param list<string> $domains โดเมนทั้งหมดของเว็บ · ว่าง = ใช้โดเมนหลักอย่างเดียว
      */
-    public function selfSign(Executor $executor, Site $site, int $days = 825): array
+    public function selfSign(Executor $executor, Site $site, array $domains = [], int $days = 825): array
     {
         $domain = Validator::domain($site->domain);
         $dir = self::SELF_SIGNED_DIR . '/' . $domain;
         $resolved = $executor->path($dir);
 
         $executor->makeDirectory($resolved, 0700);
+
+        /*
+         * **ต้องใส่ทุกโดเมนของเว็บ ไม่ใช่แค่โดเมนหลัก** — เหมือนที่ issue() ทำ
+         *
+         * ไคลเอนต์สมัยใหม่ดูแต่ subjectAltName ไม่สนใจ CN แล้ว · ใบที่มีแต่โดเมนหลัก
+         * จึงถูกปฏิเสธทันทีเมื่อเข้าผ่านชื่ออื่นของเว็บเดียวกัน (`www.` หรือ
+         * `mail.`) ทั้งที่หน้าจอบอกว่าติดตั้งใบเรียบร้อยแล้ว
+         *
+         * เจอตอนทำ M3: ชื่อโฮสต์ของเมลเป็นโดเมนหนึ่งของเว็บ ใบที่เซ็นเองจึงไม่ครอบคลุม
+         * มันเลย แล้ว `mail.cert` มองไม่เห็นใบนั้น (ถูกต้องแล้ว) — ทางที่ควรใช้ได้
+         * กลับตันโดยไม่มีอะไรอธิบาย
+         */
+        $names = [];
+
+        foreach ($domains === [] ? [$site->domain] : $domains as $name) {
+            // `*.example.com` ไม่ผ่าน Validator::domain เพราะ `*` ไม่ใช่อักขระของชื่อโฮสต์
+            $names[] = str_starts_with((string) $name, '*.')
+                ? '*.' . Validator::domain(substr((string) $name, 2))
+                : Validator::domain((string) $name);
+        }
+
+        $names = array_values(array_unique($names));
 
         $result = $executor->exec([
             self::OPENSSL, 'req', '-x509', '-nodes',
@@ -299,7 +336,11 @@ final class CertbotManager
             '-out', $resolved . '/fullchain.pem',
             // -subj กันไม่ให้ openssl หยุดถามข้อมูลแบบโต้ตอบจนคำสั่งค้าง
             '-subj', '/CN=' . $domain,
-            '-addext', 'subjectAltName=DNS:' . $domain,
+            // ต้องรวมเป็น -addext เดียวคั่นด้วยจุลภาค · ส่งสองครั้ง openssl จะฟ้องซ้ำซ้อน
+            '-addext', 'subjectAltName=' . implode(',', array_map(
+                static fn (string $name): string => 'DNS:' . $name,
+                $names,
+            )),
             // `openssl req -x509` ตั้ง CA:TRUE ให้เองถ้าไม่ระบุ ซึ่งผิดสำหรับใบของเว็บไซต์
             // Apache จะเตือน AH01906 และเบราว์เซอร์รุ่นใหม่ปฏิเสธใบที่เป็น CA ทันที
             '-addext', 'basicConstraints=critical,CA:FALSE',
@@ -382,6 +423,19 @@ final class CertbotManager
             str_contains($raw, '404') && str_contains($raw, 'acme-challenge') =>
                 'Let\'s Encrypt เข้าถึงไฟล์ตรวจสอบใน .well-known/acme-challenge ไม่ได้ — '
                 . 'ตรวจว่า DocumentRoot ถูกต้องและไม่มี rewrite rule ดักไฟล์นั้นไว้',
+            /*
+             * ชื่อที่ไม่มี TLD สาธารณะ — `.test` `.local` `.internal` `.lan` หรือชื่อเปล่า ๆ
+             *
+             * **ไม่ใช่ความผิดพลาดที่แก้แล้วขอใหม่ได้** · Let's Encrypt ออกใบให้ชื่อที่พิสูจน์
+             * ความเป็นเจ้าของผ่าน DNS สาธารณะไม่ได้เลยตามนิยาม ลองกี่ครั้งก็ได้ผลเดิม ·
+             * เครื่องพัฒนาแทบทุกเครื่องใช้ชื่อแบบนี้ ข้อความจึงต้องชี้ไปทางที่ใช้ได้จริง
+             * ไม่ใช่บอกว่าล้มเหลวเฉย ๆ แล้วปล่อยให้ไปนั่งไล่ DNS ที่ไม่มีวันถูก
+             */
+            str_contains($raw, 'valid public suffix') || str_contains($raw, 'Domain name does not end with') =>
+                'ชื่อนี้ไม่มี TLD สาธารณะ (เช่นลงท้าย .test .local .internal) — Let\'s Encrypt '
+                . 'ออกใบให้ไม่ได้เลยไม่ว่าลองกี่ครั้ง เพราะพิสูจน์ความเป็นเจ้าของผ่าน DNS '
+                . 'สาธารณะไม่ได้ · ใช้วิธี "ใบที่เซ็นเอง" แทน ซึ่งใช้งานได้จริงทั้ง HTTPS และเมล '
+                . 'เพียงแต่เบราว์เซอร์กับโปรแกรมเมลจะขึ้นคำเตือน',
             default => 'ขอใบรับรองไม่สำเร็จ',
         };
 

@@ -74,7 +74,8 @@ final class SslIssue extends SslCapability implements Capability
         $domains = $this->domainsFor($site);
 
         if ($args['method'] === 'self-signed') {
-            $certbot->selfSign($executor, $site);
+            // ทุกโดเมนของเว็บ ไม่ใช่แค่โดเมนหลัก — ชุดเดียวกับที่ letsencrypt ขอไป
+            $certbot->selfSign($executor, $site, $domains);
 
             return [
                 'site_id' => $site->id,
