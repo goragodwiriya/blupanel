@@ -1,30 +1,30 @@
 #!/usr/bin/env bash
 #
-# ตัวติดตั้ง PHP Server Control Panel — ARCHITECTURE §13
+# PHP Server Control Panel installer - ARCHITECTURE §13
 #
-#   sudo ./install.sh                          ติดตั้งใช้งานจริง
-#   sudo ./install.sh --mode=sandbox           ติดตั้งเพื่อทดสอบ ไม่แตะระบบจริง
-#   ./install.sh --mode=sandbox --portable     ทดสอบในโฟลเดอร์โปรเจกต์ ไม่ต้องใช้ root
+#   sudo ./install.sh                          install for production use
+#   sudo ./install.sh --mode=sandbox           install for testing, never touches the real system
+#   ./install.sh --mode=sandbox --portable     test inside the project folder, no root required
 #
-#   --users-dir=/mnt/Server/hosting    เก็บบ้านของผู้ใช้ที่อื่นแทน /srv/phpcp/users
-#   --sites-dir=/mnt/Server/htdocs     ที่เก็บเว็บของเลย์เอาต์เดิม (ก่อน migration 0006)
-#   --pointer-root=/mnt/Server/htdocs  ยอมให้ชี้ DocumentRoot เข้าโฟลเดอร์นี้ (ซ้ำได้)
-#   --shared-owner                     เฉพาะ NTFS/exFAT/FAT — ข้ามการแยกสิทธิ์ระหว่างเว็บ
+#   --users-dir=/mnt/Server/hosting    keep user home directories somewhere else than /srv/phpcp/users
+#   --sites-dir=/mnt/Server/htdocs     where sites of the legacy layout live (before migration 0006)
+#   --pointer-root=/mnt/Server/htdocs  allow a DocumentRoot to point into this folder (repeatable)
+#   --shared-owner                     NTFS/exFAT/FAT only - skip ownership separation between sites
 #
-# ค่าเริ่มต้นคือ "ติดตั้งให้ครบพร้อมใช้" — ปิดเป็นรายข้อได้เมื่อเครื่องมีของพวกนี้อยู่แล้ว
-# หรือจัดการเองด้วยวิธีอื่น:
+# The default is "install everything, ready to use" - switch off individual pieces when the
+# machine already has them, or when you manage them some other way:
 #
-#   --dns-ns=ns1.a.com,ns2.a.com  เปิดใช้งาน BIND9 ให้เลย (ไม่ใส่ = ติดตั้งไว้แต่ยังไม่เปิด)
-#   --dns-email=hostmaster@a.com  อีเมลผู้ดูแลใน SOA (ไม่ใส่ = hostmaster@<ชื่อเครื่อง>)
-#   --no-postfix                  ไม่ติดตั้ง/ตั้งค่า Postfix (ใช้ MTA อื่นอยู่แล้ว)
-#   --no-logrotate                ไม่เขียน /etc/logrotate.d/phpcp
-#   --no-check                    ข้ามการตรวจ `phpcp doctor` ตอนจบ
+#   --dns-ns=ns1.a.com,ns2.a.com  enable BIND9 right away (omit = installed but not enabled)
+#   --dns-email=hostmaster@a.com  admin email in the SOA record (omit = hostmaster@<hostname>)
+#   --no-postfix                  do not install/configure Postfix (another MTA is already in use)
+#   --no-logrotate                do not write /etc/logrotate.d/phpcp
+#   --no-check                    skip the `phpcp doctor` check at the end
 #   --smoke-user=U --smoke-password-file=P
-#                                 ยิงทุก endpoint ใส่เครื่องจริงตอนจบด้วยบัญชีนี้
-#                                 (ใช้ได้เฉพาะบัญชีที่เปลี่ยนรหัสผ่านครั้งแรกไปแล้ว)
+#                                 hit every endpoint on the real machine at the end with this account
+#                                 (only works with an account that already changed its first password)
 #
-# หลักการ: ทุกอย่างของ panel อยู่ใน config tree ของตัวเอง
-# ไม่แตะ /etc/apache2 และ /etc/php ของระบบเลยแม้แต่ไฟล์เดียว (ARCHITECTURE §5.2)
+# Principle: everything the panel owns lives in its own config tree.
+# It never touches a single file under /etc/apache2 or /etc/php (ARCHITECTURE §5.2)
 
 set -euo pipefail
 
@@ -39,18 +39,18 @@ CONF_DIR="/etc/phpcp"
 DATA_DIR="/var/lib/phpcp"
 LOG_DIR="/var/log/phpcp"
 RUN_DIR="/run/phpcp"
-# tmp ของ panel อยู่ใต้ DATA_DIR ไม่ใช่ /tmp เพราะ /tmp ถูกล้างตอนบูตแล้วบริการจะสตาร์ตไม่ขึ้น
+# The panel's tmp lives under DATA_DIR, not /tmp, because /tmp is wiped at boot and the service would fail to start
 TMP_DIR="$DATA_DIR/tmp"
 SITES_DIR="/srv/phpcp/sites"
-# บ้านของผู้ใช้โฮสติ้ง — ไฟล์เว็บอยู่ที่ <USERS_DIR>/<ผู้ใช้>/domains/<โดเมน>/
-# ตั้งแต่ migration 0006 (uid และโควตาดิสก์ผูกกับผู้ใช้ ไม่ใช่ผูกกับเว็บ)
+# Home directories of hosting users - site files live at <USERS_DIR>/<user>/domains/<domain>/
+# Since migration 0006 the uid and the disk quota belong to the user, not to the site
 USERS_DIR="/srv/phpcp/users"
 SHARED_OWNER="no"
-POINTER_ROOTS=""  # ว่าง = ใช้ค่าจาก sites_dir อัตโนมัติ
+POINTER_ROOTS=""  # empty = derive from sites_dir automatically
 SANDBOX_DIR="/opt/phpcp-sandbox"
 PANEL_USER="phpcp-web"
 PANEL_GROUP="phpcp"
-# เจ้าของกล่องจดหมายทุกกล่อง — ดูเหตุผลในหัวข้อ 3
+# Owner of every mailbox - see the reasoning in section 3
 VMAIL_USER="vmail"
 MAIL_ROOT="/srv/phpcp/mail"
 
@@ -63,7 +63,7 @@ SMOKE_USER=""
 SMOKE_PASSWORD_FILE=""
 
 # ---------------------------------------------------------------------------
-# ข้อความ
+# Messages
 # ---------------------------------------------------------------------------
 if [ -t 1 ]; then
   C_OK=$'\033[32m'; C_WARN=$'\033[33m'; C_ERR=$'\033[31m'; C_DIM=$'\033[90m'; C_OFF=$'\033[0m'
@@ -75,10 +75,11 @@ say()  { printf '  %s\n' "$*"; }
 ok()   { printf '  %s✔%s %s\n' "$C_OK" "$C_OFF" "$*"; }
 warn() { printf '  %s!%s %s\n' "$C_WARN" "$C_OFF" "$*"; }
 die()  { printf '  %s✘%s %s\n' "$C_ERR" "$C_OFF" "$*" >&2; exit 1; }
-head_() { printf '\n%s\n%s\n' "$*" "$(printf '─%.0s' $(seq 1 46))"; }
+# `printf --` is required: without it printf reads the leading "-" of the separator as an option flag
+head_() { printf '\n%s\n%s\n' "$*" "$(printf -- '-%.0s' $(seq 1 46))"; }
 
 # ---------------------------------------------------------------------------
-# อ่านตัวเลือก
+# Read the options
 # ---------------------------------------------------------------------------
 for arg in "$@"; do
   case "$arg" in
@@ -98,64 +99,65 @@ for arg in "$@"; do
     --smoke-user=*)          SMOKE_USER="${arg#*=}" ;;
     --smoke-password-file=*) SMOKE_PASSWORD_FILE="${arg#*=}" ;;
     -h|--help)
-      # พิมพ์คอมเมนต์หัวไฟล์ทั้งบล็อก ไม่ใช่ช่วงบรรทัดตายตัว — เคยตรึงไว้ที่ 2,14
-      # แล้วตัวเลือกที่เพิ่มทีหลังไม่เคยโผล่ใน --help เลยสักตัว
+      # Print the whole header comment block, not a fixed line range - it used to be pinned
+      # at 2,14 and options added later never showed up in --help at all
       awk 'NR > 1 { if ($0 ~ /^#/) { sub(/^# ?/, ""); print } else { exit } }' "${BASH_SOURCE[0]}"
       exit 0 ;;
-    *) die "ไม่รู้จักตัวเลือก: $arg" ;;
+    *) die "Unknown option: $arg" ;;
   esac
 done
 
 case "$MODE" in
   production|sandbox|dryrun) ;;
-  *) die "โหมดต้องเป็น production, sandbox หรือ dryrun" ;;
+  *) die "Mode must be production, sandbox or dryrun" ;;
 esac
 
 if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
-  die "หมายเลขพอร์ตไม่ถูกต้อง: $PORT"
+  die "Invalid port number: $PORT"
 fi
 
-# เส้นทางจากบรรทัดคำสั่งจะถูกเขียนลง config แล้วกลายเป็น DocumentRoot ของ vhost — ตรวจตั้งแต่ต้นทาง
+# Paths from the command line get written into the config and become a vhost DocumentRoot - validate them at the source
 check_abs_path() {
   case "$1" in
     /*) ;;
-    *) die "$2 ต้องเป็นเส้นทางสัมบูรณ์: $1" ;;
+    *) die "$2 must be an absolute path: $1" ;;
   esac
   case "/$1/" in
-    */../*) die "$2 ต้องไม่มี .. : $1" ;;
+    */../*) die "$2 must not contain .. : $1" ;;
   esac
   case "$1" in
-    *[\'\"\\]*) die "$2 มีอักขระที่ใช้ในไฟล์ตั้งค่าไม่ได้: $1" ;;
+    *[\'\"\\]*) die "$2 contains characters that cannot be used in a config file: $1" ;;
   esac
 }
 
-# ค่าของ --dns-* ถูกเขียนลง config.php ที่ถูก include ตอนบูต จึงต้องคัดกรองที่ต้นทาง
-# แบบเดียวกับเส้นทาง — อนุญาตเฉพาะอักขระที่เป็นไปได้จริงของชื่อโฮสต์และอีเมล
+# The --dns-* values are written into config.php, which is included at boot, so they get
+# filtered at the source just like paths - only characters that can genuinely appear in a
+# hostname or an email address are allowed
 if [ -n "$DNS_NS" ]; then
   case "$DNS_NS" in
-    *[!A-Za-z0-9.,-]*) die "--dns-ns มีอักขระที่ไม่ใช่ชื่อโฮสต์: $DNS_NS" ;;
+    *[!A-Za-z0-9.,-]*) die "--dns-ns contains characters that are not part of a hostname: $DNS_NS" ;;
   esac
 fi
 if [ -n "$DNS_EMAIL" ]; then
   case "$DNS_EMAIL" in
-    *[!A-Za-z0-9.@_-]*) die "--dns-email มีอักขระที่ไม่ใช่อีเมล: $DNS_EMAIL" ;;
+    *[!A-Za-z0-9.@_-]*) die "--dns-email contains characters that are not part of an email address: $DNS_EMAIL" ;;
     *@*) ;;
-    *) die "--dns-email ต้องเป็นอีเมล: $DNS_EMAIL" ;;
+    *) die "--dns-email must be an email address: $DNS_EMAIL" ;;
   esac
 fi
 if [ -n "$SMOKE_PASSWORD_FILE" ] && [ ! -r "$SMOKE_PASSWORD_FILE" ]; then
-  die "อ่าน --smoke-password-file ไม่ได้: $SMOKE_PASSWORD_FILE"
+  die "Cannot read --smoke-password-file: $SMOKE_PASSWORD_FILE"
 fi
 
 SITES_DIR="$(printf '%s' "$SITES_DIR" | sed 's:/*$::')"
 check_abs_path "$SITES_DIR" "--sites-dir"
-[ "$SITES_DIR" = "/" ] && die "--sites-dir เป็น / ไม่ได้"
+[ "$SITES_DIR" = "/" ] && die "--sites-dir cannot be /"
 
 USERS_DIR="$(printf '%s' "$USERS_DIR" | sed 's:/*$::')"
 check_abs_path "$USERS_DIR" "--users-dir"
-[ "$USERS_DIR" = "/" ] && die "--users-dir เป็น / ไม่ได้"
+[ "$USERS_DIR" = "/" ] && die "--users-dir cannot be /"
 
-# ถ้า pointer roots ว่าง ให้ใช้ sites_dir อัตโนมัติ
+# When pointer roots are empty, fall back to sites_dir automatically
 if [ -z "$POINTER_ROOTS" ]; then
   POINTER_ROOTS="$SITES_DIR"
 fi
@@ -166,58 +168,58 @@ if [ -n "$POINTER_ROOTS" ]; then
     check_abs_path "$_root" "--pointer-root"
     case "$_root" in
       /|/etc|/home|/root|/usr|/var|/bin|/sbin|/boot|/dev|/proc|/sys)
-        die "--pointer-root=$_root เท่ากับเปิดให้สร้าง vhost เสิร์ฟไฟล์ระบบผ่านเว็บ" ;;
+        die "--pointer-root=$_root would allow a vhost that serves system files over the web" ;;
     esac
   done
 fi
 
-head_ "ติดตั้ง PHP Server Control Panel"
-say "โหมด      : $MODE"
-say "พอร์ต     : $PORT"
-say "ที่มา      : $SRC_DIR"
-say "บ้านผู้ใช้ : $USERS_DIR"
-say "ไฟล์เว็บเดิม: $SITES_DIR"
-[ -n "$POINTER_ROOTS" ] && say "ชี้ได้ถึง  : $POINTER_ROOTS"
-[ "$SHARED_OWNER" = "yes" ] && warn "เปิด shared_owner — เว็บทุกเว็บใช้เจ้าของไฟล์ร่วมกัน ห้ามใช้กับเว็บของคนอื่น"
+head_ "Installing PHP Server Control Panel"
+say "Mode         : $MODE"
+say "Port         : $PORT"
+say "Source       : $SRC_DIR"
+say "User homes   : $USERS_DIR"
+say "Legacy sites : $SITES_DIR"
+[ -n "$POINTER_ROOTS" ] && say "Pointer roots: $POINTER_ROOTS"
+[ "$SHARED_OWNER" = "yes" ] && warn "shared_owner is on - every site shares one file owner, never use this for sites owned by other people"
 
 # ---------------------------------------------------------------------------
-# 1. ตรวจ distro
+# 1. Check the distro
 # ---------------------------------------------------------------------------
-head_ "1. ตรวจระบบปฏิบัติการ"
+head_ "1. Checking the operating system"
 
-[ -r /etc/os-release ] || die "อ่าน /etc/os-release ไม่ได้ — ไม่รองรับระบบนี้"
+[ -r /etc/os-release ] || die "Cannot read /etc/os-release - this system is not supported"
 # shellcheck disable=SC1091
 . /etc/os-release
 
 case "${ID:-}${ID_LIKE:-}" in
-  *debian*|*ubuntu*) ok "รองรับ: ${PRETTY_NAME:-$ID}" ;;
+  *debian*|*ubuntu*) ok "Supported: ${PRETTY_NAME:-$ID}" ;;
   *)
-    warn "ยังไม่ได้ทดสอบกับ ${PRETTY_NAME:-$ID} — v1 รองรับ Debian 12+, Ubuntu 22.04+, Linux Mint 21+"
-    [ "$MODE" = "production" ] && die "หยุดเพื่อความปลอดภัย ใช้ --mode=sandbox เพื่อทดลองได้"
+    warn "Not tested on ${PRETTY_NAME:-$ID} - v1 supports Debian 12+, Ubuntu 22.04+, Linux Mint 21+"
+    [ "$MODE" = "production" ] && die "Stopping to stay on the safe side, use --mode=sandbox to try it out"
     ;;
 esac
 
 # ---------------------------------------------------------------------------
-# 2. ตรวจ PHP
+# 2. Check PHP
 # ---------------------------------------------------------------------------
-head_ "2. ตรวจสอบและติดตั้งแพ็กเกจที่จำเป็น"
+head_ "2. Checking and installing the required packages"
 
-# ติดตั้งแพ็กเกจได้เฉพาะตอนเป็น root — โหมด --portable ตั้งใจให้รันโดยไม่ต้องใช้ root
-# (ดูหัวไฟล์และ docker/Dockerfile ที่รันด้วยผู้ใช้ phpcp) ถ้าไม่กันไว้ตรงนี้
-# บรรทัดเขียน /etc/apt/sources.list.d/php.list จะล้มด้วย Permission denied
-# แล้ว set -e จะฆ่าสคริปต์ทิ้งทั้งตัว — คอนเทนเนอร์ sandbox สตาร์ตไม่ขึ้นเลยแม้แต่ครั้งเดียว
+# Packages can only be installed as root - --portable mode is meant to run without root
+# (see the file header and docker/Dockerfile, which runs as the phpcp user). Without this
+# guard the line that writes /etc/apt/sources.list.d/php.list fails with Permission denied
+# and set -e kills the whole script - the sandbox container would never start even once
 if [ "$(id -u)" -eq 0 ] && command -v apt-get >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
-  say "กำลังอัปเดตและติดตั้ง PPA / แพ็กเกจที่จำเป็น..."
+  say "Updating and installing the required PPA / packages..."
   apt-get update -qq >/dev/null 2>&1 || true
-  # gnupg ต้องมาด้วย — `add-apt-repository` เรียก gpg เพื่อ import กุญแจของ PPA
-  # ระบบที่ติดตั้งแบบ minimal ไม่มี gpg ติดมา ขั้นเพิ่ม PPA จะล้มเงียบ ๆ แล้วเครื่องจะค้าง
-  # อยู่กับ PHP ของดิสทริบิวชัน (8.1 บน Ubuntu 22.04) ซึ่งใหม่ไม่พอสำหรับโค้ดชุดนี้
+  # gnupg has to come along - `add-apt-repository` calls gpg to import the PPA key.
+  # Minimal installs ship without gpg, the PPA step then fails silently and the machine is
+  # stuck with the distribution's PHP (8.1 on Ubuntu 22.04), which is too old for this codebase
   apt-get install -y -qq --no-install-recommends software-properties-common lsb-release ca-certificates gnupg curl wget >/dev/null 2>&1 || true
 
-  # เพิ่ม Ondřej Surý PPA (สำหรับ Ubuntu/Debian) เพื่อให้มี PHP 7.4 และ PHP 8.4 พร้อมกัน
+  # Add the Ondřej Surý PPA (for Ubuntu/Debian) so PHP 7.4 and PHP 8.4 are both available
   if ! command -v php7.4 >/dev/null 2>&1 || ! command -v php8.4 >/dev/null 2>&1; then
-    say "กำลังติดตั้ง repository สำหรับ Multi-PHP (PHP 7.4 & 8.4)..."
+    say "Installing the repository for Multi-PHP (PHP 7.4 & 8.4)..."
     if [ "${ID:-}" = "ubuntu" ] || [ "${ID_LIKE:-}" = "ubuntu" ]; then
       LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php >/dev/null 2>&1 || true
     elif [ "${ID:-}" = "debian" ] || [ "${ID_LIKE:-}" = "debian" ]; then
@@ -227,29 +229,31 @@ if [ "$(id -u)" -eq 0 ] && command -v apt-get >/dev/null 2>&1; then
     apt-get update -qq >/dev/null 2>&1 || true
   fi
 
-  # Postfix ถามค่าตั้งระหว่างติดตั้งถ้าไม่ตอบล่วงหน้า — ตอบให้ก่อนเพื่อไม่ให้ค้างรอคน
+  # Postfix asks for its settings during installation unless they are answered up front -
+  # answer them here so it never sits waiting for a human.
   #
-  # "Internet Site" คือค่าที่ทำให้ส่งเมลออกได้จริง ซึ่งเป็นสิ่งเดียวที่ panel ต้องการ
-  # (แจ้งเตือนขาออก ไม่ใช่รับเมลเข้า) · ผู้ดูแลที่ต้องส่งผ่าน relay ตั้งได้ทีหลังในหน้า
-  # ตั้งค่าของ panel ซึ่งเขียน main.cf ทับให้เองผ่าน MailApply
+  # "Internet Site" is the value that actually allows outgoing mail, which is the only thing
+  # the panel needs (outbound notifications, not inbound mail). An admin who has to send
+  # through a relay can set that later on the panel's settings page, which rewrites main.cf
+  # through MailApply.
   #
-  # ข้ามทั้งชุดถ้าเครื่องมี MTA อื่นอยู่แล้ว — การลง Postfix ทับ exim/sendmail
-  # ที่ผู้ดูแลตั้งใจใช้ ถือเป็นการเปลี่ยนระบบเกินขอบเขตของตัวติดตั้ง panel
+  # Skip the whole block when the machine already has another MTA - installing Postfix over an
+  # exim/sendmail the admin deliberately chose changes the system beyond an installer's scope
   POSTFIX_PKG=""
   if [ "$WITH_POSTFIX" = "yes" ]; then
     OTHER_MTA="no"
     if ! command -v postfix >/dev/null 2>&1; then
-      # `sendmail` เป็นคำสั่งที่ Postfix เองก็ติดตั้งให้ จึงเช็คได้เฉพาะตอนที่ยังไม่มี Postfix
+      # `sendmail` is a command Postfix installs too, so it can only be checked while Postfix is absent
       command -v exim4 >/dev/null 2>&1 && OTHER_MTA="yes"
       command -v sendmail >/dev/null 2>&1 && OTHER_MTA="yes"
     fi
 
     if [ "$OTHER_MTA" = "yes" ]; then
-      warn "พบ MTA อื่นบนเครื่องนี้ — ข้ามการติดตั้ง Postfix (ใช้ --no-postfix เพื่อไม่ให้เตือนอีก)"
+      warn "Another MTA is present on this machine - skipping Postfix (use --no-postfix to silence this warning)"
     else
-      # Dovecot มาคู่กับ Postfix เสมอ — เมลโฮสติ้ง (PLAN-MAIL) ต้องมีทั้งคู่ และการ
-      # ติดตั้งไว้ล่วงหน้าไม่ได้เปิดรับเมลเข้าเอง (ต้องสั่ง `phpcp mail:enable` ก่อน)
-      # rspamd เซ็น DKIM ให้เมลขาออก — เมลที่ไม่ได้เซ็นเข้าถังขยะของ Gmail แทบทุกฉบับ
+      # Dovecot always comes with Postfix - mail hosting (PLAN-MAIL) needs both, and installing
+      # them ahead of time does not accept inbound mail by itself (`phpcp mail:enable` does).
+      # rspamd signs outbound mail with DKIM - unsigned mail lands in Gmail's spam folder nearly every time
       POSTFIX_PKG="postfix dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd rspamd"
       debconf-set-selections <<EOF >/dev/null 2>&1 || true
 postfix postfix/main_mailer_type select Internet Site
@@ -259,27 +263,28 @@ EOF
   fi
 
   # ---------------------------------------------------------------------------
-  # ติดตั้งแพ็กเกจ — **แยกกลุ่มที่ขาดไม่ได้ออกจากกลุ่มที่ขาดได้**
+  # Installing packages - **the must-have group is kept separate from the nice-to-have group**
   #
-  # เดิมเป็นคำสั่งเดียวยาว ๆ ปิดท้ายด้วย `>/dev/null 2>&1 || true` ซึ่งอันตรายกว่าที่เห็น:
-  # `apt-get install` เป็นแบบ **ทั้งหมดหรือไม่เอาเลย** — ชื่อแพ็กเกจเดียวที่ไม่มีใน
-  # repository ของรุ่นนั้น (หรือ mirror ที่ล่มชั่วคราว) ทำให้ **ไม่มีอะไรถูกติดตั้งเลย
-  # สักตัว** แล้ว `|| true` กลืนข้อผิดพลาดทิ้ง สคริปต์เดินต่อเหมือนสำเร็จ · ผู้ติดตั้ง
-  # จะไปเจอข้อผิดพลาดที่ปลายทางแทน ("ขาด PHP extension", "ไม่พบ apache2") ซึ่งไม่มีทาง
-  # เดาได้เลยว่าสาเหตุจริงคือชื่อแพ็กเกจตัวหนึ่งผิด
+  # This used to be one long command ending in `>/dev/null 2>&1 || true`, which is more
+  # dangerous than it looks: `apt-get install` is **all or nothing** - a single package name
+  # missing from that release's repository (or a mirror that is briefly down) means **nothing
+  # gets installed at all**, and `|| true` swallows the error so the script carries on as if it
+  # succeeded. The person installing then hits the failure much later ("missing PHP extension",
+  # "apache2 not found") with no way to guess that one wrong package name was the real cause.
   #
-  # กลุ่มบังคับล้มแล้วหยุดพร้อมแสดงข้อความจาก apt จริง ๆ · กลุ่มเสริมล้มแล้วลองใหม่
-  # ทีละตัวเพื่อให้ตัวที่ใช้ได้ยังถูกติดตั้ง แล้วรายงานชื่อตัวที่ไม่ได้
+  # The required group stops the installer and prints apt's real message. The optional group
+  # retries one package at a time so the ones that do exist still get installed, then reports
+  # the names that did not.
   # ---------------------------------------------------------------------------
-  say "กำลังติดตั้งแพ็กเกจ PHP 7.4, PHP 8.4, Apache2, Nginx, BIND9, MariaDB, OpenSSH, UFW, Fail2ban, phpMyAdmin, Cron${POSTFIX_PKG:+, Postfix, Dovecot, rspamd}..."
+  say "Installing PHP 7.4, PHP 8.4, Apache2, Nginx, BIND9, MariaDB, OpenSSH, UFW, Fail2ban, phpMyAdmin, Cron${POSTFIX_PKG:+, Postfix, Dovecot, rspamd}..."
 
-  # ขาดตัวใดตัวหนึ่งแล้ว panel ทำงานไม่ได้จริง — ต้องหยุดตรงนี้ ไม่ใช่ไปล้มทีหลัง
+  # Miss any one of these and the panel genuinely cannot work - stop here rather than fail later
   APT_REQUIRED="cron openssh-server logrotate ca-certificates openssl procps
     php8.4-cli php8.4-fpm php8.4-sqlite3 php8.4-mbstring php8.4-curl php8.4-zip php8.4-xml
     apache2"
 
-  # ขาดได้โดย panel ยังใช้งานได้ แค่ฟีเจอร์นั้นปิดไป — PHP 7.4 มีเฉพาะบางรุ่น ·
-  # phpmyadmin/rspamd อยู่ใน universe · mariadb ผู้ดูแลบางคนใช้เซิร์ฟเวอร์แยก
+  # These can be missing and the panel still works, only that feature turns off - PHP 7.4 exists
+  # on some releases only, phpmyadmin/rspamd live in universe, and some admins run MariaDB on a separate server
   APT_OPTIONAL="bind9 bind9-utils nginx ufw fail2ban mariadb-server phpmyadmin
     certbot python3-certbot-apache python3-certbot-nginx
     php8.4-gd php8.4-intl php8.4-mysql php8.4-imagick php8.4-opcache
@@ -288,47 +293,47 @@ EOF
 
   if ! APT_ERR=$(apt-get install -y -qq --no-install-recommends $APT_REQUIRED 2>&1); then
     printf '%s\n' "$APT_ERR" >&2
-    die "ติดตั้งแพ็กเกจที่จำเป็นไม่สำเร็จ — แก้ตามข้อความข้างบนแล้วรันใหม่ (มักเป็น apt update ที่ยังไม่ได้ทำ หรือ repository ที่เข้าไม่ถึง)"
+    die "Failed to install the required packages - fix what the message above says and run again (usually an apt update that was never run, or an unreachable repository)"
   fi
-  ok "แพ็กเกจที่จำเป็นครบแล้ว"
+  ok "All required packages are present"
 
   if ! apt-get install -y -qq --no-install-recommends $APT_OPTIONAL >/dev/null 2>&1; then
-    # ล้มทั้งกลุ่มแปลว่ามีตัวใดตัวหนึ่งไม่มีใน repository — ลองทีละตัวเพื่อไม่ให้ตัวที่ใช้ได้
-    # ต้องหายไปด้วย · ช้ากว่าแต่เกิดเฉพาะตอนมีปัญหาจริงเท่านั้น
+    # A whole-group failure means one of them is missing from the repository - retry one at a
+    # time so the usable ones do not disappear along with it. Slower, but only when something is actually wrong
     APT_SKIPPED=""
     for pkg in $APT_OPTIONAL; do
       apt-get install -y -qq --no-install-recommends "$pkg" >/dev/null 2>&1 || APT_SKIPPED="$APT_SKIPPED $pkg"
     done
-    [ -z "$APT_SKIPPED" ] || warn "ติดตั้งไม่ได้ (ฟีเจอร์ที่เกี่ยวข้องจะปิดไว้):$APT_SKIPPED"
+    [ -z "$APT_SKIPPED" ] || warn "Could not install (the related features stay off):$APT_SKIPPED"
   fi
 elif command -v apt-get >/dev/null 2>&1; then
-  say "$C_DIM ข้ามการติดตั้งแพ็กเกจ (ไม่ได้รันด้วย root) — จะใช้ PHP ที่มีอยู่แล้วบนเครื่อง$C_OFF"
+  say "$C_DIM Skipping package installation (not running as root) - using the PHP already on this machine$C_OFF"
 fi
 
 PHP_BIN="$(command -v php8.4 || command -v php8.3 || command -v php || true)"
-[ -n "$PHP_BIN" ] || die "ไม่พบ PHP — กรุณาติดตั้ง php-cli หรือ php-fpm ก่อน"
+[ -n "$PHP_BIN" ] || die "PHP not found - please install php-cli or php-fpm first"
 
 PHP_VER="$("$PHP_BIN" -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')"
-# ต้องการ 8.2 ขึ้นไปเพราะโค้ดใช้ readonly class ซึ่งมีตั้งแต่ 8.2
-# เคยตั้งไว้ที่ 8.1 ซึ่งผิด — ตัวติดตั้งจบด้วยรหัส 0 บน Ubuntu 22.04 (PHP 8.1)
-# แล้ว panel ตายด้วย parse error ตอนใช้งานครั้งแรก ผู้ติดตั้งไม่มีทางรู้ล่วงหน้าเลย
-"$PHP_BIN" -r 'exit(PHP_VERSION_ID >= 80200 ? 0 : 1);' || die "ต้องการ PHP 8.2 ขึ้นไป (พบ $PHP_VER) — Ubuntu 22.04 ต้องเพิ่ม ppa:ondrej/php ก่อน"
-ok "PHP $PHP_VER ที่ $PHP_BIN"
+# 8.2 or newer is required because the code uses readonly classes, which arrived in 8.2.
+# This used to say 8.1, which was wrong - the installer exited 0 on Ubuntu 22.04 (PHP 8.1)
+# and the panel then died with a parse error on first use, with no warning beforehand
+"$PHP_BIN" -r 'exit(PHP_VERSION_ID >= 80200 ? 0 : 1);' || die "PHP 8.2 or newer is required (found $PHP_VER) - on Ubuntu 22.04 add ppa:ondrej/php first"
+ok "PHP $PHP_VER at $PHP_BIN"
 
 MISSING=""
 for ext in pdo_sqlite sqlite3 sodium posix pcntl sockets openssl mbstring json filter fileinfo curl zip; do
   "$PHP_BIN" -m | grep -qix "$ext" || MISSING="$MISSING $ext"
 done
-[ -z "$MISSING" ] || die "ขาด PHP extension:$MISSING (ติดตั้งด้วย apt install php$PHP_VER-{sqlite3,mbstring,curl,zip})"
-ok "PHP extension ครบทุกตัวที่ต้องการ"
+[ -z "$MISSING" ] || die "Missing PHP extensions:$MISSING (install with apt install php$PHP_VER-{sqlite3,mbstring,curl,zip})"
+ok "Every required PHP extension is present"
 
 # ---------------------------------------------------------------------------
-# โหมด portable — ติดตั้งในโฟลเดอร์โปรเจกต์ ไม่ต้องใช้ root
+# Portable mode - installs inside the project folder, no root required
 # ---------------------------------------------------------------------------
 if [ "$PORTABLE" = "yes" ]; then
-  [ "$MODE" != "production" ] || die "โหมด portable ใช้กับ production ไม่ได้"
+  [ "$MODE" != "production" ] || die "Portable mode cannot be used with production"
 
-  head_ "ติดตั้งแบบ portable (ไม่ต้องใช้ root)"
+  head_ "Portable install (no root required)"
 
   CONF_DIR="$SRC_DIR/etc"
   mkdir -p "$CONF_DIR" "$SRC_DIR/var/"{lib,log,run,sandbox,sites}
@@ -336,7 +341,7 @@ if [ "$PORTABLE" = "yes" ]; then
   if [ ! -f "$CONF_DIR/config.php" ]; then
     cp "$CONF_DIR/config.example.php" "$CONF_DIR/config.php"
     chmod 600 "$CONF_DIR/config.php"
-    ok "สร้าง etc/config.php"
+    ok "Created etc/config.php"
   fi
 
   "$PHP_BIN" -r '
@@ -350,38 +355,38 @@ if [ "$PORTABLE" = "yes" ]; then
   "$PHP_BIN" "$SRC_DIR/bin/phpcp" key:generate >/dev/null 2>&1 || true
   "$PHP_BIN" "$SRC_DIR/bin/phpcp" setup --user="$ADMIN_USER"
 
-  [ "$MODE" = "sandbox" ] && "$PHP_BIN" "$SRC_DIR/bin/phpcp" sandbox:seed >/dev/null && ok "ใส่ข้อมูลตัวอย่างแล้ว"
+  [ "$MODE" = "sandbox" ] && "$PHP_BIN" "$SRC_DIR/bin/phpcp" sandbox:seed >/dev/null && ok "Sample data loaded"
 
-  head_ "เสร็จสิ้น"
-  say "เริ่ม agent : $C_DIM$SRC_DIR/bin/phpcp-agentd$C_OFF"
-  say "เปิดเว็บ    : $C_DIM$SRC_DIR/bin/phpcp serve --port=$PORT$C_OFF"
+  head_ "Done"
+  say "Start the agent : $C_DIM$SRC_DIR/bin/phpcp-agentd$C_OFF"
+  say "Start the web   : $C_DIM$SRC_DIR/bin/phpcp serve --port=$PORT$C_OFF"
   printf '\n'
   exit 0
 fi
 
 # ---------------------------------------------------------------------------
-# 3. ผู้ใช้ระบบ
+# 3. System users
 # ---------------------------------------------------------------------------
-[ "$(id -u)" -eq 0 ] || die "ต้องรันด้วย sudo (หรือใช้ --portable เพื่อทดสอบโดยไม่ต้องใช้ root)"
+[ "$(id -u)" -eq 0 ] || die "Must be run with sudo (or use --portable to test without root)"
 
-head_ "3. ผู้ใช้และกลุ่มของ panel"
+head_ "3. The panel's user and group"
 
-getent group "$PANEL_GROUP" >/dev/null || { groupadd --system "$PANEL_GROUP"; ok "สร้างกลุ่ม $PANEL_GROUP"; }
+getent group "$PANEL_GROUP" >/dev/null || { groupadd --system "$PANEL_GROUP"; ok "Created group $PANEL_GROUP"; }
 getent passwd "$PANEL_USER" >/dev/null || {
   useradd --system --gid "$PANEL_GROUP" --home-dir "$DATA_DIR" \
           --shell /usr/sbin/nologin --comment "PHP Control Panel web tier" "$PANEL_USER"
-  ok "สร้างผู้ใช้ $PANEL_USER"
+  ok "Created user $PANEL_USER"
 }
-ok "ผู้ใช้ $PANEL_USER อยู่ในกลุ่ม $PANEL_GROUP"
+ok "User $PANEL_USER is in group $PANEL_GROUP"
 
-# บัญชีที่เป็นเจ้าของกล่องจดหมายทุกกล่อง (PLAN-MAIL M-A)
+# The account that owns every mailbox (PLAN-MAIL M-A)
 #
-# **หนึ่งบัญชีสำหรับทุกกล่อง** ไม่ใช่บัญชีต่อกล่อง — กล่อง 500 กล่องไม่ควรทำให้
-# /etc/passwd บวมและกลายเป็นทางเข้าเครื่อง · การแยกสิทธิ์ระหว่างกล่องเป็นหน้าที่
-# ของ Dovecot ที่จำกัดแต่ละ session ไว้ที่โฟลเดอร์ของกล่องนั้น
+# **One account for every mailbox**, not one per mailbox - 500 mailboxes should not bloat
+# /etc/passwd and turn into 500 ways into the machine. Keeping mailboxes apart is Dovecot's
+# job: it confines each session to that mailbox's folder.
 #
-# สร้างไว้เสมอแม้ยังไม่เปิดเมล — ราคาของบัญชีที่ไม่ได้ใช้คือศูนย์ ส่วนราคาของการ
-# ลืมสร้างคือ `phpcp mail:enable` ล้มบนเครื่องจริงตอนที่ผู้ดูแลกำลังรีบ
+# Always created, even when mail is not enabled yet - an unused account costs nothing, while
+# forgetting it costs a failing `phpcp mail:enable` on a live machine while the admin is in a hurry
 if ! getent group "$VMAIL_USER" >/dev/null; then
   groupadd --system "$VMAIL_USER"
 fi
@@ -392,60 +397,60 @@ fi
 mkdir -p "$MAIL_ROOT"
 chown "$VMAIL_USER:$VMAIL_USER" "$MAIL_ROOT"
 chmod 0750 "$MAIL_ROOT"
-ok "ผู้ใช้ $VMAIL_USER และที่เก็บกล่องจดหมาย $MAIL_ROOT พร้อมแล้"
+ok "User $VMAIL_USER and the mailbox store $MAIL_ROOT are ready"
 
 # ---------------------------------------------------------------------------
-# 4. วางไฟล์
+# 4. Install the files
 # ---------------------------------------------------------------------------
-head_ "4. วางไฟล์และตั้งสิทธิ์"
+head_ "4. Installing files and setting permissions"
 
 mkdir -p "$INSTALL_DIR" "$CONF_DIR" "$DATA_DIR/backups" "$TMP_DIR" "$LOG_DIR" "$SITES_DIR" "$USERS_DIR" "$RUN_DIR"
 
-# 0711 = เดินเข้าบ้านตัวเองได้ แต่ ls ดูรายชื่อบ้านทั้งหมดไม่ได้
-# ลูกค้าจึงไม่รู้ว่าบนเครื่องนี้มีลูกค้ารายอื่นอยู่กี่รายและชื่ออะไร
+# 0711 = walk into your own home, but never `ls` the list of all homes,
+# so a customer cannot tell how many other customers are on this machine or what they are called
 chmod 0711 "$USERS_DIR"
 
-# `views` ไม่อยู่ในรายการแล้วตั้งแต่ 2026-08-08 — UI แบบ HTML ถูกลบทิ้งทั้งชุด
-# หน้าเว็บทั้งหมดคือ SPA ใต้ `public/assets/spa/` · `templates` ที่เหลือคือไฟล์ตั้งค่า
-# ของ systemd/Apache/FPM ไม่ใช่เทมเพลตหน้าเว็บ
+# `views` left this list on 2026-08-08 - the HTML UI was deleted entirely.
+# Every page is now the SPA under `public/assets/spa/`, and the `templates` that remain are
+# systemd/Apache/FPM config files, not web page templates
 for dir in bin src templates db docs public; do
   rm -rf "${INSTALL_DIR:?}/$dir"
   cp -a "$SRC_DIR/$dir" "$INSTALL_DIR/"
 done
 
-# ล้างของเก่าที่ยังค้างอยู่จากการติดตั้งรุ่นก่อน — ไม่งั้นเครื่องที่อัปเกรดจะเหลือ
-# UI เก่าทำงานคู่ขนานอยู่เงียบ ๆ ทั้งที่เส้นทางฝั่ง PHP ไม่มีแล้ว
+# Clear leftovers from an older install - otherwise an upgraded machine keeps the old UI
+# running quietly in parallel even though the PHP side no longer routes to it
 rm -rf "${INSTALL_DIR:?}/views" "${INSTALL_DIR:?}/public/assets/js" \
        "${INSTALL_DIR:?}/public/assets/icons" "${INSTALL_DIR:?}/public/assets/images"
 cp -a "$SRC_DIR/bootstrap.php" "$INSTALL_DIR/"
 
-# โค้ดเป็นของ root และอ่านอย่างเดียว — ผู้ใช้ของเว็บทั้ง panel และเว็บไซต์แก้ไม่ได้
+# The code is owned by root and read-only - neither the panel's web user nor the sites can change it
 chown -R root:root "$INSTALL_DIR"
 find "$INSTALL_DIR" -type d -exec chmod 755 {} +
 find "$INSTALL_DIR" -type f -exec chmod 644 {} +
 chmod 755 "$INSTALL_DIR/bin/phpcp" "$INSTALL_DIR/bin/phpcp-agentd" "$INSTALL_DIR/bin/phpcp-scheduler" "$INSTALL_DIR/bin/phpcp-alert" "$INSTALL_DIR/bin/phpcp-acme-hook"
-ok "วางโค้ดที่ $INSTALL_DIR (อ่านอย่างเดียว)"
+ok "Code installed at $INSTALL_DIR (read-only)"
 
-# ข้อมูลและ log เป็นของผู้ใช้เว็บ
+# Data and logs belong to the web user
 chown -R "$PANEL_USER:$PANEL_GROUP" "$DATA_DIR" "$LOG_DIR"
 chmod 750 "$DATA_DIR" "$LOG_DIR" "$DATA_DIR/backups" "$TMP_DIR"
 chown root:"$PANEL_GROUP" "$CONF_DIR" "$RUN_DIR"
 chmod 750 "$CONF_DIR" "$RUN_DIR"
-ok "ตั้งสิทธิ์ไดเรกทอรีข้อมูลและ log"
+ok "Permissions set on the data and log directories"
 
 ln -sf "$INSTALL_DIR/bin/phpcp" /usr/local/bin/phpcp
-ok "ติดตั้งคำสั่ง phpcp"
+ok "Installed the phpcp command"
 
 # ---------------------------------------------------------------------------
-# 5. config tree ของ panel เอง (ไม่แตะของระบบ)
+# 5. The panel's own config tree (the system's is never touched)
 # ---------------------------------------------------------------------------
-head_ "5. config tree ของ panel"
+head_ "5. The panel's config tree"
 
 if [ ! -f "$CONF_DIR/config.php" ]; then
   cp "$SRC_DIR/etc/config.example.php" "$CONF_DIR/config.php"
-  ok "สร้าง $CONF_DIR/config.php"
+  ok "Created $CONF_DIR/config.php"
 else
-  warn "มี config.php อยู่แล้ว — ไม่เขียนทับ"
+  warn "config.php already exists - not overwriting it"
 fi
 
 "$PHP_BIN" -r '
@@ -456,7 +461,7 @@ fi
   $s = preg_replace("/(\x27port\x27\s*=>\s*)\d+/", "$1".$argv[3], $s, 1);
   $s = preg_replace("/(\x27cookie_secure\x27\s*=>\s*)(true|false)/", "$1true", $s, 1);
 
-  // var_export ทุกค่าที่มาจากบรรทัดคำสั่ง — ค่าเหล่านี้ถูกเขียนลงไฟล์ PHP ที่รันด้วยสิทธิ์ panel
+  // var_export every value that came from the command line - these are written into a PHP file that runs with the privileges of the panel
   $s = preg_replace(
     "/(\x27dir\x27\s*=>\s*)\x27[^\x27]*\x27/",
     "$1".str_replace("$", "\\$", var_export($argv[4], true)),
@@ -486,44 +491,47 @@ fi
   file_put_contents($f, $s);
 ' "$CONF_DIR/config.php" "$MODE" "$PORT" "$SITES_DIR" "$SHARED_OWNER" "$POINTER_ROOTS" "$USERS_DIR"
 
-# ค่าที่เพิ่งเขียนต้อง parse ได้จริง ไม่งั้น panel จะสตาร์ตไม่ขึ้นแล้วหาสาเหตุยาก
-"$PHP_BIN" -l "$CONF_DIR/config.php" >/dev/null || die "เขียน config.php แล้วไฟล์เสีย — ตรวจค่า --sites-dir/--pointer-root"
+# What was just written has to parse, otherwise the panel will not start and the cause is hard to find
+"$PHP_BIN" -l "$CONF_DIR/config.php" >/dev/null || die "config.php is broken after being written - check --sites-dir/--pointer-root"
 
-# root:phpcp 0640 — ห้ามลบสองบรรทัดนี้
+# root:phpcp 0640 - never delete these two lines
 #
-# ไฟล์นี้ถูก `cp` มาโดยตัวติดตั้งซึ่งรันเป็น root จึงได้ root:root ส่วน `key:generate`
-# ตั้งแค่ chmod 0640 ไม่เคยตั้งกลุ่ม ผลคือผู้ใช้ของเว็บ (phpcp-web) **อ่าน config
-# ไม่ได้เลย** แล้ว App::boot() ถอยไปใช้ค่าเริ่มต้นเงียบ ๆ — panel กลายเป็นโหมด
-# sandbox ไม่มีฐานข้อมูล ไม่มีบัญชีผู้ดูแล ทั้งที่ตัวติดตั้งรายงานว่าผ่านทุกขั้น
-# (เคยหายไปช่วงหนึ่งจนติดตั้งบนเครื่องเปล่าไม่สำเร็จ — docker/verify-install.sh จับได้)
+# This file is `cp`'d by the installer, which runs as root, so it lands as root:root, while
+# `key:generate` only ever sets chmod 0640 and never the group. The result is that the web user
+# (phpcp-web) **cannot read the config at all**, App::boot() quietly falls back to the defaults,
+# and the panel turns into sandbox mode with no database and no admin account - while the
+# installer reports that every step passed.
+# (This went missing once and installs on a clean machine stopped working - docker/verify-install.sh caught it)
 #
-# กลุ่มต้องเป็น phpcp ไม่ใช่ world-readable เพราะไฟล์นี้มี secret_key ของทั้งระบบ
+# The group must be phpcp, not world-readable, because this file holds the system's secret_key
 chown root:"$PANEL_GROUP" "$CONF_DIR/config.php"
 chmod 640 "$CONF_DIR/config.php"
 
 # ---------------------------------------------------------------------------
-# 5.1 เชื่อม BIND9 (เฉพาะเมื่อบอกชื่อ nameserver มาด้วย)
+# 5.1 Wire up BIND9 (only when nameserver names were given)
 #
-# ติดตั้งแพ็กเกจ bind9 ให้ทุกเครื่องอยู่แล้ว แต่ **ไม่เปิด `dns.enabled` เอง** ถ้าไม่มี
-# `--dns-ns` เพราะการเปิดแปลว่า panel จะเขียนทับ `named.conf.local` ทั้งไฟล์ — zone
-# ที่ผู้ดูแลตั้งเองไว้ก่อนจะหายไปเงียบ ๆ · และ BIND9 ปฏิเสธ zone ที่ไม่มี NS record
-# อยู่แล้ว การเปิดโดยไม่รู้ชื่อ nameserver จึงได้ระบบที่สร้าง zone ไม่ได้สักอัน
+# The bind9 package is installed on every machine, but `dns.enabled` is **never turned on by
+# itself** without `--dns-ns`, because turning it on means the panel rewrites the whole of
+# `named.conf.local` - zones the admin set up beforehand would vanish silently. BIND9 also
+# rejects a zone with no NS record, so enabling it without knowing the nameserver names
+# produces a system that cannot create a single zone.
 # ---------------------------------------------------------------------------
 if [ -n "$DNS_NS" ]; then
-  head_ "5.1 เชื่อม BIND9"
+  head_ "5.1 Wiring up BIND9"
 
   DNS_EMAIL_FINAL="${DNS_EMAIL:-hostmaster@$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo localhost)}"
 
-  # แทรกบล็อกระหว่างเครื่องหมายของตัวติดตั้งเอง — ติดตั้งซ้ำจะแทนที่ของเดิม ไม่ใช่ต่อท้าย
-  # ซ้อนกันไปเรื่อย ๆ · ไม่ใช้ var_export ทั้งไฟล์เพราะจะล้างคอมเมนต์ทั้งหมดที่อธิบาย
-  # เหตุผลของแต่ละค่าทิ้ง ซึ่งเป็นสิ่งที่ผู้ดูแลคนถัดไปต้องอ่าน
+  # Insert the block between the installer's own markers - reinstalling replaces the previous
+  # one instead of appending copy after copy. var_export over the whole file is avoided because
+  # it would wipe every comment explaining why each value is what it is, which is exactly what
+  # the next admin needs to read
   "$PHP_BIN" -r '
     $f = $argv[1];
     $s = file_get_contents($f);
 
     $ns = array_values(array_filter(array_map("trim", explode(",", $argv[2]))));
     $block = "    /* phpcp:dns */\n"
-      . "    // เขียนโดย install.sh --dns-ns — แก้ได้ แต่การติดตั้งซ้ำจะเขียนทับบล็อกนี้\n"
+      . "    // Written by install.sh --dns-ns - safe to edit, but reinstalling overwrites this block\n"
       . "    \x27dns\x27 => [\n"
       . "        \x27enabled\x27 => true,\n"
       . "        \x27nameservers\x27 => [" . implode(", ", array_map(
@@ -542,16 +550,17 @@ if [ -n "$DNS_NS" ]; then
             1,
         );
     } else {
-        // คีย์ที่ซ้ำกันใน array literal ตัวหลังชนะ จึงต้องแทรก "ก่อน" ค่าอื่นเสมอ
-        // ไม่ใช่ต่อท้าย เผื่อวันหนึ่ง config.example.php มีคีย์ dns ของตัวเอง
+        // With duplicate keys in an array literal the later one wins, so this must always be
+        // inserted "before" the other values, not appended, in case config.example.php one day
+        // grows a dns key of its own
         $s = preg_replace("~(return\s*\[\R)~", "$1" . $block, $s, 1);
     }
 
     file_put_contents($f, $s);
   ' "$CONF_DIR/config.php" "$DNS_NS" "$DNS_EMAIL_FINAL"
 
-  "$PHP_BIN" -l "$CONF_DIR/config.php" >/dev/null || die "เขียนค่า DNS แล้ว config.php เสีย — ตรวจค่า --dns-ns/--dns-email"
-  ok "เปิด dns.enabled พร้อม nameserver: $DNS_NS (SOA: $DNS_EMAIL_FINAL)"
+  "$PHP_BIN" -l "$CONF_DIR/config.php" >/dev/null || die "config.php is broken after writing the DNS values - check --dns-ns/--dns-email"
+  ok "Enabled dns.enabled with nameservers: $DNS_NS (SOA: $DNS_EMAIL_FINAL)"
 
   mkdir -p /etc/bind/zones
   chown root:bind /etc/bind/zones 2>/dev/null || true
@@ -560,23 +569,23 @@ if [ -n "$DNS_NS" ]; then
   if [ -d /run/systemd/system ]; then
     systemctl enable --now named >/dev/null 2>&1 \
       || systemctl enable --now bind9 >/dev/null 2>&1 \
-      || warn "เปิดบริการ BIND9 ไม่สำเร็จ — ตรวจด้วย systemctl status named"
-    ok "เปิดใช้งานบริการ BIND9 และตั้งให้ขึ้นตอนบูต"
+      || warn "Could not start the BIND9 service - check with systemctl status named"
+    ok "Enabled the BIND9 service and set it to start at boot"
   fi
 
-  warn "โซนที่ตั้งเองไว้ก่อนหน้าใน named.conf.local จะถูก panel เขียนทับ — สำรองไว้ก่อนถ้ามี"
+  warn "Zones you set up yourself in named.conf.local will be overwritten by the panel - back them up first if you have any"
 fi
 
 if [ "$MODE" = "production" ]; then
-  # เพิ่ม config สำหรับเครื่องภายในที่มี BIND แต่ยังต้องการ hosts entry
+  # Extra config for internal machines that run BIND but still want a hosts entry
   "$PHP_BIN" -r '
     $f = $argv[1];
     $s = file_get_contents($f);
-    // ค้นหาบรรทัด log level และเพิ่ม force_hosts_update_for_test_domains
+    // Find the log level line and add force_hosts_update_for_test_domains
     if (!str_contains($s, "force_hosts_update_for_test_domains")) {
       $s = preg_replace(
         "/(\x27log\x27\s*=>\s*\[[^\]]*?)(\x27level\x27\s*=>\s*\x27info\x27[^\]]*?)(\])/",
-        "$1$2,\n        // ตั้งให้แก้ไข /etc/hosts สำหรับโดเมน .test แม้มี BIND/named รันอยู่\n        // เหมาะสำหรับเครื่อง development ที่มี DNS รันอยู่แต่ยังต้องการ hosts entry\n        \x27force_hosts_update_for_test_domains\x27 => true,$3",
+        "$1$2,\n        // Update /etc/hosts for .test domains even when BIND/named is running\n        // Suits development machines that run DNS but still want a hosts entry\n        \x27force_hosts_update_for_test_domains\x27 => true,$3",
         $s,
         1
       );
@@ -584,25 +593,26 @@ if [ "$MODE" = "production" ]; then
     file_put_contents($f, $s);
   ' "$CONF_DIR/config.php"
 
-  say "ตั้งค่า mode=production layout=system port=$PORT sites.dir=$SITES_DIR"
-  say "เปิดใช้งาน hosts update สำหรับโดเมน .test"
+  say "Set mode=production layout=system port=$PORT sites.dir=$SITES_DIR"
+  say "Enabled hosts updates for .test domains"
 else
-  say "ตั้งค่า mode=$MODE layout=system port=$PORT sites.dir=$SITES_DIR"
+  say "Set mode=$MODE layout=system port=$PORT sites.dir=$SITES_DIR"
 fi
 
   # ---------------------------------------------------------------------------
-  # 5.2 เชื่อมต่อ phpMyAdmin ที่ติดตั้งไว้แล้วบนเครื่อง
+  # 5.2 Link the phpMyAdmin that is already installed on this machine
   #
-  # เชื่อมเฉพาะของที่มีอยู่แล้ว ไม่ดาวน์โหลดอะไรจากอินเทอร์เน็ตมาวางในเว็บรูทของ panel
-  # ตัวติดตั้งเคยดึง Adminer มาโดยไม่ตรวจ checksum หรือลายเซ็น ซึ่งเป็นความเสี่ยง
-  # supply-chain ชนิดเดียวกับที่ Updater ออกแบบมาป้องกัน — ไฟล์ PHP ที่ถูกสับเปลี่ยน
-  # ระหว่างทางจะรันด้วยสิทธิ์ของ panel ทันที ตัดออกดีกว่าเพราะ phpMyAdmin ทำงานนี้อยู่แล้ว
+  # Only what is already there gets linked; nothing is downloaded from the internet into the
+  # panel's web root. An earlier installer pulled in Adminer without checking a checksum or a
+  # signature, which is exactly the kind of supply-chain risk the Updater was designed to
+  # prevent - a PHP file swapped in transit would run with the panel's privileges immediately.
+  # Dropping it is the better answer because phpMyAdmin already does this job.
   # ---------------------------------------------------------------------------
   PMA_DIR="$INSTALL_DIR/public/phpmyadmin"
   if [ -d /usr/share/phpmyadmin ] && [ ! -f "$PMA_DIR/index.php" ]; then
     mkdir -p "$PMA_DIR"
     ln -s /usr/share/phpmyadmin/* "$PMA_DIR/" 2>/dev/null || true
-    # ตั้งค่า blowfish_secret ให้ล็อกอินด้วย cookie ได้ไม่ค้าง
+    # Set blowfish_secret so cookie logins do not hang
     if [ -f /etc/phpmyadmin/config.inc.php ]; then
       PMA_SECRET=$(openssl rand -hex 16)
       if ! grep -q "blowfish_secret" /etc/phpmyadmin/config.inc.php; then
@@ -611,19 +621,21 @@ fi
     fi
 
     # ---------------------------------------------------------------------
-    # เข้าใช้งานแบบ signon — panel เตรียม session ให้แล้วผู้ใช้ไม่ต้องพิมพ์รหัสเลย
+    # Signon access - the panel prepares the session so the user never types a password
     #
-    # ผู้ใช้ไม่เคยเห็นรหัสผ่านฐานข้อมูลของตัวเอง (panel สุ่มให้และเก็บแบบเข้ารหัส)
-    # ถ้าไม่ตั้งค่านี้ ปุ่ม "เปิด phpMyAdmin" จะพาไปหน้าล็อกอินที่ไม่มีใครกรอกได้
+    # Users never see their own database password (the panel generates it and stores it
+    # encrypted). Without this setting the "Open phpMyAdmin" button leads to a login page
+    # that nobody can fill in.
     #
-    # SignonURL ชี้กลับมาที่หน้าฐานข้อมูลของ panel — คนที่เปิด /phpmyadmin ตรง ๆ
-    # โดยไม่ผ่านปุ่มจะถูกส่งกลับมาให้กดปุ่มที่ถูกต้อง แทนที่จะเจอหน้าเปล่า
+    # SignonURL points back at the panel's database page - anyone opening /phpmyadmin
+    # directly, without the button, is sent back to press the right button instead of
+    # landing on a blank page.
     # ---------------------------------------------------------------------
     if [ -f /etc/phpmyadmin/config.inc.php ] && ! grep -q "phpcp_pma_signon" /etc/phpmyadmin/config.inc.php; then
       cat >> /etc/phpmyadmin/config.inc.php <<'PMACFG'
 
-// --- เพิ่มโดย PHP Server Control Panel — ห้ามแก้ด้วยมือ ---
-// ล็อกอินผ่าน session ที่ panel เตรียมไว้ให้ (PLAN-V2 เฟส M5)
+// --- Added by PHP Server Control Panel - do not edit by hand ---
+// Sign in through the session the panel prepares (PLAN-V2 phase M5)
 $i = 1;
 $cfg['Servers'][$i]['auth_type']     = 'signon';
 $cfg['Servers'][$i]['SignonSession'] = 'phpcp_pma_signon';
@@ -631,45 +643,46 @@ $cfg['Servers'][$i]['SignonURL']     = '/databases';
 $cfg['Servers'][$i]['host']          = 'localhost';
 $cfg['Servers'][$i]['compress']      = false;
 $cfg['Servers'][$i]['AllowNoPassword'] = false;
-// ผู้ใช้เห็นเฉพาะฐานข้อมูลที่บัญชีตัวเองมีสิทธิ์ ซึ่ง panel เป็นคน GRANT ให้ตอนสร้าง
+// Users only see the databases their own account may access, which the panel GRANTs at creation time
 $cfg['Servers'][$i]['only_db']       = '';
 PMACFG
-      ok "ตั้งค่า phpMyAdmin ให้เข้าใช้งานผ่าน panel ได้โดยไม่ต้องพิมพ์รหัส"
+      ok "Configured phpMyAdmin so the panel can sign users in without a password prompt"
     fi
-    ok "เชื่อมต่อ phpMyAdmin เรียบร้อย (/phpmyadmin)"
+    ok "phpMyAdmin linked (/phpmyadmin)"
   elif [ ! -d /usr/share/phpmyadmin ]; then
-    say "ไม่พบ phpMyAdmin — ติดตั้งด้วย apt install phpmyadmin แล้วรันตัวติดตั้งซ้ำถ้าต้องการ"
+    say "phpMyAdmin not found - install it with apt install phpmyadmin and re-run the installer if you want it"
   fi
 
-  # ล้างร่องรอย Adminer ที่ตัวติดตั้งรุ่นก่อนเคยดาวน์โหลดมาวางไว้
+  # Clear traces of the Adminer an older installer used to download
   rm -rf "$INSTALL_DIR/public/adminer"
 
 mkdir -p "$CONF_DIR/httpd" "$CONF_DIR/fpm/pool.d" "$CONF_DIR/vhosts.d" "$CONF_DIR/tls"
 
-# ไฟล์ตั้งค่าเพิ่มเติมที่ผู้ดูแลเขียนเอง — vhost ที่ระบบสร้าง include ไดเรกทอรีนี้
-# เป็นอันสุดท้าย · panel ไม่เขียนทับไฟล์ในนี้เลย จึงเป็นที่เดียวที่แก้แล้วไม่หาย
+# Extra config files written by the admin - the generated vhost includes this directory last.
+# The panel never overwrites anything in here, so it is the one place where edits survive
 mkdir -p "$CONF_DIR/custom/apache" "$CONF_DIR/custom/nginx" \
          "$CONF_DIR/custom/postfix" "$CONF_DIR/custom/dovecot"
 chmod 750 "$CONF_DIR/httpd" "$CONF_DIR/fpm" "$CONF_DIR/vhosts.d"
 chmod 700 "$CONF_DIR/tls"
-ok "สร้าง config tree แยกจาก /etc/apache2 และ /etc/php"
+ok "Created a config tree separate from /etc/apache2 and /etc/php"
 
 
-# < /dev/null สำคัญ: ถ้ามี secret_key อยู่แล้ว (ติดตั้งซ้ำ) คำสั่งนี้จะถาม confirm()
-# ที่อ่าน STDIN จริง แต่คำถามถูกเงียบไปกับ >/dev/null ด้วย — ไม่ปิด stdin สคริปต์จะค้าง
-# รอคีย์บอร์ดแบบไม่มีอะไรบอกผู้ใช้เลยว่ากำลังรออยู่ ปิดแล้ว fgets(STDIN) เจอ EOF ทันที
-# ตอบเป็น "ไม่สร้างใหม่" โดยอัตโนมัติ ตรงกับเจตนาของบรรทัดนี้อยู่แล้วคือสร้างเฉพาะตอนยังไม่มี
+# `< /dev/null` matters: when a secret_key already exists (a reinstall), this command calls
+# confirm(), which really does read STDIN, but the question itself is swallowed by >/dev/null.
+# Without closing stdin the script would sit waiting for a keypress with nothing on screen to
+# say so. Closed, fgets(STDIN) hits EOF immediately and answers "do not regenerate", which is
+# what this line intends anyway - generate only when there is nothing yet
 "$PHP_BIN" /usr/local/bin/phpcp key:generate < /dev/null >/dev/null 2>&1 || true
 
 # ---------------------------------------------------------------------------
-# 6. ใบรับรองชั่วคราว
+# 6. Temporary certificate
 # ---------------------------------------------------------------------------
-head_ "6. ใบรับรอง TLS ของ panel"
+head_ "6. The panel's TLS certificate"
 
 PANEL_HOST="$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo localhost)"
 
 if [ ! -f "$CONF_DIR/tls/panel.crt" ]; then
-  # ต้องมี SAN และ CA:FALSE ไม่งั้นเบราว์เซอร์สมัยใหม่ปฏิเสธแม้จะกดยอมรับความเสี่ยงแล้ว
+  # SAN and CA:FALSE are required, otherwise modern browsers refuse it even after you accept the risk
   openssl req -x509 -newkey rsa:2048 -nodes -days 825 \
     -keyout "$CONF_DIR/tls/panel.key" -out "$CONF_DIR/tls/panel.crt" \
     -subj "/CN=$PANEL_HOST" \
@@ -679,16 +692,17 @@ if [ ! -f "$CONF_DIR/tls/panel.crt" ]; then
     -addext "extendedKeyUsage=serverAuth" >/dev/null 2>&1
   chmod 600 "$CONF_DIR/tls/panel.key"
   chmod 644 "$CONF_DIR/tls/panel.crt"
-  ok "สร้าง self-signed certificate สำหรับ $PANEL_HOST (เปลี่ยนเป็น Let's Encrypt ได้ทีหลังในหน้าตั้งค่า)"
+  ok "Created a self-signed certificate for $PANEL_HOST (swap it for Let's Encrypt later on the settings page)"
 else
-  ok "มีใบรับรองอยู่แล้ว"
+  ok "A certificate already exists"
 fi
 
-# สำเนาของใบที่เซ็นเอง — **ทางกลับที่ต้องมีอยู่จริงเสมอ**
+# A copy of the self-signed certificate - **the way back that must always exist**
 #
-# หน้าตั้งค่าเปลี่ยนใบของหน้าจัดการเป็นใบจริงได้ และเมื่อเปลี่ยนแล้วไฟล์ panel.crt จะ
-# กลายเป็นใบของ Let's Encrypt · ถ้าไม่มีสำเนานี้ การกลับไปใช้ใบที่เซ็นเองจะต้องสร้างใหม่
-# ตอนที่ทุกอย่างพังแล้ว ซึ่งเป็นเวลาที่แย่ที่สุดที่จะต้องทำอะไรที่ซับซ้อน
+# The settings page can replace the panel's certificate with a real one, and once it does,
+# panel.crt becomes the Let's Encrypt certificate. Without this copy, going back to the
+# self-signed one would mean generating a new one at the moment everything is already broken,
+# which is the worst possible time to have to do something complicated
 if [ ! -f "$CONF_DIR/tls/panel.selfsigned.crt" ] && [ -f "$CONF_DIR/tls/panel.crt" ]; then
   cp "$CONF_DIR/tls/panel.crt" "$CONF_DIR/tls/panel.selfsigned.crt"
   cp "$CONF_DIR/tls/panel.key" "$CONF_DIR/tls/panel.selfsigned.key"
@@ -699,7 +713,7 @@ fi
 # ---------------------------------------------------------------------------
 # 7. systemd units
 # ---------------------------------------------------------------------------
-head_ "7. runtime stack ของ panel"
+head_ "7. The panel's runtime stack"
 
 FPM_BIN="$(command -v "php-fpm$PHP_VER" || command -v php-fpm || echo /usr/sbin/php-fpm$PHP_VER)"
 HTTPD_BIN="$(command -v apache2 || command -v httpd || echo /usr/sbin/apache2)"
@@ -729,42 +743,42 @@ render() {
 }
 
 render "$SRC_DIR/templates/panel/phpcp-agentd.service.tpl" /etc/systemd/system/phpcp-agentd.service
-ok "ติดตั้ง phpcp-agentd.service"
+ok "Installed phpcp-agentd.service"
 
-# ตัวแจ้งเตือนเมื่อ unit ล้มเหลว — ถูกเรียกโดย OnFailure= ของ phpcp-agentd เท่านั้น
+# The notifier for a failed unit - only ever started by phpcp-agentd's OnFailure=
 #
-# ไม่ต้อง enable เพราะเป็น template unit ที่ systemd สั่งเริ่มเองตามชื่อ (phpcp-alert@...)
-# ตอน agent เข้าสถานะ failed · การ enable ตัว template ไม่มีความหมายและจะขึ้น error
+# It is not enabled, because it is a template unit systemd starts by name (phpcp-alert@...)
+# when the agent enters the failed state. Enabling the template itself is meaningless and errors out
 render "$SRC_DIR/templates/panel/phpcp-alert@.service.tpl" /etc/systemd/system/phpcp-alert@.service
-ok "ติดตั้ง phpcp-alert@.service"
+ok "Installed phpcp-alert@.service"
 
-# ตัวจับเวลา — ไม่มีตัวนี้แปลว่ากลไกคืนค่าอัตโนมัติของ SSH/firewall ไม่มีอยู่จริง
-# เพราะมันถูกออกแบบมาเพื่อกรณีที่ผู้ดูแลหลุดการเชื่อมต่อไปแล้ว (ไม่มีคำขอเข้ามากระตุ้น)
+# The timer - without it, the automatic rollback for SSH/firewall does not really exist,
+# because it is designed for the case where the admin has already lost their connection (no request comes in to trigger it)
 render "$SRC_DIR/templates/panel/phpcp-scheduler.service.tpl" /etc/systemd/system/phpcp-scheduler.service
 render "$SRC_DIR/templates/panel/phpcp-scheduler.timer.tpl"   /etc/systemd/system/phpcp-scheduler.timer
-ok "ติดตั้ง phpcp-scheduler.service และ phpcp-scheduler.timer"
+ok "Installed phpcp-scheduler.service and phpcp-scheduler.timer"
 
 UNITS="phpcp-agentd.service"
 
 if [ "$MODE" = "production" ]; then
   render "$SRC_DIR/templates/panel/phpcp-fpm.service.tpl" /etc/systemd/system/phpcp-fpm.service
   render "$SRC_DIR/templates/panel/phpcp-web.service.tpl" /etc/systemd/system/phpcp-web.service
-  ok "ติดตั้ง phpcp-fpm.service และ phpcp-web.service"
+  ok "Installed phpcp-fpm.service and phpcp-web.service"
 
-  # config tree ของ panel เอง — ไฟล์ generate ทุกครั้ง เพราะเป็นของตัวติดตั้งไม่ใช่ของผู้ดูแล
+  # The panel's own config tree - regenerated every time, because these files belong to the installer, not to the admin
   render "$SRC_DIR/templates/panel/php-fpm.conf.tpl"    "$CONF_DIR/fpm/php-fpm.conf"
   render "$SRC_DIR/templates/panel/panel-pool.conf.tpl" "$CONF_DIR/fpm/pool.d/panel.conf"
   render "$SRC_DIR/templates/panel/httpd.conf.tpl"      "$CONF_DIR/httpd/httpd.conf"
   chown root:"$PANEL_GROUP" "$CONF_DIR/fpm/php-fpm.conf" "$CONF_DIR/fpm/pool.d/panel.conf" "$CONF_DIR/httpd/httpd.conf"
   chmod 640 "$CONF_DIR/fpm/php-fpm.conf" "$CONF_DIR/fpm/pool.d/panel.conf" "$CONF_DIR/httpd/httpd.conf"
-  ok "สร้าง httpd.conf และ php-fpm.conf ของ panel"
+  ok "Generated the panel's httpd.conf and php-fpm.conf"
 
-  # ตรวจ config ก่อนสตาร์ต — ล้มตรงนี้ยังกู้ง่ายกว่าล้มตอน systemd สตาร์ต
+  # Check the config before starting - failing here is still easier to recover from than failing under systemd
   "$HTTPD_BIN" -t -f "$CONF_DIR/httpd/httpd.conf" >/dev/null 2>&1 \
-    || die "httpd.conf ของ panel ไม่ผ่าน configtest: $("$HTTPD_BIN" -t -f "$CONF_DIR/httpd/httpd.conf" 2>&1 | tail -3)"
+    || die "The panel's httpd.conf failed configtest: $("$HTTPD_BIN" -t -f "$CONF_DIR/httpd/httpd.conf" 2>&1 | tail -3)"
   "$FPM_BIN" -t -y "$CONF_DIR/fpm/php-fpm.conf" >/dev/null 2>&1 \
-    || die "php-fpm.conf ของ panel ไม่ผ่าน configtest: $("$FPM_BIN" -t -y "$CONF_DIR/fpm/php-fpm.conf" 2>&1 | tail -3)"
-  ok "configtest ของ httpd และ fpm ผ่าน"
+    || die "The panel's php-fpm.conf failed configtest: $("$FPM_BIN" -t -y "$CONF_DIR/fpm/php-fpm.conf" 2>&1 | tail -3)"
+  ok "configtest passed for httpd and fpm"
 
   UNITS="$UNITS phpcp-fpm.service phpcp-web.service"
 fi
@@ -774,69 +788,70 @@ if [ -d /run/systemd/system ]; then
   # shellcheck disable=SC2086
   systemctl enable $UNITS >/dev/null 2>&1
 
-  # restart ไม่ใช่ `enable --now` — บนเครื่องที่ติดตั้งซ้ำเพื่ออัปเดตโค้ด บริการยัง
-  # active อยู่แล้ว `--now` จึงไม่ทำอะไรเลย ผลคือ phpcp-agentd ซึ่งเป็นโปรเซส PHP
-  # ที่รันค้างยาว ๆ จะยังใช้โค้ดชุดเก่าที่โหลดไว้ตอนสตาร์ตต่อไป ทั้งที่ไฟล์บนดิสก์ใหม่แล้ว
-  # (restart สตาร์ตให้เองอยู่แล้วถ้า unit ยังไม่ทำงาน จึงใช้ได้ทั้งติดตั้งใหม่และติดตั้งซ้ำ)
+  # restart, not `enable --now` - on a machine being reinstalled to update the code the services
+  # are still active, so `--now` does nothing at all, and phpcp-agentd, a long-running PHP
+  # process, keeps using the old code it loaded at startup even though the files on disk are new.
+  # (restart starts the unit by itself when it is not running, so it works for both fresh installs and reinstalls)
   #
-  # สั่งทุก unit ในคำสั่งเดียว เพราะทั้งสามใช้ RuntimeDirectory=phpcp ร่วมกัน
+  # All units in a single command, because all three share RuntimeDirectory=phpcp
   # shellcheck disable=SC2086
   systemctl restart $UNITS
-  ok "เปิดใช้งานและรีสตาร์ต: $UNITS"
+  ok "Enabled and restarted: $UNITS"
 
-  # timer แยกจาก $UNITS เพราะตัว .service เป็น oneshot ที่ timer เป็นคนเรียก
-  # ไม่ใช่บริการที่รันค้าง — `restart` ตัวมันตรง ๆ จะได้แค่รันหนึ่งรอบแล้วจบ
+  # The timer is kept out of $UNITS because its .service is a oneshot the timer triggers,
+  # not a long-running service - `restart` on it directly would just run one round and finish
   systemctl enable phpcp-scheduler.timer >/dev/null 2>&1
   systemctl restart phpcp-scheduler.timer
-  ok "เปิดใช้งาน phpcp-scheduler.timer (ทุกนาที)"
+  ok "Enabled phpcp-scheduler.timer (every minute)"
 
-  # "ทำงานอยู่ตอนนี้" กับ "ขึ้นเองตอนบูต" เป็นคนละเรื่อง — เว็บของผู้ใช้ทั้งเครื่อง
-  # พึ่ง apache2 และ mariadb ถ้าสองตัวนี้ถูก disable ไว้ เครื่องจะกลับมาแบบเว็บล่มทั้งหมด
-  # โดยที่ตัวติดตั้งรายงานว่าสำเร็จ — enable ซ้ำไม่มีผลเสียถ้าเปิดอยู่แล้ว
+  # "running right now" and "starts at boot" are two different things - every user site on this
+  # machine depends on apache2 and mariadb, and if those are left disabled the machine comes
+  # back with every site down while the installer reported success.
+  # Enabling again does no harm when they are already enabled
   if [ "$MODE" = "production" ]; then
     for unit in apache2 mariadb; do
       systemctl list-unit-files "$unit.service" >/dev/null 2>&1 || continue
       if systemctl is-enabled --quiet "$unit" 2>/dev/null; then
-        say "$unit ตั้งให้ขึ้นตอนบูตอยู่แล้ว"
+        say "$unit is already set to start at boot"
       else
-        systemctl enable "$unit" >/dev/null 2>&1 && ok "ตั้งให้ $unit ขึ้นตอนบูต" \
-          || warn "ตั้งให้ $unit ขึ้นตอนบูตไม่สำเร็จ — ตรวจด้วย systemctl status $unit"
+        systemctl enable "$unit" >/dev/null 2>&1 && ok "Set $unit to start at boot" \
+          || warn "Could not set $unit to start at boot - check with systemctl status $unit"
       fi
     done
   fi
 else
-  warn "ไม่พบ systemd — ติดตั้งไฟล์ unit ไว้แล้วแต่ยังไม่ได้เปิดใช้งาน"
+  warn "systemd not found - the unit files are installed but not enabled"
 fi
 
 # ---------------------------------------------------------------------------
-# 8. ฐานข้อมูลและผู้ดูแลระบบคนแรก
+# 8. Database and the first administrator
 # ---------------------------------------------------------------------------
-head_ "8. ฐานข้อมูลและบัญชีผู้ดูแล"
-# ตรวจว่า panel จะต่อ MariaDB ได้ — "ตรวจ" เท่านั้น ไม่แก้อะไรทั้งสิ้น
+head_ "8. Database and the admin account"
+# Check that the panel can reach MariaDB - "check" only, nothing is changed
 #
-# ห้ามรัน ALTER USER กับ root เด็ดขาด เคยทำแล้วพังมาก่อน:
-# Debian/Ubuntu ตั้ง root@localhost เป็น unix_socket มาแต่ต้น ซึ่งแปลว่าใครก็ตาม
-# ที่เป็น OS root ต่อได้ทันทีโดยไม่ต้องมีรหัสผ่านเก็บไว้ที่ไหนเลย — agent ของ panel
-# รันเป็น root จึงใช้ช่องทางนี้ได้ตรง ๆ อยู่แล้ว
+# Never run ALTER USER against root; it has caused real damage before:
+# Debian/Ubuntu set root@localhost to unix_socket from the start, which means anyone who is
+# OS root can connect immediately with no password stored anywhere. The panel's agent runs as
+# root, so it already uses that path directly.
 #
-# การสั่ง ALTER USER ... IDENTIFIED BY '<รหัส>' จะสลับ plugin จาก unix_socket
-# ไปเป็นรหัสผ่าน ผลคือ `sudo mariadb` ของผู้ดูแลใช้ไม่ได้อีกเลย และถ้าขั้นตอนเขียน
-# /root/.my.cnf ล้มเหลว (ดิสก์เต็ม, สคริปต์ถูกขัดจังหวะ) จะไม่มีใครรู้รหัสนั้นเลย
-# = ล็อกตัวเองออกจากฐานข้อมูลถาวร ต้องกู้ด้วย --skip-grant-tables เท่านั้น
+# ALTER USER ... IDENTIFIED BY '<password>' switches the plugin from unix_socket to a password,
+# so the admin's `sudo mariadb` stops working forever, and if writing /root/.my.cnf then fails
+# (full disk, interrupted script) nobody knows that password at all
+# = locked out of the database permanently, recoverable only with --skip-grant-tables
 if command -v mariadb >/dev/null 2>&1; then
-  # อยู่ใน && / || เพื่อไม่ให้ set -e ตัดจบสคริปต์เมื่อต่อฐานข้อมูลไม่ได้
+  # Wrapped in && / || so set -e does not end the script when the database cannot be reached
   MARIADB_PROBE=$(mariadb -e "SELECT 1" 2>&1) && MARIADB_PROBE_RC=0 || MARIADB_PROBE_RC=$?
 
   if [ "$MARIADB_PROBE_RC" -eq 0 ]; then
-    # ครอบคลุมทั้ง unix_socket และกรณีที่มี /root/.my.cnf อยู่แล้ว
-    # (client อ่าน /root/.my.cnf ให้เองอัตโนมัติเมื่อรันในฐานะ root)
-    ok "ต่อ MariaDB ในฐานะ root ได้ — panel ใช้ช่องทางเดียวกันนี้ผ่าน agent"
+    # Covers both unix_socket and the case where /root/.my.cnf already exists
+    # (the client reads /root/.my.cnf automatically when run as root)
+    ok "Connected to MariaDB as root - the panel uses this same path through the agent"
   elif mariadb --defaults-file=/etc/mysql/debian.cnf -e "SELECT 1" >/dev/null 2>&1; then
-    ok "ต่อ MariaDB ผ่าน /etc/mysql/debian.cnf ได้ — panel จะใช้ไฟล์นี้"
+    ok "Connected to MariaDB through /etc/mysql/debian.cnf - the panel will use this file"
   else
-    warn "ต่อ MariaDB ไม่ได้ — หน้าจัดการฐานข้อมูลใน panel จะยังใช้ไม่ได้"
-    warn "  ถ้าบริการยังไม่ทำงาน : sudo systemctl enable --now mariadb"
-    warn "  ถ้า root ถูกตั้งรหัสผ่านไว้แล้วแต่ไม่มีใครรู้รหัส ให้คืนค่าเป็น unix_socket ด้วย"
+    warn "Cannot connect to MariaDB - the database pages in the panel will not work yet"
+    warn "  If the service is not running : sudo systemctl enable --now mariadb"
+    warn "  If root has a password nobody knows, put it back to unix_socket with"
     warn "    sudo systemctl stop mariadb"
     warn "    sudo systemctl set-environment MYSQLD_OPTS=\"--skip-grant-tables --skip-networking\""
     warn "    sudo systemctl start mariadb && sudo mariadb -u root"
@@ -845,7 +860,7 @@ if command -v mariadb >/dev/null 2>&1; then
     warn "    sudo systemctl start mariadb"
   fi
 fi
-# runuser มากับ util-linux จึงมีเสมอ ต่างจาก sudo ที่อาจไม่ได้ติดตั้งบน Debian แบบ minimal
+# runuser ships with util-linux so it is always there, unlike sudo, which a minimal Debian may not have
 as_panel() {
   if command -v runuser >/dev/null; then
     runuser -u "$PANEL_USER" -- "$@"
@@ -861,7 +876,7 @@ if [ "$MODE" = "sandbox" ]; then
   mkdir -p "$SANDBOX_DIR/state"
   chown -R "$PANEL_USER:$PANEL_GROUP" "$SANDBOX_DIR"
   as_panel "$PHP_BIN" /usr/local/bin/phpcp sandbox:seed >/dev/null
-  ok "สร้าง $SANDBOX_DIR และใส่ข้อมูลตัวอย่างแล้ว"
+  ok "Created $SANDBOX_DIR and loaded the sample data"
 fi
 
 # ---------------------------------------------------------------------------
@@ -870,16 +885,16 @@ fi
 head_ "9. Firewall (UFW)"
 
 if [ "$MODE" = "production" ] && command -v ufw >/dev/null; then
-  # ต้องหาพอร์ต SSH จริงก่อนเปิด firewall — เปิดแค่ 22 ตายตัวแล้วสั่ง enable
-  # เท่ากับตัดผู้ดูแลออกจากเครื่องทันทีถ้าเขาย้าย SSH ไปพอร์ตอื่น ซึ่งเป็นเรื่องปกติมาก
-  # บนเซิร์ฟเวอร์จริง (panel ตัวนี้ยังมีปุ่มให้ย้ายพอร์ต SSH เองด้วยซ้ำ)
+  # The real SSH port has to be found before the firewall goes up - opening a hard-coded 22 and
+  # then enabling would cut the admin off the machine instantly if they moved SSH elsewhere,
+  # which is very common on real servers (this panel even has a button to move the SSH port).
   #
-  # ลำดับความน่าเชื่อถือ: sshd -T (อ่าน config จริงรวม Include ทั้งหมด) → ไฟล์ config
-  # → พอร์ตของ session ที่กำลังใช้ติดตั้งอยู่ตอนนี้ → 22
-  # ทุกบรรทัดต้องมี `|| true` — `set -e` ฆ่าสคริปต์ทั้งตัวเมื่อคำสั่งใน $( ) คืนค่าไม่เป็น 0
-  # และทั้งสองคำสั่งนี้ล้มเป็นปกติบนเครื่องที่ยังไม่มี host key หรือไม่มีไฟล์ config
-  # (เจอจริงตอนทดสอบติดตั้งบน debian:12 — ตัวติดตั้งตายที่ขั้นนี้ด้วยรหัส 255
-  # ทั้งที่ฐานข้อมูลและบัญชีผู้ดูแลสร้างเสร็จไปแล้ว)
+  # Order of trust: sshd -T (reads the real config including every Include) -> the config files
+  # -> the port of the session doing the install right now -> 22
+  # Every line needs `|| true` - `set -e` kills the whole script when a command inside $( )
+  # returns non-zero, and both of these fail routinely on a machine with no host key or no config file
+  # (seen for real while testing an install on debian:12 - the installer died here with code 255
+  # even though the database and the admin account had already been created)
   SSH_PORTS=""
   if command -v sshd >/dev/null 2>&1; then
     SSH_PORTS="$(sshd -T 2>/dev/null | awk '$1 == "port" { print $2 }' || true)"
@@ -888,7 +903,7 @@ if [ "$MODE" = "production" ] && command -v ufw >/dev/null; then
     SSH_PORTS="$(awk '/^[[:space:]]*[Pp]ort[[:space:]]+[0-9]+/ { print $2 }' \
       /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null || true)"
   fi
-  # พอร์ตปลายทางของ session ปัจจุบัน — ค่าที่ "รู้แน่" ว่าใช้ต่อเข้ามาได้จริง
+  # The destination port of the current session - the value we know for certain still lets us in
   if [ -n "${SSH_CONNECTION:-}" ]; then
     SSH_PORTS="$SSH_PORTS $(printf '%s' "$SSH_CONNECTION" | awk '{ print $4 }' || true)"
   fi
@@ -908,16 +923,16 @@ if [ "$MODE" = "production" ] && command -v ufw >/dev/null; then
   done
   SSH_ALLOWED="${SSH_ALLOWED# }"
 
-  say "กำลังเปิดใช้งาน UFW และเปิดพอร์ตที่จำเป็น (SSH: $SSH_ALLOWED, 53, 80, 443, $PORT)..."
+  say "Enabling UFW and opening the required ports (SSH: $SSH_ALLOWED, 53, 80, 443, $PORT)..."
   ufw allow 53 comment "DNS" >/dev/null 2>&1 || true
   ufw allow 80/tcp comment "HTTP Web" >/dev/null 2>&1 || true
   ufw allow 443/tcp comment "HTTPS Web" >/dev/null 2>&1 || true
   ufw allow "$PORT/tcp" comment "PHP Control Panel" >/dev/null 2>&1 || true
-  # พอร์ตเมล — เปิดไว้ตั้งแต่ติดตั้ง แม้ยังไม่ได้เปิดเมลให้โดเมนไหน
+  # Mail ports - opened at install time even though mail is not enabled for any domain yet.
   #
-  # ไม่มีอะไรฟังพอร์ตเหล่านี้จนกว่าจะสั่ง `phpcp mail:enable` จึงไม่ได้เพิ่มพื้นที่
-  # โจมตีอะไรตอนนี้ · แต่การเปิดทีหลังบนเครื่องที่รับเมลอยู่แล้วแปลว่ามีช่วงที่เมล
-  # ขาเข้าถูกไฟร์วอลล์ตัดทิ้งเงียบ ๆ ซึ่งหาสาเหตุยากมาก
+  # Nothing listens on them until `phpcp mail:enable` runs, so this adds no attack surface now.
+  # But opening them later, on a machine that is already receiving mail, means there is a window
+  # where inbound mail is dropped by the firewall silently, which is very hard to diagnose
   if [ "$WITH_POSTFIX" = "yes" ]; then
     ufw allow 25/tcp comment "SMTP" >/dev/null 2>&1 || true
     ufw allow 465/tcp comment "SMTP submission (TLS)" >/dev/null 2>&1 || true
@@ -926,115 +941,117 @@ if [ "$MODE" = "production" ] && command -v ufw >/dev/null; then
     ufw allow 995/tcp comment "POP3 over TLS" >/dev/null 2>&1 || true
   fi
   ufw --force enable >/dev/null 2>&1 || true
-  ok "ตั้งค่าและเปิดใช้งาน UFW Firewall เรียบร้อยแล้ว (SSH: $SSH_ALLOWED, 53, 80, 443, $PORT)"
+  ok "UFW firewall configured and enabled (SSH: $SSH_ALLOWED, 53, 80, 443, $PORT)"
   case " $SSH_ALLOWED " in
     *" 22 "*) ;;
-    *) warn "ไม่ได้เปิดพอร์ต 22 เพราะ sshd ไม่ได้ฟังอยู่ — ถ้าจะย้ายกลับต้อง ufw allow 22/tcp ก่อน" ;;
+    *) warn "Port 22 was not opened because sshd is not listening on it - run ufw allow 22/tcp first if you move back" ;;
   esac
 else
-  say "$C_DIM ข้าม (ufw ไม่ได้ติดตั้ง หรือไม่ใช่โหมด production)$C_OFF"
+  say "$C_DIM Skipped (ufw is not installed, or this is not production mode)$C_OFF"
 fi
 
 # ---------------------------------------------------------------------------
-# 10. หมุน log
+# 10. Log rotation
 #
-# ไม่มีตัวนี้ = /var/log/phpcp โตไม่มีที่สิ้นสุด · panel.log กับ agent.log บนเครื่อง
-# ที่ใช้งานจริงโตเร็วที่สุดเพราะบันทึกทุกคำขอและทุกคำสั่งที่ผ่าน agent
+# Without this, /var/log/phpcp grows without limit. panel.log and agent.log grow fastest on a
+# machine in real use, because they record every request and every command that goes through the agent
 # ---------------------------------------------------------------------------
 if [ "$WITH_LOGROTATE" = "yes" ]; then
-  head_ "10. หมุน log"
+  head_ "10. Log rotation"
 
   if [ -d /etc/logrotate.d ]; then
     render "$SRC_DIR/templates/panel/logrotate.conf.tpl" /etc/logrotate.d/phpcp
     chown root:root /etc/logrotate.d/phpcp
     chmod 644 /etc/logrotate.d/phpcp
 
-    # logrotate ข้ามไฟล์ตั้งค่าที่ผิดรูปทั้งไฟล์โดยไม่ทำให้ใครรู้ — ตรวจตั้งแต่ตอนนี้
+    # logrotate skips a malformed config file entirely without telling anyone - check it now
     if command -v logrotate >/dev/null 2>&1; then
       if LOGROTATE_ERR="$(logrotate -d /etc/logrotate.d/phpcp 2>&1)"; then
-        ok "ตั้งค่าหมุน log ที่ /etc/logrotate.d/phpcp (ทั่วไปทุกสัปดาห์ · audit ทุกเดือน)"
+        ok "Log rotation configured at /etc/logrotate.d/phpcp (weekly in general, monthly for audit)"
       else
-        # ต้องเก็บข้อความก่อนลบไฟล์ — ตรวจไฟล์ต้นแบบที่ยังมี {{...}} จะได้ error คนละเรื่อง
+        # The message has to be captured before the file is deleted - checking the template that
+        # still has {{...}} in it would produce an error about something else entirely
         rm -f /etc/logrotate.d/phpcp
-        die "ไฟล์ตั้งค่า logrotate ไม่ผ่านการตรวจ: $(printf '%s' "$LOGROTATE_ERR" | tail -3)"
+        die "The logrotate config file failed its check: $(printf '%s' "$LOGROTATE_ERR" | tail -3)"
       fi
     else
-      ok "เขียน /etc/logrotate.d/phpcp แล้ว (ไม่พบคำสั่ง logrotate จึงข้ามการตรวจ)"
+      ok "Wrote /etc/logrotate.d/phpcp (the logrotate command was not found, so the check was skipped)"
     fi
   else
-    warn "ไม่มี /etc/logrotate.d — ข้ามการตั้งค่าหมุน log"
+    warn "No /etc/logrotate.d - skipping log rotation setup"
   fi
 else
-  say "$C_DIM ข้ามการตั้งค่าหมุน log (--no-logrotate)$C_OFF"
+  say "$C_DIM Skipping log rotation setup (--no-logrotate)$C_OFF"
 fi
 
 # ---------------------------------------------------------------------------
-# 10.9 สร้างไฟล์ตั้งค่าของเว็บเซิร์ฟเวอร์ใหม่ตามโหมดที่ตั้งไว้
+# 10.9 Regenerate the web server config files for the current mode
 #
-# ติดตั้งซ้ำต้องได้ไฟล์ที่ตรงกับโหมดปัจจุบันเสมอ — ทั้ง ports.conf ที่บอกว่า Apache
-# ฟังพอร์ตไหน และ vhost ของ http://localhost (ถ้าเครื่องนี้เปิดไว้) · ถ้าไม่เรียก
-# ตรงนี้ ไฟล์เหล่านั้นจะกลับมาก็ต่อเมื่อมีคนนึกได้ว่าต้องรัน sites:rebuild เอง
+# A reinstall has to end up with files that match the current mode - both ports.conf, which says
+# which port Apache listens on, and the vhost for http://localhost (if this machine has it).
+# Without this call those files only come back when somebody remembers to run sites:rebuild.
 #
-# ล้มเหลวไม่ใช่เหตุให้การติดตั้งล้ม (เครื่องที่ยังไม่มีเว็บสักเว็บก็ปกติ) แต่ต้องเห็น
+# Failing here is not a reason for the install to fail (a machine with no sites yet is normal), but it has to be visible
 # ---------------------------------------------------------------------------
 if as_panel "$PHP_BIN" /usr/local/bin/phpcp sites:rebuild >/dev/null 2>&1; then
-  ok "สร้างไฟล์ตั้งค่าของเว็บเซิร์ฟเวอร์ใหม่แล้ว"
+  ok "Regenerated the web server config files"
 else
-  warn "สร้างไฟล์ตั้งค่าของเว็บเซิร์ฟเวอร์ไม่สำเร็จ — รัน 'phpcp sites:rebuild' ดูข้อความเต็ม"
+  warn "Could not regenerate the web server config files - run 'phpcp sites:rebuild' to see the full message"
 fi
 
 # ---------------------------------------------------------------------------
-# 11. ตรวจผลการติดตั้ง
+# 11. Check the result of the install
 #
-# ตัวติดตั้งที่จบด้วยรหัส 0 ไม่ได้แปลว่าระบบใช้งานได้ — เคยเกิดมาแล้วที่ทุกขั้นรายงาน
-# ผ่านหมดแต่ panel อ่าน config ไม่ได้จึงไม่มีฐานข้อมูลเลย · doctor ตรวจจากมุมของ
-# ผู้ใช้ที่ panel รันจริง (ไม่ใช่ root) ซึ่งเป็นมุมเดียวที่จับปัญหาสิทธิ์แบบนั้นได้
+# An installer that exits 0 does not mean the system works - it has happened that every step
+# reported success while the panel could not read its config and therefore had no database at
+# all. doctor checks from the point of view of the user the panel really runs as (not root),
+# which is the only angle that catches a permission problem like that
 # ---------------------------------------------------------------------------
 if [ "$RUN_DOCTOR" = "yes" ]; then
-  head_ "11. ตรวจผลการติดตั้ง"
+  head_ "11. Checking the result of the install"
 
   as_panel "$PHP_BIN" /usr/local/bin/phpcp doctor || DOCTOR_RC=$?
   if [ "${DOCTOR_RC:-0}" -ne 0 ]; then
-    warn "doctor พบปัญหาข้างต้น — แก้ให้ครบก่อนเปิดใช้งานจริง"
+    warn "doctor found the problems above - fix them all before going live"
   fi
 fi
 
-# ยิงทุก endpoint ใส่เครื่องจริง — ต้องมีบัญชีที่ล็อกอินผ่านแล้วจริง จึงเป็นทางเลือก
-# ไม่ใช่ค่าเริ่มต้น (บัญชีที่เพิ่งสร้างติดธง must_change_password จะล็อกอินไม่ผ่าน)
+# Hit every endpoint on the real machine - this needs an account that can really log in, so it
+# is optional rather than the default (a freshly created account carries the must_change_password flag and cannot log in)
 if [ -n "$SMOKE_USER" ] && [ -n "$SMOKE_PASSWORD_FILE" ]; then
-  head_ "12. ยิงทุก endpoint ใส่เครื่องจริง"
+  head_ "12. Hitting every endpoint on the real machine"
 
   if as_panel "$PHP_BIN" "$INSTALL_DIR/bin/phpcp-smoke" \
       --url="https://127.0.0.1:$PORT" --user="$SMOKE_USER" --password-file="$SMOKE_PASSWORD_FILE"; then
-    ok "ทุก endpoint ตอบตามสัญญา"
+    ok "Every endpoint answered as promised"
   else
-    warn "phpcp-smoke พบปัญหา — ดูผลด้านบน"
+    warn "phpcp-smoke found problems - see the output above"
   fi
 fi
 
 # ---------------------------------------------------------------------------
-# เสร็จสิ้น
+# Done
 # ---------------------------------------------------------------------------
-head_ "เสร็จสิ้น"
-say "ตรวจสถานะ : ${C_DIM}phpcp status${C_OFF}"
-say "ตรวจปัญหา : ${C_DIM}phpcp doctor${C_OFF}"
+head_ "Done"
+say "Check the status : ${C_DIM}phpcp status${C_OFF}"
+say "Check for issues : ${C_DIM}phpcp doctor${C_OFF}"
 
 if [ "$MODE" = "production" ]; then
-  say "เข้าใช้งาน : ${C_DIM}https://$(hostname -I 2>/dev/null | awk '{print $1}'):$PORT${C_OFF}"
+  say "Open the panel   : ${C_DIM}https://$(hostname -I 2>/dev/null | awk '{print $1}'):$PORT${C_OFF}"
   printf '\n'
-  warn "อย่าลืมทำตามรายการตรวจก่อนขึ้น production ใน docs/SECURITY.md §5"
+  warn "Do not forget the pre-production checklist in docs/SECURITY.md §5"
   printf '\n'
   if [ -n "$DNS_NS" ]; then
-    say "DNS  : เชื่อม BIND9 แล้ว — สร้างเรกคอร์ดจากหน้า Domains ได้เลย"
+    say "DNS  : BIND9 is wired up - create records from the Domains page right away"
   else
-    warn "ติดตั้ง BIND9 ไว้แล้วแต่ panel ยังไม่เชื่อมให้ (dns.enabled = false)"
-    say "เปิดได้ด้วยการติดตั้งซ้ำพร้อม ${C_DIM}--dns-ns=ns1.example.com,ns2.example.com${C_OFF}"
+    warn "BIND9 is installed but the panel is not wired up to it (dns.enabled = false)"
+    say "Turn it on by reinstalling with ${C_DIM}--dns-ns=ns1.example.com,ns2.example.com${C_OFF}"
   fi
   if [ "$WITH_POSTFIX" = "yes" ]; then
-    say "เมล : ตั้งค่า relay/ผู้ส่งได้ในหน้า Settings — ค่าที่ตั้งจะเขียน main.cf ให้เอง"
+    say "Mail : set the relay/sender on the Settings page - what you set is written into main.cf for you"
   fi
 else
   printf '\n'
-  warn "ระบบอยู่ในโหมด $MODE — คำสั่งจะไม่มีผลกับเซิร์ฟเวอร์จริง"
+  warn "The system is in $MODE mode - commands will not affect the real server"
 fi
 printf '\n'
