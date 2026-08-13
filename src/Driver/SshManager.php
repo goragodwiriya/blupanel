@@ -208,6 +208,11 @@ final class SshManager
             return [true, 'ข้ามการตรวจ: ไม่พบ sshd บนเครื่องนี้'];
         }
 
+        // /run/sshd ต้องมีก่อน ไม่งั้น `sshd -t` ล้มด้วย "Missing privilege separation
+        // directory" ทั้งที่ไฟล์ตั้งค่าไม่มีอะไรผิด — เหตุผลเต็มอยู่ที่
+        // {@see \Phpcp\Driver\Ssh\SftpAccessManager::ensureRuntimeDir()}
+        $executor->exec([$executor->path('/usr/bin/mkdir'), '-m', '0755', '-p', '/run/sshd'], timeout: 10);
+
         $result = $executor->exec([$binary, '-t', '-f', $executor->path(self::CONFIG)], timeout: 20);
         $output = trim($result->stderr) !== '' ? $result->stderr : $result->stdout;
 

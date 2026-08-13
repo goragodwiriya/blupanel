@@ -22,6 +22,31 @@ use Phpcp\Driver\Notify\TelegramNotifier;
 
 group('ค่าตั้ง การแจ้งเตือน และเมล');
 
+/**
+ * ฐานข้อมูลเปล่า + Context สำหรับเรียก capability ของค่าตั้งตรง ๆ
+ *
+ * @return array{db:Phpcp\Kernel\Db,context:Phpcp\Agent\Context}
+ */
+function settingsFixture(): array
+{
+    $root = sys_get_temp_dir() . '/phpcp-settings-' . getmypid() . '-' . bin2hex(random_bytes(4));
+    mkdir($root, 0750, true);
+
+    $db = new Phpcp\Kernel\Db($root . '/panel.db');
+    $db->migrate(PHPCP_ROOT . '/db/migrations');
+
+    register_shutdown_function(static fn () => exec('rm -rf ' . escapeshellarg($root)));
+
+    return [
+        'db' => $db,
+        'context' => new Phpcp\Agent\Context(
+            new Phpcp\Agent\Actor(0, 'tester', Phpcp\Security\Permissions::SUPERADMIN, '127.0.0.1', 'test'),
+            Phpcp\Kernel\Config::load($root),
+            $db,
+        ),
+    ];
+}
+
 test('ค่าที่เป็นความลับต้องถูกปิดบังก่อนส่งไปหน้าจอ', static function (): void {
     // token ที่หลุดไปทาง HTML แปลว่าใครก็ส่งข้อความในนามระบบได้
     // และจะติดอยู่ในแคชของเบราว์เซอร์กับประวัติของ proxy ไปอีกนาน
@@ -320,4 +345,63 @@ test('nameserver ตั้งจากหน้าจอได้ ไม่ต�
     $page = (string) file_get_contents(PHPCP_ROOT . '/public/assets/spa/templates/settings.html');
     assertTrue(str_contains($page, 'name="dns.nameservers"'), 'หน้าตั้งค่าต้องมีช่องกรอก nameserver');
     assertTrue(str_contains($page, 'name="mode"'), 'หน้าตั้งค่าต้องมีตัวเลือกเว็บเซิร์ฟเวอร์');
+});
+
+test('เปิดสวิตช์ DNS ต้องเปิดบริการ named ให้จริง ไม่ใช่แค่บันทึกค่า', static function (): void {
+    // **เจอจากเซิร์ฟเวอร์จริง (2026-08-13):** ติดตั้งโดยไม่ส่ง --dns-ns (ค่าเริ่มต้น) แล้ว
+    // แพ็กเกจ bind9 ถูกลงไว้แต่ service ไม่เคยถูก enable · ผู้ดูแลกดสวิตช์ในหน้าตั้งค่า
+    // เห็น "บันทึกแล้ว" แต่เรกคอร์ดแรกที่เพิ่มล้มที่ `rndc reload` โดยข้อความไม่ได้บอกเลย
+    // ว่าต้องไป start service ก่อน — สวิตช์ต้องทำงานให้จบ ไม่ใช่แค่จำความตั้งใจไว้
+    $fixture = settingsFixture();
+
+    (new SettingsRepository($fixture['db']))->save(['dns.nameservers' => 'ns1.example.com,ns2.example.com']);
+
+    $executor = new Phpcp\Agent\Executor\DryRunExecutor();
+    $capability = new Phpcp\Agent\Capability\SettingsSet();
+
+    $result = $capability->run(
+        $capability->validate(['dns.enabled' => '1']),
+        $executor,
+        $fixture['context'],
+    );
+
+    $commands = implode(' | ', $executor->simulatedCommands());
+
+    assertTrue(
+        str_contains($commands, 'systemctl enable --now named')
+        || str_contains($commands, 'systemctl enable --now bind9'),
+        'ต้องสั่งเปิดบริการ BIND9 ด้วย · ได้: ' . $commands,
+    );
+    assertTrue(
+        str_contains($commands, '/etc/bind/zones'),
+        'ต้องสร้างไดเรกทอรี zone ด้วย ไม่งั้นเขียนไฟล์แรกไม่ได้ · ได้: ' . $commands,
+    );
+    assertTrue(
+        str_contains((string) $result['message'], 'named') || str_contains((string) $result['message'], 'bind9'),
+        'ต้องรายงานกลับว่าทำอะไรไปกับบริการ · ได้: ' . $result['message'],
+    );
+});
+
+test('เปิดสวิตช์ DNS โดยยังไม่มี nameserver ต้องบอกตรง ๆ ว่ายังสร้าง zone ไม่ได้', static function (): void {
+    // BIND9 ปฏิเสธ zone ที่ไม่มี NS record — ปล่อยให้ผู้ดูแลไปเจอเองตอนเพิ่มเรกคอร์ดแรก
+    // แปลว่าเขาจะไล่หาสาเหตุผิดที่ ทั้งที่ระบบรู้ตั้งแต่ตอนกดสวิตช์แล้ว
+    $fixture = settingsFixture();
+
+    $executor = new Phpcp\Agent\Executor\DryRunExecutor();
+    $capability = new Phpcp\Agent\Capability\SettingsSet();
+
+    $result = $capability->run(
+        $capability->validate(['dns.enabled' => '1']),
+        $executor,
+        $fixture['context'],
+    );
+
+    assertTrue(
+        str_contains((string) $result['message'], 'เนมเซิร์ฟเวอร์'),
+        'ต้องบอกว่ายังขาดชื่อเนมเซิร์ฟเวอร์ · ได้: ' . $result['message'],
+    );
+    assertTrue(
+        !str_contains(implode(' | ', $executor->simulatedCommands()), 'systemctl enable'),
+        'ยังไม่ควรแตะบริการจนกว่าจะมีข้อมูลครบ',
+    );
 });

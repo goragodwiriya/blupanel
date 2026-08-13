@@ -53,6 +53,7 @@ final class SftpAccessManager
     private const GPASSWD = '/usr/bin/gpasswd';
     private const CHPASSWD = '/usr/sbin/chpasswd';
     private const SSHD = '/usr/sbin/sshd';
+    private const MKDIR = '/usr/bin/mkdir';
 
     public function __construct(private readonly Executor $executor)
     {
@@ -67,14 +68,14 @@ final class SftpAccessManager
     {
         $this->assertPassword($password);
 
-        $this->assertSshdRunning();
+        $activation = $this->assertSshdRunning();
         $this->ensureGroup();
         $this->ensureConfig();
 
         // reload อยู่นอก ensureConfig() โดยเจตนา — ที่นั่นมี early return เมื่อไฟล์ตรงอยู่แล้ว
         // ถ้าเอา reload ไปไว้ข้างใน กรณี "เขียนไฟล์สำเร็จแต่ reload ล้มรอบก่อน" จะแก้ไม่ได้เลย
         // เพราะการกดซ้ำจะข้ามทั้งบล็อกไป · reload เร็วและไม่มีผลข้างเคียง เรียกทุกครั้งคุ้มกว่า
-        $this->reloadSshd();
+        $this->reloadSshd($activation);
 
         // ใส่เข้ากลุ่มก่อนตั้งรหัสผ่าน — ถ้าล้มกลางทาง บัญชีที่มีรหัสผ่านแต่ไม่อยู่ในกลุ่ม
         // ยังเข้าอะไรไม่ได้ (shell เป็น nologin) ปลอดภัยกว่าลำดับกลับกัน
@@ -111,13 +112,19 @@ final class SftpAccessManager
      * `/run/sshd` ถูกสร้างโดย systemd ตอน start service (`RuntimeDirectory=sshd`) เท่านั้น
      * · ผลคือผู้ดูแลเห็นข้อความ "การตั้งค่าที่สร้างขึ้นไม่ผ่านการตรวจสอบ" ซึ่งชี้ไปผิดทาง
      * ทั้งที่ config ที่ phpcp เขียนถูกต้องทุกบรรทัด — ต้องบอกสาเหตุจริงตั้งแต่ก่อนแตะไฟล์
+     *
+     * @return array{unit:string,socket:bool} unit ที่พบว่าทำงานอยู่ และมาจาก socket หรือไม่
      */
-    private function assertSshdRunning(): void
+    private function assertSshdRunning(): array
     {
         // ชื่อ unit ต่างกันตาม distro: Debian/Ubuntu ใช้ `ssh`, RHEL ใช้ `sshd`
         foreach (['ssh', 'sshd'] as $unit) {
-            if (ServiceProbe::read($this->executor, $unit)['running'] ?? false) {
-                return;
+            $status = ServiceProbe::read($this->executor, $unit);
+
+            if ($status['running'] ?? false) {
+                // socket activation คือค่าเริ่มต้นของ Ubuntu 22.10+ — ตัว `.service`
+                // inactive ตลอดเวลาโดยไม่ผิดปกติ · ดู ServiceProbe::withSocketActivation()
+                return ['unit' => $unit, 'socket' => ($status['activation'] ?? '') === 'socket'];
             }
         }
 
@@ -127,6 +134,22 @@ final class SftpAccessManager
             . "    sudo systemctl enable --now ssh\n\n"
             . 'แล้วลองเปิด SFTP อีกครั้ง',
         );
+    }
+
+    /**
+     * `/run/sshd` ต้องมีอยู่ก่อน `sshd -t` ถึงจะผ่าน
+     *
+     * เป็น privilege separation directory ที่ปกติ systemd สร้างให้ผ่าน `RuntimeDirectory=sshd`
+     * ตอน start `ssh.service` · **บนเครื่องที่ใช้ socket activation ตัว service นั้นไม่เคยรัน
+     * เป็นตัวยาว ๆ เลย** ไดเรกทอรีจึงหายไปได้ทุกเมื่อ แล้ว `sshd -t` ล้มด้วย
+     * *"Missing privilege separation directory"* ทั้งที่ไฟล์ตั้งค่าถูกต้องทุกบรรทัด
+     *
+     * สร้างเองแบบ idempotent ก่อนตรวจ — systemd จะดูแลต่อเองเมื่อ service ทำงานจริง
+     * (0755 root:root คือสิทธิ์เดียวกับที่ systemd ตั้งให้ ไม่ได้ผ่อนอะไรลง)
+     */
+    private function ensureRuntimeDir(): void
+    {
+        $this->executor->exec([self::MKDIR, '-m', '0755', '-p', '/run/sshd'], timeout: 10);
     }
 
     /** กลุ่มต้องมีอยู่ก่อน `Match Group` ถึงจะมีความหมาย — สร้างแบบ lazy ครั้งแรกที่ใช้ */
@@ -159,6 +182,8 @@ final class SftpAccessManager
         $tx->write(self::CONFIG_FILE, $this->configContent(), 0644);
 
         $tx->commit(function (): array {
+            $this->ensureRuntimeDir();
+
             $test = $this->executor->exec([self::SSHD, '-t'], timeout: 20);
 
             return [$test->ok(), $this->explainSshdTest(trim($test->output() . $test->stderr))];
@@ -178,9 +203,21 @@ final class SftpAccessManager
      *
      * ใช้ `reload` (SIGHUP) ไม่ใช่ `restart` — อ่าน config ใหม่โดยไม่ตัดการเชื่อมต่อที่ทำงานอยู่
      * ซึ่งสำคัญมากเพราะผู้ดูแลอาจกำลัง ssh อยู่ผ่านเซสชันเดียวกันนั้น
+     *
+     * **ยกเว้นเครื่องที่ใช้ socket activation** (ค่าเริ่มต้นของ Ubuntu 22.10+) ที่นั่นไม่มี
+     * sshd ตัวยาว ๆ ให้ reload เลย — `systemd` ปลุก `ssh@<n>.service` ใหม่ต่อการเชื่อมต่อ
+     * หนึ่งครั้ง แต่ละตัวจึงอ่าน `sshd_config` สด ๆ อยู่แล้วโดยธรรมชาติ · การสั่ง
+     * `systemctl reload ssh.service` บนเครื่องแบบนั้นล้มเสมอ ("Job type reload is not
+     * applicable") ซึ่งจะกลายเป็นข้อความผิดพลาดที่ผู้ดูแลแก้ตามแล้วไม่มีอะไรดีขึ้น
+     *
+     * @param array{unit:string,socket:bool} $activation ผลจาก assertSshdRunning()
      */
-    private function reloadSshd(): void
+    private function reloadSshd(array $activation): void
     {
+        if ($activation['socket']) {
+            return;   // การเชื่อมต่อถัดไปได้ config ใหม่อยู่แล้ว ไม่มีอะไรต้องปลุก
+        }
+
         $systemctl = BinaryPath::resolve($this->executor, self::SYSTEMCTL_PATHS, 'systemd');
 
         foreach (['ssh', 'sshd'] as $unit) {

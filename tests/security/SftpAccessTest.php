@@ -16,6 +16,7 @@ declare(strict_types=1);
  */
 
 use Phpcp\Agent\Actor;
+use Phpcp\Agent\Capability\ServiceProbe;
 use Phpcp\Agent\Capability\SftpDisable;
 use Phpcp\Agent\Capability\SftpEnable;
 use Phpcp\Agent\Context;
@@ -332,6 +333,193 @@ test('เขียน config แล้วต้องสั่ง sshd อ่า
         !str_contains($commands, 'systemctl restart ssh'),
         'ต้องใช้ reload ไม่ใช่ restart เพื่อไม่ตัดเซสชันที่ทำงานอยู่: ' . $commands,
     );
+});
+
+/**
+ * Executor ที่จำลอง Ubuntu 22.10+ — `ssh.service` inactive แต่ `ssh.socket` ฟังอยู่
+ *
+ * ตอบตาม unit ที่ถูกถามจริง ๆ ไม่ใช่ตอบเหมือนกันหมด เพราะสิ่งที่ต้องพิสูจน์คือ
+ * ระบบแยกแยะสองตัวนี้ออกจากกันได้
+ */
+final class SocketActivatedSshExecutor implements Executor
+{
+    private DryRunExecutor $inner;
+
+    public function __construct()
+    {
+        $this->inner = new DryRunExecutor();
+    }
+
+    public function exec(array $argv, int $timeout = 30, ?string $cwd = null, ?string $stdin = null): ExecResult
+    {
+        if (basename((string) ($argv[0] ?? '')) === 'systemctl' && ($argv[1] ?? '') === 'show') {
+            $unit = (string) ($argv[2] ?? '');
+
+            if ($unit === 'ssh.socket') {
+                return new ExecResult(
+                    argv: $argv,
+                    exitCode: 0,
+                    stdout: "LoadState=loaded\nActiveState=active\nSubState=listening\nUnitFileState=enabled\n",
+                    stderr: '',
+                    durationMs: 0,
+                );
+            }
+
+            // ตัว `.service` ของเครื่องแบบนี้ inactive ตลอดเวลาโดยไม่ผิดปกติ
+            return new ExecResult(
+                argv: $argv,
+                exitCode: 0,
+                stdout: "LoadState=loaded\nActiveState=inactive\nSubState=dead\nUnitFileState=static\n",
+                stderr: '',
+                durationMs: 0,
+            );
+        }
+
+        // reload ตัว service ที่ inactive อยู่ — systemd ปฏิเสธจริงบนเครื่องแบบนี้
+        if (basename((string) ($argv[0] ?? '')) === 'systemctl' && ($argv[1] ?? '') === 'reload') {
+            return new ExecResult(
+                argv: $argv,
+                exitCode: 1,
+                stdout: '',
+                stderr: 'Job type reload is not applicable for unit ssh.service.',
+                durationMs: 0,
+            );
+        }
+
+        return $this->inner->exec($argv, $timeout, $cwd, $stdin);
+    }
+
+    public function mode(): Mode { return Mode::DryRun; }
+    public function isSimulated(): bool { return true; }
+    public function simulatedCommands(): array { return $this->inner->simulatedCommands(); }
+    public function path(string $absolutePath): string { return $absolutePath; }
+
+    /**
+     * ตอบจากค่าคงที่ ไม่อ่าน /etc ของเครื่องที่รันเทสต์
+     *
+     * `DryRunExecutor` อ่านไฟล์จริงเพื่อให้ผลลัพธ์มีความหมาย ซึ่งทำให้เทสต์นี้เปลี่ยนผล
+     * ตามเครื่อง: เครื่องที่เคยติดตั้ง phpcp มี `phpcp-sftp.conf` ตรงกับที่ระบบจะเขียนอยู่แล้ว
+     * `ensureConfig()` จึง early-return แล้ว `sshd -t` ไม่เคยถูกเรียก — เทสต์ผ่านหรือไม่ผ่าน
+     * โดยไม่เกี่ยวกับโค้ดที่กำลังตรวจเลย
+     */
+    public function readFile(string $path): string
+    {
+        // เนื้อไฟล์ที่ "ไม่ตรง" กับที่ระบบจะเขียน เพื่อบังคับให้เดินเส้นทางเขียน+ตรวจจริง
+        if ($path === SftpAccessManager::CONFIG_FILE) {
+            return "# ของเดิมที่ล้าสมัย\n";
+        }
+
+        if ($path === Phpcp\Driver\SshManager::CONFIG) {
+            return "Include /etc/ssh/sshd_config.d/*.conf\nPort 22\n";
+        }
+
+        return $this->inner->readFile($path);
+    }
+
+    public function writeFile(string $path, string $content, int $mode = 0644): void { $this->inner->writeFile($path, $content, $mode); }
+    public function exists(string $path): bool
+    {
+        return in_array($path, [SftpAccessManager::CONFIG_FILE, Phpcp\Driver\SshManager::CONFIG], true)
+            || $this->inner->exists($path);
+    }
+    public function makeDirectory(string $path, int $mode = 0755): void { $this->inner->makeDirectory($path, $mode); }
+    public function diskSpace(string $path): array { return $this->inner->diskSpace($path); }
+    public function realPath(string $path): ?string { return $this->inner->realPath($path); }
+    public function listDirectory(string $path): array { return $this->inner->listDirectory($path); }
+    public function stat(string $path): ?array { return $this->inner->stat($path); }
+    public function rename(string $from, string $to): void { $this->inner->rename($from, $to); }
+    public function copyPath(string $from, string $to): void { $this->inner->copyPath($from, $to); }
+    public function removePath(string $path): void { $this->inner->removePath($path); }
+    public function changeMode(string $path, int $mode): void { $this->inner->changeMode($path, $mode); }
+    public function zip(array $sources, string $base, string $archive): array { return $this->inner->zip($sources, $base, $archive); }
+    public function unzip(string $archive, string $destination): array { return $this->inner->unzip($archive, $destination); }
+    public function asUser(?string $systemUser, callable $work): array { return $this->inner->asUser($systemUser, $work); }
+}
+
+test('sshd ที่ถูกปลุกด้วย socket ต้องนับว่าทำงานอยู่ — ไม่งั้นเปิด SFTP ไม่ได้ทั้งเครื่อง', static function (): void {
+    // **เจอจากเซิร์ฟเวอร์จริง (Lightsail + Ubuntu 24.04, 2026-08-13):** ตั้งแต่ Ubuntu 22.10
+    // OpenSSH ใช้ socket activation เป็นค่าเริ่มต้น — `ssh.service` จึง inactive ตลอดเวลา
+    // ทั้งที่พอร์ต 22 เปิดอยู่และผู้ดูแล ssh เข้ามาติดตั้ง panel ด้วยเส้นทางนั้นเอง
+    // ผลเดิมคือกดเปิด SFTP แล้วได้ "บริการ SSH ไม่ได้ทำงานอยู่" บนเครื่องที่ SSH ใช้งานได้ปกติ
+    $status = ServiceProbe::read(new SocketActivatedSshExecutor(), 'ssh');
+
+    assertTrue($status['running'] === true, 'ssh.socket ที่ active ต้องทำให้ ssh นับว่าทำงานอยู่');
+    assertTrue($status['status'] === 'running', 'สถานะที่ UI แสดงต้องเป็น running ไม่ใช่ stopped');
+    assertTrue(($status['activation'] ?? '') === 'socket', 'ต้องบอกผู้เรียกว่าความพร้อมนี้มาจาก socket');
+    // "เปิดตอนบูตไหม" ที่เป็นความจริงอยู่ที่ .socket — .service เป็น static เสมอ
+    assertTrue($status['enabled'] === 'enabled', 'ต้องรายงาน enabled ตาม .socket ไม่ใช่ static ของ .service');
+});
+
+test('เครื่อง socket activation ต้องไม่สั่ง reload — systemd ปฏิเสธ แล้วผู้ดูแลจะเจอ error ที่แก้ตามไม่ได้', static function (): void {
+    // การเชื่อมต่อถัดไปเกิดเป็นโปรเซส sshd ใหม่ที่อ่าน sshd_config สด ๆ อยู่แล้ว
+    // จึงไม่มีอะไรต้อง reload · ถ้าฝืนสั่ง จะได้ "Job type reload is not applicable"
+    // แล้วโยนทิ้งไปเป็นข้อความผิดพลาด ทั้งที่ทุกอย่างสำเร็จเรียบร้อย
+    $executor = new SocketActivatedSshExecutor();
+    $manager = new SftpAccessManager($executor);
+
+    try {
+        $manager->enable(new UserAccount(1, 'socketuser'), 'LongEnoughPass123');
+    } catch (\Throwable $e) {
+        assertTrue(
+            !str_contains($e->getMessage(), 'อ่านค่าใหม่ไม่สำเร็จ'),
+            'ต้องไม่ล้มเพราะ reload บนเครื่องที่ไม่มีอะไรให้ reload: ' . $e->getMessage(),
+        );
+        assertTrue(
+            !str_contains($e->getMessage(), 'บริการ SSH ไม่ได้ทำงานอยู่'),
+            'ต้องไม่บอกว่า SSH ไม่ทำงาน ทั้งที่ socket ฟังอยู่: ' . $e->getMessage(),
+        );
+    }
+
+    $commands = implode(' | ', $executor->simulatedCommands());
+
+    assertTrue(
+        !str_contains($commands, 'systemctl reload'),
+        'ต้องไม่สั่ง reload เลยบนเครื่อง socket activation · ได้: ' . $commands,
+    );
+});
+
+test('ต้องสร้าง /run/sshd ก่อน sshd -t — ไม่งั้นการตรวจล้มทั้งที่ไฟล์ถูกต้อง', static function (): void {
+    // systemd สร้างไดเรกทอรีนี้ผ่าน RuntimeDirectory=sshd ตอน start service เท่านั้น
+    // บนเครื่อง socket activation ตัว service ไม่เคยรันยาว ๆ ไดเรกทอรีจึงหายได้ทุกเมื่อ
+    $executor = new SocketActivatedSshExecutor();
+    $manager = new SftpAccessManager($executor);
+
+    try {
+        $manager->enable(new UserAccount(1, 'runtimeuser'), 'LongEnoughPass123');
+    } catch (\Throwable) {
+        // สนใจแค่ว่าคำสั่งถูกออกไปก่อนการตรวจ
+    }
+
+    $commands = $executor->simulatedCommands();
+    $joined = implode(' | ', $commands);
+
+    assertTrue(str_contains($joined, '/run/sshd'), 'ต้องสร้าง /run/sshd · ได้: ' . $joined);
+
+    $mkdirAt = null;
+    $testAt = null;
+    foreach ($commands as $index => $command) {
+        if ($mkdirAt === null && str_contains($command, '/run/sshd')) {
+            $mkdirAt = $index;
+        }
+        if ($testAt === null && str_contains($command, 'sshd -t')) {
+            $testAt = $index;
+        }
+    }
+
+    assertTrue(
+        $mkdirAt !== null && $testAt !== null && $mkdirAt < $testAt,
+        'ต้องสร้างไดเรกทอรีก่อนเรียก sshd -t ไม่ใช่หลัง · ได้: ' . $joined,
+    );
+});
+
+test('SSH ต้องอยู่ในรายการบริการที่จัดการได้จากหน้าเว็บ', static function (): void {
+    // ขาดไปตั้งแต่ต้น — SFTP ของลูกค้าทุกรายวิ่งบนตัวนี้ แต่ผู้ดูแลมองไม่เห็นสถานะ
+    // และสั่ง restart จากหน้าเว็บไม่ได้เลย ต้อง ssh เข้าไปเอง ซึ่งเป็นไปไม่ได้พอดี
+    // ในกรณีที่ SSH นั่นแหละคือตัวที่พัง
+    $catalog = Phpcp\Domain\ServiceCatalog::all();
+
+    assertTrue(isset($catalog['ssh']), 'ต้องมี ssh ในรายการบริการ');
+    assertTrue($catalog['ssh']['critical'] === true, 'SSH คือทางเข้าเครื่องทางเดียวที่เหลือเมื่อ panel ล่ม');
 });
 
 // --- 4. รหัสผ่าน --------------------------------------------------------------

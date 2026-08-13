@@ -21,6 +21,7 @@ final class ServiceCatalog
     public const KIND_SCHEDULER = 'scheduler';
     public const KIND_DNS = 'dns';
     public const KIND_MAIL = 'mail';
+    public const KIND_ACCESS = 'access';
 
     /** เวอร์ชัน PHP ที่ระบบรู้จัก เรียงจากใหม่ไปเก่า */
     public const PHP_VERSIONS = ['8.5', '8.4', '8.3', '8.2', '8.1', '8.0', '7.4'];
@@ -58,6 +59,21 @@ final class ServiceCatalog
         $catalog['mariadb'] = ['label' => 'MariaDB', 'kind' => self::KIND_DATABASE, 'critical' => true];
         $catalog['mysql'] = ['label' => 'MySQL', 'kind' => self::KIND_DATABASE, 'critical' => true];
         $catalog['cron'] = ['label' => 'Cron', 'kind' => self::KIND_SCHEDULER, 'critical' => false];
+
+        /*
+         * SSH — ขาดจากรายการนี้มาตลอด ทั้งที่เป็นบริการที่ผู้ดูแลต้องมองเห็นมากที่สุด
+         *
+         * SFTP ของลูกค้าทุกรายวิ่งบนตัวนี้ (ดู SftpAccessManager) เมื่อมันไม่โผล่ในหน้า
+         * Services ผู้ดูแลจึงไม่มีทางรู้จากหน้าเว็บเลยว่า SSH อยู่ในสภาพไหน และไม่มีทาง
+         * สั่ง start/restart ได้ — ต้องไปหาเครื่องหรือ ssh เข้าไปเอง ซึ่งเป็นไปไม่ได้พอดี
+         * ในกรณีที่ SSH นั่นแหละเป็นตัวที่พัง
+         *
+         * `critical` = true เพราะนี่คือทางเข้าเครื่องทางเดียวที่เหลือเมื่อ panel ล่ม
+         * · `sshd` สำหรับ RHEL, `ssh` สำหรับ Debian/Ubuntu — เครื่องหนึ่งมีตัวเดียว
+         * อีกตัวจะรายงานเป็น not_installed แล้วหน้าจอกรองทิ้งเอง (แบบเดียวกับ named/bind9)
+         */
+        $catalog['ssh'] = ['label' => 'SSH / SFTP', 'kind' => self::KIND_ACCESS, 'critical' => true];
+        $catalog['sshd'] = ['label' => 'SSH / SFTP', 'kind' => self::KIND_ACCESS, 'critical' => true];
 
         /*
          * เมล (PLAN-MAIL) — สามเดมอนนี้เพิ่มเข้ามาในเฟส M1–M3 แต่ไม่เคยโผล่ในหน้าบริการเลย

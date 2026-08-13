@@ -30,13 +30,7 @@ final class ServiceProbe
     /** @return array<string,mixed> */
     public static function read(Executor $executor, string $unit): array
     {
-        $argv = [$executor->path('/usr/bin/systemctl'), 'show', $unit, '--no-pager'];
-        foreach (self::PROPERTIES as $property) {
-            $argv[] = '--property='.$property;
-        }
-
-        $result = $executor->exec($argv, timeout: 10);
-        $keyValues = $result->keyValues();
+        $keyValues = self::show($executor, $unit);
 
         // เมื่อ systemd ไม่ได้รันเป็น PID 1 (เช่น ใน Docker container หรือสภาพแวดล้อมที่ไม่มี systemd)
         // systemctl show จะล้มเหลว ให้ใช้ fallback ด้วย service / sysvinit / process check
@@ -47,7 +41,66 @@ final class ServiceProbe
             }
         }
 
-        return self::parse($unit, $keyValues);
+        $status = self::parse($unit, $keyValues);
+
+        return $status['running'] === true ? $status : self::withSocketActivation($executor, $unit, $status);
+    }
+
+    /**
+     * บริการที่ถูกปลุกโดย socket ยังนับว่า "พร้อมใช้งาน" แม้ `.service` จะ inactive
+     *
+     * **เจอจากเซิร์ฟเวอร์จริง (Lightsail + Ubuntu 24.04):** ตั้งแต่ Ubuntu 22.10 OpenSSH
+     * ถูกเปลี่ยนมาเป็น socket activation — `ssh.socket` เป็นตัวฟังพอร์ต 22 แล้วปลุก
+     * `ssh@<n>.service` ขึ้นมาต่อการเชื่อมต่อหนึ่งครั้ง · ผลคือ `ssh.service` มี
+     * `ActiveState=inactive` **ตลอดเวลา** ทั้งที่ SSH ใช้งานได้ปกติ (ผู้ดูแลก็ ssh
+     * เข้ามาติดตั้ง panel ด้วยเส้นทางนั้นเอง)
+     *
+     * เมื่อไม่รู้จักเรื่องนี้ ระบบจะรายงานว่า "SSH หยุดทำงาน" แล้ว
+     * {@see \Phpcp\Driver\Ssh\SftpAccessManager::assertSshdRunning()} จะปฏิเสธการเปิด SFTP
+     * ด้วยเหตุผลที่ไม่เป็นความจริง — ผู้ดูแลกดปุ่มแล้วเจอ "บริการ SSH ไม่ได้ทำงานอยู่"
+     * บนเครื่องที่ตัวเองกำลัง ssh อยู่ ณ ขณะนั้น
+     *
+     * `activation` บอกผู้เรียกว่าความพร้อมนี้มาจาก socket ไม่ใช่ตัว service —
+     * คนที่จะสั่ง `reload` ต้องรู้ เพราะ reload service ที่ inactive อยู่ทำไม่ได้
+     *
+     * @param  array<string,mixed> $status
+     * @return array<string,mixed>
+     */
+    private static function withSocketActivation(Executor $executor, string $unit, array $status): array
+    {
+        $socket = self::show($executor, $unit.'.socket');
+
+        if (($socket['LoadState'] ?? 'not-found') === 'not-found'
+            || ($socket['ActiveState'] ?? '') !== 'active') {
+            return $status;
+        }
+
+        return [
+            ...$status,
+            'installed' => true,
+            'active' => 'active',
+            'sub' => $socket['SubState'] ?? 'listening',
+            'running' => true,
+            'status' => 'running',
+            // `.service` ของบริการแบบนี้เป็น `static` เสมอ — สถานะ "เปิดตอนบูตไหม"
+            // ที่เป็นความจริงอยู่ที่ `.socket` ไม่ใช่ที่ `.service`
+            'enabled' => $socket['UnitFileState'] ?? $status['enabled'],
+            'activation' => 'socket',
+            'socket_unit' => $unit.'.socket',
+        ];
+    }
+
+    /**
+     * @return array<string,string>
+     */
+    private static function show(Executor $executor, string $unit): array
+    {
+        $argv = [$executor->path('/usr/bin/systemctl'), 'show', $unit, '--no-pager'];
+        foreach (self::PROPERTIES as $property) {
+            $argv[] = '--property='.$property;
+        }
+
+        return $executor->exec($argv, timeout: 10)->keyValues();
     }
 
     /**

@@ -508,13 +508,53 @@ chown root:"$PANEL_GROUP" "$CONF_DIR/config.php"
 chmod 640 "$CONF_DIR/config.php"
 
 # ---------------------------------------------------------------------------
-# 5.1 Wire up BIND9 (only when nameserver names were given)
+# 5.0 Get BIND9 ready to be switched on from the web UI later
 #
-# The bind9 package is installed on every machine, but `dns.enabled` is **never turned on by
-# itself** without `--dns-ns`, because turning it on means the panel rewrites the whole of
-# `named.conf.local` - zones the admin set up beforehand would vanish silently. BIND9 also
-# rejects a zone with no NS record, so enabling it without knowing the nameserver names
-# produces a system that cannot create a single zone.
+# The service is started here on every install, but `dns.enabled` stays off until someone
+# supplies nameserver names - those are two different questions and they were previously
+# answered by the same flag:
+#
+#   "is the DNS daemon running?"      - always yes, it costs nothing and cannot be fixed
+#                                       from the web UI once the admin has left the console
+#   "may the panel own named.conf?"   - only once nameservers are known, because turning it
+#                                       on rewrites that file and any hand-made zone in it
+#                                       would vanish silently
+#
+# Tying the first to `--dns-ns` meant an admin who installed without that flag got a machine
+# where flipping the DNS switch in Settings saved the value and nothing else: the daemon was
+# never enabled and /etc/bind/zones did not exist, so the first record they added failed at
+# `rndc reload` with a message that did not mention either. Doing this unconditionally is what
+# lets `SettingsSet::activateDns()` finish the job from the web UI.
+# ---------------------------------------------------------------------------
+if [ "$MODE" = "production" ] && command -v named-checkzone >/dev/null 2>&1; then
+  head_ "5.0 Preparing BIND9"
+
+  mkdir -p /etc/bind/zones
+  chown root:bind /etc/bind/zones 2>/dev/null || true
+  chmod 775 /etc/bind/zones 2>/dev/null || true
+  ok "Created /etc/bind/zones"
+
+  if [ -d /run/systemd/system ]; then
+    if systemctl enable --now named >/dev/null 2>&1 || systemctl enable --now bind9 >/dev/null 2>&1; then
+      ok "BIND9 is running and set to start at boot"
+    else
+      warn "Could not start BIND9 - turn it on later from Settings or with systemctl status named"
+    fi
+  fi
+
+  [ -z "$DNS_NS" ] && say "DNS stays switched off until nameservers are set - do that in Settings, or reinstall with --dns-ns"
+fi
+
+# ---------------------------------------------------------------------------
+# 5.1 Hand named.conf.local over to the panel (only when nameserver names were given)
+#
+# `dns.enabled` is **never turned on by itself** without `--dns-ns`, because turning it on
+# means the panel rewrites the whole of `named.conf.local` - zones the admin set up beforehand
+# would vanish silently. BIND9 also rejects a zone with no NS record, so enabling it without
+# knowing the nameserver names produces a system that cannot create a single zone.
+#
+# The same switch is available in Settings, and flipping it there now does everything this
+# block does - so omitting `--dns-ns` costs the admin nothing but a visit to that page.
 # ---------------------------------------------------------------------------
 if [ -n "$DNS_NS" ]; then
   head_ "5.1 Wiring up BIND9"
@@ -562,16 +602,7 @@ if [ -n "$DNS_NS" ]; then
   "$PHP_BIN" -l "$CONF_DIR/config.php" >/dev/null || die "config.php is broken after writing the DNS values - check --dns-ns/--dns-email"
   ok "Enabled dns.enabled with nameservers: $DNS_NS (SOA: $DNS_EMAIL_FINAL)"
 
-  mkdir -p /etc/bind/zones
-  chown root:bind /etc/bind/zones 2>/dev/null || true
-  chmod 775 /etc/bind/zones 2>/dev/null || true
-
-  if [ -d /run/systemd/system ]; then
-    systemctl enable --now named >/dev/null 2>&1 \
-      || systemctl enable --now bind9 >/dev/null 2>&1 \
-      || warn "Could not start the BIND9 service - check with systemctl status named"
-    ok "Enabled the BIND9 service and set it to start at boot"
-  fi
+  # The zone directory and the service itself were already handled in 5.0 on every install
 
   warn "Zones you set up yourself in named.conf.local will be overwritten by the panel - back them up first if you have any"
 fi
@@ -1044,8 +1075,8 @@ if [ "$MODE" = "production" ]; then
   if [ -n "$DNS_NS" ]; then
     say "DNS  : BIND9 is wired up - create records from the Domains page right away"
   else
-    warn "BIND9 is installed but the panel is not wired up to it (dns.enabled = false)"
-    say "Turn it on by reinstalling with ${C_DIM}--dns-ns=ns1.example.com,ns2.example.com${C_OFF}"
+    warn "BIND9 is running but the panel is not wired up to it (dns.enabled = false)"
+    say "Turn it on in ${C_DIM}Settings -> DNS${C_OFF}: fill in the nameserver names and flip the switch"
   fi
   if [ "$WITH_POSTFIX" = "yes" ]; then
     say "Mail : set the relay/sender on the Settings page - what you set is written into main.cf for you"
