@@ -411,6 +411,7 @@
     "phpMyAdmin is not installed on this machine": "เครื่องนี้ยังไม่ได้ติดตั้ง phpMyAdmin",
     "Please confirm": "กรุณายืนยัน",
     "Port": "พอร์ต",
+    "Postfix and Dovecot settings the panel does not manage. Open a file to view it — the editable ones open with comments explaining what belongs there.": "ค่าตั้งของ Postfix และ Dovecot ที่ panel ไม่ได้จัดการให้ · กดเปิดเพื่อดูเนื้อไฟล์ — ไฟล์ที่แก้ได้จะเปิดมาพร้อมคอมเมนต์อธิบายว่าเขียนอะไรได้บ้าง",
     "Private key": "กุญแจส่วนตัว",
     "Privileges": "สิทธิ์",
     "Processes are killed when memory runs out": "แรมหมดเมื่อไหร่ โปรเซสจะถูกฆ่าทันที",

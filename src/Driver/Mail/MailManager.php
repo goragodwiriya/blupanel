@@ -10,6 +10,7 @@ use Phpcp\Agent\ValidationError;
 use Phpcp\Driver\ConfigTransaction;
 use Phpcp\Driver\SafeBlock;
 use Phpcp\Driver\Template;
+use Phpcp\Driver\WebServer\CustomConfig;
 
 /**
  * เมลขาออกผ่าน Postfix — ตั้งใจทำแค่ "ส่งออก" ไม่ใช่เมลเซิร์ฟเวอร์เต็มรูปแบบ
@@ -215,6 +216,16 @@ final class MailManager
                 ? 'localhost'
                 : 'localhost, $myhostname',
             'HOSTING_SECTION' => new SafeBlock($hosting ? $this->hostingSection($config) : ''),
+            /*
+             * **Postfix ไม่มีคำสั่ง include สำหรับ main.cf** — ต่างจาก Apache/nginx/Dovecot
+             * ที่ชี้ไปไฟล์ของผู้ดูแลได้ · เนื้อไฟล์จึงถูกผนวกมาที่นี่ตอนเขียนไฟล์ใหม่
+             * และเพราะ Postfix ใช้ค่าที่ประกาศทีหลัง ค่าของผู้ดูแลที่อยู่ท้ายสุดจึงชนะเสมอ
+             *
+             * ต้นฉบับยังเป็นไฟล์แยกที่ panel ไม่แตะ ค่าที่เขียนไว้จึงไม่หายตอนเขียน main.cf ใหม่
+             */
+            'CUSTOM_SECTION' => new SafeBlock(
+                (new CustomConfig())->read($executor, 'postfix'),
+            ),
             'GENERATED_AT' => date('Y-m-d H:i:s'),
         ]), 0644);
 

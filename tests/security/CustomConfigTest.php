@@ -29,7 +29,7 @@ test('เส้นทางไฟล์ต้องประกอบจาก�
         $rejected = false;
 
         try {
-            CustomConfig::path('apache', $bad);
+            CustomConfig::sitePath('apache', $bad);
         } catch (\Throwable) {
             $rejected = true;
         }
@@ -37,7 +37,7 @@ test('เส้นทางไฟล์ต้องประกอบจาก�
         assertTrue($rejected, "ต้องปฏิเสธชื่อโดเมน: {$bad}");
     }
 
-    $path = CustomConfig::path('apache', 'example.com');
+    $path = CustomConfig::sitePath('apache', 'example.com');
 
     assertSame('/etc/phpcp/custom/apache/example.com/custom.conf', $path, 'เส้นทางต้องอยู่ใต้รากที่กำหนด');
     assertTrue(str_starts_with($path, CustomConfig::ROOT . '/'), 'ต้องอยู่ใต้ราก /etc/phpcp/custom เสมอ');
@@ -50,7 +50,7 @@ test('ชนิดเว็บเซิร์ฟเวอร์ต้องอ�
         $rejected = false;
 
         try {
-            CustomConfig::directory($bad, 'example.com');
+            CustomConfig::siteDirectory($bad, 'example.com');
         } catch (ValidationError) {
             $rejected = true;
         }
@@ -60,7 +60,7 @@ test('ชนิดเว็บเซิร์ฟเวอร์ต้องอ�
 
     assertSame(
         '/etc/phpcp/custom/nginx/example.com',
-        CustomConfig::directory('nginx', 'example.com'),
+        CustomConfig::siteDirectory('nginx', 'example.com'),
         'ชนิดที่รู้จักต้องได้เส้นทางของตัวเอง',
     );
 });
@@ -193,7 +193,7 @@ test('ทะเบียนไฟล์ต้องแยก "แก้ได้
 
     assertSame(1, count($writable), 'ต้องมีไฟล์ที่แก้ได้ไฟล์เดียวเท่านั้น');
     assertSame(
-        CustomConfig::path('apache', 'example.com'),
+        CustomConfig::sitePath('apache', 'example.com'),
         $writable[0]['path'],
         'ไฟล์ที่แก้ได้ต้องเป็นไฟล์ส่วนเสริมเท่านั้น ไม่ใช่ไฟล์ที่ระบบสร้าง',
     );
@@ -304,4 +304,118 @@ test('ตัวเขียนต้องไม่เติมหัวไฟ�
         'ต้องเขียนเนื้อไฟล์ตามที่ส่งมาตรง ๆ',
     );
     assertTrue(!str_contains($code, 'header()'), 'ต้องไม่เติมหัวไฟล์เองอีกแล้ว');
+});
+
+test('ระบบเมล — ทะเบียนแยกไฟล์ที่แก้ได้ออกจากไฟล์ที่ระบบสร้าง', static function (): void {
+    /*
+     * ขอบเขตของเมลเป็นของทั้งเครื่อง ไม่ผูกกับเว็บไซต์ · แต่กติกาเดียวกันทุกข้อ:
+     * อ้างด้วยคีย์ ไม่ใช่เส้นทาง · แก้ได้เฉพาะไฟล์ของผู้ดูแล · ไฟล์ที่ระบบสร้างเปิดดูได้
+     */
+    $files = ConfigFileCatalog::forMail(['/etc/postfix/main.cf', '/etc/dovecot/conf.d/99-phpcp.conf']);
+
+    $writable = array_values(array_filter(
+        $files,
+        static fn (array $f): bool => $f['kind'] === ConfigFileCatalog::KIND_WRITABLE,
+    ));
+
+    assertSame(2, count($writable), 'ต้องแก้ได้สองไฟล์: ของ Postfix กับของ Dovecot');
+    assertSame(CustomConfig::servicePath('postfix'), $writable[0]['path'], 'ไฟล์แรกต้องเป็นของ Postfix');
+    assertSame(CustomConfig::servicePath('dovecot'), $writable[1]['path'], 'ไฟล์ที่สองต้องเป็นของ Dovecot');
+
+    foreach ($files as $file) {
+        if (str_contains((string) $file['path'], '/etc/postfix/main.cf')
+            || str_contains((string) $file['path'], '99-phpcp.conf')
+        ) {
+            assertSame(
+                ConfigFileCatalog::KIND_GENERATED,
+                $file['kind'],
+                'ไฟล์ที่ระบบสร้างต้องเป็นชนิดอ่านอย่างเดียวเสมอ',
+            );
+        }
+    }
+
+    // คีย์ของเว็บไซต์ต้องใช้กับขอบเขตเมลไม่ได้ และกลับกัน — สองทะเบียนแยกกันสิ้นเชิง
+    assertTrue(ConfigFileCatalog::find($files, 'site.1.custom') === null, 'คีย์ของเว็บไซต์ต้องไม่อยู่ในทะเบียนเมล');
+});
+
+test('เมล — ไฟล์ของผู้ดูแลต้องถูกอ่านท้ายสุดทั้ง Postfix และ Dovecot', static function (): void {
+    /*
+     * **ลำดับคือทั้งหมดของคุณสมบัตินี้** และสองบริการนี้ทำคนละวิธี:
+     *
+     *   Postfix  ไม่มีคำสั่ง include สำหรับ main.cf เลย → เนื้อไฟล์ถูก "ผนวก" ท้ายไฟล์
+     *            ตอน generate · Postfix ใช้ค่าที่ประกาศทีหลัง ค่าของผู้ดูแลจึงชนะ
+     *   Dovecot  `!include_try` ซึ่ง **ไม่ล้มเมื่อไฟล์ยังไม่มี** ต่างจาก `!include`
+     *            ที่จะทำให้ Dovecot สตาร์ตไม่ขึ้นทั้งตัวบนเครื่องที่ยังไม่เคยเขียนค่าเพิ่ม
+     */
+    $templates = new Template(PHPCP_ROOT . '/templates');
+
+    $main = $templates->render('postfix/main.cf.tpl', [
+        'HOSTNAME' => 'mail.example.com',
+        'ORIGIN' => 'mail.example.com',
+        'RELAY_HOST' => '',
+        'SASL_ENABLED' => 'no',
+        'TLS_SECURITY' => 'may',
+        'INET_INTERFACES' => 'all',
+        'MYDESTINATION' => 'localhost, $myhostname',
+        'HOSTING_SECTION' => new Phpcp\Driver\SafeBlock('virtual_mailbox_domains = hash:/etc/postfix/vdomains'),
+        'CUSTOM_SECTION' => new Phpcp\Driver\SafeBlock('message_size_limit = 99'),
+        'GENERATED_AT' => '2026-01-01 00:00:00',
+    ]);
+
+    assertTrue(!str_contains($main, '{{'), 'main.cf ต้องไม่มีตัวแปรค้าง');
+    assertTrue(
+        strpos($main, 'message_size_limit = 99') > strpos($main, 'virtual_mailbox_domains'),
+        'ค่าของผู้ดูแลต้องอยู่ท้ายสุด — Postfix ใช้ค่าที่ประกาศทีหลัง',
+    );
+    assertTrue(
+        strpos($main, 'message_size_limit = 99') > strpos($main, 'message_size_limit = 26214400'),
+        'ค่าของผู้ดูแลต้องมาหลังค่าเริ่มต้นของ panel ไม่งั้นถูกทับ',
+    );
+
+    $dovecot = $templates->render('dovecot/99-phpcp.conf.tpl', [
+        'MAIL_ROOT' => '/srv/phpcp/mail',
+        'VMAIL_USER' => 'vmail',
+        'USERS_FILE' => '/etc/dovecot/phpcp-users',
+        'CUSTOM_DIR' => '/etc/phpcp/custom/dovecot',
+        'TLS_CERT' => '/x.pem',
+        'TLS_KEY' => '/x.key',
+        'GENERATED_AT' => '2026-01-01 00:00:00',
+    ]);
+
+    assertTrue(
+        str_contains($dovecot, '!include_try /etc/phpcp/custom/dovecot/*.conf'),
+        'Dovecot ต้องใช้ !include_try ที่ทนกับไฟล์ที่ยังไม่มี',
+    );
+    assertTrue(
+        !str_contains($dovecot, "\n!include /etc/phpcp"),
+        '`!include` ธรรมดาทำให้ Dovecot สตาร์ตไม่ขึ้นเมื่อยังไม่มีไฟล์',
+    );
+    assertTrue(
+        strpos($dovecot, '!include_try') > strpos($dovecot, 'ssl = required'),
+        'ไฟล์ของผู้ดูแลต้องถูกอ่านหลังค่าเริ่มต้น',
+    );
+});
+
+test('เมล — ตัวเขียนต้องคืนไฟล์ของผู้ดูแลด้วยเมื่อตัวตรวจไม่ผ่าน', static function (): void {
+    /*
+     * **จุดที่พลาดง่ายที่สุดของขอบเขตนี้**
+     *
+     * `sync()` เขียน main.cf แล้วให้ `postfix check` ตัดสิน · ถ้าไม่ผ่าน ConfigTransaction
+     * ข้างในคืน main.cf ให้เอง — แต่ไฟล์ของผู้ดูแลถูกเขียนไว้ก่อนหน้าในคนละธุรกรรม
+     * ถ้าไม่คืนด้วย ไฟล์เสียจะค้างอยู่ แล้ว sync ครั้งถัดไป (ซึ่งเกิดจากคนอื่นแก้กล่อง
+     * จดหมาย) จะล้มตามไปด้วยโดยไม่มีใครรู้ว่าเพราะอะไร
+     */
+    $code = (string) preg_replace(
+        '~/\*.*?\*/|//[^\n]*~s',
+        '',
+        (string) file_get_contents(PHPCP_ROOT . '/src/Agent/Capability/MailCustomConfig.php'),
+    );
+
+    assertTrue(str_contains($code, '$transaction->rollback();'), 'ต้องคืนไฟล์ของผู้ดูแลเมื่อ sync ล้ม');
+    assertTrue(
+        substr_count($code, '$this->sync($executor, $context);') >= 2,
+        'ต้อง sync ซ้ำหลังคืนค่า ไม่งั้นไฟล์ที่ generate ยังเป็นของรอบที่ล้ม',
+    );
+    assertTrue(str_contains($code, 'RollbackGuard'), 'ต้องตั้งเวลาถอนคืนเหมือนขอบเขตเว็บไซต์');
+    assertTrue(str_contains($code, 'KIND_WRITABLE'), 'ต้องตรวจจากทะเบียนว่าไฟล์นี้แก้ได้จริง');
 });

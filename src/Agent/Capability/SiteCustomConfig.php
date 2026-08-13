@@ -105,11 +105,11 @@ final class SiteCustomConfig extends SiteCapability
             }
         }
 
-        $path = CustomConfig::path($server, $site->domain);
+        $path = CustomConfig::sitePath($server, $site->domain);
         $custom = new CustomConfig();
         $previous = $custom->read($executor, $server, $site->domain);
 
-        $executor->makeDirectory($executor->path(CustomConfig::directory($server, $site->domain)), 0755);
+        $executor->makeDirectory($executor->path(CustomConfig::siteDirectory($server, $site->domain)), 0755);
 
         $transaction = new ConfigTransaction($executor);
 

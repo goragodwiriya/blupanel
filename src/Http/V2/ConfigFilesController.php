@@ -19,27 +19,53 @@ use Phpcp\Kernel\Response;
  */
 final class ConfigFilesController extends HostingController
 {
-    /** รายการไฟล์ของขอบเขตหนึ่ง — ตอนนี้มีขอบเขตเดียวคือเว็บไซต์ */
-    public function index(Request $request): Response
+    /**
+     * อ่านไฟล์ตามขอบเขตที่ขอมา — เว็บไซต์หนึ่ง หรือระบบเมลของทั้งเครื่อง
+     *
+     * ขอบเขตมาจากพารามิเตอร์ `scope` ไม่ใช่จากเส้นทางไฟล์ · เพิ่มขอบเขตใหม่ (DNS ฯลฯ)
+     * ทำที่นี่ที่เดียวแล้วหน้าจอทุกหน้าใช้รูปแบบเดิมได้ทันที
+     *
+     * @return array{0:string,1:array<string,mixed>}|Response  [ชื่อ capability, args] หรือคำตอบข้อผิดพลาด
+     */
+    private function scopeArgs(Request $request, string $key = ''): array|Response
     {
+        $scope = $request->get('scope');
+
+        if ($scope === 'mail') {
+            return ['mail.config_read', $key === '' ? [] : ['key' => $key]];
+        }
+
         $siteId = (int) $request->get('site_id');
 
         if ($this->findSite($siteId) === null) {
             return $this->siteNotFound();
         }
 
-        $result = $this->agent()->data(
-            'config.file_read',
-            ['site_id' => $siteId],
-            $this->ctx->actor($request),
-        );
+        return ['config.file_read', ['site_id' => $siteId] + ($key === '' ? [] : ['key' => $key])];
+    }
+
+    /** รายการไฟล์ของขอบเขตหนึ่ง — ตอนนี้มีขอบเขตเดียวคือเว็บไซต์ */
+    public function index(Request $request): Response
+    {
+        $resolved = $this->scopeArgs($request);
+
+        if ($resolved instanceof Response) {
+            return $resolved;
+        }
+
+        [$capability, $args] = $resolved;
+        $siteId = (int) ($args['site_id'] ?? 0);
+        $scope = $request->get('scope');
+
+        $result = $this->agent()->data($capability, $args, $this->ctx->actor($request));
 
         $rows = array_map(
             fn (array $file): array => $file + [
                 'row_id' => $file['key'],
-                // ปุ่มในแถวประกอบ URL จากค่าในแถว — ต้องมี site_id ติดไปด้วย
-                // ไม่งั้น `{site_id}` กลายเป็นค่าว่างแล้วเปิดไฟล์ไม่ได้
+                // ปุ่มในแถวประกอบ URL จากค่าในแถว — ต้องมีทั้งสองค่าติดไปด้วย
+                // ไม่งั้นตัวแปรกลายเป็นค่าว่างแล้วเปิดไฟล์ไม่ได้
                 'site_id' => $siteId,
+                'scope' => $scope,
                 'writable' => $file['kind'] === 'writable',
                 // ป้ายที่บอกให้ชัดว่าแก้ได้หรือดูได้อย่างเดียว — เป็นคำตอบจากเซิร์ฟเวอร์
                 // ไม่ใช่การเดาของหน้าจอจากชื่อไฟล์
@@ -63,17 +89,16 @@ final class ConfigFilesController extends HostingController
      */
     public function show(Request $request): Response
     {
-        $siteId = (int) $request->get('site_id');
+        $resolved = $this->scopeArgs($request, (string) $request->param('key'));
 
-        if ($this->findSite($siteId) === null) {
-            return $this->siteNotFound();
+        if ($resolved instanceof Response) {
+            return $resolved;
         }
 
-        $result = $this->agent()->data(
-            'config.file_read',
-            ['site_id' => $siteId, 'key' => $request->param('key')],
-            $this->ctx->actor($request),
-        );
+        [$capability, $args] = $resolved;
+        $siteId = (int) ($args['site_id'] ?? 0);
+
+        $result = $this->agent()->data($capability, $args, $this->ctx->actor($request));
 
         $writable = ($result['kind'] ?? '') === 'writable';
 
@@ -81,6 +106,8 @@ final class ConfigFilesController extends HostingController
             [
                 'key' => (string) ($result['key'] ?? ''),
                 'site_id' => $siteId,
+                'scope' => (string) $request->get('scope'),
+                'service' => (string) ($result['service'] ?? ''),
                 'path' => (string) ($result['path'] ?? ''),
                 'content' => (string) ($result['content'] ?? ''),
                 'writable' => $writable,
@@ -106,21 +133,40 @@ final class ConfigFilesController extends HostingController
      */
     public function update(Request $request): Response
     {
+        /*
+         * **ตัวเขียนไม่เชื่อคีย์ที่ส่งมาเรื่องสิทธิ์การเขียน** — capability เป็นคนตัดสินจาก
+         * ทะเบียนอีกรอบว่าไฟล์นี้แก้ได้จริงไหม · หน้าจอที่ส่งคีย์ของไฟล์อ่านอย่างเดียวมา
+         * จึงถูกปฏิเสธที่ชั้นล่างสุด ไม่ใช่แค่ปุ่มไม่ขึ้นบนหน้าจอ
+         *
+         * คีย์มาในเนื้อคำขอ ไม่ใช่เส้นทาง — ฟอร์มอยู่ใน Modal ซึ่งไม่มีใครเติมค่าลง
+         * ตัวแปรในเส้นทางให้ (`RouterManager` เติมให้เฉพาะเทมเพลตของหน้า)
+         */
+        $key = $request->payloadString('key');
+
+        if ($request->payloadString('scope') === 'mail') {
+            $result = $this->agent()->data('mail.custom_config', [
+                'service' => $request->payloadString('service'),
+                'key' => $key,
+                'content' => $request->payloadString('content'),
+                'window' => (int) $request->payload('window', 0),
+            ], $this->ctx->actor($request));
+
+            return $this->saved(
+                (string) ($result['message'] ?? 'Configuration saved'),
+                'configFiles',
+                is_array($result) ? $result : [],
+            );
+        }
+
         $siteId = (int) $request->payload('site_id', 0);
 
         if ($this->findSite($siteId) === null) {
             return $this->siteNotFound();
         }
 
-        /*
-         * คีย์มาจากเนื้อคำขอ ไม่ใช่เส้นทาง — ดูเหตุผลที่ตารางเส้นทาง
-         *
-         * ว่างได้: เว็บไซต์หนึ่งมีไฟล์ที่แก้ได้ไฟล์เดียวอยู่แล้ว capability จึงรู้ปลายทาง
-         * เอง · แต่ถ้าส่งมา ต้องเป็นคีย์ของไฟล์ที่แก้ได้จริง ไม่งั้นถูกปฏิเสธที่ชั้นล่างสุด
-         */
         $result = $this->agent()->data('site.custom_config', [
             'site_id' => $siteId,
-            'key' => $request->payloadString('key'),
+            'key' => $key,
             'content' => $request->payloadString('content'),
             'window' => (int) $request->payload('window', 0),
         ], $this->ctx->actor($request));

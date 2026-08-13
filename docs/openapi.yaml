@@ -556,7 +556,9 @@ paths:
             schema:
               type: object
               properties:
-                site_id: { type: integer }
+                site_id: { type: integer, description: จำเป็นเมื่อไม่ได้ระบุ scope }
+                scope: { type: string, enum: [mail] }
+                service: { type: string, enum: [postfix, dovecot], description: จำเป็นเมื่อ scope=mail }
                 key: { type: string }
                 content: { type: string }
                 window: { type: integer, description: วินาทีก่อนถอนคืนอัตโนมัติ }
@@ -576,7 +578,8 @@ paths:
         ของหน้าจอ · ไฟล์ที่ระบบสร้างเปิดดูได้แต่แก้ไม่ได้ เพราะถูกเขียนทับทั้งไฟล์ทุกครั้ง
         ที่ข้อมูลที่เกี่ยวข้องเปลี่ยน
       parameters:
-        - { name: site_id, in: query, required: true, schema: { type: integer } }
+        - { name: scope, in: query, schema: { type: string, enum: [mail] }, description: "ว่าง = ไฟล์ของเว็บไซต์ (ต้องมี site_id) · mail = ไฟล์ของระบบเมลทั้งเครื่อง" }
+        - { name: site_id, in: query, schema: { type: integer }, description: จำเป็นเมื่อไม่ได้ระบุ scope }
       responses:
         "200":
           description: รายการไฟล์
@@ -594,7 +597,8 @@ paths:
         description: >-
           คีย์จากทะเบียน **ไม่ใช่เส้นทางไฟล์** — เส้นทางจริงถูกประกอบฝั่งเซิร์ฟเวอร์จาก
           ข้อมูลที่ผ่านการตรวจแล้ว ผู้เรียกจึงขอไฟล์นอกทะเบียนไม่ได้เลย
-      - { name: site_id, in: query, required: true, schema: { type: integer } }
+      - { name: scope, in: query, schema: { type: string, enum: [mail] } }
+      - { name: site_id, in: query, schema: { type: integer } }
     get:
       tags: [sites]
       summary: เนื้อไฟล์หนึ่งไฟล์ — เปิดใน Modal (ฟอร์มถ้าแก้ได้ ข้อความถ้าแก้ไม่ได้)

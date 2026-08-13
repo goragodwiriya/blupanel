@@ -89,6 +89,8 @@ use Phpcp\Agent\Capability\MailAliasSet;
 use Phpcp\Agent\Capability\MailBoxCreate;
 use Phpcp\Agent\Capability\MailBoxUpdate;
 use Phpcp\Agent\Capability\MailCert;
+use Phpcp\Agent\Capability\MailConfigRead;
+use Phpcp\Agent\Capability\MailCustomConfig;
 use Phpcp\Agent\Capability\MailMessage;
 use Phpcp\Agent\Capability\MailQueueAction;
 use Phpcp\Agent\Capability\MailQueueList;
@@ -219,6 +221,8 @@ final class CapabilityRegistry
             MailAliasDelete::class,
             MailReadiness::class,
             MailCert::class,
+            MailConfigRead::class,
+            MailCustomConfig::class,
 
             // คิวเมลขาออก — ตอบคำถาม "ทำไมเมลไม่ถึง" โดยไม่ต้อง ssh เข้าเครื่อง
             MailQueueList::class,

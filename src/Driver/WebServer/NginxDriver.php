@@ -150,7 +150,7 @@ final class NginxDriver implements WebServerDriver
 
         $body = new SafeBlock($this->templates->render('nginx/vhost-body.conf.tpl', [
             // ไดเรกทอรีของผู้ดูแล — vhost อ่านเป็นอันสุดท้าย ค่าที่นั่นจึงชนะค่าเริ่มต้น
-            'CUSTOM_DIR' => $executor->path(CustomConfig::directory('nginx', $site->domain)),
+            'CUSTOM_DIR' => $executor->path(CustomConfig::siteDirectory('nginx', $site->domain)),
             'DOCROOT' => $executor->path($site->docroot()),
             'FPM_SOCKET' => $executor->path($site->fpmSocket()),
             'ERROR_LOG' => $executor->path($site->errorLog()),

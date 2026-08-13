@@ -183,6 +183,7 @@ function postfixMainCfRaw(bool $hosting): string
         'TLS_SECURITY' => 'may',
         'INET_INTERFACES' => $hosting ? 'all' : 'loopback-only',
         'MYDESTINATION' => 'localhost, $myhostname',
+        'CUSTOM_SECTION' => '',
         'HOSTING_SECTION' => new SafeBlock($hosting ? $templates->render('postfix/hosting.cf.tpl', [
             'TLS_CERT' => '/etc/ssl/certs/x.pem',
             'TLS_KEY' => '/etc/ssl/private/x.key',

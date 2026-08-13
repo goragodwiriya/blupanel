@@ -106,6 +106,39 @@
           </table>
         </div>
       </div>
+      <!--
+        ไฟล์ตั้งค่าของระบบเมล — ตารางเดียวกับหน้าเว็บไซต์ เปิดทีละไฟล์ใน Modal
+
+        ใช้ endpoint กลางตัวเดียวกัน ต่างกันแค่ `scope=mail` · ไฟล์ที่ระบบสร้างเปิดดูได้
+        แต่แก้ไม่ได้ ส่วนไฟล์ของผู้ดูแลเปิดมาพร้อมคำอธิบายและตัวอย่างในตัวไฟล์เอง
+      -->
+      <div class="content-body" data-if="permissions['settings.manage']">
+        <h2 class="icon-code" data-i18n>Configuration files</h2>
+        <p class="muted" data-i18n>Postfix and Dovecot settings the panel does not manage. Open a file to view it — the editable ones open with comments explaining what belongs there.</p>
+        <div class="tablebody">
+          <table class="table border fullwidth" data-table="configFiles"
+                 data-source="/api/v2/config-files?scope=mail" data-row-actions='{
+                   "open": {
+                     "title": "Open",
+                     "className": "btn small icon-search",
+                     "method": "get",
+                     "navigate": false,
+                     "url": "/api/v2/config-files/{key}?scope=mail"
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="path" data-cell-class="mono" data-i18n>{LNG_File}</th>
+                <th data-field="kind_label" class="center" data-cell-class="center"
+                    data-template="<span class=\'pill pill-${kind_tone}\'>${kind_label}</span>" data-i18n>{LNG_Access}</th>
+                <th data-field="state" class="center" data-cell-class="center" data-i18n>{LNG_Status}</th>
+                <th data-field="size" class="center" data-cell-class="center right" data-format="bytes" data-i18n>{LNG_Size}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
       <div class="content-body">
         <h2 class="icon-link" data-i18n>Forwarders</h2>
         <p class="muted" data-i18n>An address with no mailbox that sends everything on to somewhere else. A row with only @domain catches every unmatched address.</p>

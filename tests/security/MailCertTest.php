@@ -387,6 +387,7 @@ test('บันทึกค่าเมลขาออกต้องไม่�
         'TLS_SECURITY' => 'may',
         'INET_INTERFACES' => 'all',
         'MYDESTINATION' => 'localhost, $myhostname',
+        'CUSTOM_SECTION' => '',
         'HOSTING_SECTION' => new Phpcp\Driver\SafeBlock($hosting),
         'GENERATED_AT' => '2026-01-01 00:00:00',
     ]);
@@ -478,6 +479,7 @@ test('Postfix กับ Dovecot ต้องได้ใบใบเดียว
         'MAIL_ROOT' => MailboxManager::MAIL_ROOT,
         'VMAIL_USER' => MailboxManager::VMAIL_USER,
         'USERS_FILE' => '/etc/dovecot/phpcp-users',
+        'CUSTOM_DIR' => '/etc/phpcp/custom/dovecot',
         'TLS_CERT' => $cert,
         'TLS_KEY' => $key,
         'GENERATED_AT' => '2026-01-01 00:00:00',

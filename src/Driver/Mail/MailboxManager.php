@@ -8,6 +8,7 @@ use Phpcp\Agent\ExecutionFailed;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Driver\ConfigTransaction;
 use Phpcp\Driver\Template;
+use Phpcp\Driver\WebServer\CustomConfig;
 
 /**
  * กล่องจดหมายจริงบนเครื่อง — PLAN-MAIL เฟส M1
@@ -107,6 +108,8 @@ final class MailboxManager
             'MAIL_ROOT' => self::MAIL_ROOT,
             'VMAIL_USER' => self::VMAIL_USER,
             'USERS_FILE' => self::DOVECOT_USERS,
+            // ไดเรกทอรีของผู้ดูแล — Dovecot อ่านท้ายสุด ค่าที่นั่นจึงชนะค่าข้างบน
+            'CUSTOM_DIR' => $executor->path(CustomConfig::serviceDirectory('dovecot')),
             'TLS_CERT' => $certificate['cert'],
             'TLS_KEY' => $certificate['key'],
             'GENERATED_AT' => date('Y-m-d H:i:s'),

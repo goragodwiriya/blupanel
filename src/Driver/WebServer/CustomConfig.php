@@ -39,6 +39,24 @@ final class CustomConfig
     public const ROOT = '/etc/phpcp/custom';
 
     /**
+     * บริการที่มีไฟล์ส่วนเสริมได้ พร้อมนามสกุลที่บริการนั้นใช้
+     *
+     * **allowlist ตายตัว** แบบเดียวกับทะเบียน capability — ชื่อที่ไม่อยู่ในนี้ถูกปฏิเสธ
+     * ไม่ใช่ประกอบเส้นทางให้แล้วค่อยหวังว่าจะไม่มีอะไรผิด
+     *
+     * แยกตามบริการเพราะไวยากรณ์คนละแบบสิ้นเชิง — ไฟล์ของ Apache ที่หลุดไปให้ nginx อ่าน
+     * ทำให้ตัวตรวจล้มทั้งเครื่องโดยที่ผู้ดูแลไม่ได้แก้อะไรเลยในวันนั้น
+     *
+     * @var array<string,string>
+     */
+    public const SERVICES = [
+        'apache' => 'custom.conf',
+        'nginx' => 'custom.conf',
+        'postfix' => 'custom.cf',
+        'dovecot' => 'custom.conf',
+    ];
+
+    /**
      * ชื่อไฟล์เดียวที่หน้าจอแก้ได้
      *
      * ไดเรกทอรีถูก include ด้วย `*.conf` ผู้ดูแลจึงวางไฟล์อื่นเพิ่มเองทาง SSH ได้
@@ -57,24 +75,46 @@ final class CustomConfig
      * ไฟล์ของอีกฝั่งต้องไม่ถูกอ่าน ไม่งั้น configtest ล้มทั้งเครื่องโดยที่ผู้ดูแล
      * ไม่ได้แก้อะไรเลยในวันนั้น
      */
-    public static function directory(string $server, string $domain): string
+    /**
+     * ไดเรกทอรีของบริการที่ตั้งค่าทั้งเครื่อง (เมล) — ไม่มีโดเมนกำกับ
+     */
+    public static function serviceDirectory(string $service): string
     {
-        if (!in_array($server, ['apache', 'nginx'], true)) {
-            throw new ValidationError('ชนิดเว็บเซิร์ฟเวอร์ไม่ถูกต้อง: ' . $server);
+        if (!isset(self::SERVICES[$service])) {
+            throw new ValidationError('บริการนี้ไม่มีไฟล์ส่วนเสริม: ' . $service);
         }
 
-        return self::ROOT . '/' . $server . '/' . Validator::domain($domain);
+        return self::ROOT . '/' . $service;
     }
 
-    public static function path(string $server, string $domain): string
+    /**
+     * ไดเรกทอรีของเว็บไซต์หนึ่ง — **ต้องมีโดเมนเสมอ**
+     *
+     * แยกจาก `serviceDirectory()` โดยเจตนา ไม่ใช่ทำเป็นพารามิเตอร์ที่ว่างได้ · โดเมนว่าง
+     * ที่หลุดเข้ามาจะเงียบ ๆ ไปเขียนทับไฟล์ระดับบริการที่ทุกเว็บใช้ร่วมกัน แทนที่จะเขียน
+     * ไฟล์ของเว็บนั้น — ความผิดพลาดที่ไม่มีอะไรฟ้องจนกว่าจะมีคนสงสัยว่าทำไมทุกเว็บเปลี่ยน
+     */
+    public static function siteDirectory(string $service, string $domain): string
     {
-        return self::directory($server, $domain) . '/' . self::FILE;
+        return self::serviceDirectory($service) . '/' . Validator::domain($domain);
+    }
+
+    public static function servicePath(string $service): string
+    {
+        return self::serviceDirectory($service) . '/' . self::SERVICES[$service];
+    }
+
+    public static function sitePath(string $service, string $domain): string
+    {
+        return self::siteDirectory($service, $domain) . '/' . self::SERVICES[$service];
     }
 
     /** เนื้อไฟล์ปัจจุบัน — ยังไม่เคยเขียน = ค่าว่าง ไม่ใช่ข้อผิดพลาด */
-    public function read(Executor $executor, string $server, string $domain): string
+    public function read(Executor $executor, string $service, string $domain = ''): string
     {
-        $path = $executor->path(self::path($server, $domain));
+        $path = $executor->path(
+            $domain === '' ? self::servicePath($service) : self::sitePath($service, $domain),
+        );
 
         if (!$executor->exists($path)) {
             return '';
@@ -125,12 +165,12 @@ final class CustomConfig
      * ตัวอย่างในไฟล์ถูกคอมเมนต์ไว้ทั้งหมด — ไฟล์ตั้งต้นที่บันทึกทันทีต้องไม่เปลี่ยน
      * พฤติกรรมของเว็บแม้แต่นิดเดียว
      */
-    public function seed(Template $templates, string $server, string $domain): string
+    public function seed(Template $templates, string $service, string $domain = ''): string
     {
-        $file = $server === 'nginx' ? 'custom/nginx.conf.tpl' : 'custom/apache.conf.tpl';
+        $file = 'custom/' . (isset(self::SERVICES[$service]) ? $service : 'apache') . '.conf.tpl';
 
         try {
-            return $templates->render($file, ['DOMAIN' => $domain]);
+            return $templates->render($file, ['DOMAIN' => $domain !== '' ? $domain : 'เครื่องนี้']);
         } catch (\Throwable) {
             // ไม่มีเทมเพลตก็ยังแก้ไฟล์ได้ แค่ไม่มีคำอธิบายให้ — ไม่ใช่เหตุให้ทั้งหน้าพัง
             return '';

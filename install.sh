@@ -611,7 +611,8 @@ mkdir -p "$CONF_DIR/httpd" "$CONF_DIR/fpm/pool.d" "$CONF_DIR/vhosts.d" "$CONF_DI
 
 # ไฟล์ตั้งค่าเพิ่มเติมที่ผู้ดูแลเขียนเอง — vhost ที่ระบบสร้าง include ไดเรกทอรีนี้
 # เป็นอันสุดท้าย · panel ไม่เขียนทับไฟล์ในนี้เลย จึงเป็นที่เดียวที่แก้แล้วไม่หาย
-mkdir -p "$CONF_DIR/custom/apache" "$CONF_DIR/custom/nginx"
+mkdir -p "$CONF_DIR/custom/apache" "$CONF_DIR/custom/nginx" \
+         "$CONF_DIR/custom/postfix" "$CONF_DIR/custom/dovecot"
 chmod 750 "$CONF_DIR/httpd" "$CONF_DIR/fpm" "$CONF_DIR/vhosts.d"
 chmod 700 "$CONF_DIR/tls"
 ok "สร้าง config tree แยกจาก /etc/apache2 และ /etc/php"
