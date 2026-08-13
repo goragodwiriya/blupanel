@@ -85,18 +85,18 @@
       <div class="content-body">
         <h2 data-i18n>Actions</h2>
         <div class="header-actions">
-          <button type="button" class="btn icon-ban" data-if="can['suspend'] && status !== 'suspended'" data-action="click.prevent:requestApi"
+          <button type="button" class="btn icon-ban" data-if="can['suspend'] && status !== 'suspended'" data-action="click.prevent:apiRefresh"
                   data-api-url="/api/v2/sites/{id}/suspension" data-api-method="put" data-param-suspended="true"
                   data-confirm="Suspending stops the website from serving visitors immediately." data-i18n>Suspend</button>
-          <button type="button" class="btn icon-refresh" data-if="can['suspend'] && status === 'suspended'" data-action="click.prevent:requestApi"
+          <button type="button" class="btn icon-refresh" data-if="can['suspend'] && status === 'suspended'" data-action="click.prevent:apiRefresh"
                   data-api-url="/api/v2/sites/{id}/suspension" data-api-method="put" data-param-suspended="false" data-confirm="Resume serving this website?"
                   data-i18n>Resume</button>
           <!--
             ลบเว็บไซต์ย้อนกลับไม่ได้ · API บังคับให้ส่งชื่อโดเมนมายืนยันอยู่แล้ว
             `data-attr` เติมชื่อโดเมนจริงลง `data-param-confirm_domain` ให้ตอนเรนเดอร์
           -->
-          <button type="button" class="btn btn-danger icon-delete" data-if="can['delete']" data-action="click.prevent:requestApi" data-api-url="/api/v2/sites/{id}"
-                  data-api-method="delete" data-attr="data-param-confirm_domain:domain"
+          <button type="button" class="btn btn-danger icon-delete" data-if="can['delete']" data-action="click.prevent:apiRefresh" data-api-url="/api/v2/sites/{id}"
+                  data-go="/sites" data-api-method="delete" data-attr="data-param-confirm_domain:domain"
                   data-confirm="Deleting a website removes its files, databases and certificates. This cannot be undone." data-i18n>Delete website</button>
         </div>
       </div>
@@ -164,8 +164,8 @@
                 <tr>
                   <th data-field="ip" data-i18n>{LNG_IP address}</th>
                   <th class="center" data-row-actions="
-                        <button type='button' class='btn btn-small icon-refresh' data-action='click.prevent:requestApi'
-                                data-api-url='/api/v2/sites/{id}/rate-limit/unban' data-api-method='post'
+                        <button type='button' class='btn small icon-refresh' data-action='click.prevent:apiRefresh'
+                                data-api-url='/api/v2/sites/{id}/rate-limit/unban' data-refresh-table="bannedIps" data-api-method='post'
                                 data-param-ip='{ip}'>{LNG_Unban}</button>"
                       data-i18n>{LNG_Action}</th>
                 </tr>
@@ -182,7 +182,13 @@
             ฟอร์มอยู่คนละเทมเพลตตาม FRAMEWORK_GUIDE Pattern 3 — ส่วนนี้มีแต่ตาราง
             สองช่องกรอกถือว่าน้อย จึงเปิดใน Modal ที่เซิร์ฟเวอร์เป็นคนสั่ง
           -->
-          <button type="button" class="btn icon-plus" data-if="permissions['domain.manage']"
+          <!--
+            ถาม `can[...]` จากคำตอบของ endpoint นี้ ไม่ใช่ `permissions[...]` ซึ่งมีให้ใช้
+            เฉพาะในคอมโพเนนต์ที่โหลด /api/v2/session มา (ดู sites.html) · หน้านี้โหลด
+            /api/v2/sites/{id} ปุ่มจึงหายไปทั้งปุ่มโดยไม่มี error ให้เห็น ·
+            SitesController::show ส่ง `can.manage_domains` มาให้อยู่แล้วตั้งแต่แรก
+          -->
+          <button type="button" class="btn icon-plus" data-if="can['manage_domains']"
                   data-action="click.prevent:requestApi"
                   data-api-url="/api/v2/sites/{id}/domains/form" data-api-method="get"
                   data-i18n>Add domain</button>
@@ -248,6 +254,7 @@
                      "className": "btn btn-danger icon-delete",
                      "method": "delete",
                      "url": "/api/v2/certificates/{site_id}",
+                     "params": {"confirm_domain": "{domain}"},
                      "condition": "${can_manage && status !== \"none\"}",
                      "confirm": "Remove this certificate? The website falls back to plain HTTP."
                    }

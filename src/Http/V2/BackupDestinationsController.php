@@ -190,7 +190,6 @@ final class BackupDestinationsController extends ApiController
                 // ตารางปลายทางเองรีโหลดจาก target ด้านบนแล้ว แต่ <select> ตัวเลือกปลายทาง
                 // ในฟอร์มตั้งเวลา/ฟอร์มส่งออก (backups.html) ผูกกับเหตุการณ์นี้ต่างหาก
                 // เพราะไม่ใช่ตารางที่มี id ให้ target อ้างถึง
-                ['type' => 'event', 'event' => self::RELOAD_EVENT],
             ],
             ['destination_id' => $id],
             201,
@@ -237,7 +236,6 @@ final class BackupDestinationsController extends ApiController
             [
                 ['type' => 'notification', 'level' => 'success', 'message' => 'Destination saved'],
                 ['type' => 'redirect', 'url' => '/app/backups', 'delay' => 800],
-                ['type' => 'event', 'event' => self::RELOAD_EVENT],
             ],
             is_array($result) ? $result : [],
         );
@@ -278,7 +276,6 @@ final class BackupDestinationsController extends ApiController
             [
                 ['type' => 'notification', 'level' => 'success', 'message' => $message],
                 ['type' => 'redirect', 'url' => 'reload', 'target' => 'destinations'],
-                ['type' => 'event', 'event' => self::RELOAD_EVENT],
             ],
             is_array($result) ? $result : [],
         );

@@ -71,10 +71,19 @@ final class FirewallController extends ApiController
             'window' => (int) $request->payload('window', RollbackGuard::DEFAULT_WINDOW),
         ], $this->ctx->actor($request));
 
-        return $this->refreshed(
-            (string) ($result['message'] ?? 'Rule added — confirm it before the automatic rollback runs out'),
-            extra: $result + ['pending_rollback' => $this->pendingRollback()],
-        )->withHeader('Location', '/api/v2/firewall');
+        $message = (string) ($result['message'] ?? 'Rule added — confirm it before the automatic rollback runs out');
+
+        /*
+         * ปิดฟอร์มก่อน แล้วโหลดหน้าใหม่ทั้งหน้า (target ว่าง) — ตารางกฎผูกกับข้อมูล
+         * ของหน้า ไม่ได้ดึงเอง จึงสั่งโหลดเฉพาะตารางไม่ได้ · และหน้านี้ยังมีแถบ
+         * "รอการยืนยัน" ที่ต้องอัปเดตตามด้วย ซึ่งอยู่นอกตารางอยู่แล้ว
+         */
+        return $this->done($message, [
+            ['type' => 'modal', 'action' => 'close'],
+            ['type' => 'notification', 'level' => 'success', 'message' => $message],
+            ['type' => 'redirect', 'url' => 'reload', 'target' => ''],
+        ], $result + ['pending_rollback' => $this->pendingRollback()])
+            ->withHeader('Location', '/api/v2/firewall');
     }
 
     /**

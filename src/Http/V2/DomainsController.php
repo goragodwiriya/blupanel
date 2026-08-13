@@ -218,6 +218,7 @@ final class DomainsController extends HostingController
         return $this->done(
             $this->t('{type} record added', ['type' => $clean['type']]),
             [
+                ['type' => 'modal', 'action' => 'close'],
                 ['type' => 'notification', 'level' => 'success',
                  'message' => $this->t('{type} record added', ['type' => $clean['type']])],
                 ...$this->dnsSyncWarning($sync),

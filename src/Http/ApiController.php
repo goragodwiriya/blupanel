@@ -128,6 +128,34 @@ abstract class ApiController extends Controller
     }
 
     /**
+     * บันทึกจากฟอร์มใน Modal สำเร็จ — **ปิด Modal แล้วโหลดตารางใหม่**
+     *
+     * ฟอร์มที่เปิดใน Modal ถูกเปิดด้วยคำสั่งจากเซิร์ฟเวอร์ (`$this->modal(...)`) การปิดจึง
+     * ต้องเป็นคำสั่งจากเซิร์ฟเวอร์เหมือนกัน · ไม่มีบรรทัดนี้ Modal จะค้างอยู่บนจอทั้งที่
+     * บันทึกสำเร็จไปแล้ว — ผู้ใช้เห็นฟอร์มเดิมพร้อมข้อความว่าสำเร็จ แล้วมักกดบันทึกซ้ำ
+     * เพราะเข้าใจว่ายังไม่ติด ได้ข้อมูลซ้ำสองรายการ
+     *
+     * **ลำดับสำคัญ:** ปิด Modal ก่อนโหลดตาราง · สลับกันแล้วตารางจะถูกวาดใหม่ใต้ Modal
+     * ที่ยังเปิดค้างอยู่ ซึ่งผู้ใช้มองไม่เห็นความเปลี่ยนแปลงอยู่ดี
+     *
+     * @param string $table ชื่อ `data-table` ที่ต้องโหลดใหม่ · ว่าง = ไม่โหลดอะไร
+     * @param array<string,mixed> $extra
+     */
+    protected function saved(string $message, string $table = '', array $extra = [], int $status = 200): Response
+    {
+        $actions = [
+            ['type' => 'modal', 'action' => 'close'],
+            ['type' => 'notification', 'level' => 'success', 'message' => $message],
+        ];
+
+        if ($table !== '') {
+            $actions[] = ['type' => 'redirect', 'url' => 'reload', 'target' => $table];
+        }
+
+        return $this->done($message, $actions, $extra, $status);
+    }
+
+    /**
      * แจ้งผลสำเร็จพร้อมสั่งให้หน้ารายละเอียดโหลดตัวเองใหม่
      *
      * ใช้แทน `completed()` เมื่อสิ่งที่ต้องอัปเดตไม่ใช่ตารางที่ดึงข้อมูลเอง แต่เป็น

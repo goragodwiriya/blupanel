@@ -147,7 +147,7 @@
                   <td><a data-attr="href:'/app/site?id=' + site.id" data-text="site.name"></a></td>
                   <td data-text="site.status"></td>
                   <td>
-                    <button type="button" class="btn btn-sm btn-danger icon-minus" data-action="click.prevent:requestApi" data-api-method="delete"
+                    <button type="button" class="btn small btn-danger icon-minus" data-action="click.prevent:apiRefresh" data-api-method="delete"
                             data-attr="data-api-url:'/api/v2/users/{id}/sites/' + site.id" data-confirm="Unlink this website from the account?" data-i18n>Unlink</button>
                   </td>
                 </tr>
@@ -324,7 +324,7 @@
             </fieldset>
             <fieldset class="submit">
               <button type="submit" class="btn btn-primary icon-save" data-text="sftp_enabled ? 'Change password' : 'Enable SFTP'"></button>
-              <button type="button" class="btn btn-danger icon-ban" data-if="sftp_enabled" data-action="click.prevent:requestApi" data-api-url="/api/v2/users/{id}/sftp"
+              <button type="button" class="btn btn-danger icon-ban" data-if="sftp_enabled" data-action="click.prevent:apiRefresh" data-api-url="/api/v2/users/{id}/sftp"
                       data-api-method="delete" data-confirm="Disable SFTP for this account? Files and websites are not affected." data-emit-event="phpcp:reload" data-i18n>Disable
                 SFTP</button>
             </fieldset>

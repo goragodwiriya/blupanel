@@ -106,6 +106,7 @@ final class DatabasesController extends ApiController
         return $this->done(
             $this->t('Database {name} created', ['name' => (string) $result['name']]),
             [
+                ['type' => 'modal', 'action' => 'close'],
                 [
                     'type' => 'modal',
                     'action' => 'show',

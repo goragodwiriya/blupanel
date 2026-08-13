@@ -92,6 +92,7 @@ final class CronJobsController extends HostingController
         return $this->done(
             'Cron job added',
             [
+                ['type' => 'modal', 'action' => 'close'],
                 ['type' => 'notification', 'level' => 'success', 'message' => 'Cron job added'],
                 ['type' => 'redirect', 'url' => 'reload', 'target' => 'cronJobs']
             ],
@@ -200,7 +201,7 @@ final class CronJobsController extends HostingController
             },
         );
 
-        return $this->completed('Cron job saved', 'cronJobs', ['cron_job_id' => $id]);
+        return $this->saved('Cron job saved', 'cronJobs', ['cron_job_id' => $id]);
     }
 
     /**

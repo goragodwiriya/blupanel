@@ -26,11 +26,11 @@
                       data-action="click.prevent:requestApi"
                       data-api-url="/api/v2/firewall/rules/form" data-api-method="get"
                       data-i18n>Add rule</button>
-              <button type="button" class="btn small btn-primary icon-power" data-show="active === false" data-action="click.prevent:requestApi"
+              <button type="button" class="btn small btn-primary icon-power" data-show="active === false" data-action="click.prevent:apiRefresh"
                       data-api-url="/api/v2/firewall/enabled" data-api-method="put" data-param-enabled="true"
                       data-confirm="Enabling the firewall can lock you out if a needed port isn't allowed yet — the panel and SSH ports are opened automatically first."
                       data-i18n>Enable firewall</button>
-              <button type="button" class="btn small btn-danger icon-power" data-show="active === true" data-action="click.prevent:requestApi"
+              <button type="button" class="btn small btn-danger icon-power" data-show="active === true" data-action="click.prevent:apiRefresh"
                       data-api-url="/api/v2/firewall/enabled" data-api-method="put" data-param-enabled="false"
                       data-confirm="Disabling the firewall makes this server reachable on every port." data-i18n>Disable firewall</button>
             </div>
@@ -40,7 +40,7 @@
           <table class="table border fullwidth" data-table="firewallRules" data-attr="data:rules" data-row-actions='{
                    "delete": {
                      "title": "Delete",
-                     "className": "btn btn-sm btn-danger icon-delete",
+                     "className": "btn small btn-danger icon-delete",
                      "method": "delete",
                      "url": "/api/v2/firewall/rules/{number}",
                      "params": {"expect": "{signature}"},

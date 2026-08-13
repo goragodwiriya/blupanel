@@ -114,6 +114,7 @@ final class BackupSchedulesController extends ApiController
         return $this->done(
             'Schedule added',
             [
+                ['type' => 'modal', 'action' => 'close'],
                 ['type' => 'notification', 'level' => 'success', 'message' => 'Schedule added'],
                 ['type' => 'redirect', 'url' => 'reload', 'target' => 'schedules'],
             ],
@@ -163,7 +164,7 @@ final class BackupSchedulesController extends ApiController
             ['id' => (int) $row['id']],
         ) ?? []);
 
-        return $this->completed('Schedule saved', 'schedules', is_array($result) ? $result : []);
+        return $this->saved('Schedule saved', 'schedules', is_array($result) ? $result : []);
     }
 
     public function destroy(Request $request): Response

@@ -561,6 +561,7 @@ final class SitesController extends HostingController
         return $this->done(
             $this->t('Domain {domain} added', ['domain' => $domain]),
             [
+                ['type' => 'modal', 'action' => 'close'],
                 ['type' => 'notification', 'level' => 'success', 'message' => $this->t('Domain {domain} added', ['domain' => $domain])],
                 ['type' => 'redirect', 'url' => 'reload', 'target' => 'sites']
             ],

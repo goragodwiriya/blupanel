@@ -122,6 +122,7 @@ final class BackupsController extends HostingController
         return $this->done(
             (string) ($result['message'] ?? 'Backup created'),
             [
+                ['type' => 'modal', 'action' => 'close'],
                 ['type' => 'notification', 'level' => 'success',
                  'message' => (string) ($result['message'] ?? 'Backup created')],
                 ['type' => 'redirect', 'url' => 'reload', 'target' => 'backups'],

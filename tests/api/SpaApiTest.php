@@ -227,6 +227,284 @@ test('ทุกแถวของตารางในเทมเพลตม�
     assertSame([], $problems, "เทมเพลตเสียรูป:\n  " . implode("\n  ", $problems));
 });
 
+test('ฟอร์มที่เปิดใน Modal ต้องสั่งปิด Modal เมื่อบันทึกสำเร็จ', static function (): void {
+    /*
+     * **Modal ถูกเปิดด้วยคำสั่งจากเซิร์ฟเวอร์ การปิดจึงต้องเป็นคำสั่งจากเซิร์ฟเวอร์ด้วย**
+     *
+     * ไม่มีคำสั่งปิด ฟอร์มจะค้างอยู่บนจอทั้งที่บันทึกสำเร็จไปแล้ว · ผู้ใช้เห็นฟอร์มเดิม
+     * พร้อมข้อความว่าสำเร็จ แล้วมักกดบันทึกซ้ำเพราะเข้าใจว่ายังไม่ติด — ได้ข้อมูลซ้ำ
+     * สองรายการ · เดิมเป็นแบบนี้ทุกฟอร์มในระบบ ไม่ใช่หน้าใดหน้าหนึ่ง
+     *
+     * แยก "Modal ที่เป็นฟอร์ม" ออกจาก "Modal ที่แสดงผลอย่างเดียว" ด้วยวิธีที่โค้ดบอกเอง:
+     * ฟอร์มเปิดด้วย `'template' => 'x-form.html'` ส่วนกล่องแสดงผล (รหัสผ่านที่สุ่มให้ ·
+     * เนื้อเมลในคิว) เปิดด้วย `'content'`/`'html'` ซึ่งผู้ใช้ปิดเองเมื่ออ่านเสร็จ
+     */
+    $problems = [];
+
+    foreach (glob(PHPCP_ROOT . '/src/Http/V2/*.php') ?: [] as $file) {
+        $source = (string) file_get_contents($file);
+        $code = (string) preg_replace('~/\*.*?\*/|//[^\n]*~s', '', $source);
+
+        // เปิด Modal ที่เป็นฟอร์มหรือเปล่า
+        if (preg_match("/'template'\s*=>\s*'[\w.-]+\.html'/", $code) !== 1) {
+            continue;
+        }
+
+        // ปิดได้สองทาง: สั่งตรง ๆ หรือผ่านตัวช่วย saved() ที่ใส่คำสั่งปิดให้เอง
+        if (str_contains($code, "'action' => 'close'") || str_contains($code, '$this->saved(')) {
+            continue;
+        }
+
+        $problems[] = basename($file);
+    }
+
+    assertSame(
+        [],
+        $problems,
+        "controller เหล่านี้เปิดฟอร์มใน Modal แต่ไม่เคยสั่งปิด — ใช้ saved() หรือใส่ "
+        . "['type' => 'modal', 'action' => 'close'] เป็นคำสั่งแรก:\n  " . implode("\n  ", $problems),
+    );
+});
+
+test('ปุ่มที่เปลี่ยนแปลงข้อมูลต้องใช้ apiRefresh ไม่ใช่ requestApi', static function (): void {
+    /*
+     * **`requestApi` ไม่อ่าน `actions` ที่เซิร์ฟเวอร์ส่งกลับมาเลย**
+     *
+     * มันขึ้นข้อความแจ้งผลแล้วจบ · คำสั่ง "โหลดใหม่" ที่ controller อุตส่าห์ส่งมาถูกทิ้ง
+     * ทั้งหมด — ต่างจากปุ่มในแถวตารางซึ่ง `TableManager` ส่งต่อให้ `ResponseHandler`
+     * (ยืนยันจากซอร์สของเฟรมเวิร์ก 2026-08-13)
+     *
+     * อาการคือ **กดแล้วขึ้นว่าสำเร็จ แต่หน้าจอยังโชว์ของเดิม** — ผู้ใช้กดซ้ำเพราะคิดว่า
+     * ไม่ติด · โปรเจกต์มี `apiRefresh` ที่ห่อ `requestApi` แล้วรีเฟรชต่อให้อยู่แล้ว
+     *
+     * ปุ่มที่ "ทำแล้วไม่มีอะไรบนจอต้องเปลี่ยน" (ส่งเมลทดสอบ · เปิด Modal) ใช้
+     * `requestApi` ได้ตามเดิม จึงยกเว้นด้วย `data-notify-success` และเส้นทาง `/form`
+     */
+    $problems = [];
+
+    foreach (glob(PHPCP_ROOT . '/public/assets/spa/templates/*.html') ?: [] as $file) {
+        $html = (string) preg_replace('/<!--.*?-->/s', '', (string) file_get_contents($file));
+
+        if (preg_match_all('/<button[^>]*>/i', $html, $tags) === 0) {
+            continue;
+        }
+
+        foreach ($tags[0] as $tag) {
+            if (!str_contains($tag, 'click.prevent:requestApi')) {
+                continue;
+            }
+
+            preg_match('/data-api-method="(\w+)"/', $tag, $method);
+            preg_match('/data-api-url="([^"]*)"/', $tag, $url);
+
+            $verb = strtolower($method[1] ?? 'get');
+            $target = $url[1] ?? '';
+
+            // อ่านอย่างเดียว = ไม่มีอะไรเปลี่ยน · `/form` เปิด Modal · `data-notify-success`
+            // คือปุ่มที่ผลลัพธ์เป็นข้อความอย่างเดียว (ส่งเมล/ข้อความทดสอบ)
+            if (!in_array($verb, ['post', 'put', 'patch', 'delete'], true)
+                || str_contains($target, '/form')
+                || str_contains($tag, 'data-notify-success')
+            ) {
+                continue;
+            }
+
+            $problems[] = basename($file) . ': ' . strtoupper($verb) . ' ' . ($target !== '' ? $target : '(ตั้งค่าเส้นทางตอนเรนเดอร์)');
+        }
+    }
+
+    assertSame(
+        [],
+        $problems,
+        "ปุ่มเหล่านี้เปลี่ยนแปลงข้อมูลแต่หน้าจอจะไม่อัปเดตหลังกด — ใช้ apiRefresh แทน:\n  "
+        . implode("\n  ", $problems),
+    );
+});
+
+test('ปุ่มลบที่ปลายทางบังคับให้ยืนยันชื่อโดเมน ต้องส่งชื่อนั้นไปด้วย', static function (): void {
+    /*
+     * **ปุ่มที่ยิงคำขอโดยขาดค่าที่ปลายทางบังคับ = ปุ่มที่กดยังไงก็ล้ม**
+     *
+     * `ssl.delete` กับ `site.delete` เทียบ `confirm_domain` กับโดเมนจริงก่อนลบ — ด่านนี้
+     * ถูกต้องแล้วและต้องอยู่ · แต่ปุ่ม Remove ในหน้า SSL ไม่เคยส่งค่านั้นมาเลย กดแล้วได้
+     * "ชื่อโดเมนที่ยืนยันไม่ตรงกับเว็บไซต์ปลายทาง" ทุกครั้งตั้งแต่วันแรก ไม่มีทางสำเร็จ
+     *
+     * เทสต์นี้อ่านจากโค้ดจริงสองฝั่งมาเทียบกัน ไม่ได้ฮาร์ดโค้ดรายชื่อปุ่มไว้ — ปุ่มใหม่ที่
+     * ยิงไปยังปลายทางแบบเดียวกันจะถูกจับได้ทันทีโดยไม่ต้องมีใครนึกออกว่าต้องมาแก้เทสต์
+     */
+    $routes = (string) file_get_contents(PHPCP_ROOT . '/src/Kernel/Routes.php');
+
+    // เส้นทาง DELETE ทั้งหมด → [path, controller, method]
+    preg_match_all(
+        "/new Route\(\s*'DELETE'\s*,\s*'([^']+)'\s*,\s*([A-Za-z0-9_]+)::class\s*,\s*'([^']+)'/",
+        $routes,
+        $matches,
+        PREG_SET_ORDER,
+    );
+
+    /** ดึงเนื้อเมธอดออกมาด้วยการนับวงเล็บปีกกา — เทียบทั้งไฟล์จะติดเมธอดอื่นที่ไม่เกี่ยว */
+    $methodBody = static function (string $source, string $name): string {
+        $start = strpos($source, 'function ' . $name . '(');
+
+        if ($start === false) {
+            return '';
+        }
+
+        $open = strpos($source, '{', $start);
+
+        if ($open === false) {
+            return '';
+        }
+
+        $depth = 0;
+
+        for ($i = $open, $len = strlen($source); $i < $len; $i++) {
+            $depth += $source[$i] === '{' ? 1 : ($source[$i] === '}' ? -1 : 0);
+
+            if ($depth === 0) {
+                return substr($source, $open, $i - $open + 1);
+            }
+        }
+
+        return '';
+    };
+
+    // เส้นทางไหนบังคับ confirm_domain บ้าง
+    $needsConfirm = [];
+
+    foreach ($matches as [, $path, $controller, $action]) {
+        foreach (glob(PHPCP_ROOT . '/src/Http/**/*.php') ?: [] as $file) {
+            if (basename($file, '.php') !== $controller) {
+                continue;
+            }
+
+            if (str_contains($methodBody((string) file_get_contents($file), $action), 'confirm_domain')) {
+                $needsConfirm[] = $path;
+            }
+        }
+    }
+
+    assertTrue($needsConfirm !== [], 'ต้องเจอเส้นทางที่บังคับ confirm_domain อย่างน้อยหนึ่งเส้น ไม่งั้นเทสต์นี้ผ่านฟรี');
+
+    /** เส้นทางนี้ตรงกับเส้นทางที่บังคับยืนยันไหม — เทียบทีละส่วน `{...}` แทนอะไรก็ได้หนึ่งส่วน */
+    $matchesRoute = static function (string $url, string $route): bool {
+        $url = strtok($url, '?') ?: $url;
+        $left = explode('/', trim($url, '/'));
+        $right = explode('/', trim($route, '/'));
+
+        if (count($left) !== count($right)) {
+            return false;
+        }
+
+        foreach ($right as $i => $segment) {
+            if (!str_starts_with($segment, '{') && $segment !== $left[$i]) {
+                return false;
+            }
+        }
+
+        return true;
+    };
+
+    $problems = [];
+
+    foreach (glob(PHPCP_ROOT . '/public/assets/spa/templates/*.html') ?: [] as $file) {
+        $html = (string) preg_replace('/<!--.*?-->/s', '', (string) file_get_contents($file));
+        $actions = [];
+
+        // 1) ปุ่มในตาราง — อ่านจาก JSON ของ data-row-actions ตรง ๆ ไม่เดาจากข้อความรอบ ๆ
+        if (preg_match_all("/data-row-actions='([^']*)'/s", $html, $blocks) > 0) {
+            foreach ($blocks[1] as $json) {
+                foreach ((array) json_decode($json, true) as $name => $action) {
+                    if (!is_array($action)) {
+                        continue;
+                    }
+
+                    $actions[] = [
+                        'label' => (string) $name,
+                        'method' => strtolower((string) ($action['method'] ?? 'get')),
+                        'url' => (string) ($action['url'] ?? ''),
+                        'sends' => array_key_exists('confirm_domain', (array) ($action['params'] ?? [])),
+                    ];
+                }
+            }
+        }
+
+        // 2) ปุ่มเดี่ยว — ดูเฉพาะภายในแท็กนั้นแท็กเดียว ไม่ใช่หน้าต่างรอบ ๆ
+        if (preg_match_all('/<[a-z]+[^>]*data-api-url="[^"]*"[^>]*>/i', $html, $tags) > 0) {
+            foreach ($tags[0] as $tag) {
+                preg_match('/data-api-url="([^"]*)"/', $tag, $url);
+                preg_match('/data-api-method="([^"]*)"/', $tag, $method);
+
+                $actions[] = [
+                    'label' => 'ปุ่มเดี่ยว',
+                    'method' => strtolower($method[1] ?? 'get'),
+                    'url' => $url[1] ?? '',
+                    // ส่งได้สองทาง: data-param-* ตรง ๆ หรือ data-attr เติมให้ตอนเรนเดอร์
+                    'sends' => str_contains($tag, 'confirm_domain'),
+                ];
+            }
+        }
+
+        foreach ($actions as $action) {
+            if ($action['method'] !== 'delete' || $action['sends']) {
+                continue;
+            }
+
+            foreach ($needsConfirm as $route) {
+                if ($matchesRoute($action['url'], $route)) {
+                    $problems[] = basename($file) . ': ' . $action['label'] . ' → ' . $action['url'];
+                }
+            }
+        }
+    }
+
+    assertSame(
+        [],
+        array_values(array_unique($problems)),
+        "ปุ่มลบเหล่านี้ไม่ส่ง confirm_domain ปลายทางจะปฏิเสธทุกครั้ง:\n  "
+        . implode("\n  ", array_unique($problems)),
+    );
+});
+
+test('`permissions[...]` ใช้ได้เฉพาะหน้าที่โหลด /api/v2/session มาเท่านั้น', static function (): void {
+    /*
+     * **ปุ่มที่ผูกกับสิ่งที่ไม่มีในขอบเขต จะหายไปทั้งปุ่มโดยไม่มี error ให้เห็น**
+     *
+     * `permissions` ไม่ใช่ของกลางของแอป — มันคือฟิลด์หนึ่งในคำตอบของ `/api/v2/session`
+     * คอมโพเนนต์ที่โหลด endpoint อื่นจึงไม่มีมันในขอบเขตเลย · หน้าที่ต้องใช้ทั้งข้อมูลของ
+     * ตัวเองและสิทธิ์ ต้องให้ **endpoint ของตัวเองตอบสิทธิ์มาด้วย** (`meta.can_*` หรือ
+     * `can[...]`) แบบที่ SitesController::show ทำอยู่แล้ว
+     *
+     * เจอตอนทำ M3: ปุ่มผูกใบรับรองไม่ขึ้นบนหน้าจอเลย ทั้งที่โค้ดถูกทุกอย่าง เพราะมันอยู่
+     * ในคอมโพเนนต์ซ้อนที่โหลด `/api/v2/mail/readiness` · ไล่ดูแล้วพบว่ามีปุ่มแบบเดียวกัน
+     * ที่ตายอยู่เงียบ ๆ มาก่อนแล้วในสองหน้า
+     */
+    $problems = [];
+
+    foreach (glob(PHPCP_ROOT . '/public/assets/spa/templates/*.html') ?: [] as $file) {
+        // ตัดคอมเมนต์ก่อน — คำอธิบายในไฟล์พูดถึง `permissions[...]` ตรง ๆ
+        $html = (string) preg_replace('/<!--.*?-->/s', '', (string) file_get_contents($file));
+
+        if (!str_contains($html, 'permissions[')) {
+            continue;
+        }
+
+        // ทุก endpoint ที่หน้านี้โหลด · ใช้ `permissions[...]` ได้ต่อเมื่อมี session อยู่ด้วย
+        preg_match_all('/data-endpoint="([^"]*)"/', $html, $endpoints);
+
+        if (!in_array('/api/v2/session', $endpoints[1], true)) {
+            $problems[] = basename($file) . ': โหลดแต่ ' . (implode(', ', $endpoints[1]) ?: 'ไม่มี endpoint เลย');
+        }
+    }
+
+    assertSame(
+        [],
+        $problems,
+        "หน้าเหล่านี้ใช้ permissions[...] ทั้งที่ไม่มีในขอบเขต — ให้ endpoint ตอบสิทธิ์มาเองแทน:\n  "
+        . implode("\n  ", $problems),
+    );
+});
+
 test('data-i18n ต้องไม่มีค่า — Now.js เติมคีย์จากข้อความในแท็กเอง', static function (): void {
     // ใส่ค่าเองแล้วมีสองแหล่งความจริง: ค่าในแอตทริบิวต์กับข้อความในแท็ก ซึ่งจะค่อย ๆ
     // ไม่ตรงกันเมื่อมีคนแก้ข้อความแต่ลืมแก้คีย์ แล้วป้ายนั้นจะไม่ถูกแปลโดยไม่มีใครรู้
