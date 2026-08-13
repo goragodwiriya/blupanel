@@ -375,7 +375,7 @@
     "One name per line, or a single name": "หนึ่งชื่อต่อบรรทัด หรือชื่อเดียว",
     "One website = one system user + one FPM pool": "หนึ่งเว็บไซต์ = หนึ่งบัญชีระบบ + หนึ่ง FPM pool",
     "Open": "เปิด",
-    "Open a file to view it. Only the extra configuration file can be edited — it is read last, so anything set there overrides the generated settings.": "กดเปิดเพื่อดูเนื้อไฟล์ · แก้ได้เฉพาะไฟล์ค่าตั้งเพิ่มเติมเท่านั้น ซึ่งถูกอ่านเป็นอันสุดท้าย ค่าที่เขียนที่นั่นจึงชนะค่าที่ระบบสร้าง",
+    "Open a file to view it. The editable one opens with comments explaining what belongs there and examples to start from.": "กดเปิดเพื่อดูเนื้อไฟล์ · ไฟล์ที่แก้ได้จะเปิดมาพร้อมคอมเมนต์อธิบายว่าเขียนอะไรได้บ้าง และตัวอย่างให้เริ่มต้น",
     "Open in phpMyAdmin": "เปิดใน phpMyAdmin",
     "Open phpMyAdmin": "เปิด phpMyAdmin",
     "Operating system": "ระบบปฏิบัติการ",

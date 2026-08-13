@@ -118,7 +118,12 @@ final class SiteCustomConfig extends SiteCapability
          * ลบทิ้ง เพราะไฟล์ที่มีอยู่แต่ว่างอ่านง่ายกว่าไฟล์ที่หายไป — และการลบไฟล์ทำให้
          * ผู้ดูแลไม่รู้ว่าเคยมีที่ให้เขียนอยู่ตรงนี้
          */
-        $transaction->write($path, CustomConfig::header() . "\n" . $args['content'], 0644);
+        /*
+         * เขียนตามที่ส่งมาตรง ๆ **ไม่เติมหัวไฟล์เอง** — คำอธิบายมากับไฟล์ตั้งต้นอยู่แล้ว
+         * ถ้าเติมซ้ำที่นี่ ทุกครั้งที่บันทึกจะได้หัวไฟล์เพิ่มอีกชุดทับกันไปเรื่อย ๆ ·
+         * ผู้ดูแลลบคอมเมนต์ทิ้งได้ตามใจ ไฟล์นี้เป็นของเขา
+         */
+        $transaction->write($path, $args['content'], 0644);
 
         $transaction->commit(fn (): array => $driver->testConfig($executor));
 
@@ -144,7 +149,7 @@ final class SiteCustomConfig extends SiteCapability
         $rollbackId = (new RollbackGuard($context->db))->arm(
             action: self::name(),
             description: sprintf('แก้ค่าตั้งเพิ่มเติมของ %s', $site->domain),
-            files: [$path => $previous === '' ? '' : CustomConfig::header() . "\n" . $previous],
+            files: [$path => $previous],
             reloadUnits: [$driver->unit()],
             window: $args['window'],
             actorId: $context->actor->userId,

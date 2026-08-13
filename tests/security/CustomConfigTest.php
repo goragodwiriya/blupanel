@@ -253,3 +253,55 @@ test('ตัวเขียนต้องปฏิเสธคีย์ขอ�
     assertTrue(str_contains($code, 'ConfigFileCatalog::find('), 'ตัวเขียนต้องค้นทะเบียนเอง');
     assertTrue(str_contains($code, 'KIND_WRITABLE'), 'ต้องเทียบชนิดของไฟล์ก่อนเขียน');
 });
+
+test('ไฟล์ตั้งต้นต้องอธิบายได้ครบและไม่มีคำสั่งที่ทำงานจริงสักบรรทัด', static function (): void {
+    /*
+     * **ไฟล์ตั้งต้นที่บันทึกทันทีต้องไม่เปลี่ยนพฤติกรรมของเว็บแม้แต่นิดเดียว**
+     *
+     * ถ้ามีใครเผลอเอาเครื่องหมายคอมเมนต์ออกจากตัวอย่างสักบรรทัด เว็บใหม่ทุกเว็บที่เปิด
+     * หน้านี้แล้วกดบันทึกจะได้คำสั่งนั้นติดไปด้วยโดยไม่มีใครตั้งใจ — และเป็นการเปลี่ยน
+     * พฤติกรรมที่ไม่มีอะไรบนหน้าจอบอกเลย
+     *
+     * คำอธิบายอยู่ในไฟล์เพราะเป็นที่ที่ผู้ดูแลระบบคาดว่าจะเจอ และติดไปกับไฟล์เสมอ
+     * ไม่ว่าจะเปิดจากหน้าเว็บหรือ `cat` ผ่าน SSH
+     */
+    $templates = new Template(PHPCP_ROOT . '/templates');
+    $seed = new CustomConfig();
+
+    foreach (['apache' => '<VirtualHost>', 'nginx' => 'server { }'] as $server => $context) {
+        $content = $seed->seed($templates, $server, 'example.com');
+
+        assertTrue($content !== '', "ต้องมีไฟล์ตั้งต้นของ {$server}");
+        assertTrue(!str_contains($content, '{{'), "ไฟล์ตั้งต้นของ {$server} ต้องไม่มีตัวแปรค้าง");
+        assertTrue(str_contains($content, 'example.com'), "ต้องเติมชื่อโดเมนจริงลงไป");
+
+        // ทุกบรรทัดต้องเป็นคอมเมนต์หรือบรรทัดว่าง — ไม่มีคำสั่งที่ทำงานจริงเลย
+        $active = array_values(array_filter(
+            preg_split('/\R/', $content) ?: [],
+            static fn (string $line): bool => trim($line) !== '' && !str_starts_with(trim($line), '#'),
+        ));
+
+        assertSame([], $active, "ไฟล์ตั้งต้นของ {$server} ต้องไม่มีคำสั่งที่ทำงานจริง");
+
+        // สามข้อที่ผู้ดูแลไม่มีทางรู้เองและเดาผิดแล้วเสียเวลา
+        assertTrue(str_contains($content, $context), "ต้องบอกว่าไฟล์อยู่ในบริบท {$context}");
+        assertTrue(str_contains($content, 'ท้ายสุด'), 'ต้องบอกว่าถูกอ่านท้ายสุดจึงเขียนทับค่าเริ่มต้นได้');
+        assertTrue(str_contains($content, 'ยืนยัน'), 'ต้องบอกว่าไม่กดยืนยันแล้วระบบคืนค่าเดิม');
+    }
+});
+
+test('ตัวเขียนต้องไม่เติมหัวไฟล์เอง — ไม่งั้นบันทึกซ้ำได้หัวไฟล์ซ้อนกันไปเรื่อย ๆ', static function (): void {
+    // คำอธิบายมากับไฟล์ตั้งต้นแล้ว · ถ้าตัวเขียนเติมซ้ำทุกครั้งที่บันทึก ไฟล์จะยาวขึ้น
+    // เรื่อย ๆ ด้วยหัวไฟล์ที่ซ้ำกัน ซึ่งผู้ใช้ต้องมาไล่ลบเองทุกครั้ง
+    $code = (string) preg_replace(
+        '~/\*.*?\*/|//[^\n]*~s',
+        '',
+        (string) file_get_contents(PHPCP_ROOT . '/src/Agent/Capability/SiteCustomConfig.php'),
+    );
+
+    assertTrue(
+        str_contains($code, "write(\$path, \$args['content']"),
+        'ต้องเขียนเนื้อไฟล์ตามที่ส่งมาตรง ๆ',
+    );
+    assertTrue(!str_contains($code, 'header()'), 'ต้องไม่เติมหัวไฟล์เองอีกแล้ว');
+});

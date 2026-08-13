@@ -6,6 +6,7 @@ namespace Phpcp\Driver\WebServer;
 
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\ValidationError;
+use Phpcp\Driver\Template;
 use Phpcp\Support\Validator;
 
 /**
@@ -113,11 +114,26 @@ final class CustomConfig
         return $content === '' ? '' : $content . "\n";
     }
 
-    /** หัวไฟล์ที่บอกว่าใครเป็นเจ้าของ — ตรงข้ามกับหัวไฟล์ของไฟล์ที่ panel generate */
-    public static function header(): string
+    /**
+     * เนื้อไฟล์ตั้งต้นสำหรับไฟล์ที่ยังไม่เคยถูกเขียน
+     *
+     * **คำอธิบายอยู่ในไฟล์ ไม่ใช่บนหน้าจอ** — เป็นที่ที่ผู้ดูแลระบบคาดว่าจะเจอมันอยู่แล้ว
+     * (ไฟล์ `.conf` ของดิสโทรทุกตัวมาพร้อมคอมเมนต์อธิบาย) · และมันติดไปกับไฟล์เสมอ
+     * ไม่ว่าจะเปิดจากหน้าเว็บหรือ `cat` ดูผ่าน SSH ต่างจากข้อความบนหน้าจอที่หายไปทันที
+     * ที่ปิดหน้าต่าง
+     *
+     * ตัวอย่างในไฟล์ถูกคอมเมนต์ไว้ทั้งหมด — ไฟล์ตั้งต้นที่บันทึกทันทีต้องไม่เปลี่ยน
+     * พฤติกรรมของเว็บแม้แต่นิดเดียว
+     */
+    public function seed(Template $templates, string $server, string $domain): string
     {
-        return "# ไฟล์นี้เป็นของผู้ดูแลเครื่อง — panel ไม่เขียนทับ\n"
-            . "# ถูกอ่านท้ายสุดหลังค่าตั้งที่ panel สร้าง ค่าที่นี่จึงชนะเสมอ\n"
-            . "# แก้ได้จากหน้าเว็บไซต์ใน panel หรือแก้ไฟล์นี้ตรง ๆ ก็ได้\n";
+        $file = $server === 'nginx' ? 'custom/nginx.conf.tpl' : 'custom/apache.conf.tpl';
+
+        try {
+            return $templates->render($file, ['DOMAIN' => $domain]);
+        } catch (\Throwable) {
+            // ไม่มีเทมเพลตก็ยังแก้ไฟล์ได้ แค่ไม่มีคำอธิบายให้ — ไม่ใช่เหตุให้ทั้งหน้าพัง
+            return '';
+        }
     }
 }

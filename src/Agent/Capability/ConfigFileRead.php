@@ -9,6 +9,7 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\ValidationError;
 use Phpcp\Domain\ConfigFileCatalog;
 use Phpcp\Driver\Template;
+use Phpcp\Driver\WebServer\CustomConfig;
 use Phpcp\Support\Validator;
 
 /**
@@ -83,7 +84,22 @@ final class ConfigFileRead extends SiteCapability
             throw new ValidationError('ไม่พบไฟล์ตั้งค่านี้ในทะเบียน');
         }
 
-        return $file + ['content' => $this->contents($executor, (string) $file['path'])];
+        $content = $this->contents($executor, (string) $file['path']);
+
+        /*
+         * ไฟล์ที่ยังไม่เคยถูกเขียน → เปิดมาพร้อมเนื้อไฟล์ตั้งต้นที่มีคำอธิบายและตัวอย่าง
+         * (คอมเมนต์ไว้ทั้งหมด) · ผู้ดูแลจึงไม่ต้องเปิดหน้าเปล่าแล้วเดาว่าเขียนอะไรได้บ้าง
+         * และคำอธิบายติดไปกับไฟล์เสมอ ไม่ใช่อยู่แค่บนหน้าจอที่ปิดแล้วหาย
+         */
+        if ($content === '' && ($file['kind'] ?? '') === ConfigFileCatalog::KIND_WRITABLE) {
+            $content = (new CustomConfig())->seed(
+                new Template($context->config->paths->templates()),
+                $driver->name() === 'nginx' ? 'nginx' : 'apache',
+                $site->domain,
+            );
+        }
+
+        return $file + ['content' => $content];
     }
 
     private function contents(Executor $executor, string $path): string
