@@ -36,7 +36,7 @@
           <table class="table border fullwidth" data-table="schedules" data-source="/api/v2/backup-schedules" data-page-size="25" data-row-actions='{
                    "disable": {
                      "title": "Disable",
-                     "className": "btn btn-sm icon-ban",
+                     "className": "btn small icon-ban",
                      "method": "patch",
                      "url": "/api/v2/backup-schedules/{id}",
                      "params": {"enabled": false},
@@ -44,7 +44,7 @@
                    },
                    "enable": {
                      "title": "Enable",
-                     "className": "btn btn-sm icon-play",
+                     "className": "btn small icon-play",
                      "method": "patch",
                      "url": "/api/v2/backup-schedules/{id}",
                      "params": {"enabled": true},
@@ -52,7 +52,7 @@
                    },
                    "delete": {
                      "title": "Delete",
-                     "className": "btn btn-sm btn-danger icon-delete",
+                     "className": "btn small btn-danger icon-delete",
                      "method": "delete",
                      "url": "/api/v2/backup-schedules/{id}",
                      "condition": "${can_manage}",
@@ -94,21 +94,21 @@
         <table class="table border fullwidth" data-table="destinations" data-source="/api/v2/backup-destinations" data-page-size="25" data-row-actions='{
                    "edit": {
                      "title": "Edit",
-                     "className": "btn btn-sm btn-success icon-edit",
+                     "className": "btn small btn-success icon-edit",
                      "method": "get",
                      "url": "/app/backup-destination?id={id}",
                      "condition": "${can_manage}"
                    },
                    "test": {
                      "title": "Test",
-                     "className": "btn btn-sm icon-refresh",
+                     "className": "btn small icon-refresh",
                      "method": "post",
                      "url": "/api/v2/backup-destinations/{id}/verification",
                      "condition": "${can_manage}"
                    },
                    "delete": {
                      "title": "Delete",
-                     "className": "btn btn-sm btn-danger icon-delete",
+                     "className": "btn small btn-danger icon-delete",
                      "method": "delete",
                      "url": "/api/v2/backup-destinations/{id}",
                      "condition": "${can_manage}",
@@ -164,7 +164,7 @@
         <table class="table border fullwidth" data-table="backups" data-source="/api/v2/backups" data-default-sort="created_at desc" data-page-size="25" data-row-actions='{
                    "restore": {
                      "title": "Restore",
-                     "className": "btn btn-sm icon-refresh",
+                     "className": "btn small icon-refresh",
                      "method": "post",
                      "url": "/api/v2/backups/{id}/restoration",
                      "params": {"confirm": "{site_domain}"},
@@ -173,7 +173,7 @@
                    },
                    "delete": {
                      "title": "Delete",
-                     "className": "btn btn-sm btn-danger icon-delete",
+                     "className": "btn small btn-danger icon-delete",
                      "method": "delete",
                      "url": "/api/v2/backups/{id}",
                      "condition": "${can_manage}",

@@ -31,7 +31,7 @@
                  data-row-actions='{
                    "edit": {
                      "title": "Edit",
-                     "className": "btn btn-sm btn-success icon-edit",
+                     "className": "btn small btn-success icon-edit",
                      "method": "get",
                      "navigate": false,
                      "url": "/api/v2/cron-jobs/{id}",
@@ -39,7 +39,7 @@
                    },
                    "disable": {
                      "title": "Disable",
-                     "className": "btn btn-sm icon-ban",
+                     "className": "btn small icon-ban",
                      "method": "patch",
                      "url": "/api/v2/cron-jobs/{id}",
                      "params": {"enabled": false},
@@ -47,7 +47,7 @@
                    },
                    "enable": {
                      "title": "Enable",
-                     "className": "btn btn-sm icon-refresh",
+                     "className": "btn small icon-refresh",
                      "method": "patch",
                      "url": "/api/v2/cron-jobs/{id}",
                      "params": {"enabled": true},
@@ -55,7 +55,7 @@
                    },
                    "delete": {
                      "title": "Delete",
-                     "className": "btn btn-sm btn-danger icon-delete",
+                     "className": "btn small btn-danger icon-delete",
                      "method": "delete",
                      "url": "/api/v2/cron-jobs/{id}",
                      "condition": "${can_manage}",

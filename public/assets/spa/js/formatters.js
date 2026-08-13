@@ -103,7 +103,7 @@
 
     const push = document.createElement('button');
     push.type = 'button';
-    push.className = 'btn btn-sm icon-cloud';
+    push.className = 'btn small icon-cloud';
     push.dataset.action = 'click.prevent:pushOffsite';
     push.dataset.backupId = String(id);
     push.title = t('Copy to the selected destination');
