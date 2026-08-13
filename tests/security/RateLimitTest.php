@@ -25,6 +25,9 @@ use Phpcp\Agent\Capability\SiteRateLimitUnban;
 use Phpcp\Agent\ValidationError;
 use Phpcp\Driver\Security\Fail2banManager;
 
+use Phpcp\Kernel\Config;
+use Phpcp\Kernel\Request;
+
 group('Rate limit — จำกัดอัตราคำขอต่อเว็บไซต์');
 
 test('ค่าที่อยู่นอกช่วงต้องถูกปฏิเสธพร้อมบอกช่วงที่ยอมรับ', static function (): void {
@@ -278,4 +281,54 @@ test('filter ต้องจับทุกคำขอ ไม่ใช่เฉ
 
     // ต้องมี datepattern — ไม่งั้น fail2ban อ่านเวลาจาก access log ไม่ออกแล้วนับผิดหมด
     assertTrue(str_contains($source, 'datepattern'), 'ต้องระบุรูปแบบวันเวลาของ log');
+});
+
+test('X-Forwarded-For ต้องถูกเมินเมื่อไม่ได้ตั้ง proxy ที่เชื่อถือไว้', static function (): void {
+    /*
+     * **จุดเดียวที่พังแล้วปิดการจำกัดอัตราทั้งระบบเงียบ ๆ**
+     *
+     * โควตาของหน้าล็อกอินผูกกับ IP (`login:<ip>`) ไม่ใช่เซสชัน — หมุนคุกกี้จึงเลี่ยงไม่ได้ ·
+     * แต่ถ้า `Request` เชื่อ `X-Forwarded-For` ที่ผู้เรียกส่งมาเอง ผู้โจมตีเปลี่ยนค่าใน
+     * header ทุกคำขอก็ได้ IP ใหม่ทุกครั้ง แล้วเดารหัสผ่านได้ไม่จำกัดโดยที่ตัวจำกัดยัง
+     * "ทำงานอยู่" ทุกประการ · ไม่มีอะไรในระบบฟ้องเลยว่าการป้องกันหายไปแล้ว
+     *
+     * กติกาที่ต้องเป็นจริงเสมอ: เชื่อ `X-Forwarded-For` **ก็ต่อเมื่อ** คำขอมาจากที่อยู่ที่
+     * อยู่ใน `panel.trusted_proxies` ซึ่งค่าเริ่มต้นคือ *ว่าง* (ไม่เชื่อใครเลย)
+     */
+    $config = Config::load(PHPCP_ROOT);
+    $reflection = new ReflectionMethod(Request::class, 'resolveIp');
+    $reflection->setAccessible(true);
+
+    $spoofed = [
+        'REMOTE_ADDR' => '203.0.113.9',
+        'HTTP_X_FORWARDED_FOR' => '198.51.100.1, 10.0.0.1',
+    ];
+
+    // ไม่มี proxy ที่เชื่อถือ = ต้องใช้ที่อยู่จริงของการเชื่อมต่อเท่านั้น
+    assertSame(
+        '203.0.113.9',
+        $reflection->invoke(null, $spoofed, []),
+        'ไม่ได้ตั้ง trusted_proxies ไว้ ต้องเมิน X-Forwarded-For ทั้งหมด',
+    );
+
+    // ตั้งไว้แต่คำขอไม่ได้มาจาก proxy ตัวนั้น = ยังต้องเมิน
+    assertSame(
+        '203.0.113.9',
+        $reflection->invoke(null, $spoofed, ['127.0.0.1']),
+        'คำขอที่ไม่ได้มาจาก proxy ที่ตั้งไว้ ต้องเมิน X-Forwarded-For',
+    );
+
+    // มาจาก proxy ที่เชื่อถือจริง = เอาตัวซ้ายสุดที่เป็น IP ถูกต้อง (ผู้ใช้ปลายทาง)
+    assertSame(
+        '198.51.100.1',
+        $reflection->invoke(null, $spoofed, ['203.0.113.9']),
+        'คำขอจาก proxy ที่เชื่อถือ ต้องอ่านที่อยู่ผู้ใช้จริงจาก header',
+    );
+
+    // ค่าเริ่มต้นของระบบต้องเป็น "ไม่เชื่อใครเลย" — ตั้งเองได้ แต่ต้องเป็นการตัดสินใจ
+    assertSame(
+        [],
+        $config->list('panel.trusted_proxies'),
+        'ค่าเริ่มต้นของ panel.trusted_proxies ต้องว่าง',
+    );
 });
