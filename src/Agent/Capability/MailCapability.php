@@ -42,6 +42,35 @@ abstract class MailCapability implements Capability
         return new MailboxRepository($context->db);
     }
 
+    /**
+     * ชื่อโฮสต์ของเมลที่เครื่องนี้ใช้จริง
+     *
+     * **ต้องเป็นที่เดียวทั้งระบบ** — ค่านี้ถูกใช้สามที่ที่ต้องตอบตรงกันเสมอ: ตอนเขียน
+     * `myhostname` ลง Postfix · ตอนหาว่าใบรับรองใบไหนครอบคลุมชื่อนี้ · ตอนรายงานความพร้อม
+     *
+     * ตอนที่แต่ละที่อ่านเอง `mail.cert` กับหน้าความพร้อมอ่านแค่ `mail.hostname` ตรง ๆ
+     * ส่วน `sync()` อนุมานต่อจาก `mail.from` ได้ · เครื่องที่ไม่เคยกรอกช่องชื่อโฮสต์จึงมี
+     * Postfix ที่ประกาศชื่อถูกต้องอยู่ แต่ปุ่มผูกใบรับรองตอบว่า "ยังไม่ได้ตั้งชื่อโฮสต์"
+     * แล้วไม่ทำอะไรเลย — สองส่วนของระบบเดียวกันไม่เห็นตรงกันว่าเครื่องชื่ออะไร
+     */
+    protected static function mailHostname(SettingsRepository $settings): string
+    {
+        $hostname = trim($settings->get('mail.hostname'));
+
+        if ($hostname !== '') {
+            return $hostname;
+        }
+
+        // ส่วนโดเมนของที่อยู่ผู้ส่งเป็นการเดาที่ดีที่สุดที่มี — เจ้าของเครื่องกรอกไว้แล้ว
+        $from = trim($settings->get('mail.from'));
+
+        if ($from !== '' && str_contains($from, '@')) {
+            return substr($from, strpos($from, '@') + 1);
+        }
+
+        return gethostname() ?: '';
+    }
+
     protected function mailboxes(Context $context): MailboxManager
     {
         return new MailboxManager(new Template($context->config->paths->templates()));
@@ -53,6 +82,11 @@ abstract class MailCapability implements Capability
      * เรียกหลังแก้ฐานข้อมูลเสร็จเสมอ · ลำดับสำคัญ: `main.cf` ต้องรู้ก่อนว่าเปิดรับ
      * เมลไหม (มันตัดสินว่าจะฟังพอร์ต 25 หรือไม่) แล้วค่อยเขียนตารางค้นหาที่อ้างถึงกัน
      *
+     * **ทางนี้เป็นทางเดียวที่เขียน `main.cf` ได้** — รวมถึงการกดบันทึกค่าเมลขาออกจาก
+     * หน้าตั้งค่า (`mail.apply`) · เขียนจากที่อื่นแปลว่าต้องจำเองว่ามีเมลโฮสติ้งเปิดอยู่
+     * ไหม ซึ่งลืมเมื่อไหร่ก็ได้ `main.cf` ที่ไม่มีส่วนรับเมลเลย: กล่องทุกกล่องบนเครื่อง
+     * หยุดรับเมลเงียบ ๆ ทั้งที่ผู้ใช้แค่กดบันทึกที่อยู่ผู้ส่ง
+     *
      * @return array{domains:int,mailboxes:int,aliases:int}
      */
     protected function sync(Executor $executor, Context $context): array
@@ -61,14 +95,7 @@ abstract class MailCapability implements Capability
         $domains = $repository->enabledDomains();
 
         $settings = new SettingsRepository($context->db);
-        $hostname = $settings->get('mail.hostname');
-
-        if ($hostname === '') {
-            $from = $settings->get('mail.from');
-            $hostname = $from !== '' && str_contains($from, '@')
-                ? substr($from, strpos($from, '@') + 1)
-                : (gethostname() ?: '');
-        }
+        $hostname = self::mailHostname($settings);
 
         /*
          * ชื่อโฮสต์ของเมลต้องเป็นชื่อเต็มที่มีจุด — เซิร์ฟเวอร์ปลายทางใช้ค่านี้ตอน
@@ -97,15 +124,37 @@ abstract class MailCapability implements Capability
             'relay_password' => $settings->get('mail.relay_password'),
             'relay_tls' => $settings->bool('mail.relay_tls'),
             'hosting' => $domains !== [],
+            // ชื่อเครื่องเป็นโดเมนของกล่องจดหมายด้วยไหม — ถ้าใช่ ห้ามใส่ใน mydestination
+            'virtual_hostname' => in_array($hostname, $domains, true),
             'tls_cert' => $settings->get('mail.tls_cert'),
             'tls_key' => $settings->get('mail.tls_key'),
         ], reload: false);
 
-        $result = $this->mailboxes($context)->apply(
+        $mailboxes = $this->mailboxes($context);
+
+        /*
+         * **เครื่องที่ส่งเมลอย่างเดียวไม่ต้องมี Dovecot** — และเป็นเครื่องส่วนใหญ่
+         *
+         * `mail.apply` (ปุ่มบันทึกค่าเมลขาออกในหน้าตั้งค่า) เดินผ่านทางนี้ด้วย ซึ่ง
+         * เครื่องเหล่านั้นมีแค่ Postfix ไว้ส่งเมลแจ้งเตือน · การเขียนตารางกล่องจดหมาย
+         * ที่นั่นจะล้มที่ `doveconf -n` ทั้งที่ไม่มีกล่องให้เขียนสักกล่อง
+         */
+        if ($domains === [] && !$mailboxes->isInstalled($executor)) {
+            // reload เปลี่ยนพอร์ตที่ฟังไม่ได้ · เครื่องที่เคยฟังพอร์ต 25 อยู่ต้องหยุดฟังจริง
+            ($outbound['restart_required'] ?? false)
+                ? $postfix->restart($executor)
+                : $postfix->reload($executor);
+
+            return ['domains' => 0, 'mailboxes' => 0, 'aliases' => 0];
+        }
+
+        $result = $mailboxes->apply(
             $executor,
             $domains,
             $repository->activeMailboxes(),
             $repository->activeAliases(),
+            // Dovecot ต้องได้ใบใบเดียวกับ Postfix — โปรแกรมเมลต่อ IMAP เข้า Dovecot ตรง ๆ
+            ['cert' => $settings->get('mail.tls_cert'), 'key' => $settings->get('mail.tls_key')],
         );
 
         // เปิดหรือปิดเมลครั้งแรกเปลี่ยนพอร์ตที่ Postfix ฟัง ซึ่ง reload ทำให้ไม่ได้

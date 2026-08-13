@@ -203,18 +203,59 @@
               <label for="notify_events_alert" data-i18n>Server health thresholds</label>
             </div>
           </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
+          </fieldset>
+        </form>
+      </div>
+
+      <div class="content-body">
+        <!--
+          เมลขาออก — ฟอร์มของตัวเองด้วยเหตุผลเดียวกับเว็บเซิร์ฟเวอร์ข้างบน
+
+          ไม่ใช่แค่บันทึกค่า แต่เขียน `main.cf`/`master.cf` ใหม่แล้ว reload Postfix จริง
+          · ตอนที่ช่องเหล่านี้อยู่ในฟอร์ม "บันทึก" รวม ค่าจะถูกเก็บลงฐานข้อมูลแล้ว
+          **ไม่มีผลกับเครื่องเลย** จนกว่าจะมีใครไปแตะกล่องจดหมายสักกล่อง — ผู้ดูแลที่
+          เพิ่งตั้ง relay จึงเห็นว่า "บันทึกแล้ว" ทั้งที่เมลยังออกทางเดิมอยู่
+        -->
+        <form data-form="mail" action="/api/v2/settings/mail-config" method="post" data-ajax-submit="true" data-load-api="/api/v2/settings" data-emit-event="phpcp:reload">
           <fieldset>
             <legend class="icon-email" data-i18n>Outgoing mail</legend>
             <div>
               <input type="checkbox" class="switch" id="mail_enabled" name="mail.enabled" data-checked="isOn(values['mail.enabled'])">
               <label for="mail_enabled" data-i18n>Enable outgoing mail</label>
             </div>
+            <!--
+              โหมดขาออก — PLAN-MAIL §1
+
+              เครื่องของผู้ให้บริการรายใหญ่บล็อกพอร์ต 25 ขาออกเป็นค่าเริ่มต้น (AWS, GCP,
+              Azure, DigitalOcean) · เครื่องเหล่านั้นยังโฮสต์เมลได้เต็มรูปแบบ เพราะการ
+              **รับ**เมลไม่ได้พึ่งพอร์ต 25 ขาออก ขาดแค่ทางออก ซึ่งคือตัวเลือกนี้
+            -->
+            <div>
+              <label for="mail_mode" data-i18n>How mail leaves this server</label>
+              <span class="form-control icon-send">
+                <select id="mail_mode" name="mail.mode" data-value="values['mail.mode'] || 'local'">
+                  <option value="local" data-i18n>Send directly from this server</option>
+                  <option value="relay" data-i18n>Send through an external relay (SendGrid, SES, ...)</option>
+                </select>
+              </span>
+            </div>
+            <div class="comment" data-i18n>Choose the relay if your provider blocks outgoing port 25 — the mail readiness page says whether it is blocked here.</div>
             <div>
               <label for="mail_from" data-i18n>From address</label>
               <span class="form-control icon-email">
                 <input type="email" id="mail_from" name="mail.from" autocomplete="off" data-attr="value:values['mail.from']">
               </span>
             </div>
+            <div>
+              <label for="mail_hostname" data-i18n>Mail hostname</label>
+              <span class="form-control icon-world">
+                <input type="text" id="mail_hostname" name="mail.hostname" autocomplete="off"
+                       placeholder="mail.example.com" data-attr="value:values['mail.hostname']">
+              </span>
+            </div>
+            <div class="comment" data-i18n>The name this server announces to other mail servers. It must have a dot, and its reverse DNS (PTR) should match — otherwise many providers treat the mail as spam.</div>
             <div>
               <label for="mail_relay_host" data-i18n>Relay host</label>
               <span class="form-control icon-database">
@@ -243,6 +284,7 @@
               <input type="checkbox" class="switch" id="mail_relay_tls" name="mail.relay_tls" data-checked="isOn(values['mail.relay_tls'])">
               <label for="mail_relay_tls" data-i18n>Use TLS</label>
             </div>
+            <div class="comment" data-i18n>The four relay fields only matter in relay mode. Leave the masked password untouched to keep the current one.</div>
             <div class="form-group bottom">
               <div class="width90">
                 <label for="to" data-i18n>Test email</label>
@@ -256,9 +298,10 @@
                         data-notify-success="true" data-i18n>Send test email</button>
               </div>
             </div>
+            <div class="comment" data-i18n>The test uses the saved settings — apply first, then send.</div>
           </fieldset>
           <fieldset class="submit">
-            <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
+            <button type="submit" class="btn btn-primary icon-save" data-loading-text="Applying..." data-i18n>Apply mail settings</button>
           </fieldset>
         </form>
       </div>

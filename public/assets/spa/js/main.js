@@ -49,6 +49,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     '/filemanager': { template: 'filemanager.html', title: '{LNG_File Manager}', permission: 'file.view' },
     '/cron-jobs': { template: 'cron-jobs.html', title: '{LNG_Cron Jobs}', permission: 'cron.view' },
     '/mailboxes': { template: 'mailboxes.html', title: '{LNG_Mailboxes}', permission: 'mail.view' },
+    // คิวเป็นของทั้งเครื่อง มีที่อยู่ของลูกค้าทุกรายปนกัน — ด่านอยู่ที่เส้นทาง
+    // ไม่ใช่ซ่อนการ์ดในหน้าอื่น เพราะคอมโพเนนต์ที่ถูกซ่อนยังยิงคำขอออกไปจริง
+    '/mail-queue': { template: 'mail-queue.html', title: '{LNG_Mail queue}', permission: 'settings.manage' },
     '/cron-job': { template: 'cron-job.html', title: '{LNG_Cron Jobs}', permission: 'cron.view' },
     '/backups': { template: 'backups.html', title: '{LNG_Backups}', permission: 'backup.view' },
     // ฟอร์มปลายทางมีสิบกว่าช่อง จึงเป็นหน้าของตัวเองแทน Modal ตาม FRAMEWORK_GUIDE

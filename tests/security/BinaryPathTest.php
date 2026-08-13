@@ -39,6 +39,7 @@ function binaryPathGroups(): array
         Phpcp\Driver\Firewall\UfwDriver::class       => [['BINARY']],
         Phpcp\Driver\Ssl\CertbotManager::class       => [['BINARY'], ['OPENSSL']],
         Phpcp\Driver\Mail\MailManager::class         => [['POSTFIX'], ['POSTMAP']],
+        Phpcp\Driver\Mail\MailQueue::class           => [['POSTQUEUE'], ['POSTSUPER'], ['POSTCAT']],
         Phpcp\Driver\Ssh\SftpAccessManager::class    => [['GROUPADD'], ['USERMOD'], ['GPASSWD'], ['CHPASSWD'], ['SSHD'], ['SYSTEMCTL_PATHS']],
         // คู่ที่มี fallback อยู่แล้ว — ผ่านถ้าเจอตัวใดตัวหนึ่ง
         Phpcp\Driver\Db\MariaDbManager::class        => [['CLIENT', 'CLIENT_FALLBACK'], ['DUMP', 'DUMP_FALLBACK']],

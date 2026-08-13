@@ -196,10 +196,28 @@ test('Dovecot ต้องไม่เปิดพอร์ตที่ไม่
         'MAIL_ROOT' => '/srv/phpcp/mail',
         'VMAIL_USER' => 'vmail',
         'USERS_FILE' => '/etc/dovecot/phpcp-users',
+        'TLS_CERT' => '/etc/letsencrypt/live/mail.example.com/fullchain.pem',
+        'TLS_KEY' => '/etc/letsencrypt/live/mail.example.com/privkey.pem',
         'GENERATED_AT' => '2026-01-01 00:00:00',
     ]);
 
     assertTrue(str_contains($conf, 'ssl = required'), 'ต้องบังคับ TLS');
+
+    /*
+     * **ใบรับรองต้องตั้งที่ Dovecot ด้วย ไม่ใช่ที่ Postfix อย่างเดียว**
+     *
+     * โปรแกรมเมลต่อ IMAP/POP3 เข้า Dovecot ตรง ๆ ไม่ผ่าน Postfix เลย · ขาดสองบรรทัดนี้
+     * แล้วเครื่องจะ "ส่งเมลได้ไม่มีคำเตือน แต่เปิดกล่องทีไรก็เตือนใบรับรองทุกที"
+     * ซึ่งหาสาเหตุยากเพราะครึ่งหนึ่งของระบบทำงานถูกต้อง
+     */
+    assertTrue(
+        str_contains($conf, 'ssl_cert = </etc/letsencrypt/live/mail.example.com/fullchain.pem'),
+        'Dovecot ต้องได้ใบรับรองใบเดียวกับ Postfix',
+    );
+    assertTrue(
+        str_contains($conf, 'ssl_key = </etc/letsencrypt/live/mail.example.com/privkey.pem'),
+        'ใบที่ไม่มีกุญแจคู่กันทำให้ Dovecot สตาร์ตไม่ขึ้นทั้งตัว',
+    );
     assertTrue(str_contains($conf, "inet_listener imap {\n    port = 0"), 'ต้องปิดพอร์ต imap ธรรมดา');
     assertTrue(str_contains($conf, "inet_listener pop3 {\n    port = 0"), 'ต้องปิดพอร์ต pop3 ธรรมดา');
     assertTrue(str_contains($conf, 'port = 993'), 'ต้องเปิด imaps');

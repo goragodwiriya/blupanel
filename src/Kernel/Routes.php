@@ -18,6 +18,7 @@ use Phpcp\Http\V2\FirewallController as V2FirewallController;
 use Phpcp\Http\V2\LogsController;
 use Phpcp\Http\V2\MailAliasesController;
 use Phpcp\Http\V2\MailboxesController;
+use Phpcp\Http\V2\MailQueueController;
 use Phpcp\Http\V2\MetricsController as V2MetricsController;
 use Phpcp\Http\V2\RollbacksController;
 use Phpcp\Http\V2\SecurityController as V2SecurityController;
@@ -271,12 +272,29 @@ final class Routes
         $router->add(new Route('GET', '/api/v2/mailboxes', MailboxesController::class, 'index', 'mail.view', 'api.v2.mailboxes.index'));
         // ต้องมาก่อน {id} — ไม่งั้น "form" ถูกอ่านเป็นรหัสกล่อง
         $router->add(new Route('GET', '/api/v2/mail/readiness', MailboxesController::class, 'readiness', 'mail.view', 'api.v2.mail.readiness'));
+        // ใบรับรองของ mail hostname เป็นของทั้งเครื่อง จึงเป็นสิทธิ์ของผู้ดูแลเครื่อง
+        // ไม่ใช่ `mail.manage` ที่เจ้าของเว็บมีไว้จัดการกล่องของโดเมนตัวเอง
+        $router->add(new Route('POST', '/api/v2/mail/certificate', MailboxesController::class, 'certificate', 'settings.manage', 'api.v2.mail.certificate'));
+
+        /*
+         * คิวเมลขาออก (PLAN-MAIL §5) — ทั้งหมดเป็น `settings.manage` เพราะคิวเป็นของ
+         * ทั้งเครื่อง แต่ละแถวมีที่อยู่ผู้ส่ง/ผู้รับของลูกค้าทุกรายปนกัน
+         *
+         * **`/flush` ต้องมาก่อน `{id}`** ไม่งั้น "flush" ถูกอ่านเป็นรหัสเมล · และการล้าง
+         * ทั้งคิวเป็นคนละเส้นทางกับการลบฉบับเดียว ไม่ใช่ `{id}` ที่มีค่าพิเศษ
+         */
+        $router->add(new Route('GET', '/api/v2/mail/queue', MailQueueController::class, 'index', 'settings.manage', 'api.v2.mail.queue.index'));
+        $router->add(new Route('POST', '/api/v2/mail/queue/flush', MailQueueController::class, 'flush', 'settings.manage', 'api.v2.mail.queue.flush'));
+        $router->add(new Route('DELETE', '/api/v2/mail/queue', MailQueueController::class, 'destroyAll', 'settings.manage', 'api.v2.mail.queue.destroy_all'));
+        $router->add(new Route('GET', '/api/v2/mail/queue/{id}', MailQueueController::class, 'show', 'settings.manage', 'api.v2.mail.queue.show'));
+        $router->add(new Route('DELETE', '/api/v2/mail/queue/{id}', MailQueueController::class, 'destroy', 'settings.manage', 'api.v2.mail.queue.destroy'));
         $router->add(new Route('GET', '/api/v2/mailboxes/form', MailboxesController::class, 'form', 'mail.manage', 'api.v2.mailboxes.form'));
         $router->add(new Route('POST', '/api/v2/mailboxes', MailboxesController::class, 'store', 'mail.manage', 'api.v2.mailboxes.store'));
         $router->add(new Route('GET', '/api/v2/mailboxes/{id}', MailboxesController::class, 'show', 'mail.view', 'api.v2.mailboxes.show'));
         $router->add(new Route('PATCH', '/api/v2/mailboxes/{id}', MailboxesController::class, 'update', 'mail.manage', 'api.v2.mailboxes.update'));
         $router->add(new Route('DELETE', '/api/v2/mailboxes/{id}', MailboxesController::class, 'destroy', 'mail.manage', 'api.v2.mailboxes.destroy'));
 
+        $router->add(new Route('GET', '/api/v2/mail-aliases', MailAliasesController::class, 'index', 'mail.view', 'api.v2.mail_aliases.index'));
         $router->add(new Route('GET', '/api/v2/mail-aliases/form', MailAliasesController::class, 'form', 'mail.manage', 'api.v2.mail_aliases.form'));
         $router->add(new Route('POST', '/api/v2/mail-aliases', MailAliasesController::class, 'store', 'mail.manage', 'api.v2.mail_aliases.store'));
         $router->add(new Route('DELETE', '/api/v2/mail-aliases/{id}', MailAliasesController::class, 'destroy', 'mail.manage', 'api.v2.mail_aliases.destroy'));

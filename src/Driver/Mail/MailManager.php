@@ -204,6 +204,16 @@ final class MailManager
             // เปิดรับเมลเข้าต้องฟังทุกหน้าตัดเน็ต ไม่ใช่แค่ loopback — แต่ mynetworks
             // ยังแคบเท่าเดิม คนนอกที่จะส่งผ่านเราต้องล็อกอินก่อนเสมอ
             'INET_INTERFACES' => $interfaces,
+            /*
+             * ชื่อของเครื่องเองต้องอยู่ใน mydestination ไม่งั้นเมลที่ระบบสร้างขึ้นเอง
+             * (ผลลัพธ์ cron, ข้อความจากระบบ) ค้างในคิวด้วย "loops back to myself" ตลอดไป
+             *
+             * ยกเว้นกรณีเดียว: ชื่อนั้นถูกใช้เป็นโดเมนของกล่องจดหมายด้วย — ใส่ทั้งสองที่
+             * พร้อมกันแล้ว Postfix ฟ้องและไม่รับเมลของโดเมนนั้นเลย (ดู hosting.cf.tpl)
+             */
+            'MYDESTINATION' => ($config['virtual_hostname'] ?? false)
+                ? 'localhost'
+                : 'localhost, $myhostname',
             'HOSTING_SECTION' => new SafeBlock($hosting ? $this->hostingSection($config) : ''),
             'GENERATED_AT' => date('Y-m-d H:i:s'),
         ]), 0644);
@@ -250,12 +260,14 @@ final class MailManager
     {
         // ใบรับรองของ mail hostname ถ้ายังไม่มี ใช้ใบที่ดิสโทรสร้างให้ไปก่อน —
         // ดีกว่าไม่มี TLS เลย และหน้าความพร้อมของเมลจะฟ้องว่ายังไม่ได้ขอใบจริง
-        $cert = (string) ($config['tls_cert'] ?? '');
-        $key = (string) ($config['tls_key'] ?? '');
+        $tls = MailCertificate::pathsOrDefault(
+            (string) ($config['tls_cert'] ?? ''),
+            (string) ($config['tls_key'] ?? ''),
+        );
 
         return $this->templates->render('postfix/hosting.cf.tpl', [
-            'TLS_CERT' => $cert !== '' ? $cert : '/etc/ssl/certs/ssl-cert-snakeoil.pem',
-            'TLS_KEY' => $key !== '' ? $key : '/etc/ssl/private/ssl-cert-snakeoil.key',
+            'TLS_CERT' => $tls['cert'],
+            'TLS_KEY' => $tls['key'],
         ]);
     }
 

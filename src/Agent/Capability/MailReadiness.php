@@ -9,6 +9,8 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Domain\MailboxRepository;
 use Phpcp\Domain\SettingsRepository;
 use Phpcp\Driver\Mail\DkimManager;
+use Phpcp\Driver\Mail\MailCertificate;
+use Phpcp\Driver\Ssl\CertbotManager;
 
 /**
  * ความพร้อมของเมล — PLAN-MAIL §7
@@ -51,7 +53,9 @@ final class MailReadiness extends MailCapability
     public function run(array $args, Executor $executor, Context $context): array
     {
         $settings = new SettingsRepository($context->db);
-        $hostname = trim($settings->get('mail.hostname'));
+        // ต้องเป็นชื่อที่ Postfix ประกาศจริง ไม่ใช่ค่าในช่องกรอก — หน้าความพร้อมที่บอกว่า
+        // "ยังไม่ได้ตั้ง" ทั้งที่เครื่องประกาศชื่อถูกต้องอยู่ ทำให้ไล่ปัญหาผิดทางทั้งหมด
+        $hostname = self::mailHostname($settings);
         $domains = (new MailboxRepository($context->db))->enabledDomains();
 
         $checks = [
@@ -60,7 +64,7 @@ final class MailReadiness extends MailCapability
             $this->outboundCheck($executor, $settings->get('mail.mode') ?: 'local'),
             $this->rdnsCheck($executor, $hostname),
             $this->dkimCheck($executor, $context, $domains),
-            $this->tlsCheck($settings),
+            $this->tlsCheck($executor, $settings, $hostname),
         ];
 
         $failed = count(array_filter($checks, static fn (array $c): bool => !$c['ok']));
@@ -192,15 +196,53 @@ final class MailReadiness extends MailCapability
         ];
     }
 
-    /** @return array{key:string,ok:bool,found:string,fix:string} */
-    private function tlsCheck(SettingsRepository $settings): array
+    /**
+     * ใบรับรองของ mail hostname — **อ่านจากไฟล์จริง ไม่ใช่เชื่อค่าในฐานข้อมูล**
+     *
+     * ค่าที่บันทึกไว้บอกได้แค่ว่า "เคยผูกใบไว้" · สิ่งที่ผู้ดูแลต้องรู้จริง ๆ คือใบที่
+     * เดมอนหยิบไปใช้ตอนนี้หมดอายุหรือยัง และชื่อในใบตรงกับชื่อที่เครื่องประกาศไหม —
+     * ใบที่หมดอายุเมื่อวานยังเป็นไฟล์ที่ "มีอยู่" ทุกประการ (§7 บอกไว้ว่าอ่านวันหมดอายุ
+     * จากไฟล์)
+     *
+     * @return array{key:string,ok:bool,found:string,fix:string}
+     */
+    private function tlsCheck(Executor $executor, SettingsRepository $settings, string $hostname): array
     {
         $cert = trim($settings->get('mail.tls_cert'));
 
+        if ($cert === '' || !$executor->exists($executor->path($cert))) {
+            /*
+             * ยังไม่ได้ผูกใบ — แต่บอกด้วยว่ามีใบที่ใช้ได้รออยู่บนเครื่องหรือเปล่า
+             * "ยังไม่ได้ตั้ง" กับ "ขอใบมาแล้วแต่ยังไม่ได้กดผูก" ต้องแก้คนละแบบ
+             */
+            $available = (new MailCertificate(new CertbotManager()))->locate($executor, $hostname);
+
+            return [
+                'key' => 'tls',
+                'ok' => false,
+                'found' => $available !== null
+                    ? sprintf('มีใบของ %s อยู่แล้วแต่เมลยังไม่ได้ใช้ — กดปุ่มผูกใบรับรอง', $available['name'])
+                    : 'ใช้ใบรับรองของดิสโทร (โปรแกรมเมลจะเตือน)',
+                'fix' => 'panel',
+            ];
+        }
+
+        $info = (new CertbotManager())->inspectFile($executor, $cert);
+        $status = (string) ($info['status'] ?? 'invalid');
+        $days = (int) ($info['days_left'] ?? 0);
+        $covers = MailCertificate::covers((array) ($info['domains'] ?? []), $hostname);
+
         return [
             'key' => 'tls',
-            'ok' => $cert !== '' && is_file($cert),
-            'found' => $cert !== '' ? $cert : 'ใช้ใบรับรองของดิสโทร (โปรแกรมเมลจะเตือน)',
+            // ใกล้หมดอายุยังถือว่าผ่าน — certbot ต่อให้เองที่ 30 วัน การขึ้นสีแดงตรงนั้น
+            // คือการฝึกให้ผู้ดูแลเพิกเฉยกับข้อที่แดงอยู่ตลอดโดยไม่มีอะไรให้ทำ
+            'ok' => in_array($status, ['valid', 'expiring'], true) && $covers,
+            'found' => match (true) {
+                !$covers => sprintf('ใบนี้ไม่ครอบคลุม %s (ในใบมี: %s)', $hostname, implode(', ', (array) ($info['domains'] ?? [])) ?: '—'),
+                $status === 'expired' => sprintf('หมดอายุแล้ว (%s)', $cert),
+                $status === 'invalid' => sprintf('อ่านไฟล์ใบรับรองไม่ได้ (%s)', $cert),
+                default => sprintf('%s · เหลือ %d วัน', $cert, $days),
+            },
             'fix' => 'panel',
         ];
     }

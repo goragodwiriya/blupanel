@@ -158,7 +158,20 @@ test('เปิดเมลโฮสติ้งแล้วยังต้อ�
 });
 
 /** main.cf ที่เรนเดอร์จริงตามโหมดที่ระบุ */
+/**
+ * `main.cf` ที่เรนเดอร์แล้ว **โดยตัดคอมเมนต์ออก**
+ *
+ * เทสต์เหล่านี้ถามว่า "ไฟล์นี้สั่ง Postfix ว่าอะไร" ซึ่งคำตอบอยู่ในบรรทัดคำสั่งเท่านั้น ·
+ * คำอธิบายในไฟล์พูดถึงชื่อค่าตั้งตรง ๆ อยู่แล้วโดยธรรมชาติ (เช่นอธิบายว่าทำไมค่านี้ถึง
+ * ห้ามชนกับ `virtual_mailbox_domains`) ถ้าไม่ตัดออก การเพิ่มคำอธิบายที่ดีจะทำให้เทสต์
+ * ความปลอดภัยล้ม และคนแก้จะถูกกดดันให้เขียนคำอธิบายแย่ลงเพื่อให้เทสต์เขียว
+ */
 function postfixMainCf(bool $hosting): string
+{
+    return (string) preg_replace('/^\s*#.*$/m', '', postfixMainCfRaw($hosting));
+}
+
+function postfixMainCfRaw(bool $hosting): string
 {
     $templates = new Template(PHPCP_ROOT . '/templates');
 
@@ -169,6 +182,7 @@ function postfixMainCf(bool $hosting): string
         'SASL_ENABLED' => 'no',
         'TLS_SECURITY' => 'may',
         'INET_INTERFACES' => $hosting ? 'all' : 'loopback-only',
+        'MYDESTINATION' => 'localhost, $myhostname',
         'HOSTING_SECTION' => new SafeBlock($hosting ? $templates->render('postfix/hosting.cf.tpl', [
             'TLS_CERT' => '/etc/ssl/certs/x.pem',
             'TLS_KEY' => '/etc/ssl/private/x.key',

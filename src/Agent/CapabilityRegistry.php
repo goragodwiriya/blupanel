@@ -86,6 +86,10 @@ use Phpcp\Agent\Capability\MailAliasDelete;
 use Phpcp\Agent\Capability\MailAliasSet;
 use Phpcp\Agent\Capability\MailBoxCreate;
 use Phpcp\Agent\Capability\MailBoxUpdate;
+use Phpcp\Agent\Capability\MailCert;
+use Phpcp\Agent\Capability\MailMessage;
+use Phpcp\Agent\Capability\MailQueueAction;
+use Phpcp\Agent\Capability\MailQueueList;
 use Phpcp\Agent\Capability\MailReadiness;
 use Phpcp\Agent\Capability\MailBoxDelete;
 use Phpcp\Agent\Capability\MailDomainSet;
@@ -208,6 +212,12 @@ final class CapabilityRegistry
             MailAliasSet::class,
             MailAliasDelete::class,
             MailReadiness::class,
+            MailCert::class,
+
+            // คิวเมลขาออก — ตอบคำถาม "ทำไมเมลไม่ถึง" โดยไม่ต้อง ssh เข้าเครื่อง
+            MailQueueList::class,
+            MailQueueAction::class,
+            MailMessage::class,
 
             // SSL — ขอ ต่ออายุ และสลับโหมด HTTPS ของเว็บไซต์
             SslIssue::class,

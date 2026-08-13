@@ -1587,18 +1587,33 @@ paths:
   /settings/mail-config:
     post:
       tags: [settings]
-      summary: ตั้งค่าเมลขาออก
+      summary: บันทึกค่าเมลขาออกแล้วเขียนลง Postfix
       description: |
-        ขอบเขตที่จงใจจำกัด: Postfix ที่ฟังเฉพาะ loopback สำหรับส่งเมลแจ้งเตือนออกเท่านั้น
-        **ไม่ใช่ mail hosting เต็มรูปแบบ** (§2.1) — การตั้ง relay ผิดจนกลายเป็น open relay
-        จะกระทบชื่อเสียง IP ของทุกเว็บไซต์บนเครื่องพร้อมกัน
+        บันทึกค่าและเขียน `main.cf`/`master.cf` ใหม่ในคำขอเดียว แบบเดียวกับ
+        `POST /settings/webserver` — "บันทึกแล้วแต่ยังไม่มีผล" คือสภาพที่ผู้ดูแลมองไม่ออก
+        ว่าตกลงเครื่องส่งเมลทางไหนอยู่
+
+        ส่งเฉพาะช่องที่ต้องการเปลี่ยนได้ ช่องที่ไม่ส่งใช้ค่าเดิมในฐานข้อมูล ·
+        `mail.relay_password` ที่ส่งกลับมาเป็น `********` ถือว่าไม่ได้แก้ จึงเก็บของเดิมไว้
+
+        **ส่วนรับเมลเข้าของโดเมนที่เปิดเมลอยู่ถูกประกอบใหม่จากฐานข้อมูลเสมอ** —
+        การเรียกที่นี่ไม่ทำให้กล่องจดหมายบนเครื่องหยุดรับเมล
       requestBody:
         content:
           application/json:
             schema:
               type: object
               properties:
-                hostname: { type: string }
+                mail.enabled: { type: boolean }
+                mail.mode: { type: string, enum: [local, relay] }
+                mail.from: { type: string, format: email }
+                mail.hostname: { type: string, description: ชื่อที่ประกาศตอนคุยกับเซิร์ฟเวอร์เมลอื่น ต้องมีจุด }
+                mail.relay_host: { type: string }
+                mail.relay_port: { type: integer, minimum: 1, maximum: 65535 }
+                mail.relay_user: { type: string }
+                mail.relay_password: { type: string }
+                mail.relay_tls: { type: boolean }
+                hostname: { type: string, deprecated: true, description: ชื่อเดิมของ mail.hostname — ยังรับอยู่เพื่อไม่ให้สคริปต์เก่าเงียบหาย }
       responses:
         "200":
           description: ตั้งค่าแล้ว
@@ -3361,6 +3376,93 @@ paths:
               schema:
                 type: object
 
+  /mail/certificate:
+    post:
+      tags: [mail]
+      summary: ผูกใบรับรองของ mail hostname เข้ากับ Postfix และ Dovecot
+      description: >-
+        ไม่ได้ขอใบรับรอง — ใบขอจากหน้า SSL เหมือนใบของเว็บทุกใบ · ที่นี่หาใบที่ครอบคลุม
+        mail hostname บนเครื่องแล้วบอกเดมอนทั้งสองให้ใช้ใบนั้น · ยังไม่มีใบไม่ใช่ข้อผิดพลาด
+        คำตอบจะมี found=false พร้อมวิธีขอใบแทน
+      responses:
+        "200":
+          description: ผลการผูกใบรับรอง
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /mail/queue:
+    get:
+      tags: [mail]
+      summary: คิวเมลขาออก พร้อมเหตุผลรายฉบับที่ปลายทางตอบกลับมา
+      description: >-
+        `settings.manage` เท่านั้น — คิวเป็นของทั้งเครื่อง แต่ละแถวมีที่อยู่ผู้ส่ง/ผู้รับ
+        ของลูกค้าทุกรายปนกัน · `meta.available=false` แปลว่า Postfix เก่ากว่า 3.1
+        จึงไม่รองรับ `postqueue -j` (ต่างจากคิวว่าง ซึ่ง available=true และ total=0)
+      responses:
+        "200":
+          description: รายการในคิว
+          content:
+            application/json:
+              schema:
+                type: object
+    delete:
+      tags: [mail]
+      summary: ล้างคิวทั้งหมด — ลบเมลที่รอส่งทุกฉบับ ไม่มีการแจ้งผู้ส่ง
+      responses:
+        "200":
+          description: ล้างคิวแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /mail/queue/flush:
+    post:
+      tags: [mail]
+      summary: สั่งให้ลองส่งเมลในคิวใหม่ทั้งหมดเดี๋ยวนี้
+      responses:
+        "200":
+          description: สั่งแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /mail/queue/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, pattern: "^[A-Za-z0-9]{4,40}$" }
+        description: รหัสของเมลในคิว · `ALL` ถูกปฏิเสธเสมอ (ล้างทั้งคิวเป็นเส้นทางแยก)
+    get:
+      tags: [mail]
+      summary: เนื้อเมลหนึ่งฉบับที่ค้างอยู่ในคิว
+      description: >-
+        เมลในคิวยังไม่ได้ถูกส่งเข้ากล่องของใคร การเปิดดูจึงไม่แตะ Maildir และไม่มีแฟล็ก
+        "อ่านแล้ว" ให้เปลี่ยน — คนละเรื่องกับการเปิดอ่านกล่องจดหมายของลูกค้า
+      responses:
+        "200":
+          description: เนื้อเมล
+          content:
+            application/json:
+              schema:
+                type: object
+        "422": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [mail]
+      summary: ลบเมลฉบับเดียวออกจากคิว
+      responses:
+        "200":
+          description: ลบแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+        "422": { $ref: "#/components/responses/Error" }
+
   /mailboxes:
     get:
       tags: [mail]
@@ -3440,6 +3542,16 @@ paths:
                 type: object
 
   /mail-aliases:
+    get:
+      tags: [mail]
+      summary: รายการที่อยู่ส่งต่อ — ตารางดึงเอง จึงสั่งโหลดใหม่หลังลบได้
+      responses:
+        "200":
+          description: รายการที่อยู่ส่งต่อ
+          content:
+            application/json:
+              schema:
+                type: object
     post:
       tags: [mail]
       summary: ตั้งที่อยู่ส่งต่อหรือ catch-all

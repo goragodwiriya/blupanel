@@ -1,0 +1,77 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <!--
+    คิวเมลขาออก — PLAN-MAIL §5
+
+    นี่คือที่ที่ตอบคำถาม "ทำไมเมลไม่ถึง" ได้ · เมลที่ส่งไม่สำเร็จไม่ได้หายไปไหน มันค้าง
+    อยู่ที่นี่พร้อมเหตุผลที่ปลายทางตอบกลับมา และ Postfix ลองส่งใหม่ให้เองอีกหลายวันก่อน
+    ยอมแพ้ — ผู้ดูแลจึงมีเวลาเห็นและแก้ต้นเหตุทัน
+
+    **แยกเป็นหน้าของตัวเอง ไม่ใช่การ์ดในหน้ากล่องจดหมาย** — คิวเป็นของทั้งเครื่อง
+    แต่ละแถวมีที่อยู่ผู้ส่ง/ผู้รับของลูกค้าทุกรายปนกัน จึงเป็นของผู้ดูแลเครื่องเท่านั้น
+    (`permission: settings.manage` ในตารางเส้นทางของ main.js)
+
+    เคยลองวางไว้ในหน้ากล่องจดหมายแล้วซ่อนด้วย `data-if` — ใช้ไม่ได้ เพราะคอมโพเนนต์
+    **ยังยิงคำขอออกไปจริงแม้ธาตุจะถูกลบทิ้ง** เจ้าของเว็บที่เปิดหน้านั้นจึงสร้างแถว
+    "ถูกปฏิเสธ" ในบันทึกความปลอดภัยทุกครั้งที่เปิดหน้า ทั้งที่ไม่ได้ทำอะไรผิดเลย
+    (Authorize middleware บันทึกทุกครั้งที่ปฏิเสธ) · ด่านที่ถูกต้องคือด่านของเส้นทาง
+    ซึ่งทำให้หน้านี้ไม่ถูกโหลดเลยตั้งแต่แรก
+  -->
+  <main class="content">
+    <div class="card-groups">
+      <header>
+        <div>
+          <h1 class="icon-send" data-i18n>Mail queue</h1>
+          <p data-i18n>Outgoing messages waiting to be delivered. A message stays here with the reason the far end gave, until Postfix gives up after five days.</p>
+        </div>
+        <div class="header-actions">
+          <button type="button" class="btn icon-refresh" data-action="click.prevent:apiRefresh"
+                  data-api-url="/api/v2/mail/queue/flush" data-api-method="post" data-refresh-table="mailQueue"
+                  data-loading-text="Sending..." data-i18n>Retry all now</button>
+          <button type="button" class="btn btn-danger icon-delete"
+                  data-action="click.prevent:apiRefresh" data-api-url="/api/v2/mail/queue"
+                  data-api-method="delete" data-refresh-table="mailQueue"
+                  data-confirm="Delete every queued message? They are gone for good and nobody is told."
+                  data-i18n>Empty the queue</button>
+        </div>
+      </header>
+      <div class="content-body">
+        <div class="tablebody">
+          <table class="table border fullwidth" data-table="mailQueue" data-source="/api/v2/mail/queue" data-page-size="25"
+                 data-search-columns="sender,recipient" data-row-actions='{
+                   "view": {
+                     "title": "View",
+                     "className": "btn small icon-search",
+                     "method": "get",
+                     "navigate": false,
+                     "url": "/api/v2/mail/queue/{id}"
+                   },
+                   "delete": {
+                     "title": "Delete",
+                     "className": "btn small btn-danger icon-delete",
+                     "method": "delete",
+                     "url": "/api/v2/mail/queue/{id}",
+                     "confirm": "Delete this message from the queue?"
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="sender" data-cell-class="mono" data-i18n>{LNG_Sender}</th>
+                <th data-field="recipient" data-cell-class="mono" data-i18n>{LNG_Recipient}</th>
+                <th data-field="queue" class="center" data-cell-class="center"
+                    data-template="<span class='pill pill-${tone}'>${queue}</span>" data-i18n>{LNG_Queue}</th>
+                <th data-field="age" class="center" data-cell-class="center" data-format="duration" data-i18n>{LNG_Age}</th>
+                <th data-field="size" class="center" data-cell-class="center right" data-format="bytes" data-i18n>{LNG_Size}</th>
+                <th data-field="reason_short" data-empty-text="—" data-i18n>{LNG_Reason}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>

@@ -51,7 +51,13 @@ final class MailboxManager
     private const VALIAS = self::POSTFIX_DIR . '/valias';
     private const VDOMAINS = self::POSTFIX_DIR . '/vdomains';
 
-    private const DOVECOT_CONF = '/etc/dovecot/conf.d/99-phpcp.conf';
+    /**
+     * ไฟล์ตั้งค่าที่ panel เป็นเจ้าของทั้งไฟล์
+     *
+     * เปิดเป็น public เพราะ `mail.cert` ใช้เวลาแก้ไขของไฟล์นี้เป็นเครื่องหมายว่า
+     * "บอกเดมอนเรื่องใบรับรองครั้งล่าสุดเมื่อไหร่" (ดู MailCertificate::changedSince)
+     */
+    public const DOVECOT_CONF = '/etc/dovecot/conf.d/99-phpcp.conf';
     private const DOVECOT_USERS = '/etc/dovecot/phpcp-users';
 
     private const POSTMAP = '/usr/sbin/postmap';
@@ -78,9 +84,10 @@ final class MailboxManager
      * @param list<string>                                                    $domains โดเมนที่เปิดเมล
      * @param list<array{address:string,maildir:string,password:string,quota_mb:int}> $boxes
      * @param list<array{source:string,destination:string}>                   $aliases
+     * @param array{cert?:string,key?:string}                                 $tls ใบรับรองของ mail hostname
      * @return array{domains:int,mailboxes:int,aliases:int}
      */
-    public function apply(Executor $executor, array $domains, array $boxes, array $aliases): array
+    public function apply(Executor $executor, array $domains, array $boxes, array $aliases, array $tls = []): array
     {
         $transaction = new ConfigTransaction($executor);
 
@@ -91,10 +98,17 @@ final class MailboxManager
         // ไฟล์นี้มีแฮชรหัสผ่านของทุกกล่อง — กลุ่ม dovecot อ่านได้ ผู้ใช้อื่นห้ามแตะ
         $transaction->write(self::DOVECOT_USERS, $this->renderDovecotUsers($boxes), 0640);
 
+        $certificate = MailCertificate::pathsOrDefault(
+            (string) ($tls['cert'] ?? ''),
+            (string) ($tls['key'] ?? ''),
+        );
+
         $transaction->write(self::DOVECOT_CONF, $this->templates->render('dovecot/99-phpcp.conf.tpl', [
             'MAIL_ROOT' => self::MAIL_ROOT,
             'VMAIL_USER' => self::VMAIL_USER,
             'USERS_FILE' => self::DOVECOT_USERS,
+            'TLS_CERT' => $certificate['cert'],
+            'TLS_KEY' => $certificate['key'],
             'GENERATED_AT' => date('Y-m-d H:i:s'),
         ]), 0644);
 

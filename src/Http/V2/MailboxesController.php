@@ -46,21 +46,14 @@ final class MailboxesController extends ApiController
             $repository->listMailboxes($scope),
         );
 
-        return $this->ok($rows, [
-            'aliases' => array_map(
-                static fn (array $row): array => [
-                    'id' => (int) $row['id'],
-                    'row_id' => (int) $row['id'],
-                    // ว่าง = catch-all · แสดงเป็น `@โดเมน` ให้ตรงกับที่ Postfix เขียน
-                    'source' => ((string) $row['source'] === '' ? '' : $row['source']) . '@' . $row['domain'],
-                    'destination' => (string) $row['destination'],
-                    'domain' => (string) $row['domain'],
-                    'can_manage' => $canManage,
-                ],
-                $repository->listAliases($scope),
-            ),
-            'domains' => $repository->selectableDomains($scope),
-        ]);
+        /*
+         * **คืนเป็นรายการล้วน เพราะตารางดึงข้อมูลเอง (`data-source`)**
+         *
+         * ตารางที่ดึงข้อมูลเองเท่านั้นที่สั่ง "โหลดใหม่" ได้จริงหลังลบสำเร็จ · ตอนที่
+         * ผูกกับข้อมูลของหน้า การลบทำงานถูกต้องบนเซิร์ฟเวอร์แต่ตารางยังโชว์แถวเดิมค้างอยู่
+         * — ที่อยู่ส่งต่อย้ายไปมี endpoint ของตัวเองด้วยเหตุผลเดียวกัน
+         */
+        return $this->ok($rows);
     }
 
     /**
@@ -164,13 +157,9 @@ final class MailboxesController extends ApiController
             'address' => $row['local_part'] . '@' . $row['domain'],
         ], $this->ctx->actor($request));
 
-        return $this->done(
+        return $this->completed(
             (string) ($result['message'] ?? 'Mailbox deleted'),
-            [
-                ['type' => 'notification', 'level' => 'success',
-                    'message' => (string) ($result['message'] ?? 'Mailbox deleted')],
-                ['type' => 'event', 'event' => self::RELOAD_EVENT],
-            ],
+            'mailboxes',
             is_array($result) ? $result : [],
         );
     }
@@ -207,11 +196,40 @@ final class MailboxesController extends ApiController
             (array) ($result['checks'] ?? []),
         );
 
-        return $this->ok($rows, [
+        // อยู่ใน `data` ด้วยเหตุผลเดียวกับ index() — ป้ายสรุปที่ผูกกับ `meta` ไม่เคยขึ้นเลย
+        return $this->ok([
             'ready' => (bool) ($result['ready'] ?? false),
             'failed' => (int) ($result['failed'] ?? 0),
             'domains' => (array) ($result['domains'] ?? []),
+            'checks' => $rows,
         ]);
+    }
+
+    /**
+     * ผูกใบรับรองของ mail hostname เข้ากับ Postfix และ Dovecot — PLAN-MAIL เฟส M3
+     *
+     * ปุ่มนี้ไม่ได้ "ขอใบรับรอง" — ใบขอจากหน้า SSL ที่มีอยู่แล้วเหมือนใบของเว็บทุกใบ ·
+     * ที่นี่คือขั้นที่เหลือ: บอกเดมอนเมลว่าให้ใช้ใบนั้น · งานตามเวลาทำให้เองทุกวันอยู่แล้ว
+     * ปุ่มมีไว้ให้ไม่ต้องรอถึงพรุ่งนี้เช้าหลังเพิ่งขอใบมาสด ๆ
+     */
+    public function certificate(Request $request): Response
+    {
+        $result = $this->agent()->data('mail.cert', [], $this->ctx->actor($request));
+        $message = (string) ($result['message'] ?? 'Mail certificate checked');
+
+        return $this->done(
+            $message,
+            [
+                // ยังไม่มีใบให้ผูกไม่ใช่ข้อผิดพลาด แต่ก็ไม่ใช่ความสำเร็จที่ควรฉลอง —
+                // ข้อความบอกวิธีขอใบ ซึ่งผู้ใช้ต้องอ่านจริง ๆ ไม่ใช่แค่เห็นแวบเดียว
+                ['type' => 'notification',
+                    'level' => ($result['found'] ?? false) ? 'success' : 'warning',
+                    'message' => $message],
+                // ตารางความพร้อมผูกกับข้อมูลของการ์ดนี้ · ปุ่มมี data-refresh-table
+                // สั่งโหลดใหม่ให้อยู่แล้ว ที่นี่จึงบอกผลอย่างเดียว
+            ],
+            is_array($result) ? $result : [],
+        );
     }
 
     /**
@@ -226,7 +244,9 @@ final class MailboxesController extends ApiController
     private function passwordActions(array $result, string $title): array
     {
         $password = (string) ($result['password'] ?? '');
-        $actions = [];
+
+        // ปิดฟอร์มก่อนเสมอ — แล้วค่อยเปิดหน้าต่างรหัสผ่านทับ ถ้ามีรหัสให้แสดง
+        $actions = [['type' => 'modal', 'action' => 'close']];
 
         if ($password !== '') {
             $actions[] = [
@@ -240,11 +260,11 @@ final class MailboxesController extends ApiController
         }
 
         /*
-         * ตารางหน้านี้ผูกกับข้อมูลที่หน้าโหลดมาแล้ว (`data-attr="data:data"`) ไม่ได้ยิง
-         * คำขอของตัวเอง — สั่ง "โหลดตารางใหม่" จึงไม่มีอะไรเกิดขึ้น · ต้องสั่งให้
-         * **ทั้งหน้า** โหลดข้อมูลใหม่ผ่านเหตุการณ์ที่ `data-refresh-event` ดักไว้แทน
+         * **สั่งโหลดตารางด้วยชนิดที่เฟรมเวิร์กมีตัวรับจริง** — `{type:"event"}` ไม่มี
+         * ตัวรับเลย `ResponseHandler` เตือนใน console แล้วทิ้ง · ตารางกล่องจดหมายดึง
+         * ข้อมูลเองแล้ว (`data-source`) จึงสั่งให้มันโหลดใหม่ได้ตรง ๆ
          */
-        $actions[] = ['type' => 'event', 'event' => self::RELOAD_EVENT];
+        $actions[] = ['type' => 'redirect', 'url' => 'reload', 'target' => 'mailboxes'];
 
         return $actions;
     }

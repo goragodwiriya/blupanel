@@ -94,19 +94,49 @@ final class SettingsController extends ApiController
     }
 
     /**
-     * ตั้งค่าเมลขาออก
+     * ตั้งค่าเมลขาออก — บันทึกและเขียนลง Postfix ในคำขอเดียว
      *
-     * ขอบเขตที่จงใจจำกัดไว้: Postfix ที่ฟังเฉพาะ loopback สำหรับส่งเมลแจ้งเตือนออกเท่านั้น
-     * ไม่ใช่ mail hosting เต็มรูปแบบ (§2.1) — การตั้ง relay ผิดจนกลายเป็น open relay
-     * จะกระทบชื่อเสียง IP ของทุกเว็บไซต์บนเครื่องพร้อมกัน
+     * แยกจาก `PATCH /settings` ด้วยเหตุผลเดียวกับเว็บเซิร์ฟเวอร์: ไม่ใช่แค่บันทึกค่า
+     * แต่เขียนไฟล์ตั้งค่าของบริการระบบแล้ว reload จริง · ผู้ที่แค่แก้อีเมลแจ้งเตือน
+     * ไม่ควรถูกลากไปเขียน `main.cf` ด้วย
+     *
+     * **ที่นี่ไม่ตัดสินใจอะไรเลย** — ส่งค่าที่ผู้ใช้กรอกต่อให้ capability ซึ่งเป็นที่
+     * เดียวที่รู้ว่าเครื่องนี้เปิดเมลโฮสติ้งให้โดเมนไหนอยู่ และต้องเขียนอะไรบ้าง
      */
     public function applyMail(Request $request): Response
     {
-        $result = $this->agent()->data(
-            'mail.apply',
-            ['hostname' => $request->payloadString('hostname')],
-            $this->ctx->actor($request),
-        );
+        $args = [];
+
+        foreach ([
+            'mail.enabled', 'mail.mode', 'mail.from', 'mail.hostname',
+            'mail.relay_host', 'mail.relay_port', 'mail.relay_user',
+            'mail.relay_password', 'mail.relay_tls',
+        ] as $key) {
+            $value = $request->payload($key);
+
+            if ($value !== null) {
+                $args[$key] = $value;
+            }
+        }
+
+        /*
+         * checkbox ที่ไม่ถูกติ๊กไม่ถูกส่งมาเลยตามมาตรฐาน HTML — ถ้าไม่เติมให้เป็น 0
+         * ตรงนี้ การปิดสวิตช์จะไม่มีผลอะไรทั้งสิ้น แล้วผู้ใช้จะปิดมันไม่ได้เลย
+         * (ฟอร์มนี้ส่งทุกช่องเสมอ ต่างจาก PATCH /settings ที่ส่งเฉพาะที่เปลี่ยน)
+         */
+        foreach (['mail.enabled', 'mail.relay_tls'] as $key) {
+            $args[$key] ??= '0';
+        }
+
+        // ชื่อเดิมของช่องเดียวที่เส้นทางนี้เคยรับ · สคริปต์เก่าที่ยังส่ง `hostname` มา
+        // ต้องได้ผลเหมือนเดิม ไม่ใช่ถูกมองข้ามเงียบ ๆ แล้วคิดว่าตั้งค่าสำเร็จ
+        $legacy = $request->payloadString('hostname');
+
+        if ($legacy !== '' && !isset($args['mail.hostname'])) {
+            $args['mail.hostname'] = $legacy;
+        }
+
+        $result = $this->agent()->data('mail.apply', $args, $this->ctx->actor($request));
 
         return $this->completed((string) ($result['message'] ?? 'Email settings saved'), '', is_array($result) ? $result : []);
     }
