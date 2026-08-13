@@ -135,9 +135,15 @@ final class ServiceCatalog
         return preg_match('/^php(\d\.\d{1,2})-fpm$/', $unit, $m) === 1 ? $m[1] : null;
     }
 
-    /** ชุด service ที่แสดงบนแดชบอร์ดตาม PROMPT.md */
+    /**
+     * ชุด service ที่แสดงบนแดชบอร์ด
+     *
+     * ชุดเดิมตาม PROMPT.md มีแค่ apache2/nginx/php-fpm/mariadb/cron — เขียนไว้ก่อนเฟสเมล
+     * (PLAN-MAIL) จะเพิ่ม postfix/dovecot/rspamd เข้า all() เลยไม่เคยถูกดึงมาแสดงที่นี่
+     * ทั้งที่ postfix เป็นทางออกของเมลแจ้งเตือนของ panel เองด้วย จึงต้องอยู่ในหน้าแรก
+     */
     public static function dashboardUnits(): array
     {
-        return ['apache2', 'nginx', 'php8.4-fpm', 'mariadb', 'cron'];
+        return ['apache2', 'nginx', 'php8.4-fpm', 'mariadb', 'cron', 'postfix', 'dovecot', 'rspamd'];
     }
 }
