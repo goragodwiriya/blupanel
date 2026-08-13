@@ -96,12 +96,6 @@ docker run --rm phpcp:it bash /usr/local/src/phpcp/docker/acceptance.sh
 ตามชนิดผู้โจมตี และ **รายการตรวจก่อนขึ้น production** ที่ต้องทำให้ครบ (2FA, เปลี่ยนใบรับรองจาก
 self-signed, ปิด SSH root login, ตั้ง audit log แบบ append-only ฯลฯ)
 
-ตรวจจากภายนอกด้วย:
-
-```bash
-sudo ./tools/security-audit.sh https://127.0.0.1:8443 --auth-checks --aggressive
-```
-
 พบช่องโหว่กรุณาแจ้งเป็นการส่วนตัวก่อนเปิดเผยสาธารณะ
 
 ---

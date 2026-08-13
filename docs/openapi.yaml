@@ -2241,46 +2241,6 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
 
-  /security/audit:
-    get:
-      tags: [server]
-      summary: ผลตรวจจากภายนอกที่ tools/security-audit.sh ทิ้งไว้
-      description: |
-        คนละมุมมองกับ `/security/scan` — `scan` ตรวจจาก**ข้างใน**เครื่องผ่าน agent
-        ส่วนตัวนี้คือผลที่มองจาก**ข้างนอก** (TLS, header, พอร์ตที่เปิด, คุกกี้)
-
-        อ่านจากไฟล์ `<data>/security-audit.json` ที่ผู้ดูแลสั่งเขียนไว้ด้วย
-        `tools/security-audit.sh <url> --json-out=/var/lib/phpcp/security-audit.json`
-
-        **ไม่มีปุ่มสั่งสแกนจากหน้าเว็บโดยตั้งใจ** — ตัวสแกนยิง nmap และทดสอบ rate limit
-        ซึ่งกินเวลาเป็นนาที และปุ่มแบบนั้นยังเป็นช่องให้ใช้ panel สแกนเป้าหมายอื่น
-
-        `meta.stale` เป็น true เมื่อผลตรวจเก่ากว่า `meta.max_age_seconds` (30 วัน)
-      responses:
-        "200":
-          description: ผลตรวจล่าสุด
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok: { type: boolean, const: true }
-                  data: { type: array, items: { type: object, additionalProperties: true } }
-                  meta:
-                    type: object
-                    properties:
-                      target: { type: string }
-                      mode: { type: string }
-                      scanned_at: { type: integer }
-                      age_seconds: { type: integer }
-                      stale: { type: boolean }
-                      max_age_seconds: { type: integer }
-                      summary: { type: object, additionalProperties: { type: integer } }
-        "403": { $ref: "#/components/responses/Error" }
-        "404":
-          description: "`NOT_FOUND` — ยังไม่เคยรันตัวสแกน"
-          $ref: "#/components/responses/Error"
-
   /security/scan:
     get:
       tags: [server]

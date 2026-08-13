@@ -141,60 +141,6 @@
     } catch (error) {
       // ตารางรายการตรวจโหลดแยกกันและยังขึ้นได้ — คะแนนหายไปอย่างเดียวไม่ต้องขึ้น error
     }
-
-    // ---- ผลตรวจจากภายนอก -------------------------------------------------
-    //
-    // ยังไม่เคยรันตัวสแกน = 404 ซึ่งไม่ใช่ข้อผิดพลาด · ซ่อนส่วนนี้ไว้เงียบ ๆ
-    // ดีกว่าขึ้น toast แดงทุกครั้งที่เปิดหน้าบนเครื่องที่ยังไม่ได้สแกน
-    try {
-      const audit = await window.PhpcpApi.getFull('/security/audit');
-      const panel = root.querySelector('[data-audit-panel]');
-      const meta = audit.meta;
-
-      panel.hidden = false;
-
-      const summary = Object.entries(meta.summary || {})
-        .filter(([, count]) => Number(count) > 0)
-        .map(([level, count]) => level + ' ' + count)
-        .join(' · ');
-
-      const parts = [
-        meta.target,
-        t('Scanned') + ' ' + window.formatters.datetime(meta.scanned_at),
-        summary
-      ].filter(Boolean);
-
-      const line = root.querySelector('[data-audit-meta]');
-      line.textContent = parts.join(' — ');
-
-      // เตือนเมื่อผลตรวจเก่าเกินเกณฑ์ที่เซิร์ฟเวอร์กำหนด ไม่ใช่เกณฑ์ที่หน้าจอคิดเอง
-      if (meta.stale) {
-        line.appendChild(document.createTextNode(' '));
-        const warn = el('span', 'pill pill-warn', t('This scan is out of date'));
-        line.appendChild(warn);
-      }
-
-      const body = root.querySelector('[data-audit-rows]');
-      body.textContent = '';
-
-      (audit.data || []).forEach((row) => {
-        const tr = el('tr');
-        const severity = String(row.severity || 'INFO');
-
-        const level = el('td', 'center');
-        level.appendChild(pill(severity, {
-          CRITICAL: 'danger', HIGH: 'danger', MEDIUM: 'warn', LOW: 'muted', INFO: 'muted'
-        }[severity] || 'muted'));
-        tr.appendChild(level);
-
-        tr.appendChild(el('td', null, row.check || row.category || ''));
-        tr.appendChild(el('td', null, row.detail || row.message || ''));
-
-        body.appendChild(tr);
-      });
-    } catch (error) {
-      /* 404 = ยังไม่เคยรันตัวสแกน — ปล่อยส่วนนี้ซ่อนไว้ */
-    }
   };
 
   // ===========================================================================

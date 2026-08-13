@@ -8,10 +8,6 @@ etc/config.php
 # ฐานข้อมูล · log · audit log · lock ของ scheduler · sandbox ของเครื่องพัฒนา
 var/
 
-# ผลสแกนความปลอดภัย — สร้างใหม่ได้ด้วย tools/security-audit.sh
-# และมีรายละเอียดพอร์ต/บริการของเครื่องที่สแกน จึงไม่ควรอยู่ใน history
-audit_*/
-
 # ทั่วไป
 *.log
 *.db

@@ -69,7 +69,6 @@ function serverEndpoints(): array
         ['GET', '/api/v2/logs/sources', []],
         ['GET', '/api/v2/logs', []],
         ['GET', '/api/v2/security/scan', []],
-        ['GET', '/api/v2/security/audit', []],
         ['GET', '/api/v2/backup-destinations', []],
         ['POST', '/api/v2/backup-destinations', ['name' => 'x', 'driver' => 'local', 'path' => '/tmp/x']],
         ['GET', '/api/v2/backup-schedules', []],
@@ -247,81 +246,6 @@ test('ทุกเส้นทางของ B3.4 ตอบ JSON และม�
             );
         }
     }
-});
-
-/** เขียนไฟล์ผลตรวจปลอมลงไดเรกทอรีข้อมูลของ harness แล้วคืนเส้นทาง */
-function writeAuditReport(ApiHarness $harness, array $report): string
-{
-    $file = $harness->app->config->paths->data . '/security-audit.json';
-    file_put_contents($file, json_encode($report, JSON_UNESCAPED_UNICODE));
-
-    return $file;
-}
-
-test('security/audit ตอบ 404 เมื่อยังไม่เคยรันตัวสแกน — ไม่ใช่ผลตรวจว่างเปล่า', static function (): void {
-    // ความต่างนี้สำคัญกับหน้าจอ: "ยังไม่มีข้อมูล" ต้องซ่อนส่วนนั้นไป
-    // ส่วน "ตรวจแล้วไม่พบอะไร" ต้องขึ้นตารางว่างให้เห็นว่าตรวจแล้วจริง
-    $harness = serverLogin('srvadmin', 'Server-Admin-Pass-11');
-    @unlink($harness->app->config->paths->data . '/security-audit.json');
-
-    $response = $harness->request('GET', '/api/v2/security/audit');
-
-    assertSame(404, $response->status, 'ยังไม่มีไฟล์ต้องเป็น 404');
-    assertSame(ApiProblem::NotFound->value, $response->errorCode(), 'ต้องเป็นรหัส NOT_FOUND');
-});
-
-test('security/audit อ่านรายงานของ tools/security-audit.sh ตามรูปแบบ §4.2', static function (): void {
-    $harness = serverLogin('srvadmin', 'Server-Admin-Pass-11');
-
-    writeAuditReport($harness, [
-        'target' => 'https://panel.example.com',
-        'mode' => 'external',
-        'scan_time' => gmdate('Y-m-d\TH:i:s\Z'),
-        'summary' => ['CRITICAL' => 0, 'HIGH' => 1, 'MEDIUM' => 2],
-        'results' => [
-            ['severity' => 'HIGH', 'check' => 'TLS', 'detail' => 'รองรับ TLS 1.0'],
-            ['severity' => 'MEDIUM', 'check' => 'Headers', 'detail' => 'ไม่มี HSTS'],
-        ],
-    ]);
-
-    $response = $harness->request('GET', '/api/v2/security/audit');
-
-    assertSame(200, $response->status, 'มีไฟล์แล้วต้องอ่านได้');
-    assertSame(2, count($response->json['data']), 'results ต้องมาเป็น data ไม่ใช่ซ้อนใน meta');
-    assertSame('HIGH', $response->json['data'][0]['severity'], 'ลำดับของรายการต้องคงเดิม');
-    assertSame('https://panel.example.com', $response->json['meta']['target'], 'meta ต้องบอกเป้าหมายที่ถูกสแกน');
-    assertSame(false, $response->json['meta']['stale'], 'ผลตรวจที่เพิ่งทำต้องไม่ถูกทำเครื่องหมายว่าเก่า');
-    assertSame(1, $response->json['meta']['summary']['HIGH'], 'สรุปจำนวนต้องผ่านมาถึงหน้าจอ');
-});
-
-test('security/audit ทำเครื่องหมายผลตรวจที่เก่าเกิน 30 วัน', static function (): void {
-    // หน้าจอไม่ควรคิดเกณฑ์เอง — ถ้าสองที่ตัดสินคนละแบบ ผู้ใช้จะเห็นคำเตือนไม่ตรงกัน
-    $harness = serverLogin('srvadmin', 'Server-Admin-Pass-11');
-
-    writeAuditReport($harness, [
-        'target' => 'https://panel.example.com',
-        'scan_time' => gmdate('Y-m-d\TH:i:s\Z', time() - 31 * 86400),
-        'results' => [],
-    ]);
-
-    $response = $harness->request('GET', '/api/v2/security/audit');
-
-    assertSame(200, $response->status, 'ผลตรวจเก่าก็ยังต้องอ่านได้');
-    assertSame(true, $response->json['meta']['stale'], 'เกิน 30 วันต้องถูกทำเครื่องหมายว่าเก่า');
-    assertTrue($response->json['meta']['age_seconds'] > 30 * 86400, 'ต้องบอกอายุจริงของผลตรวจ');
-});
-
-test('security/audit ไม่ทำให้ไฟล์ที่เสียกลายเป็นผลตรวจว่างเปล่า', static function (): void {
-    // ตารางว่างอ่านได้ว่า "ปลอดภัยดี" ซึ่งเป็นคำตอบที่ผิดที่สุดที่จะให้เมื่ออ่านไฟล์ไม่ออก
-    $harness = serverLogin('srvadmin', 'Server-Admin-Pass-11');
-    file_put_contents($harness->app->config->paths->data . '/security-audit.json', '{"results": [trunc');
-
-    $response = $harness->request('GET', '/api/v2/security/audit');
-
-    assertSame(500, $response->status, 'ไฟล์เสียต้องเป็นข้อผิดพลาด ไม่ใช่ 200 พร้อมตารางว่าง');
-    assertSame(ApiProblem::InternalError->value, $response->errorCode(), 'ต้องเป็นรหัส INTERNAL_ERROR');
-
-    @unlink($harness->app->config->paths->data . '/security-audit.json');
 });
 
 test('ตารางเวลาสำรองแตะงานของระบบไม่ได้เลย', static function (): void {

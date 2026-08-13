@@ -210,8 +210,6 @@ final class Routes
         $router->add(new Route('GET', '/api/v2/logs', LogsController::class, 'tail', 'log.view', 'api.v2.logs.tail'));
 
         $router->add(new Route('GET', '/api/v2/security/scan', V2SecurityController::class, 'scan', 'security.view', 'api.v2.security.scan'));
-        // ผลตรวจจากภายนอกที่ tools/security-audit.sh ทิ้งไว้ — คนละมุมมองกับ scan
-        $router->add(new Route('GET', '/api/v2/security/audit', V2SecurityController::class, 'audit', 'security.view', 'api.v2.security.audit'));
 
         $router->add(new Route('GET', '/api/v2/metrics', V2MetricsController::class, 'index', 'dashboard.view', 'api.v2.metrics.index'));
         $router->add(new Route('GET', '/api/v2/metrics/stream', V2MetricsController::class, 'stream', 'dashboard.view', 'api.v2.metrics.stream'));
