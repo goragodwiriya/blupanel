@@ -22,7 +22,7 @@ final class ConfigFilesController extends HostingController
     /** รายการไฟล์ของขอบเขตหนึ่ง — ตอนนี้มีขอบเขตเดียวคือเว็บไซต์ */
     public function index(Request $request): Response
     {
-        $siteId = (int) $request->get('site_id', 0);
+        $siteId = (int) $request->get('site_id');
 
         if ($this->findSite($siteId) === null) {
             return $this->siteNotFound();
@@ -63,7 +63,7 @@ final class ConfigFilesController extends HostingController
      */
     public function show(Request $request): Response
     {
-        $siteId = (int) $request->get('site_id', 0);
+        $siteId = (int) $request->get('site_id');
 
         if ($this->findSite($siteId) === null) {
             return $this->siteNotFound();

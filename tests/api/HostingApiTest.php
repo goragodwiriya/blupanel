@@ -435,3 +435,73 @@ test('เส้นทางทั้งหมดของ B3.2 ตอบ JSON �
         }
     }
 });
+
+test('ไฟล์ตั้งค่าของเว็บไซต์ — คำขอต้องเดินผ่านชั้น controller ได้จริง', static function (): void {
+    /*
+     * **เทสต์นี้ยิงคำขอจริงผ่านชั้น HTTP** ไม่ใช่เรียก capability ตรง ๆ
+     *
+     * ตอนทำคุณสมบัตินี้ ผมทดสอบชั้น capability อย่างเดียวแล้วผ่านหมด แต่ของจริงล้มด้วย
+     * 500 ตั้งแต่คำขอแรก เพราะ `Request::get()` รับค่าเริ่มต้นเป็น string เท่านั้น แต่
+     * controller ส่ง `0` ไป · เป็นข้อผิดพลาดที่อยู่ในชั้นบาง ๆ ที่ไม่มีใครคิดว่าจะพัง
+     * และไม่มีเทสต์ไหนแตะเลย
+     *
+     * **agent ไม่ได้รันในแท่นทดสอบ** จึงตรวจได้ถึงแค่ "คำขอเดินผ่าน controller ไปถึง
+     * agent ได้" (503) หรือ "สำเร็จทั้งเส้น" (200) · สิ่งที่ต้องไม่เกิดคือ 500 ซึ่งแปลว่า
+     * โค้ดพังก่อนถึง agent — ซึ่งคือบั๊กที่เกิดขึ้นจริง
+     */
+    $harness = hostingLogin('hostadmin', 'Hosting-Admin-Pass-11');
+    $siteId = hostingSiteId('host.example.com');
+
+    // query ต้องส่งเป็นอาร์กิวเมนต์แยก — ต่อท้าย path เองจะกลายเป็นเส้นทางที่ไม่มีอยู่จริง
+    $list = $harness->request('GET', '/api/v2/config-files', query: ['site_id' => (string) $siteId]);
+
+    assertTrue(
+        $list->status !== 500,
+        'คำขอต้องไม่ล้มก่อนถึง agent — ได้ ' . $list->status . ' ' . ($list->json['error']['message'] ?? ''),
+    );
+    assertTrue(
+        in_array($list->status, [200, 503], true),
+        'ต้องได้ 200 (สำเร็จ) หรือ 503 (ไม่มี agent ในแท่นทดสอบ) · ได้ ' . $list->status,
+    );
+
+    // เส้นทางของไฟล์เดียวต้องเดินผ่านได้เหมือนกัน — คีย์ที่มีจุดต้องไม่ทำให้ router หลุด
+    $open = $harness->request(
+        'GET',
+        '/api/v2/config-files/site.' . $siteId . '.custom',
+        query: ['site_id' => (string) $siteId],
+    );
+
+    assertTrue($open->status !== 500, 'เปิดไฟล์เดียวต้องไม่ล้มก่อนถึง agent · ได้ ' . $open->status);
+    assertTrue($open->status !== 404, 'คีย์ที่มีจุดต้องยังจับคู่กับเส้นทางได้ · ได้ ' . $open->status);
+
+    // เว็บไซต์ที่ไม่มีอยู่ต้องได้ 404 ไม่ใช่ 500 — ด่านนี้อยู่ก่อนเรียก agent
+    $missing = $harness->request('GET', '/api/v2/config-files', query: ['site_id' => '999999']);
+
+    assertSame(404, $missing->status, 'เว็บไซต์ที่ไม่มีอยู่ต้องได้ 404');
+});
+
+test('เจ้าของเว็บไซต์แตะไฟล์ตั้งค่าไม่ได้เลย', static function (): void {
+    // ไฟล์เหล่านี้ถูกอ่านโดยเว็บเซิร์ฟเวอร์ที่ใช้ร่วมกันทั้งเครื่อง เขียนผิดแล้วกระทบ
+    // ทุกเว็บ ไม่ใช่แค่เว็บของคนเขียน — `site.edit` ที่เจ้าของเว็บมีจึงไม่พอ
+    $harness = hostingLogin('hostowner', 'Hosting-Owner-Pass-22');
+    $siteId = hostingSiteId('host.example.com');
+
+    foreach ([
+        ['GET', '/api/v2/config-files'],
+        ['GET', '/api/v2/config-files/site.' . $siteId . '.custom'],
+        ['PUT', '/api/v2/config-files/site.' . $siteId . '.custom'],
+    ] as [$method, $path]) {
+        $response = $harness->request(
+            $method,
+            $path,
+            ['site_id' => $siteId, 'content' => ''],
+            query: ['site_id' => (string) $siteId],
+        );
+
+        assertSame(
+            ApiProblem::Forbidden->value,
+            $response->json['error']['code'] ?? '',
+            "{$method} {$path} ต้องถูกปฏิเสธด้วย FORBIDDEN",
+        );
+    }
+});

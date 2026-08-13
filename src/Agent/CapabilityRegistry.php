@@ -64,7 +64,6 @@ use Phpcp\Agent\Capability\ServiceStop;
 use Phpcp\Agent\Capability\SiteAddDomain;
 use Phpcp\Agent\Capability\SiteCreate;
 use Phpcp\Agent\Capability\ConfigFileRead;
-use Phpcp\Agent\Capability\SiteConfigRead;
 use Phpcp\Agent\Capability\SiteCustomConfig;
 use Phpcp\Agent\Capability\SiteDelete;
 use Phpcp\Agent\Capability\SiteRemoveDomain;
