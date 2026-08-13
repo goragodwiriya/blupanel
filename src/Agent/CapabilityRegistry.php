@@ -63,6 +63,7 @@ use Phpcp\Agent\Capability\ServiceStatus;
 use Phpcp\Agent\Capability\ServiceStop;
 use Phpcp\Agent\Capability\SiteAddDomain;
 use Phpcp\Agent\Capability\SiteCreate;
+use Phpcp\Agent\Capability\ConfigFileRead;
 use Phpcp\Agent\Capability\SiteConfigRead;
 use Phpcp\Agent\Capability\SiteCustomConfig;
 use Phpcp\Agent\Capability\SiteDelete;
@@ -178,7 +179,7 @@ final class CapabilityRegistry
             SiteDelete::class,
 
             // ค่าตั้งเพิ่มเติมที่ผู้ดูแลเขียนเอง — อ่านไฟล์ที่ generate ได้ แต่แก้ได้เฉพาะไฟล์ของตัวเอง
-            SiteConfigRead::class,
+            ConfigFileRead::class,
             SiteCustomConfig::class,
             SiteResetOwner::class,
 

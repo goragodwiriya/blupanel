@@ -678,3 +678,46 @@ fieldset.notice-danger legend {
   background: var(--color-primary);
   color: var(--color-light);
 }
+/* --------------------------------------------------------------------------
+   ไฟล์ตั้งค่าของระบบ — เปิดทีละไฟล์ใน Modal
+
+   เนื้อไฟล์ตั้งค่าคือข้อความยาวที่โครงสร้างมีความหมาย (ย่อหน้า วงเล็บ บล็อก)
+   ถ้าปล่อยให้ไหลรวมกับส่วนอื่นของหน้าจอ ผู้อ่านแยกไม่ออกว่าอะไรคือไฟล์ อะไรคือ
+   คำอธิบายของ panel · จึงต้องมีกรอบและพื้นหลังของตัวเองให้เห็นขอบเขตชัด
+   -------------------------------------------------------------------------- */
+.config-file-path {
+  margin: 0 0 0.75rem;
+  padding: 0.45rem 0.7rem;
+  border-radius: 8px;
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+  word-break: break-all;
+}
+
+/* ไฟล์ที่ดูได้อย่างเดียว — พื้นหลังต่างจากช่องแก้ไข เพื่อให้รู้ตั้งแต่แรกเห็นว่าพิมพ์ไม่ได้ */
+.config-file-view {
+  margin: 0;
+  padding: 0.85rem 1rem;
+  max-height: 60vh;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--phpcp-radius);
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+  line-height: 1.55;
+  tab-size: 4;
+  /* ไม่ตัดบรรทัด — ค่าตั้งที่ถูกตัดกลางบรรทัดอ่านผิดความหมายได้ */
+  white-space: pre;
+}
+
+/* ช่องแก้ไข — สูงพอเห็นบริบทหลายบรรทัด แต่ไม่กินทั้งจอเหมือนตัวแก้ไขไฟล์เต็มหน้า */
+textarea.config-file-editor {
+  min-height: 18rem;
+  max-height: 60vh;
+  border-radius: var(--phpcp-radius);
+}
+
+/* ป้ายบอกสิทธิ์ในตาราง — "แก้ได้" ต้องเด่นกว่า "ดูได้อย่างเดียว" อย่างชัดเจน */
+[data-table="configFiles"] .pill-ok {
+  font-weight: 600;
+}

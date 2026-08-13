@@ -6,10 +6,12 @@ namespace Phpcp\Agent\Capability;
 
 use Phpcp\Agent\Context;
 use Phpcp\Agent\ExecutionFailed;
+use Phpcp\Agent\ValidationError;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Driver\ConfigTransaction;
 use Phpcp\Driver\RollbackGuard;
 use Phpcp\Driver\Template;
+use Phpcp\Domain\ConfigFileCatalog;
 use Phpcp\Driver\WebServer\CustomConfig;
 use Phpcp\Support\Validator;
 
@@ -64,6 +66,10 @@ final class SiteCustomConfig extends SiteCapability
         return [
             'site_id' => Validator::requireInt($args, 'site_id', 1),
             'content' => CustomConfig::assertContent((string) ($args['content'] ?? '')),
+            // คีย์จากหน้าจอ — ว่างได้ (ผู้เรียกที่เป็นเครื่อง) แต่ถ้าส่งมาต้องเป็นไฟล์ที่แก้ได้จริง
+            'key' => isset($args['key']) && $args['key'] !== ''
+                ? ConfigFileCatalog::assertKey((string) $args['key'])
+                : '',
             'window' => isset($args['window'])
                 ? (int) $args['window']
                 : RollbackGuard::DEFAULT_WINDOW,
@@ -78,6 +84,27 @@ final class SiteCustomConfig extends SiteCapability
 
         // ชนิดของไฟล์ต้องตรงกับเซิร์ฟเวอร์ที่ใช้อยู่จริง ไม่ใช่ที่ผู้เรียกบอกมา
         $server = $driver->name() === 'nginx' ? 'nginx' : 'apache';
+
+        /*
+         * **ตัดสินจากทะเบียนอีกรอบว่าไฟล์นี้แก้ได้จริง** ไม่ใช่เชื่อว่าหน้าจอส่งคีย์ที่ถูก
+         *
+         * ปุ่มที่ไม่ขึ้นบนหน้าจอไม่ใช่ด่านความปลอดภัย — คำขอที่ประกอบเองยังส่งคีย์ของ
+         * ไฟล์ที่ระบบสร้าง (`site.N.vhost.0`) มาได้เสมอ · ด่านต้องอยู่ที่ชั้นล่างสุด
+         */
+        if ($args['key'] !== '') {
+            $file = ConfigFileCatalog::find(
+                ConfigFileCatalog::forSite($site->id, $site->domain, $driver->name(), $driver->vhostPaths($site)),
+                $args['key'],
+            );
+
+            if ($file === null || $file['kind'] !== ConfigFileCatalog::KIND_WRITABLE) {
+                throw new ValidationError(
+                    'ไฟล์นี้แก้จากหน้าเว็บไม่ได้ — ระบบเขียนทับทั้งไฟล์ทุกครั้งที่เว็บไซต์เปลี่ยน '
+                    . 'สิ่งที่แก้ลงไปจะหายไปเงียบ ๆ · เขียนค่าที่ต้องการลงไฟล์ส่วนเสริมแทน',
+                );
+            }
+        }
+
         $path = CustomConfig::path($server, $site->domain);
         $custom = new CustomConfig();
         $previous = $custom->read($executor, $server, $site->domain);

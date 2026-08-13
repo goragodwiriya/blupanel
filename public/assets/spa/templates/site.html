@@ -95,8 +95,8 @@
             ลบเว็บไซต์ย้อนกลับไม่ได้ · API บังคับให้ส่งชื่อโดเมนมายืนยันอยู่แล้ว
             `data-attr` เติมชื่อโดเมนจริงลง `data-param-confirm_domain` ให้ตอนเรนเดอร์
           -->
-          <button type="button" class="btn btn-danger icon-delete" data-if="can['delete']" data-action="click.prevent:apiRefresh" data-api-url="/api/v2/sites/{id}"
-                  data-go="/sites" data-api-method="delete" data-attr="data-param-confirm_domain:domain"
+          <button type="button" class="btn btn-danger icon-delete" data-if="can['delete']" data-action="click.prevent:apiRefresh" data-api-url="/api/v2/sites/{id}" data-go="/sites"
+                  data-api-method="delete" data-attr="data-param-confirm_domain:domain"
                   data-confirm="Deleting a website removes its files, databases and certificates. This cannot be undone." data-i18n>Delete website</button>
         </div>
       </div>
@@ -107,49 +107,42 @@
         เพราะ `status` ต้องมาจาก fail2ban จริง ๆ ไม่ใช่จากสิ่งที่ฐานข้อมูลของ panel จำไว้
       -->
       <!--
-        ค่าตั้งเพิ่มเติมของผู้ดูแล — สำหรับคนที่รู้ว่ากำลังทำอะไร
+        ไฟล์ตั้งค่าของเว็บไซต์ — ตารางเดียว เปิดทีละไฟล์ใน Modal
 
-        **ไม่ใช่ตัวแก้ไฟล์ vhost** · ไฟล์ vhost ถูกเขียนทับทั้งไฟล์ทุกครั้งที่เว็บไซต์
-        เปลี่ยน สิ่งที่แก้ลงไปตรง ๆ จะหายเงียบ ๆ ในภายหลัง · ที่นี่เขียนลงไฟล์แยกที่
-        panel ไม่แตะ และ vhost อ่านเป็นอันสุดท้าย ค่าที่นี่จึงชนะค่าเริ่มต้นเสมอ
+        **แยกให้ชัดว่าไฟล์ไหนแก้ได้ ไฟล์ไหนดูได้อย่างเดียว** ด้วยป้ายที่มาจากเซิร์ฟเวอร์
+        ไม่ใช่การเดาของหน้าจอ · ไฟล์ที่ระบบสร้างเปิดดูได้เพราะผู้ดูแลต้องเห็นว่ามีอะไร
+        อยู่แล้วก่อนจะเขียนเพิ่ม แต่แก้ไม่ได้เพราะมันถูกเขียนทับทั้งไฟล์ทุกครั้งที่
+        เว็บไซต์เปลี่ยน
 
-        ทั้งการ์ดเป็นของผู้ดูแลเครื่อง (`settings.manage`) ไม่ใช่เจ้าของเว็บ เพราะไฟล์นี้
-        ถูกอ่านโดยเว็บเซิร์ฟเวอร์ที่ใช้ร่วมกันทั้งเครื่อง
+        ทั้งการ์ดเป็นของผู้ดูแลเครื่อง — ถาม `can[...]` จากคำตอบของ endpoint นี้เอง
+        ไม่ใช่ `permissions[...]` ซึ่งมีให้ใช้เฉพาะหน้าที่โหลด /api/v2/session
       -->
-      <div data-if="can['edit_config']">
-      <div class="content-body" data-component="api" data-endpoint="/api/v2/sites/{id}/config" data-refresh-event="phpcp:reload">
-        <h2 class="icon-code" data-i18n>Extra configuration</h2>
-        <p class="muted" data-i18n>For administrators who know the web server syntax. The panel never touches this file, and the generated configuration below reads it last — so anything set here wins.</p>
-        <div class="alert alert-warning" data-i18n>After saving you must open the website and check it really works, then confirm. The configuration test only proves the syntax is valid — rules that block every request pass it too. Without confirmation the previous version is restored automatically.</div>
-        <form data-form="siteCustomConfig" action="/api/v2/sites/{id}/config" method="post" data-method="PUT"
-              data-ajax-submit="true" data-emit-event="phpcp:reload">
-          <fieldset>
-            <div>
-              <label for="custom_config" data-text="custom_path"></label>
-              <span class="form-control">
-                <textarea id="custom_config" name="content" rows="10" spellcheck="false"
-                          class="mono" data-attr="value:custom"></textarea>
-              </span>
-            </div>
-          </fieldset>
-          <fieldset class="submit">
-            <button type="submit" class="btn btn-primary icon-save" data-loading-text="Checking..." data-i18n>Save and test</button>
-          </fieldset>
-        </form>
-        <!--
-          ไฟล์ที่ panel สร้าง — เปิดดูได้แต่แก้ไม่ได้ และนั่นคือความตั้งใจ · ผู้ดูแลที่จะ
-          เขียนค่าเพิ่มต้องเห็นก่อนว่ามีอะไรอยู่แล้ว ไม่งั้นจะเขียนซ้ำหรือทับของเดิมโดยไม่รู้ตัว
-        -->
-        <details>
-          <summary data-i18n>Show the configuration the panel generates (read-only)</summary>
-          <div data-for="file in generated">
-            <template>
-              <p class="mono muted" data-text="file.path"></p>
-              <pre class="mono scroll" data-text="file.content"></pre>
-            </template>
-          </div>
-        </details>
-      </div>
+      <div class="content-body" data-if="can['edit_config']">
+        <h2 class="icon-code" data-i18n>Configuration files</h2>
+        <p class="muted" data-i18n>Open a file to view it. Only the extra configuration file can be edited — it is read last, so anything set there overrides the generated settings.</p>
+        <div class="tablebody">
+          <table class="table border fullwidth" data-table="configFiles"
+                 data-source="/api/v2/config-files?site_id={id}" data-row-actions='{
+                   "open": {
+                     "title": "Open",
+                     "className": "btn small icon-search",
+                     "method": "get",
+                     "navigate": false,
+                     "url": "/api/v2/config-files/{key}?site_id={site_id}"
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="path" data-cell-class="mono" data-i18n>{LNG_File}</th>
+                <th data-field="kind_label" class="center" data-cell-class="center"
+                    data-template="<span class=\'pill pill-${kind_tone}\'>${kind_label}</span>" data-i18n>{LNG_Access}</th>
+                <th data-field="state" class="center" data-cell-class="center" data-i18n>{LNG_Status}</th>
+                <th data-field="size" class="center" data-cell-class="center right" data-format="bytes" data-i18n>{LNG_Size}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </div>
       <div class="content-body">
         <h2 class="icon-shield" data-i18n>Request rate limit</h2>
@@ -158,8 +151,8 @@
           ว่าการแบนมีผลทั้งเครื่อง ไม่ใช่รู้ตอนที่ IP ของตัวเองถูกแบนไปแล้ว
         -->
         <div class="alert alert-warning" data-i18n>Bans apply to the whole server, not just this website — a banned IP cannot reach any other site hosted here either.</div>
-        <form data-form="siteRateLimit" action="/api/v2/sites/{id}/rate-limit" method="post" data-method="PUT"
-              data-ajax-submit="true" data-load-api="/api/v2/sites/{id}/rate-limit">
+        <form data-form="siteRateLimit" action="/api/v2/sites/{id}/rate-limit" method="post" data-method="PUT" data-ajax-submit="true"
+              data-load-api="/api/v2/sites/{id}/rate-limit">
           <fieldset>
             <div>
               <input type="checkbox" class="switch" id="rate_limit_enabled" name="enabled" data-checked="enabled">
@@ -210,9 +203,8 @@
                   <th data-field="ip" data-i18n>{LNG_IP address}</th>
                   <th class="center" data-row-actions="
                         <button type='button' class='btn small icon-refresh' data-action='click.prevent:apiRefresh'
-                                data-api-url='/api/v2/sites/{id}/rate-limit/unban' data-refresh-table="bannedIps" data-api-method='post'
-                                data-param-ip='{ip}'>{LNG_Unban}</button>"
-                      data-i18n>{LNG_Action}</th>
+                                data-api-url='/api/v2/sites/{id}/rate-limit/unban' data-refresh-table=" bannedIps" data-api-method='post' data-param-ip='{ip}'>
+                    {LNG_Unban}</button>" data-i18n>{LNG_Action}</th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -233,10 +225,8 @@
             /api/v2/sites/{id} ปุ่มจึงหายไปทั้งปุ่มโดยไม่มี error ให้เห็น ·
             SitesController::show ส่ง `can.manage_domains` มาให้อยู่แล้วตั้งแต่แรก
           -->
-          <button type="button" class="btn icon-plus" data-if="can['manage_domains']"
-                  data-action="click.prevent:requestApi"
-                  data-api-url="/api/v2/sites/{id}/domains/form" data-api-method="get"
-                  data-i18n>Add domain</button>
+          <button type="button" class="btn icon-plus" data-if="can['manage_domains']" data-action="click.prevent:requestApi" data-api-url="/api/v2/sites/{id}/domains/form"
+                  data-api-method="get" data-i18n>Add domain</button>
         </div>
         <!--
           data-row-actions ใช้ {row_id} ไม่ใช่ {id} โดยตั้งใจ — URL ของหน้านี้เองมี ?id=

@@ -9,6 +9,7 @@ use Phpcp\Http\V2\BackupDestinationsController;
 use Phpcp\Http\V2\BackupSchedulesController;
 use Phpcp\Http\V2\BackupsController;
 use Phpcp\Http\V2\CertificatesController;
+use Phpcp\Http\V2\ConfigFilesController;
 use Phpcp\Http\V2\CronJobsController;
 use Phpcp\Http\V2\DashboardController as V2DashboardController;
 use Phpcp\Http\V2\DatabasesController;
@@ -120,11 +121,6 @@ final class Routes
         $router->add(new Route('POST', '/api/v2/sites/{id}/owner-reset', SitesController::class, 'resetOwner', 'site.edit', 'api.v2.sites.owner_reset'));
 
         // จำกัดอัตราคำขอต่อเว็บ — บังคับใช้ด้วย fail2ban (เฟส E5)
-        // ไฟล์ตั้งค่าของเว็บไซต์ — `settings.manage` เท่านั้น ไม่ใช่ `site.edit`
-        // เพราะไฟล์นี้ถูกอ่านโดยเว็บเซิร์ฟเวอร์ที่ใช้ร่วมกันทั้งเครื่อง เขียนผิดแล้ว
-        // configtest ล้ม เว็บทุกเว็บบนเครื่องหยุดโหลดค่าใหม่ตามไปด้วย
-        $router->add(new Route('GET', '/api/v2/sites/{id}/config', SitesController::class, 'config', 'settings.manage', 'api.v2.sites.config'));
-        $router->add(new Route('PUT', '/api/v2/sites/{id}/config', SitesController::class, 'setConfig', 'settings.manage', 'api.v2.sites.config.set'));
         $router->add(new Route('GET', '/api/v2/sites/{id}/rate-limit', SitesController::class, 'rateLimit', 'site.view', 'api.v2.sites.rate_limit'));
         $router->add(new Route('PUT', '/api/v2/sites/{id}/rate-limit', SitesController::class, 'setRateLimit', 'site.edit', 'api.v2.sites.rate_limit.set'));
         $router->add(new Route('GET', '/api/v2/sites/{id}/rate-limit/bans', SitesController::class, 'rateLimitBans', 'site.view', 'api.v2.sites.rate_limit.bans'));
@@ -271,6 +267,18 @@ final class Routes
         $router->add(new Route('GET', '/api/v2/cron-jobs/{id}', CronJobsController::class, 'show', 'cron.view', 'api.v2.cron.show'));
         $router->add(new Route('PATCH', '/api/v2/cron-jobs/{id}', CronJobsController::class, 'update', 'cron.manage', 'api.v2.cron.update'));
         $router->add(new Route('DELETE', '/api/v2/cron-jobs/{id}', CronJobsController::class, 'destroy', 'cron.manage', 'api.v2.cron.destroy'));
+
+        /*
+         * ไฟล์ตั้งค่าของระบบ — ทรัพยากรกลางที่ทุกหน้าจอเรียกใช้ได้
+         *
+         * `settings.manage` เท่านั้น ไม่ใช่ `site.edit` เพราะไฟล์เหล่านี้ถูกอ่านโดย
+         * บริการที่ใช้ร่วมกันทั้งเครื่อง เขียนผิดแล้วเว็บทุกเว็บหยุดโหลดค่าใหม่ตามไปด้วย
+         *
+         * **หน้าจอส่งคีย์จากทะเบียน ไม่เคยส่งเส้นทางไฟล์** — ดู ConfigFileCatalog
+         */
+        $router->add(new Route('GET', '/api/v2/config-files', ConfigFilesController::class, 'index', 'settings.manage', 'api.v2.config_files.index'));
+        $router->add(new Route('GET', '/api/v2/config-files/{key}', ConfigFilesController::class, 'show', 'settings.manage', 'api.v2.config_files.show'));
+        $router->add(new Route('PUT', '/api/v2/config-files/{key}', ConfigFilesController::class, 'update', 'settings.manage', 'api.v2.config_files.update'));
 
         // --- ข้อมูลสำรอง ---
         // เมลโฮสติ้ง — กล่องจดหมายและที่อยู่ส่งต่อ (PLAN-MAIL เฟส M2)

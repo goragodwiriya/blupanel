@@ -1,0 +1,35 @@
+<!--
+  ไฟล์ตั้งค่าหนึ่งไฟล์ — เทมเพลตเดียวรองรับทั้งไฟล์ที่แก้ได้และไฟล์ที่ดูได้อย่างเดียว
+
+  **เซิร์ฟเวอร์เป็นคนตัดสินว่าไฟล์นี้แก้ได้ไหม** (`writable`) ไม่ใช่หน้าจอเดาจากชื่อไฟล์ ·
+  และการซ่อนฟอร์มไม่ใช่ด่านความปลอดภัย — ตัวเขียนตรวจจากทะเบียนอีกรอบที่ชั้นล่างสุดเสมอ
+-->
+<div class="config-file">
+  <p class="config-file-path mono" data-text="path"></p>
+
+  <!-- แก้ได้ — ฟอร์มพร้อมคำเตือนว่าต้องยืนยันหลังบันทึก -->
+  <div data-if="writable">
+    <div class="alert alert-warning" data-i18n>After saving, open the website and check it really works, then confirm. The configuration test only proves the syntax is valid — rules that block every request pass it too. Without confirmation the previous version is restored automatically.</div>
+    <form data-form="configFile" action="/api/v2/config-files/{key}" method="post" data-method="PUT"
+          data-ajax-submit="true" data-reload-table="configFiles" data-emit-event="phpcp:reload">
+      <input type="hidden" name="site_id" data-attr="value:site_id">
+      <fieldset>
+        <div>
+          <span class="form-control">
+            <textarea name="content" rows="16" spellcheck="false" autocomplete="off"
+                      class="mono config-file-editor" data-attr="value:content"></textarea>
+          </span>
+        </div>
+      </fieldset>
+      <fieldset class="submit">
+        <button type="submit" class="btn btn-primary icon-save" data-loading-text="Checking..." data-i18n>Save and test</button>
+      </fieldset>
+    </form>
+  </div>
+
+  <!-- ดูได้อย่างเดียว — บอกเหตุผลให้ชัด ไม่ใช่แค่ไม่มีปุ่มให้กด -->
+  <div data-if="readonly">
+    <div class="alert" data-i18n>The panel rewrites this file in full whenever the website changes, so edits made here would disappear later. Put your own settings in the extra configuration file instead — it is read last, so it always wins.</div>
+    <pre class="mono config-file-view" data-text="content"></pre>
+  </div>
+</div>

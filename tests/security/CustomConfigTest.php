@@ -15,6 +15,7 @@ declare(strict_types=1);
 
 use Phpcp\Agent\ValidationError;
 use Phpcp\Driver\Template;
+use Phpcp\Domain\ConfigFileCatalog;
 use Phpcp\Driver\WebServer\CustomConfig;
 
 group('CustomConfig — ไฟล์ตั้งค่าที่ผู้ดูแลเขียนเอง');
@@ -171,4 +172,84 @@ test('การเขียนต้องผ่านตัวตรวจข�
         !preg_match("~'/etc/[^']*'~", $code),
         'ห้ามฮาร์ดโค้ดเส้นทางในตัว capability — ต้องผ่าน CustomConfig ที่ตรวจชื่อโดเมนให้',
     );
+});
+
+test('ทะเบียนไฟล์ต้องแยก "แก้ได้" กับ "ดูได้อย่างเดียว" ออกจากกันชัดเจน', static function (): void {
+    /*
+     * **`writable` ต้องเป็นคำตอบจากเซิร์ฟเวอร์ ไม่ใช่การเดาของหน้าจอจากชื่อไฟล์**
+     *
+     * ถ้าหน้าจอเป็นคนตัดสิน วันที่มีคนเพิ่มไฟล์ชนิดใหม่เข้ามาจะได้ปุ่มแก้ไขบนไฟล์ที่
+     * แก้ไม่ได้ทันที โดยไม่มีอะไรเตือน
+     */
+    $files = ConfigFileCatalog::forSite(7, 'example.com', 'apache', [
+        '/etc/phpcp/vhosts.d/example.com.conf',
+        '/etc/phpcp/vhosts.d/example.com-ssl.conf',
+    ]);
+
+    $writable = array_values(array_filter(
+        $files,
+        static fn (array $f): bool => $f['kind'] === ConfigFileCatalog::KIND_WRITABLE,
+    ));
+
+    assertSame(1, count($writable), 'ต้องมีไฟล์ที่แก้ได้ไฟล์เดียวเท่านั้น');
+    assertSame(
+        CustomConfig::path('apache', 'example.com'),
+        $writable[0]['path'],
+        'ไฟล์ที่แก้ได้ต้องเป็นไฟล์ส่วนเสริมเท่านั้น ไม่ใช่ไฟล์ที่ระบบสร้าง',
+    );
+
+    // ไฟล์ที่ระบบสร้างต้องอยู่ในทะเบียน (เพื่อให้เปิดดูได้) แต่ต้องไม่ใช่ชนิดที่แก้ได้
+    foreach ($files as $file) {
+        if (str_contains((string) $file['path'], 'vhosts.d')) {
+            assertSame(
+                ConfigFileCatalog::KIND_GENERATED,
+                $file['kind'],
+                'ไฟล์ที่ระบบสร้างต้องเป็นชนิดอ่านอย่างเดียวเสมอ',
+            );
+        }
+    }
+});
+
+test('คีย์ที่ไม่อยู่ในทะเบียนต้องหาไฟล์ไม่เจอ ไม่ว่าจะพยายามอย่างไร', static function (): void {
+    /*
+     * นี่คือกติกาที่ทำให้ทั้งเรื่องปลอดภัย: **หน้าจออ้างไฟล์ด้วยคีย์ ไม่ใช่เส้นทาง**
+     * ต่อให้ส่งอะไรมาก็ได้แค่ "ไม่พบในทะเบียน" ไม่มีทางไปโผล่เป็นการอ่านไฟล์อื่นบนเครื่อง
+     */
+    $files = ConfigFileCatalog::forSite(7, 'example.com', 'apache', ['/etc/phpcp/vhosts.d/example.com.conf']);
+
+    foreach (['site.8.custom', 'site.7.vhost.9', 'unknown', 'site.7.custom.extra'] as $key) {
+        assertTrue(
+            ConfigFileCatalog::find($files, $key) === null,
+            "คีย์นอกทะเบียนต้องหาไม่เจอ: {$key}",
+        );
+    }
+
+    foreach (['../../etc/shadow', 'site/../7', "a\nb", str_repeat('a', 200)] as $bad) {
+        $rejected = false;
+
+        try {
+            ConfigFileCatalog::assertKey($bad);
+        } catch (\Throwable) {
+            $rejected = true;
+        }
+
+        assertTrue($rejected, "รูปแบบคีย์ที่ผิดต้องถูกปฏิเสธ: " . substr($bad, 0, 20));
+    }
+
+    assertTrue(ConfigFileCatalog::find($files, 'site.7.custom') !== null, 'คีย์ที่ถูกต้องต้องหาเจอ');
+});
+
+test('ตัวเขียนต้องปฏิเสธคีย์ของไฟล์ที่ระบบสร้าง ไม่ใช่แค่ไม่แสดงปุ่ม', static function (): void {
+    /*
+     * **ปุ่มที่ไม่ขึ้นบนหน้าจอไม่ใช่ด่านความปลอดภัย** — คำขอที่ประกอบเองยังส่งคีย์ของ
+     * ไฟล์ที่ระบบสร้างมาได้เสมอ · ด่านต้องอยู่ที่ชั้นล่างสุดที่ลงมือเขียนจริง
+     */
+    $code = (string) preg_replace(
+        '~/\*.*?\*/|//[^\n]*~s',
+        '',
+        (string) file_get_contents(PHPCP_ROOT . '/src/Agent/Capability/SiteCustomConfig.php'),
+    );
+
+    assertTrue(str_contains($code, 'ConfigFileCatalog::find('), 'ตัวเขียนต้องค้นทะเบียนเอง');
+    assertTrue(str_contains($code, 'KIND_WRITABLE'), 'ต้องเทียบชนิดของไฟล์ก่อนเขียน');
 });
