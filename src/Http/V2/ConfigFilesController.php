@@ -35,6 +35,10 @@ final class ConfigFilesController extends HostingController
             return ['mail.config_read', $key === '' ? [] : ['key' => $key]];
         }
 
+        if ($scope === 'dns') {
+            return ['dns.config_read', $key === '' ? [] : ['key' => $key]];
+        }
+
         $siteId = (int) $request->get('site_id');
 
         if ($this->findSite($siteId) === null) {
@@ -142,6 +146,20 @@ final class ConfigFilesController extends HostingController
          * ตัวแปรในเส้นทางให้ (`RouterManager` เติมให้เฉพาะเทมเพลตของหน้า)
          */
         $key = $request->payloadString('key');
+
+        if ($request->payloadString('scope') === 'dns') {
+            $result = $this->agent()->data('dns.custom_config', [
+                'key' => $key,
+                'content' => $request->payloadString('content'),
+                'window' => (int) $request->payload('window', 0),
+            ], $this->ctx->actor($request));
+
+            return $this->saved(
+                (string) ($result['message'] ?? 'Configuration saved'),
+                'configFiles',
+                is_array($result) ? $result : [],
+            );
+        }
 
         if ($request->payloadString('scope') === 'mail') {
             $result = $this->agent()->data('mail.custom_config', [

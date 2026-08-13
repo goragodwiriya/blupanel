@@ -505,3 +505,53 @@ test('เจ้าของเว็บไซต์แตะไฟล์ตั�
         );
     }
 });
+
+test('ขอบเขต DNS ต้องเดินผ่านชั้น HTTP ได้และเจ้าของเว็บไซต์แตะไม่ได้', static function (): void {
+    /*
+     * ขอบเขตใหม่ทุกตัวต้องมีเทสต์ที่ยิงผ่านชั้น HTTP จริง ไม่ใช่เรียก capability ตรง ๆ
+     *
+     * ขอบเขตของเว็บไซต์เคยล้มด้วย 500 ตั้งแต่คำขอแรกเพราะชนิดของค่าเริ่มต้นใน
+     * `Request::get()` — ความผิดพลาดที่อยู่ในชั้นบาง ๆ ระหว่าง controller กับ agent
+     * ซึ่งเทสต์ระดับ capability มองไม่เห็นเลยสักตัว
+     *
+     * **agent ไม่ได้รันในแท่นทดสอบ** จึงตรวจได้ถึงแค่ว่าคำขอเดินไปถึง agent (503)
+     * หรือสำเร็จทั้งเส้น (200) · สิ่งที่ต้องไม่เกิดคือ 500
+     */
+    $harness = hostingLogin('hostadmin', 'Hosting-Admin-Pass-11');
+
+    foreach ([
+        ['GET', '/api/v2/config-files'],
+        ['GET', '/api/v2/config-files/dns.bind.custom'],
+    ] as [$method, $path]) {
+        $response = $harness->request($method, $path, query: ['scope' => 'dns']);
+
+        assertTrue(
+            in_array($response->status, [200, 503], true),
+            "{$method} {$path}?scope=dns ต้องได้ 200 หรือ 503 · ได้ {$response->status} "
+                . ($response->json['error']['message'] ?? ''),
+        );
+    }
+
+    /*
+     * **`scope=dns` ต้องไม่ต้องการ `site_id`** — ถ้าโค้ดเผลอตกไปใช้เส้นทางของเว็บไซต์
+     * มันจะหาเว็บไซต์ id 0 ไม่เจอแล้วตอบ 404 ซึ่งอ่านแล้วเข้าใจผิดว่าไฟล์ไม่มีอยู่
+     */
+    $list = $harness->request('GET', '/api/v2/config-files', query: ['scope' => 'dns']);
+    assertTrue($list->status !== 404, 'ขอบเขต DNS ต้องไม่ถูกตีความเป็นขอบเขตของเว็บไซต์');
+
+    // ค่าตั้งของ BIND กระทบทุกโดเมนบนเครื่อง — สิทธิ์ของเจ้าของเว็บไซต์ต้องไม่พอ
+    $owner = hostingLogin('hostowner', 'Hosting-Owner-Pass-22');
+
+    foreach ([
+        ['GET', '/api/v2/config-files/dns.bind.custom'],
+        ['PUT', '/api/v2/config-files'],
+    ] as [$method, $path]) {
+        $response = $owner->request($method, $path, ['scope' => 'dns', 'key' => 'dns.bind.custom', 'content' => ''], query: ['scope' => 'dns']);
+
+        assertSame(
+            ApiProblem::Forbidden->value,
+            $response->json['error']['code'] ?? '',
+            "{$method} {$path} (scope=dns) ต้องถูกปฏิเสธด้วย FORBIDDEN · ได้ {$response->status}",
+        );
+    }
+});

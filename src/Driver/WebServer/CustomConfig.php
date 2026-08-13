@@ -57,6 +57,24 @@ final class CustomConfig
     ];
 
     /**
+     * บริการที่มีไฟล์ตั้งต้นให้ — ชื่อถูกเอาไปประกอบเป็นชื่อไฟล์เทมเพลต จึงต้องเป็น allowlist
+     *
+     * **ไม่ใช่ชุดเดียวกับ `SERVICES`** เพราะ BIND9 เก็บไฟล์ไว้ที่อื่น: มันทิ้งสิทธิ์ root
+     * ทันทีที่สตาร์ต (`named -u bind`) แล้วเหลือความสามารถแค่ cap_net_bind_service กับ
+     * cap_sys_resource — ไม่มี cap_dac_read_search · `/etc/phpcp` เป็น 750 root:phpcp
+     * มันจึงเดินผ่านไดเรกทอรีไม่ได้เลย และ `rndc reload` จะล้มด้วย permission denied
+     * ทุกครั้ง (ตรวจจาก /proc/<pid>/status ของ named ที่รันอยู่จริง)
+     *
+     * การเปิดสิทธิ์ `/etc/phpcp` ให้ bind อ่านได้แลกไม่คุ้ม — ที่นั่นมี `config.php`
+     * ที่เก็บกุญแจของ panel · ไฟล์ของ BIND จึงอยู่ข้าง `named.conf.local` แทน
+     * ({@see \Phpcp\Driver\Dns\BindZoneManager::customConfigPath()}) ซึ่งเป็น
+     * ไดเรกทอรีที่ BIND อ่านได้อยู่แล้วและ panel เขียนไฟล์อื่นลงไปอยู่ก่อนแล้ว
+     *
+     * @var list<string>
+     */
+    public const SEEDS = ['apache', 'nginx', 'postfix', 'dovecot', 'bind'];
+
+    /**
      * ชื่อไฟล์เดียวที่หน้าจอแก้ได้
      *
      * ไดเรกทอรีถูก include ด้วย `*.conf` ผู้ดูแลจึงวางไฟล์อื่นเพิ่มเองทาง SSH ได้
@@ -167,7 +185,7 @@ final class CustomConfig
      */
     public function seed(Template $templates, string $service, string $domain = ''): string
     {
-        $file = 'custom/' . (isset(self::SERVICES[$service]) ? $service : 'apache') . '.conf.tpl';
+        $file = 'custom/' . (in_array($service, self::SEEDS, true) ? $service : 'apache') . '.conf.tpl';
 
         try {
             return $templates->render($file, ['DOMAIN' => $domain !== '' ? $domain : 'เครื่องนี้']);

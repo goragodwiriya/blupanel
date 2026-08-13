@@ -57,6 +57,39 @@
           </table>
         </div>
       </div>
+      <!--
+        ไฟล์ตั้งค่าของ BIND9 — ใช้ endpoint กลางตัวเดียวกับของเว็บไซต์และเมล ต่างแค่ `scope=dns`
+
+        อยู่หน้ารายชื่อโดเมนเพราะเป็นไฟล์ระดับเครื่องที่กระทบทุกโดเมนพร้อมกัน ไม่ใช่ของ
+        โดเมนใดโดเมนหนึ่ง · zone ของแต่ละโดเมนดูได้ในหน้าของโดเมนนั้นอยู่แล้ว
+      -->
+      <div class="content-body" data-if="permissions['settings.manage']">
+        <h2 class="icon-code" data-i18n>Configuration files</h2>
+        <p class="muted" data-i18n>BIND9 settings the panel does not manage. Open a file to view it — the editable one opens with comments explaining what belongs there.</p>
+        <div class="tablebody">
+          <table class="table border fullwidth" data-table="configFiles"
+                 data-source="/api/v2/config-files?scope=dns" data-row-actions='{
+                   "open": {
+                     "title": "Open",
+                     "className": "btn small icon-search",
+                     "method": "get",
+                     "navigate": false,
+                     "url": "/api/v2/config-files/{key}?scope=dns"
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="path" data-cell-class="mono" data-i18n>{LNG_File}</th>
+                <th data-field="kind_label" class="center" data-cell-class="center"
+                    data-template="<span class=\'pill pill-${kind_tone}\'>${kind_label}</span>" data-i18n>{LNG_Access}</th>
+                <th data-field="state" class="center" data-cell-class="center" data-i18n>{LNG_Status}</th>
+                <th data-field="size" class="center" data-cell-class="center right" data-format="bytes" data-i18n>{LNG_Size}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </main>
 </div>

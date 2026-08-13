@@ -31,6 +31,8 @@ use Phpcp\Agent\Capability\CustomerSiteAttach;
 use Phpcp\Agent\Capability\DiskQuotaCheck;
 use Phpcp\Agent\Capability\MetricsRecord;
 use Phpcp\Agent\Capability\DiskUsage;
+use Phpcp\Agent\Capability\DnsConfigRead;
+use Phpcp\Agent\Capability\DnsCustomConfig;
 use Phpcp\Agent\Capability\DnsReload;
 use Phpcp\Agent\Capability\DnsZoneWrite;
 use Phpcp\Agent\Capability\ExpiryCheck;
@@ -187,6 +189,8 @@ final class CapabilityRegistry
             // DNS — เชื่อม BIND9 จริง (PLAN-V2 เฟส E3)
             DnsZoneWrite::class,
             DnsReload::class,
+            DnsConfigRead::class,
+            DnsCustomConfig::class,
 
             // ฐานข้อมูล
             DbCreate::class,

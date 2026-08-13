@@ -40,6 +40,24 @@ use Phpcp\Support\BinaryPath;
  * zone ที่ตั้งเองด้วยมือมาก่อนเปิด `dns.enabled` zone เหล่านั้นจะหายไปจาก
  * `named.conf.local`** ต้องเตือนผู้ดูแลเรื่องนี้ก่อนเปิดใช้งานเสมอ
  *
+ * ## ไฟล์ส่วนเสริมของผู้ดูแล — ทำไมของ BIND ต้องระวังกว่าบริการอื่น
+ *
+ * บริการอื่นในโปรเจกต์นี้ผูกไฟล์ของผู้ดูแลด้วย include ที่ทนไฟล์หาย (`IncludeOptional`
+ * ของ Apache, `!include_try` ของ Dovecot) หรือไม่ใช้ include เลย (Postfix ผนวกเนื้อไฟล์
+ * ลงท้าย `main.cf`) · **BIND ไม่มีทางเลือกทั้งสองแบบ** — `include` ของมันเข้มงวด ไฟล์หาย
+ * แปลว่า `parsing failed: file not found` แล้ว named ไม่สตาร์ต (ทดสอบกับ named-checkconf
+ * 9.18 แล้ว ยืนยันว่าไม่มี `include_try`)
+ *
+ * ที่นี่จึงทำสองอย่างที่บริการอื่นไม่ต้องทำ:
+ *
+ *   1. **บรรทัด include เป็นค่าที่ derive จากการมีอยู่ของไฟล์** ไม่ใช่บรรทัดตายตัว —
+ *      ไม่มีไฟล์ก็ไม่มี include · ผลคือเครื่องที่ยังไม่เคยใช้ฟีเจอร์นี้ไม่มีอะไรให้พังเลย
+ *      และถ้าไฟล์ถูกลบทิ้งด้วยมือ การเขียน zone ครั้งถัดไปจะถอด include ออกให้เอง
+ *   2. **การคืนค่าต้องคืนสองไฟล์พร้อมกัน** ({@see writeCustomConfig()}) — RollbackGuard
+ *      *ลบ* ไฟล์ทิ้งเมื่อเดิมไม่มีไฟล์นั้น แล้วสั่ง `systemctl reload-or-restart` ต่อ
+ *      ถ้าคืนแค่ไฟล์ส่วนเสริมโดยไม่คืน `named.conf.local` ด้วย บรรทัด include จะชี้ไป
+ *      ไฟล์ที่เพิ่งถูกลบ แล้ว **การคืนค่าเพื่อความปลอดภัยจะกลายเป็นตัวที่ทำ DNS ทั้งเครื่องล่ม**
+ *
  * **ข้อจำกัดที่ยังไม่ได้ทำ:** glue record (A/AAAA ของ nameserver ที่อยู่ในโซนเดียวกัน) ไม่ได้
  * สร้างให้อัตโนมัติ — ถ้าตั้ง `dns.nameservers` เป็นชื่อที่อยู่ในโซนที่กำลังจะสร้าง ผู้ดูแล
  * ต้องเพิ่มเรกคอร์ด A ของ nameserver นั้นเป็น DNS record ปกติเอง ไม่งั้น `named-checkzone`
@@ -72,6 +90,28 @@ final class BindZoneManager
         private readonly Config $config,
         private readonly Db $db,
     ) {
+    }
+
+    /**
+     * ไฟล์ส่วนเสริมของผู้ดูแล — อยู่ **ข้าง `named.conf.local`** ไม่ใช่ใต้ `/etc/phpcp`
+     *
+     * เหตุผลเป็นเรื่องสิทธิ์การอ่านล้วน ๆ และวัดจากเครื่องจริงมาแล้ว: named ทิ้งสิทธิ์ root
+     * ทันทีที่สตาร์ต (`named -u bind`) เหลือความสามารถแค่ `cap_net_bind_service` กับ
+     * `cap_sys_resource` — **ไม่มี `cap_dac_read_search`** · `/etc/phpcp` เป็น
+     * 750 root:phpcp มันจึงเดินผ่านไดเรกทอรีไม่ได้เลย แล้ว `rndc reload` จะล้มด้วย
+     * permission denied ทุกครั้ง ทั้งที่ไฟล์ถูกเขียนสำเร็จและเทสต์ผ่านหมด
+     *
+     * การเปิดสิทธิ์ `/etc/phpcp` ให้ bind อ่านได้แลกไม่คุ้ม — ที่นั่นมี `config.php`
+     * ที่เก็บกุญแจของ panel · ไดเรกทอรีของ BIND เป็นที่ที่ panel เขียน zone file
+     * กับ `named.conf.local` ลงไปอยู่แล้ว การวางไฟล์นี้ไว้ด้วยกันจึงไม่ได้เพิ่ม
+     * ขอบเขตอะไรใหม่เลย
+     *
+     * อิงจากที่อยู่ของ `named.conf.local` ไม่ใช่ `/etc/bind` ตายตัว — เครื่องที่ย้าย
+     * ที่อยู่ผ่าน `dns.named_conf_local` ต้องได้ไฟล์ทั้งสองอยู่ด้วยกันเสมอ
+     */
+    public static function customConfigPath(Config $config): string
+    {
+        return dirname($config->dnsNamedConfLocal()) . '/phpcp-custom.conf';
     }
 
     /**
@@ -227,7 +267,7 @@ final class BindZoneManager
      * (`zone_serial > 0`) รวมกับโดเมนที่กำลังจะสร้างใหม่ (ยังไม่ commit จึง zone_serial
      * เป็น 0 อยู่ ต้อง union เข้าไปเอง)
      */
-    private function buildNamedConfLocal(int $newDomainId, string $newDomainName, string $newZonePath): string
+    private function buildNamedConfLocal(int $newDomainId = 0, string $newDomainName = '', string $newZonePath = '', ?bool $withCustom = null): string
     {
         $existing = $this->db->all('SELECT domain FROM domains WHERE zone_serial > 0 AND id != :id', ['id' => $newDomainId]);
 
@@ -243,9 +283,92 @@ final class BindZoneManager
             $lines[] = $this->zoneStanza($domainName, $this->config->dnsZoneDir() . '/' . $domainName . '.zone');
         }
 
-        $lines[] = $this->zoneStanza($newDomainName, $newZonePath);
+        if ($newDomainName !== '') {
+            $lines[] = $this->zoneStanza($newDomainName, $newZonePath);
+        }
+
+        /*
+         * บรรทัด include ของไฟล์ส่วนเสริม — **มีได้ก็ต่อเมื่อไฟล์นั้นมีอยู่จริง**
+         *
+         * `include` ของ BIND ไม่ทนไฟล์หาย ไฟล์ที่ถูกอ้างแต่ไม่มีอยู่ทำให้ named ไม่สตาร์ต
+         * ทั้งเครื่อง · การผูกกับสภาพจริงบนดิสก์แทนที่จะเขียนบรรทัดนี้ตายตัวทำให้เครื่อง
+         * ที่ไม่เคยใช้ฟีเจอร์นี้ไม่มีอะไรให้พัง และเครื่องที่ไฟล์ถูกลบทิ้งด้วยมือได้รับ
+         * การซ่อมให้เองในการเขียน zone ครั้งถัดไป
+         *
+         * `$withCustom` ระบุตรง ๆ ได้สำหรับผู้เรียกที่กำลังเขียนไฟล์นั้นอยู่ในทรานแซกชัน
+         * เดียวกัน — ตอนประกอบข้อความไฟล์ยังไม่ถูกเขียนลงดิสก์ การถามดิสก์จึงได้คำตอบผิด
+         */
+        $customPath = self::customConfigPath($this->config);
+
+        if ($withCustom ?? $this->executor->exists($this->executor->path($customPath))) {
+            $lines[] = '// ค่าตั้งเพิ่มเติมของผู้ดูแล — อ่านท้ายสุด แก้จากหน้าโดเมนของ panel';
+            $lines[] = sprintf('include "%s";', $customPath);
+            $lines[] = '';
+        }
 
         return implode("\n", $lines) . "\n";
+    }
+
+    /**
+     * เขียนไฟล์ส่วนเสริมของผู้ดูแล แล้วผูกบรรทัด include ใน `named.conf.local` ให้ตรงกัน
+     *
+     * ทั้งสองไฟล์อยู่ในทรานแซกชันเดียวกันเพราะมันถูกต้องหรือผิดพร้อมกันเสมอ — ไฟล์ที่ถูก
+     * include แต่ไม่มีอยู่ทำให้ named ไม่สตาร์ต และบรรทัด include ที่หายไปทำให้ค่าที่
+     * ผู้ดูแลเพิ่งเขียนไม่มีผลโดยไม่มีอะไรฟ้อง
+     *
+     * คืน**สภาพเดิมของทั้งสองไฟล์**ให้ผู้เรียกไปตั้ง RollbackGuard — ดูเหตุผลที่หัวคลาส
+     * ว่าทำไมการคืนแค่ไฟล์เดียวถึงอันตรายกว่าไม่คืนเลย
+     *
+     * @return array{path:string,files:array<string,string|null>}
+     */
+    public function writeCustomConfig(string $content): array
+    {
+        if (!$this->config->dnsEnabled()) {
+            throw new ValidationError(
+                'ยังไม่ได้เปิดใช้งานการเชื่อม BIND9 (dns.enabled = false) — '
+                . 'panel ยังไม่ได้จัดการ named.conf.local ของเครื่องนี้ จึงยังผูกไฟล์ส่วนเสริมเข้าไปไม่ได้ '
+                . 'เปิดใช้งาน DNS จากหน้าตั้งค่าก่อน',
+            );
+        }
+
+        $customPath = self::customConfigPath($this->config);
+        $namedConfLocal = $this->config->dnsNamedConfLocal();
+
+        // เก็บสภาพเดิมก่อนแตะอะไรทั้งสิ้น · null = เดิมไม่มีไฟล์นี้ (RollbackGuard จะลบทิ้ง)
+        $previous = [
+            $customPath => $this->currentContents($customPath),
+            $namedConfLocal => $this->currentContents($namedConfLocal),
+        ];
+
+        $this->executor->makeDirectory($this->executor->path(dirname($customPath)), 0755);
+
+        $transaction = new ConfigTransaction($this->executor);
+        $transaction->write($customPath, $content, 0644);
+        $transaction->write($namedConfLocal, $this->buildNamedConfLocal(withCustom: true));
+
+        // ตัวตรวจของ BIND เองอ่านทั้งชุดตั้งแต่ named.conf ลงมา จึงเห็นทั้งไฟล์ที่เพิ่งเขียน
+        // และ zone เดิมทุกตัว — จับ zone ซ้ำและ options ซ้ำที่ข้ามไฟล์กันได้
+        $transaction->commit(fn (): array => $this->checkConf());
+
+        $this->reload();
+
+        return ['path' => $customPath, 'files' => $previous];
+    }
+
+    /** เนื้อไฟล์ปัจจุบัน — null เมื่อยังไม่มีไฟล์ ซึ่งต่างจากไฟล์ว่างอย่างมีความหมาย */
+    private function currentContents(string $path): ?string
+    {
+        $resolved = $this->executor->path($path);
+
+        if (!$this->executor->exists($resolved)) {
+            return null;
+        }
+
+        try {
+            return $this->executor->readFile($resolved);
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     private function zoneStanza(string $domain, string $zonePath): string
@@ -281,10 +404,24 @@ final class BindZoneManager
 
         // ตรวจทั้งชุด (named.conf หลักซึ่ง include named.conf.local อยู่แล้ว) เสมอ ไม่ใช่แค่
         // ตอนโดเมนใหม่ — การแก้ไฟล์ zone เดิมไม่ควรกระทบ แต่ตรวจฟรีไม่มีต้นทุนเพิ่มที่คุ้มจะข้าม
-        $confCheck = $this->executor->exec([$this->binary(self::CHECKCONF_PATHS, 'bind9-utils')], timeout: 15);
+        return $this->checkConf();
+    }
 
-        if (!$confCheck->ok()) {
-            return [false, 'named-checkconf: ' . trim($confCheck->output() . $confCheck->stderr)];
+    /**
+     * ตรวจค่าตั้งทั้งชุดด้วย `named-checkconf`
+     *
+     * ไม่รับพารามิเตอร์เส้นทางโดยตั้งใจ — มันอ่านจาก `named.conf` หลักลงมาเองทั้งลำดับชั้น
+     * จึงเห็นทุกไฟล์ที่ named จะเห็นจริงตอนสตาร์ต รวมถึงไฟล์ส่วนเสริมที่ถูก include
+     * และ zone ของโดเมนอื่นที่อาจชนกัน · การตรวจทีละไฟล์แยกกันมองไม่เห็นการชนกันแบบนั้น
+     *
+     * @return array{0:bool,1:string}
+     */
+    private function checkConf(): array
+    {
+        $check = $this->executor->exec([$this->binary(self::CHECKCONF_PATHS, 'bind9-utils')], timeout: 15);
+
+        if (!$check->ok()) {
+            return [false, 'named-checkconf: ' . trim($check->output() . $check->stderr)];
         }
 
         return [true, ''];
