@@ -258,12 +258,49 @@ EOF
     fi
   fi
 
+  # ---------------------------------------------------------------------------
+  # ติดตั้งแพ็กเกจ — **แยกกลุ่มที่ขาดไม่ได้ออกจากกลุ่มที่ขาดได้**
+  #
+  # เดิมเป็นคำสั่งเดียวยาว ๆ ปิดท้ายด้วย `>/dev/null 2>&1 || true` ซึ่งอันตรายกว่าที่เห็น:
+  # `apt-get install` เป็นแบบ **ทั้งหมดหรือไม่เอาเลย** — ชื่อแพ็กเกจเดียวที่ไม่มีใน
+  # repository ของรุ่นนั้น (หรือ mirror ที่ล่มชั่วคราว) ทำให้ **ไม่มีอะไรถูกติดตั้งเลย
+  # สักตัว** แล้ว `|| true` กลืนข้อผิดพลาดทิ้ง สคริปต์เดินต่อเหมือนสำเร็จ · ผู้ติดตั้ง
+  # จะไปเจอข้อผิดพลาดที่ปลายทางแทน ("ขาด PHP extension", "ไม่พบ apache2") ซึ่งไม่มีทาง
+  # เดาได้เลยว่าสาเหตุจริงคือชื่อแพ็กเกจตัวหนึ่งผิด
+  #
+  # กลุ่มบังคับล้มแล้วหยุดพร้อมแสดงข้อความจาก apt จริง ๆ · กลุ่มเสริมล้มแล้วลองใหม่
+  # ทีละตัวเพื่อให้ตัวที่ใช้ได้ยังถูกติดตั้ง แล้วรายงานชื่อตัวที่ไม่ได้
+  # ---------------------------------------------------------------------------
   say "กำลังติดตั้งแพ็กเกจ PHP 7.4, PHP 8.4, Apache2, Nginx, BIND9, MariaDB, OpenSSH, UFW, Fail2ban, phpMyAdmin, Cron${POSTFIX_PKG:+, Postfix, Dovecot, rspamd}..."
-  apt-get install -y -qq --no-install-recommends \
-    cron openssh-server bind9 bind9utils logrotate $POSTFIX_PKG \
-    php7.4-cli php7.4-fpm php7.4-sqlite3 php7.4-mysql php7.4-mbstring php7.4-curl php7.4-zip php7.4-gd php7.4-xml php7.4-intl \
-    php8.4-cli php8.4-fpm php8.4-sqlite3 php8.4-mysql php8.4-mbstring php8.4-curl php8.4-zip php8.4-gd php8.4-xml php8.4-intl php8.4-imagick php8.4-opcache \
-    apache2 nginx openssl ca-certificates procps ufw fail2ban certbot python3-certbot-apache python3-certbot-nginx mariadb-server phpmyadmin >/dev/null 2>&1 || true
+
+  # ขาดตัวใดตัวหนึ่งแล้ว panel ทำงานไม่ได้จริง — ต้องหยุดตรงนี้ ไม่ใช่ไปล้มทีหลัง
+  APT_REQUIRED="cron openssh-server logrotate ca-certificates openssl procps
+    php8.4-cli php8.4-fpm php8.4-sqlite3 php8.4-mbstring php8.4-curl php8.4-zip php8.4-xml
+    apache2"
+
+  # ขาดได้โดย panel ยังใช้งานได้ แค่ฟีเจอร์นั้นปิดไป — PHP 7.4 มีเฉพาะบางรุ่น ·
+  # phpmyadmin/rspamd อยู่ใน universe · mariadb ผู้ดูแลบางคนใช้เซิร์ฟเวอร์แยก
+  APT_OPTIONAL="bind9 bind9-utils nginx ufw fail2ban mariadb-server phpmyadmin
+    certbot python3-certbot-apache python3-certbot-nginx
+    php8.4-gd php8.4-intl php8.4-mysql php8.4-imagick php8.4-opcache
+    php7.4-cli php7.4-fpm php7.4-sqlite3 php7.4-mysql php7.4-mbstring php7.4-curl php7.4-zip php7.4-gd php7.4-xml php7.4-intl
+    $POSTFIX_PKG"
+
+  if ! APT_ERR=$(apt-get install -y -qq --no-install-recommends $APT_REQUIRED 2>&1); then
+    printf '%s\n' "$APT_ERR" >&2
+    die "ติดตั้งแพ็กเกจที่จำเป็นไม่สำเร็จ — แก้ตามข้อความข้างบนแล้วรันใหม่ (มักเป็น apt update ที่ยังไม่ได้ทำ หรือ repository ที่เข้าไม่ถึง)"
+  fi
+  ok "แพ็กเกจที่จำเป็นครบแล้ว"
+
+  if ! apt-get install -y -qq --no-install-recommends $APT_OPTIONAL >/dev/null 2>&1; then
+    # ล้มทั้งกลุ่มแปลว่ามีตัวใดตัวหนึ่งไม่มีใน repository — ลองทีละตัวเพื่อไม่ให้ตัวที่ใช้ได้
+    # ต้องหายไปด้วย · ช้ากว่าแต่เกิดเฉพาะตอนมีปัญหาจริงเท่านั้น
+    APT_SKIPPED=""
+    for pkg in $APT_OPTIONAL; do
+      apt-get install -y -qq --no-install-recommends "$pkg" >/dev/null 2>&1 || APT_SKIPPED="$APT_SKIPPED $pkg"
+    done
+    [ -z "$APT_SKIPPED" ] || warn "ติดตั้งไม่ได้ (ฟีเจอร์ที่เกี่ยวข้องจะปิดไว้):$APT_SKIPPED"
+  fi
 elif command -v apt-get >/dev/null 2>&1; then
   say "$C_DIM ข้ามการติดตั้งแพ็กเกจ (ไม่ได้รันด้วย root) — จะใช้ PHP ที่มีอยู่แล้วบนเครื่อง$C_OFF"
 fi
