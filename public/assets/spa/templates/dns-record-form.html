@@ -16,23 +16,33 @@
     <div class="form-group">
       <div class="width50">
         <label for="rec_type" data-i18n>Type</label>
+        <!--
+          **ช่องพิมพ์ได้ ไม่ใช่รายการปิด** — รายการที่เลือกไว้ล่วงหน้าตกหล่นเสมอ (TLSA,
+          SSHFP, DS, HTTPS/SVCB) และคนที่เจอชนิดที่ขาดต้องรอโค้ดใหม่ · ตัวเลือกยังมีให้
+          เลือกตามปกติ แต่พิมพ์ชนิดอื่นได้ด้วย และ `named-checkzone` เป็นคนตัดสินว่าใช้ได้ไหม
+        -->
         <span class="form-control">
-          <select id="rec_type" name="type" required data-value="type">
-            <option value="A">A</option>
-            <option value="AAAA">AAAA</option>
-            <option value="CNAME">CNAME</option>
-            <option value="MX">MX</option>
-            <option value="TXT">TXT</option>
-            <option value="SRV">SRV</option>
-            <option value="NS">NS</option>
-            <option value="CAA">CAA</option>
-          </select>
+          <input type="text" id="rec_type" name="type" required list="rec_types" maxlength="15"
+                 autocomplete="off" spellcheck="false" class="mono" data-attr="value:type">
+          <datalist id="rec_types">
+            <option value="A"></option>
+            <option value="AAAA"></option>
+            <option value="CNAME"></option>
+            <option value="MX"></option>
+            <option value="TXT"></option>
+            <option value="SRV"></option>
+            <option value="NS"></option>
+            <option value="CAA"></option>
+            <option value="TLSA"></option>
+            <option value="SSHFP"></option>
+            <option value="HTTPS"></option>
+          </datalist>
         </span>
       </div>
       <div class="width50">
         <label for="rec_ttl" data-i18n>TTL</label>
         <span class="form-control icon-clock">
-          <input type="number" id="rec_ttl" name="ttl" min="60" max="604800" data-attr="value:ttl">
+          <input type="number" id="rec_ttl" name="ttl" min="0" max="604800" data-attr="value:ttl">
         </span>
       </div>
     </div>
@@ -46,7 +56,7 @@
     <div>
       <label for="rec_value" data-i18n>Value</label>
       <span class="form-control icon-edit">
-        <input type="text" id="rec_value" name="value" required maxlength="512"
+        <input type="text" id="rec_value" name="value" required maxlength="4096"
                autocomplete="off" data-attr="value:value">
       </span>
     </div>

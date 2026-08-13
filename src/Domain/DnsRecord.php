@@ -19,14 +19,46 @@ use Phpcp\Support\Validator;
  */
 final class DnsRecord
 {
-    /** ชนิดที่รองรับ — ตรงกับ CHECK constraint ของคอลัมน์ dns_records.type */
-    public const TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'CAA'];
+    /**
+     * ชนิดที่ระบบ "รู้จัก" — มีการตรวจค่าเฉพาะทางและมีช่องกรอกในฟอร์ม
+     *
+     * **ไม่ใช่รายการที่จำกัดว่าเก็บอะไรได้** (ดู {@see assertType()}) — เป็นรายการของชนิดที่
+     * ระบบช่วยตรวจให้ได้มากกว่าปกติ เช่น A ต้องเป็น IPv4 หรือ CNAME ห้ามชี้ไป IP ·
+     * ชนิดนอกรายการนี้เก็บได้ตามปกติ แต่ตัวตัดสินความถูกต้องคือ `named-checkzone`
+     *
+     * @var list<string>
+     */
+    public const TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'CAA', 'NS', 'SRV'];
+
+    /**
+     * ชนิดที่ค่าเป็น "ชื่อโฮสต์เดี่ยว" — ต้องเติมจุดปิดท้ายให้ตอนเขียนไฟล์
+     *
+     * ไม่รวม SRV ทั้งที่ลงท้ายด้วยชื่อโฮสต์ เพราะค่าของมันมีสี่ส่วน
+     * (`priority weight port target`) การเติมจุดท้ายทั้งก้อนจะได้ `5060 sip.example.com.`
+     * ที่ผิดตำแหน่ง — SRV จึงเก็บค่าตามที่เขียนมาทั้งบรรทัดเหมือน CAA
+     *
+     * @var list<string>
+     */
+    public const HOSTNAME_TYPES = ['CNAME', 'MX', 'NS'];
 
     /** เกินนี้ไม่ใช่ zone ของโดเมนเดียวแล้ว — กันการวางข้อมูลผิดที่ลงช่องแก้ไข */
     public const MAX_RECORDS = 500;
 
-    public const TTL_MIN = 60;
-    public const TTL_MAX = 86400;
+    /**
+     * ขอบเขต TTL — กว้างพอครอบการใช้งานจริงทุกแบบ
+     *
+     * `0` ใช้จริงกับเรกคอร์ดที่เปลี่ยนบ่อย (dynamic DNS, failover) และหนึ่งสัปดาห์คือ
+     * ค่าที่ผู้ให้บริการรายใหญ่ตั้งให้เรกคอร์ดที่ไม่เคยเปลี่ยน · ขอบเดิม (60–86400)
+     * ตัดทั้งสองกรณีทิ้งเงียบ ๆ เพราะค่าถูก clamp ไม่ใช่ถูกปฏิเสธ
+     */
+    public const TTL_MIN = 0;
+    public const TTL_MAX = 604800;
+
+    /**
+     * ความยาวค่าสูงสุด — DKIM 2048 บิตยาวเกิน 512 ตัวอักษรเมื่อรวมเครื่องหมายคำพูด
+     * และการตัดทิ้งทำให้กุญแจใช้ไม่ได้โดยไม่มีอะไรฟ้อง
+     */
+    public const VALUE_MAX = 4096;
 
     /**
      * ตรวจค่าที่ผู้ใช้ส่งมาแล้วคืนแถวที่พร้อมเขียนลงฐานข้อมูล
@@ -36,16 +68,19 @@ final class DnsRecord
      */
     public static function validate(array $input): array
     {
-        $type = Validator::requireEnum($input, 'type', self::TYPES);
+        $type = self::assertType((string) ($input['type'] ?? ''));
 
         $name = Validator::pattern(
             trim((string) ($input['name'] ?? '')) ?: '@',
-            // @ = โดเมนตัวเอง · * = wildcard · นอกนั้นเป็นชื่อโฮสต์ย่อยที่คั่นด้วยจุด
-            '/^(@|\*|[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?(\.[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?)*)$/i',
+            // @ = โดเมนตัวเอง · * = wildcard (เดี่ยว ๆ หรือนำหน้าชื่อย่อย เช่น *.dev)
+            // ขีดล่างนำหน้าได้เพราะ SRV/DMARC/DKIM ใช้ (_sip._tcp, _dmarc, _domainkey)
+            '/^(@|(\*|[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?)(\.[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?)*)$/i',
             'ชื่อเรกคอร์ดไม่ถูกต้อง',
         );
 
-        $value = Validator::requireString(['value' => trim((string) ($input['value'] ?? ''))], 'value', 512);
+        $value = self::assertRdata(
+            Validator::requireString(['value' => trim((string) ($input['value'] ?? ''))], 'value', self::VALUE_MAX),
+        );
 
         $ttl = (int) ($input['ttl'] ?? 3600);
         $ttl = max(self::TTL_MIN, min(self::TTL_MAX, $ttl));
@@ -59,6 +94,60 @@ final class DnsRecord
         self::assertValueMatchesType($type, $value);
 
         return ['type' => $type, 'name' => $name, 'value' => $value, 'ttl' => $ttl, 'priority' => $priority];
+    }
+
+    /**
+     * ชื่อชนิดเรกคอร์ดที่ยอมรับได้ — **รูปแบบ ไม่ใช่รายชื่อ**
+     *
+     * ## ทำไมไม่ใช้รายการปิด
+     *
+     * รายการปิดตกหล่นเสมอและตกหล่นเงียบ ๆ · สองชนิดที่เจอทุกวันในงานโฮสติ้งอย่าง SRV
+     * (Microsoft 365, Teams, SIP) กับ NS (มอบ subdomain ให้ DNS เครื่องอื่น) ไม่ได้อยู่
+     * ในรายการเดิม และรายการจะตกหล่นต่อไปเรื่อย ๆ — TLSA, SSHFP, DS, HTTPS/SVCB,
+     * NAPTR, PTR · ทุกครั้งที่มีคนเจอชนิดที่ขาด เขาต้องรอโค้ดใหม่ ซึ่งแพงเกินไปสำหรับ
+     * "พิมพ์ข้อความสามคำลงไฟล์ที่ BIND อ่านอยู่แล้ว"
+     *
+     * ตัวตัดสินความถูกต้องจริงคือ **`named-checkzone` ตัวจริง** ซึ่งแม่นกว่ารายชื่อที่เรา
+     * เขียนเองได้เสมอ และเป็นตัวเดียวกับที่ BIND ใช้ตอนโหลดจริง — หลักการเดียวกับที่
+     * โปรเจกต์นี้ใช้กับไฟล์ตั้งค่าของเว็บเซิร์ฟเวอร์อยู่แล้ว
+     *
+     * ที่นี่จึงกันแค่สิ่งที่ตัวตรวจของ BIND กันไม่ได้: ข้อความที่ไม่ใช่ชื่อชนิดเลย ·
+     * `TYPE65535` เป็นรูปแบบตาม RFC 3597 สำหรับชนิดที่ยังไม่มีชื่อ
+     */
+    public static function assertType(string $type): string
+    {
+        $type = strtoupper(trim($type));
+
+        if (preg_match('/^[A-Z][A-Z0-9]{0,14}$/', $type) !== 1) {
+            throw new ValidationError(
+                'ชนิดเรกคอร์ดไม่ถูกต้อง — ต้องเป็นตัวอักษรกับตัวเลข เช่น A, MX, SRV, TLSA',
+            );
+        }
+
+        return $type;
+    }
+
+    /**
+     * ค่าของเรกคอร์ดต้องไม่มีอักขระควบคุม — **ด่านที่สำคัญที่สุดของการเปิดรับทุกชนิด**
+     *
+     * ค่าถูกเขียนลงไฟล์ที่ BIND อ่าน · การขึ้นบรรทัดใหม่ได้แปลว่าแทรกเรกคอร์ดเพิ่มเองได้
+     * หรือแทรก `$INCLUDE` ให้ BIND ไปอ่านไฟล์อื่นบนเครื่อง — ช่องโหว่ที่ไม่ต้องพึ่ง
+     * ชนิดเรกคอร์ดแปลก ๆ เลย แค่ค่า TXT ที่มี `\n` ก็พอ
+     *
+     * `named-checkzone` จับกรณีนี้ได้เกือบทั้งหมดอยู่แล้ว (แล้วระบบก็คืนไฟล์เดิมให้) แต่
+     * การพึ่งตัวตรวจปลายทางอย่างเดียวแปลว่าค่าที่อันตรายถูกเขียนลงดิสก์ไปแล้วหนึ่งครั้ง
+     * ทุกครั้งที่มีคนลอง · กันตั้งแต่ต้นทางถูกกว่ามาก
+     */
+    public static function assertRdata(string $value): string
+    {
+        if (preg_match('/[\x00-\x08\x0A-\x1F\x7F]/', $value) === 1) {
+            throw new ValidationError(
+                'ค่าของเรกคอร์ดมีอักขระควบคุมหรือการขึ้นบรรทัดใหม่ปนอยู่ — '
+                . 'เรกคอร์ดหนึ่งรายการต้องอยู่ในบรรทัดเดียว',
+            );
+        }
+
+        return $value;
     }
 
     /**
@@ -80,7 +169,9 @@ final class DnsRecord
             'AAAA' => filter_var($value, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false
                 ? null
                 : throw new ValidationError('เรกคอร์ด AAAA ต้องเป็น IPv6'),
-            'CNAME', 'MX' => self::assertHostname($type, $value),
+            'CNAME', 'MX', 'NS' => self::assertHostname($type, $value),
+            'SRV' => self::assertSrv($value),
+            // ชนิดที่ระบบไม่ได้รู้จักเป็นพิเศษ — `named-checkzone` เป็นตัวตัดสิน
             default => null,
         };
     }
@@ -101,6 +192,40 @@ final class DnsRecord
         if (preg_match($pattern, $value) !== 1) {
             throw new ValidationError("เรกคอร์ด {$type} ต้องเป็นชื่อโฮสต์ที่ถูกต้อง เช่น mail.example.com");
         }
+    }
+
+    /**
+     * SRV มีสี่ส่วนในค่าเดียว: `priority weight port target`
+     *
+     * เก็บทั้งก้อนไว้ในคอลัมน์ `value` แทนที่จะแตกเป็นคอลัมน์ใหม่สี่คอลัมน์ — เพราะ
+     * ชนิดอื่นที่ระบบเปิดรับก็มีโครงสร้างของตัวเองคนละแบบ (TLSA มีสาม, NAPTR มีหก)
+     * การไล่เพิ่มคอลัมน์ตามแต่ละชนิดคือการกลับไปสู่รายการปิดในรูปแบบอื่น
+     *
+     * ตรวจแค่รูปตัวเลขสามตัวแรกกับพอร์ตที่อยู่ในช่วง เพราะนั่นคือความผิดพลาดที่คนพิมพ์เอง
+     * ทำบ่อย (สลับตำแหน่ง weight กับ port) และเป็นแบบที่ BIND รับไว้เงียบ ๆ ได้
+     */
+    private static function assertSrv(string $value): void
+    {
+        $parts = preg_split('/\s+/', trim($value)) ?: [];
+
+        if (count($parts) !== 4) {
+            throw new ValidationError(
+                'เรกคอร์ด SRV ต้องมีสี่ส่วน: ลำดับความสำคัญ น้ำหนัก พอร์ต และชื่อเซิร์ฟเวอร์ '
+                . 'เช่น `0 5 5060 sip.example.com.`',
+            );
+        }
+
+        foreach (array_slice($parts, 0, 3) as $index => $number) {
+            if (preg_match('/^\d+$/', $number) !== 1 || (int) $number > 65535) {
+                throw new ValidationError(sprintf(
+                    'เรกคอร์ด SRV: ส่วนที่ %d (%s) ต้องเป็นตัวเลข 0–65535',
+                    $index + 1,
+                    $number,
+                ));
+            }
+        }
+
+        self::assertHostname('SRV', rtrim($parts[3], '.'));
     }
 
     /**
@@ -320,18 +445,22 @@ final class DnsRecord
 
         $type = strtoupper((string) array_shift($tokens));
 
-        // panel สร้าง SOA/NS จากค่าตั้งของเครื่องเสมอ — ข้ามไปเงียบ ๆ ดูเหตุผลที่ parseZoneFile()
-        if (in_array($type, ['SOA', 'NS'], true)) {
-            return null;
+        try {
+            $name = self::relativeZoneName($owner, $origin);
+        } catch (ValidationError $e) {
+            throw new ValidationError(sprintf('บรรทัดที่ %d: %s', $lineNo, $e->getMessage()));
         }
 
-        if (!in_array($type, self::TYPES, true)) {
-            throw new ValidationError(sprintf(
-                'บรรทัดที่ %d: ระบบยังไม่รองรับเรกคอร์ดชนิด %s (รองรับ %s)',
-                $lineNo,
-                $type,
-                implode(' · ', self::TYPES),
-            ));
+        /*
+         * SOA ข้ามเสมอ · **NS ข้ามเฉพาะที่ยอดโดเมน** — ตรงนั้น panel สร้างจาก
+         * `dns.nameservers` ของเครื่องเสมอ การเก็บของผู้ใช้ไว้ด้วยจะได้ NS ซ้ำ
+         *
+         * แต่ **NS ของ subdomain คือของผู้ใช้ล้วน ๆ** — มันคือการมอบโซนย่อยให้ DNS
+         * เครื่องอื่นดูแล (delegation) ซึ่งเป็นงานจริงที่พบบ่อย · การข้ามมันไปด้วยแปลว่า
+         * ผู้ใช้บันทึกแล้วเรกคอร์ดหายไปเงียบ ๆ โดยหน้าจอบอกว่าสำเร็จ
+         */
+        if ($type === 'SOA' || ($type === 'NS' && $name === '@')) {
+            return null;
         }
 
         if ($tokens === []) {
@@ -357,7 +486,7 @@ final class DnsRecord
         try {
             return self::validate([
                 'type' => $type,
-                'name' => self::relativeZoneName($owner, $origin),
+                'name' => $name,
                 'value' => self::zoneRdata($type, $tokens),
                 'ttl' => $ttl,
                 'priority' => $priority,
@@ -384,19 +513,17 @@ final class DnsRecord
             return implode('', $parts);
         }
 
-        if (in_array($type, ['CNAME', 'MX'], true)) {
+        if (in_array($type, self::HOSTNAME_TYPES, true)) {
             // จุดปิดท้ายถูกเติมกลับให้ตอนเขียนไฟล์ — เก็บแบบไม่มีจุดให้ตรงกับที่ฟอร์มบันทึก
             return rtrim((string) $tokens[0], '.');
         }
 
-        if ($type === 'CAA') {
-            return implode(' ', array_map(
-                static fn (string $token): string => str_contains($token, '"') ? $token : $token,
-                $tokens,
-            ));
-        }
-
-        return (string) $tokens[0];
+        /*
+         * ชนิดที่เหลือเก็บ**ทั้งบรรทัดตามที่เขียนมา** — CAA มีสามส่วน SRV มีสี่ TLSA มีสี่
+         * NAPTR มีหก · การไล่แตกโครงสร้างตามแต่ละชนิดคือการกลับไปสู่รายการปิดในรูปแบบอื่น
+         * และจะตกหล่นชนิดถัดไปเสมอ · `named-checkzone` เป็นตัวตัดสินว่าเขียนถูกไหม
+         */
+        return implode(' ', $tokens);
     }
 
     /** ถอดเครื่องหมายคำพูดและ escape ออกจากโทเคนเดียว */
@@ -505,6 +632,44 @@ final class DnsRecord
     }
 
     /**
+     * เรกคอร์ดในรูปข้อความสำหรับช่องแก้ไข — **ของผู้ใช้ล้วน ไม่มี SOA/NS ที่ระบบสร้าง**
+     *
+     * ต่างจาก {@see toAuthoritativeZoneFile()} ตรงที่ไม่มีส่วนหัวที่ระบบเป็นเจ้าของ ·
+     * การเอา SOA กับ serial มาแสดงในช่องแก้ไขคือการชวนให้แก้สิ่งที่แก้ไม่ได้ แล้วผู้ใช้
+     * จะเสียเวลาปรับ serial ที่ระบบเขียนทับให้ทุกครั้งอยู่ดี
+     *
+     * ค่าถูกจัดรูปแบบเหมือนที่จะถูกเขียนลงไฟล์จริงทุกประการ (จุดปิดท้าย, เครื่องหมายคำพูด
+     * ของ TXT) — **สิ่งที่เห็นในช่องแก้ไขต้องเป็นสิ่งที่จะได้จริง** และการวางกลับเข้าไป
+     * โดยไม่แก้อะไรต้องได้เรกคอร์ดชุดเดิมเป๊ะ ๆ
+     *
+     * @param list<array<string,mixed>> $records
+     */
+    public static function toEditableRecords(string $domain, array $records): string
+    {
+        $lines = [
+            '; เรกคอร์ดของ ' . $domain . ' — แก้ได้ทั้งหมด บันทึกแล้วแทนที่ของเดิมทั้งชุด',
+            '; รายการที่ลบออกจากข้อความนี้คือลบจริง',
+            ';',
+            '; SOA และ NS ของตัวโดเมนเองไม่ได้อยู่ที่นี่ เพราะระบบสร้างจากค่าตั้งของเครื่องเสมอ',
+            '; ชื่อที่ลงท้ายด้วยจุดคือชื่อเต็ม · `@` คือตัวโดเมนเอง',
+            '',
+        ];
+
+        foreach ($records as $record) {
+            $lines[] = sprintf(
+                '%-20s %-6s IN %-6s %s%s',
+                $record['name'],
+                $record['ttl'],
+                $record['type'],
+                $record['priority'] !== null ? $record['priority'] . ' ' : '',
+                self::zoneValue((string) $record['type'], (string) $record['value']),
+            );
+        }
+
+        return implode("\n", $lines) . "\n";
+    }
+
+    /**
      * zone file แบบสมบูรณ์ที่ BIND9 โหลดเป็น master ได้จริง — PLAN-V2 เฟส E3
      *
      * ต่างจาก `toZoneFile()` (ไฟล์ส่งออกให้ผู้ใช้ไปวางที่ DNS provider ภายนอก) ตรงที่ต้องมี
@@ -575,11 +740,12 @@ final class DnsRecord
      */
     private static function zoneValue(string $type, string $value): string
     {
-        if (in_array($type, ['CNAME', 'MX'], true)) {
+        if (in_array($type, self::HOSTNAME_TYPES, true)) {
             return self::fqdn($value);
         }
 
         if ($type !== 'TXT') {
+            // ชนิดที่เก็บค่าทั้งบรรทัด (SRV, CAA, TLSA, ...) เขียนออกไปตามที่เก็บไว้เป๊ะ ๆ
             return $value;
         }
 

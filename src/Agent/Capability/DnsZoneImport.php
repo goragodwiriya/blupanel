@@ -133,8 +133,8 @@ final class DnsZoneImport extends DomainCapability
                 'name' => $record['name'],
                 'value' => $record['value'],
                 'ttl' => (int) $record['ttl'],
+                // ตาราง dns_records ไม่มีคอลัมน์เวลา — ใส่ไปแล้วการแทรกล้มทั้งคำสั่ง
                 'priority' => $record['priority'] === null ? null : (int) $record['priority'],
-                'created_at' => time(),
             ]);
         }
     }

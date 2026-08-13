@@ -25,8 +25,18 @@
                   data-action="click.prevent:requestApi"
                   data-api-url="/api/v2/domains/{id}/dns-records/form" data-api-method="get"
                   data-i18n>Add DNS record</button>
-          <button type="button" class="btn icon-document" data-action="click.prevent:toggleClass" data-toggle-target="[data-zone-panel]" data-toggle-class="is-open" data-i18n>Zone
-            file</button>
+          <!--
+            สองปุ่มแยกกันโดยตั้งใจ — "ดูไฟล์" คือความจริงบนดิสก์ทั้งไฟล์ (มี SOA/serial
+            ที่ระบบเป็นเจ้าของ) ส่วน "แก้ทั้งชุด" คือเรกคอร์ดที่ผู้ใช้เป็นเจ้าของเท่านั้น ·
+            รวมเป็นปุ่มเดียวจะได้ช่องแก้ไขที่มีบรรทัดซึ่งแก้ไปก็ไม่มีผล
+          -->
+          <button type="button" class="btn icon-document" data-action="click.prevent:apiRefresh"
+                  data-api-url="/api/v2/domains/{id}/zone-file" data-api-method="get"
+                  data-i18n>Zone file</button>
+          <button type="button" class="btn icon-edit" data-if="permissions['domain.manage']"
+                  data-action="click.prevent:apiRefresh"
+                  data-api-url="/api/v2/domains/{id}/zone-form" data-api-method="get"
+                  data-i18n>Edit all records</button>
         </div>
       </header>
       <div class="content-body">
@@ -58,39 +68,6 @@
             <tbody></tbody>
           </table>
         </div>
-      </div>
-      <!--
-        zone file — **ไฟล์จริงบนดิสก์ถ้าอ่านได้** ไม่ใช่ค่าที่ประกอบใหม่จากตาราง
-        สองอย่างนี้ต่างกันได้ และเวลาที่ต่างกันคือเวลาที่ผู้ดูแลต้องการคำตอบมากที่สุด
-
-        `can_edit`/`read_only` มาจากเซิร์ฟเวอร์เป็นคู่ตรงข้าม เพราะตัวผูกค่าไม่มี
-        เครื่องหมาย "ไม่ใช่" และการซ่อนฟอร์มไม่ใช่ด่านความปลอดภัยอยู่แล้ว —
-        capability ตรวจสิทธิ์ของโดเมนนี้ซ้ำที่ชั้นล่างสุดเสมอ
-      -->
-      <div class="content-body collapsible" data-zone-panel data-component="api" data-endpoint="/api/v2/domains/{id}/zone-file">
-        <h2 data-i18n>Zone file</h2>
-        <p class="muted mono" data-text="path"></p>
-        <p class="muted" data-text="source_label"></p>
-        <div class="alert alert-warning" data-if="drift" data-text="drift_reason"></div>
-
-        <pre class="log-view" data-if="read_only" data-text="content"></pre>
-
-        <form data-if="can_edit" data-form="zoneFile" action="/api/v2/domains/{id}/zone-file" method="post"
-              data-method="PUT" data-ajax-submit="true" data-reload-table="dnsRecords"
-              data-confirm="Replace every DNS record for this domain with what is written here?">
-          <div class="alert" data-i18n>Editing here replaces every record at once — records you delete from the text are deleted for real. SOA and NS lines are rebuilt from the panel settings, so changes to them are ignored.</div>
-          <fieldset>
-            <div>
-              <span class="form-control">
-                <textarea name="content" rows="20" spellcheck="false" autocomplete="off"
-                          class="mono config-file-editor" data-attr="value:content"></textarea>
-              </span>
-            </div>
-          </fieldset>
-          <fieldset class="submit">
-            <button type="submit" class="btn btn-primary icon-save" data-loading-text="Checking..." data-i18n>Save and test</button>
-          </fieldset>
-        </form>
       </div>
     </div>
   </main>

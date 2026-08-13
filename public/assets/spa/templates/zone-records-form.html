@@ -1,0 +1,29 @@
+<!--
+  แก้เรกคอร์ดทั้งชุดเป็นข้อความ
+
+  **ข้อความที่บันทึกไม่ได้ถูกเขียนลงดิสก์** — มันถูกแปลงกลับเป็นเรกคอร์ดในฐานข้อมูล
+  แล้วระบบเขียนไฟล์เองตามปกติ · ฐานข้อมูลจึงยังเป็นแหล่งความจริงเดียว และไม่มีอะไร
+  หายไปตอนที่มีคนแก้เรกคอร์ดอื่นทีหลัง
+
+  เส้นทางของฟอร์มมาจากเซิร์ฟเวอร์ (`form_action`) ไม่ใช่ `{id}` ในเทมเพลต — ไม่มีใคร
+  เติมค่าลงตัวแปรในเส้นทางให้ใน Modal ที่เปิดทีหลัง
+-->
+<div class="config-file">
+  <div class="alert alert-warning" data-i18n>Saving replaces every record at once — records you delete from the text are deleted for real. Check the whole list before saving, not just the lines you changed.</div>
+
+  <form data-form="zoneRecords" data-attr="action:form_action" method="post" data-method="PUT"
+        data-ajax-submit="true" data-reload-table="dnsRecords"
+        data-confirm="Replace every DNS record for this domain with what is written here?">
+    <fieldset>
+      <div>
+        <span class="form-control">
+          <textarea name="content" rows="18" spellcheck="false" autocomplete="off"
+                    class="mono config-file-editor" data-attr="value:content"></textarea>
+        </span>
+      </div>
+    </fieldset>
+    <fieldset class="submit">
+      <button type="submit" class="btn btn-primary icon-save" data-loading-text="Checking..." data-i18n>Save and test</button>
+    </fieldset>
+  </form>
+</div>

@@ -1,0 +1,22 @@
+<!--
+  ไฟล์ zone ตัวจริงบนดิสก์ — อ่านอย่างเดียวเสมอ
+
+  นี่คือไฟล์ที่ BIND9 อ่านจริง ไม่ใช่ค่าที่ประกอบใหม่จากตาราง · สองอย่างนี้ต่างกันได้
+  และเวลาที่ต่างกันคือเวลาที่ผู้ดูแลต้องการคำตอบมากที่สุด
+
+  `no_file` มาจากเซิร์ฟเวอร์เป็นคู่ตรงข้ามของ `on_disk` เพราะตัวผูกค่าไม่มีเครื่องหมาย "ไม่ใช่"
+-->
+<div class="config-file">
+  <p class="config-file-path mono" data-text="path"></p>
+  <p class="muted" data-text="source_label"></p>
+
+  <!-- ยังไม่มีไฟล์ — บอกให้ชัดว่าทำไม ไม่ใช่แสดงกล่องเปล่า -->
+  <div data-if="no_file">
+    <div class="alert alert-warning" data-i18n>This domain has no zone file on the server yet. That is normal when the BIND9 link is switched off, or when no DNS record has been saved since it was switched on. What you see below is built from the records in the panel — it is what the file would contain.</div>
+  </div>
+
+  <!-- ไฟล์บนดิสก์ไม่ตรงกับเรกคอร์ดในระบบ — เรื่องที่ต้องรู้ทันทีที่เปิดดู -->
+  <div class="alert alert-warning" data-if="drift" data-text="drift_reason"></div>
+
+  <pre class="mono config-file-view" data-text="content"></pre>
+</div>

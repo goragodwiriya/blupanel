@@ -142,6 +142,7 @@ final class Routes
         // แก้เรกคอร์ดทั้ง zone พร้อมกัน — สิทธิ์เดียวกับการเพิ่ม/ลบทีละรายการ เพราะเป็นงาน
         // เดียวกันทำทีเดียวหลายรายการ · ข้อความที่ส่งมาไม่ได้ถูกเขียนลงดิสก์ แต่ถูกแปลงกลับ
         // เป็นเรกคอร์ดในฐานข้อมูลแล้วระบบเขียนไฟล์เองตามปกติ (ดู DnsZoneImport)
+        $router->add(new Route('GET', '/api/v2/domains/{id}/zone-form', DomainsController::class, 'zoneForm', 'domain.manage', 'api.v2.domains.zone_form'));
         $router->add(new Route('PUT', '/api/v2/domains/{id}/zone-file', DomainsController::class, 'zoneImport', 'domain.manage', 'api.v2.domains.zone_import'));
         $router->add(new Route('DELETE', '/api/v2/dns-records/{id}', DomainsController::class, 'deleteRecord', 'domain.manage', 'api.v2.dns.destroy'));
         $router->add(new Route('POST', '/api/v2/dns/reload', DomainsController::class, 'reloadAll', 'dns.manage', 'api.v2.dns.reload'));

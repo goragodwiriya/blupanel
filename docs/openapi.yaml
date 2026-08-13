@@ -1060,10 +1060,32 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
 
+  /domains/{id}/zone-form:
+    get:
+      tags: [domains]
+      summary: ช่องแก้เรกคอร์ดทั้งชุด — เปิดใน Modal
+      description: |
+        `domain.manage` · คืน `content` เป็นเรกคอร์ดที่ระบบเก็บอยู่ในรูปข้อความแบบ
+        zone file **ไม่ใช่ไฟล์ทั้งไฟล์** — `SOA` และ `NS` ของตัวโดเมนเองไม่อยู่ในนั้น
+        เพราะระบบสร้างจากค่าตั้งของเครื่องเสมอ การเอามาแสดงในช่องแก้ไขคือการชวนให้
+        แก้สิ่งที่แก้ไม่ได้
+
+        ดูไฟล์เต็มที่ BIND9 ใช้จริงได้ที่ `GET /domains/{id}/zone-file`
+      parameters:
+        - { $ref: "#/components/parameters/DomainId" }
+      responses:
+        "200":
+          description: เนื้อหาสำหรับช่องแก้ไข พร้อมคำสั่งเปิด Modal
+          content:
+            application/json:
+              schema:
+                type: object
+        "404": { $ref: "#/components/responses/Error" }
+
   /domains/{id}/zone-file:
     get:
       tags: [domains]
-      summary: zone file ของโดเมน (สำหรับส่งออกไป DNS provider ภายนอก)
+      summary: ไฟล์ zone ตัวจริงบนดิสก์ — เปิดใน Modal อ่านอย่างเดียว
       description: |
         คืนเนื้อหาเป็นข้อความในฟิลด์ `content` ไม่ใช่ไฟล์แนบ — สัญญาของ v2 คือทุก
         endpoint ตอบ JSON · ฝั่งหน้าเว็บสร้างไฟล์ให้ดาวน์โหลดจากข้อความนี้เองได้
@@ -1100,8 +1122,7 @@ paths:
                       on_disk: { type: boolean }
                       drift: { type: boolean, description: ไฟล์บนดิสก์ไม่ตรงกับเรกคอร์ดในระบบ }
                       drift_reason: { type: string }
-                      can_edit: { type: boolean }
-                      read_only: { type: boolean }
+                      no_file: { type: boolean, description: ยังไม่มีไฟล์บนดิสก์ (คู่ตรงข้ามของ on_disk) }
         "404": { $ref: "#/components/responses/Error" }
     put:
       tags: [domains]

@@ -57,6 +57,16 @@ final class BindFakeExecutor implements Executor
     private array $files;
 
     /**
+     * เขียนไฟล์ที่เส้นทางมีข้อความนี้แล้วให้ล้ม — ใช้จำลองความล้มเหลวแบบที่ควบคุมได้
+     *
+     * **อย่าจำลองความล้มด้วยการตั้งค่าใน Config** — `dnsEnabled()`/`dnsNameservers()`
+     * อ่านจาก static ที่ `Config::useStoredSettings()` เติมไว้ก่อนค่าจากไฟล์ · เทสต์ที่
+     * บูต App ตัวใดตัวหนึ่งจะทิ้งค่าไว้ให้เทสต์ที่รันทีหลังทั้งกระบวนการ แล้วเทสต์ที่
+     * ผ่านตอนรันเดี่ยวจะล้มตอนรันทั้งชุด (เจอจริงตอนเขียนชุดนี้)
+     */
+    public ?string $failWritesMatching = null;
+
+    /**
      * เครื่องมือของ BIND ถือว่ามีอยู่เสมอ — `BinaryPath::resolve()` ถามผ่าน `exists()`
      * และมันคือคำถามว่า "ติดตั้งแพ็กเกจแล้วหรือยัง" ไม่ใช่เรื่องที่ชุดนี้ตรวจ
      * (`BinaryPathTest` ตรึงเรื่องนั้นไว้แยกอยู่แล้ว)
@@ -93,6 +103,10 @@ final class BindFakeExecutor implements Executor
 
     public function writeFile(string $path, string $content, int $mode = 0644): void
     {
+        if ($this->failWritesMatching !== null && str_contains($path, $this->failWritesMatching)) {
+            throw new \RuntimeException('จำลองความล้มเหลวของการเขียนไฟล์: ' . $path);
+        }
+
         $this->written[$path] = $content;
         $this->files[$path] = $content;
     }

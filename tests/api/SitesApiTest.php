@@ -303,8 +303,35 @@ test('zone file ต้องเดินผ่านชั้น HTTP ได้�
     assertSame(200, $view->status, 'อ่าน zone file ต้องได้ 200 แม้ agent จะไม่ตอบ · ได้ ' . $view->status);
     assertTrue(($view->data('content') ?? '') !== '', 'ต้องมีเนื้อไฟล์ให้ดูเสมอ');
     assertSame('generated', $view->data('source'), 'ไม่มีไฟล์บนดิสก์ต้องบอกตามจริงว่าเป็นค่าที่ประกอบขึ้น');
-    assertSame(true, $view->data('can_edit'), 'ผู้ที่มีสิทธิ์แก้ต้องได้ธงว่าแก้ได้');
-    assertSame(false, $view->data('read_only'), 'ธงคู่ตรงข้ามต้องสอดคล้องกันเสมอ');
+    assertSame(true, $view->data('no_file'), 'ต้องบอกให้หน้าจอขึ้นคำเตือนว่ายังไม่มีไฟล์');
+
+    // เปิดเป็น Modal เหมือนไฟล์ตั้งค่าอื่นในระบบ ไม่ใช่แผงที่ซ่อนอยู่ในหน้า
+    $actions = $view->json['actions'] ?? [];
+    assertSame('modal', $actions[0]['type'] ?? '', 'ต้องสั่งเปิด Modal');
+    assertSame('zone-file.html', $actions[0]['template'] ?? '', 'ต้องใช้เทมเพลตอ่านอย่างเดียว');
+
+    // ช่องแก้ไขเป็นคนละ endpoint และคนละเทมเพลต — ของผู้ใช้ล้วน ไม่มี SOA/NS ที่ระบบสร้าง
+    $form = $harness->request('GET', '/api/v2/domains/' . $domainId . '/zone-form');
+
+    assertSame(200, $form->status, 'ช่องแก้ไขต้องเปิดได้ · ได้ ' . $form->status);
+    assertSame(
+        'zone-records-form.html',
+        $form->json['actions'][0]['template'] ?? '',
+        'ต้องใช้เทมเพลตของช่องแก้ไข',
+    );
+    /*
+     * ตัดคอมเมนต์ก่อนตรวจ — คำอธิบายในหัวข้อความอธิบายว่า *ทำไม* SOA ถึงไม่อยู่ที่นี่
+     * ถ้าไม่ตัด เทสต์จะฟ้องคำอธิบายที่ดีแทนที่จะฟ้องเรกคอร์ดที่ไม่ควรมี
+     */
+    $editable = implode("\n", array_filter(
+        preg_split('/\R/', (string) $form->data('content')) ?: [],
+        static fn (string $line): bool => !str_starts_with(ltrim($line), ';'),
+    ));
+
+    assertTrue(
+        !str_contains($editable, 'SOA'),
+        'ช่องแก้ไขต้องไม่มี SOA ให้แก้ เพราะระบบสร้างทับให้ทุกครั้งอยู่แล้ว: ' . $editable,
+    );
 
     $save = $harness->request('PUT', '/api/v2/domains/' . $domainId . '/zone-file', [
         'content' => "@ IN A 203.0.113.5\n",

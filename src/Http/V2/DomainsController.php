@@ -344,21 +344,68 @@ final class DomainsController extends HostingController
          */
         $disk = $this->zoneOnDisk($request, (int) $domain['id']);
 
-        return $this->ok([
-            'domain' => (string) $domain['domain'],
-            'filename' => $domain['domain'] . '.zone',
-            'record_count' => count($records),
-            'content' => $disk['content'] !== ''
-                ? $disk['content']
-                : DnsRecord::toZoneFile((string) $domain['domain'], $records),
-            /*
-             * **เซิร์ฟเวอร์เป็นคนตัดสินว่าแก้ได้ไหม ไม่ใช่หน้าจอ** — รูปแบบเดียวกับ
-             * `writable`/`readonly` ของไฟล์ตั้งค่า · ส่งมาเป็นคู่ตรงข้ามเพราะเทมเพลต
-             * ต้องเลือกแสดงอย่างใดอย่างหนึ่ง และตัวผูกค่าไม่มีเครื่องหมาย "ไม่ใช่"
-             */
-            'can_edit' => $this->ctx->can('domain.manage'),
-            'read_only' => !$this->ctx->can('domain.manage'),
-        ] + $disk);
+        return $this->ok(
+            [
+                'domain' => (string) $domain['domain'],
+                'filename' => $domain['domain'] . '.zone',
+                'record_count' => count($records),
+                'content' => $disk['content'] !== ''
+                    ? $disk['content']
+                    : DnsRecord::toZoneFile((string) $domain['domain'], $records),
+                /*
+                 * **ส่งมาเป็นคู่ตรงข้ามเพราะตัวผูกค่าไม่มีเครื่องหมาย "ไม่ใช่"** — เทมเพลต
+                 * ต้องเลือกแสดงคำเตือน "ยังไม่มีไฟล์" หรือเนื้อไฟล์ อย่างใดอย่างหนึ่ง
+                 */
+                'no_file' => !$disk['on_disk'],
+            ] + $disk,
+            [],
+            [[
+                'type' => 'modal',
+                'action' => 'show',
+                'template' => 'zone-file.html',
+                'title' => (string) $domain['domain'] . '.zone',
+                'titleClass' => 'icon-document',
+            ]],
+        );
+    }
+
+    /**
+     * ช่องแก้เรกคอร์ดทั้งชุด — เปิดใน Modal เหมือนฟอร์มอื่นของหน้านี้
+     *
+     * **ข้อความตั้งต้นเป็นเรกคอร์ดที่ระบบเก็บอยู่ ไม่ใช่ไฟล์ทั้งไฟล์** — ผู้ใช้จึงแก้เฉพาะ
+     * สิ่งที่ตัวเองเป็นเจ้าของ · `SOA`/`NS` ที่ยอดโดเมนถูกสร้างจากค่าตั้งของเครื่องเสมอ
+     * การเอามาแสดงในช่องแก้ไขคือการชวนให้แก้สิ่งที่แก้ไม่ได้ · อยากเห็นไฟล์เต็มให้กด
+     * ปุ่มดูไฟล์ ซึ่งแสดงของจริงบนดิสก์ทั้งไฟล์
+     */
+    public function zoneForm(Request $request): Response
+    {
+        $domain = $this->findDomain($request->paramInt('id'));
+
+        if ($domain === null) {
+            return $this->problem(ApiProblem::NotFound, 'Domain not found');
+        }
+
+        $records = $this->app->db()->all(
+            'SELECT * FROM dns_records WHERE domain_id = :id ORDER BY type, name',
+            ['id' => $domain['id']],
+        );
+
+        return $this->ok(
+            [
+                'form_action' => '/api/v2/domains/' . (int) $domain['id'] . '/zone-file',
+                'domain' => (string) $domain['domain'],
+                'record_count' => count($records),
+                'content' => DnsRecord::toEditableRecords((string) $domain['domain'], $records),
+            ],
+            [],
+            [[
+                'type' => 'modal',
+                'action' => 'show',
+                'template' => 'zone-records-form.html',
+                'title' => '{LNG_Edit all records}',
+                'titleClass' => 'icon-edit',
+            ]],
+        );
     }
 
     /**
