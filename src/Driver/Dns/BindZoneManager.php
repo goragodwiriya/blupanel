@@ -93,6 +93,17 @@ final class BindZoneManager
     }
 
     /**
+     * ที่อยู่ของ zone file ของโดเมนหนึ่ง
+     *
+     * เป็น static เพื่อให้ capability ที่แค่ต้อง "อ่าน" ไฟล์ไม่ต้องสร้างตัวจัดการทั้งตัว
+     * (ซึ่งต้องมี Db) · และทำให้มีที่เดียวที่ตอบว่าไฟล์ของโดเมนหนึ่งอยู่ตรงไหน
+     */
+    public static function zonePath(Config $config, string $domain): string
+    {
+        return $config->dnsZoneDir() . '/' . $domain . '.zone';
+    }
+
+    /**
      * ไฟล์ส่วนเสริมของผู้ดูแล — อยู่ **ข้าง `named.conf.local`** ไม่ใช่ใต้ `/etc/phpcp`
      *
      * เหตุผลเป็นเรื่องสิทธิ์การอ่านล้วน ๆ และวัดจากเครื่องจริงมาแล้ว: named ทิ้งสิทธิ์ root
@@ -158,7 +169,7 @@ final class BindZoneManager
         );
 
         $zoneDir = $this->config->dnsZoneDir();
-        $zonePath = $zoneDir . '/' . $domainName . '.zone';
+        $zonePath = self::zonePath($this->config, $domainName);
 
         $this->executor->makeDirectory($this->executor->path($zoneDir), 0755);
 

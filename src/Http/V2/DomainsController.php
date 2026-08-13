@@ -333,12 +333,96 @@ final class DomainsController extends HostingController
             ['id' => $domain['id']],
         );
 
+        /*
+         * **ไฟล์จริงบนดิสก์มาก่อนเสมอถ้าอ่านได้** — สองอย่างนี้ต่างกันได้ และเวลาที่มัน
+         * ต่างกันคือเวลาที่ผู้ดูแลต้องการคำตอบมากที่สุด ("ทำไมค่าที่เห็นในหน้าจอไม่ตรงกับ
+         * ที่ DNS ตอบจริง") · การแสดงค่าที่ประกอบใหม่ในนาทีนั้นคือการยืนยันความเข้าใจผิด
+         * ด้วยหน้าจอที่ดูน่าเชื่อถือ
+         *
+         * อ่านไม่ได้ก็ไม่ใช่เหตุให้ทั้งหน้าพัง — เครื่องที่ยังไม่เปิด `dns.enabled` ไม่มีไฟล์
+         * นี้เลยตามปกติ และ agent ที่ไม่ตอบต้องไม่ทำให้ดูเรกคอร์ดไม่ได้
+         */
+        $disk = $this->zoneOnDisk($request, (int) $domain['id']);
+
         return $this->ok([
             'domain' => (string) $domain['domain'],
             'filename' => $domain['domain'] . '.zone',
             'record_count' => count($records),
-            'content' => DnsRecord::toZoneFile((string) $domain['domain'], $records),
-        ]);
+            'content' => $disk['content'] !== ''
+                ? $disk['content']
+                : DnsRecord::toZoneFile((string) $domain['domain'], $records),
+            /*
+             * **เซิร์ฟเวอร์เป็นคนตัดสินว่าแก้ได้ไหม ไม่ใช่หน้าจอ** — รูปแบบเดียวกับ
+             * `writable`/`readonly` ของไฟล์ตั้งค่า · ส่งมาเป็นคู่ตรงข้ามเพราะเทมเพลต
+             * ต้องเลือกแสดงอย่างใดอย่างหนึ่ง และตัวผูกค่าไม่มีเครื่องหมาย "ไม่ใช่"
+             */
+            'can_edit' => $this->ctx->can('domain.manage'),
+            'read_only' => !$this->ctx->can('domain.manage'),
+        ] + $disk);
+    }
+
+    /**
+     * สภาพของ zone file ตัวจริงบนดิสก์ — ค่าว่างเมื่ออ่านไม่ได้ด้วยเหตุผลใดก็ตาม
+     *
+     * @return array{content:string,path:string,on_disk:bool,drift:bool,drift_reason:string,source:string,source_label:string}
+     */
+    private function zoneOnDisk(Request $request, int $domainId): array
+    {
+        $missing = [
+            'content' => '',
+            'path' => '',
+            'on_disk' => false,
+            'drift' => false,
+            'drift_reason' => '',
+            'source' => 'generated',
+            'source_label' => $this->t('Built from the records in the panel — this domain has no zone file on the server yet'),
+        ];
+
+        try {
+            $result = $this->agent()->data('dns.zone_read', ['domain_id' => $domainId], $this->ctx->actor($request));
+        } catch (\Throwable) {
+            return $missing;
+        }
+
+        if (!($result['exists'] ?? false)) {
+            return $missing + ['path' => (string) ($result['path'] ?? '')];
+        }
+
+        return [
+            'content' => (string) ($result['content'] ?? ''),
+            'path' => (string) ($result['path'] ?? ''),
+            'on_disk' => true,
+            'drift' => (bool) ($result['drift'] ?? false),
+            'drift_reason' => (string) ($result['drift_reason'] ?? ''),
+            'source' => 'disk',
+            'source_label' => $this->t('The real file BIND9 is serving right now'),
+        ];
+    }
+
+    /**
+     * แทนที่เรกคอร์ดทั้ง zone จากข้อความที่ผู้ดูแลแก้
+     *
+     * **ไม่ได้เขียนไฟล์ที่ส่งมาลงดิสก์** — ข้อความถูกแปลงกลับเป็นเรกคอร์ดในฐานข้อมูล
+     * แล้วระบบเขียนไฟล์เองตามปกติ · ดูเหตุผลที่ `DnsZoneImport`
+     */
+    public function zoneImport(Request $request): Response
+    {
+        $domain = $this->findDomain($request->paramInt('id'));
+
+        if ($domain === null) {
+            return $this->problem(ApiProblem::NotFound, 'Domain not found');
+        }
+
+        $result = $this->agent()->data('dns.zone_import', [
+            'domain_id' => (int) $domain['id'],
+            'content' => $request->payloadString('content'),
+        ], $this->ctx->actor($request));
+
+        return $this->saved(
+            (string) ($result['message'] ?? 'DNS records replaced'),
+            'dnsRecords',
+            is_array($result) ? $result : [],
+        );
     }
 
     /**

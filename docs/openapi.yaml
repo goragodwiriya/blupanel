@@ -1068,11 +1068,14 @@ paths:
         คืนเนื้อหาเป็นข้อความในฟิลด์ `content` ไม่ใช่ไฟล์แนบ — สัญญาของ v2 คือทุก
         endpoint ตอบ JSON · ฝั่งหน้าเว็บสร้างไฟล์ให้ดาวน์โหลดจากข้อความนี้เองได้
 
-        รูปแบบนี้เป็นไฟล์ export อย่างเดียว **ไม่มี SOA/NS และไม่ผ่านการตรวจ
-        `named-checkzone`** — มีไว้ให้คัดลอกไปวางที่ DNS provider ภายนอกเท่านั้น
-        ถ้าต้องการ zone ที่ BIND9 ของเครื่องนี้โหลดได้จริง (มี SOA/NS/serial ครบ)
-        ให้ดูที่ `POST /domains/{id}/dns-records` ซึ่งสั่ง `dns.zone_write` ให้อัตโนมัติ
-        หลังแก้เรกคอร์ดทุกครั้งอยู่แล้วเมื่อเปิด `dns.enabled`
+        **`content` เป็นไฟล์จริงบนดิสก์ถ้าอ่านได้** (`source: disk`) ไม่ใช่ค่าที่ประกอบ
+        ใหม่จากฐานข้อมูล — สองอย่างนี้ต่างกันได้ และเวลาที่ต่างกันคือเวลาที่ผู้ดูแล
+        ต้องการคำตอบมากที่สุด · `drift` บอกว่าไฟล์บนดิสก์ตรงกับเรกคอร์ดในระบบหรือยัง
+        โดยเทียบ**ความหมาย** ไม่ใช่ตัวอักษร (serial ของ SOA เปลี่ยนทุกการเขียน)
+
+        เครื่องที่ยังไม่เปิด `dns.enabled` ไม่มีไฟล์นี้เลยตามปกติ — จะได้
+        `source: generated` ซึ่งเป็นรูปแบบ export ที่ไม่มี SOA/NS สำหรับคัดลอกไปวาง
+        ที่ DNS provider ภายนอก
       parameters:
         - { $ref: "#/components/parameters/DomainId" }
       responses:
@@ -1091,7 +1094,52 @@ paths:
                       filename: { type: string }
                       record_count: { type: integer }
                       content: { type: string }
+                      path: { type: string, description: ที่อยู่ของไฟล์บนเครื่อง }
+                      source: { type: string, enum: [disk, generated] }
+                      source_label: { type: string }
+                      on_disk: { type: boolean }
+                      drift: { type: boolean, description: ไฟล์บนดิสก์ไม่ตรงกับเรกคอร์ดในระบบ }
+                      drift_reason: { type: string }
+                      can_edit: { type: boolean }
+                      read_only: { type: boolean }
         "404": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [domains]
+      summary: แทนที่เรกคอร์ดทั้ง zone จากข้อความแบบ zone file
+      description: |
+        `domain.manage` — สิทธิ์เดียวกับการเพิ่ม/ลบเรกคอร์ดทีละรายการ เพราะเป็นงาน
+        เดียวกันทำทีเดียวหลายรายการ
+
+        **ข้อความที่ส่งมาไม่ได้ถูกเขียนลงดิสก์** — มันถูกแปลงกลับเป็นเรกคอร์ดใน
+        ฐานข้อมูล แล้วระบบเขียนไฟล์เองตามปกติ · ฐานข้อมูลจึงยังเป็นแหล่งความจริงเดียว
+        และไม่มีอะไรหายไปตอนที่มีคนแก้เรกคอร์ดอื่นทีหลัง
+
+        เป็นการ**แทนที่ทั้งชุด**: รายการที่ไม่อยู่ในข้อความคือรายการที่ถูกลบ · จำเป็น
+        สำหรับงานอย่างการย้ายเมลไปผู้ให้บริการอื่น ซึ่งต้องลบ MX เดิมออกพร้อมกับใส่ของใหม่
+
+        `SOA`/`NS` ถูกข้ามให้เพราะระบบสร้างจากค่าตั้งของเครื่องเสมอ · `$INCLUDE`,
+        `$ORIGIN`, `$GENERATE` และเรกคอร์ดชนิดที่ระบบยังไม่รองรับถูกปฏิเสธพร้อมบอก
+        หมายเลขบรรทัด
+      parameters:
+        - { $ref: "#/components/parameters/DomainId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string, description: ข้อความแบบ zone file }
+      responses:
+        "200":
+          description: แทนที่แล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
 
   /dns-records/{id}:
     delete:

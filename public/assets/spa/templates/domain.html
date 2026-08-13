@@ -59,10 +59,38 @@
           </table>
         </div>
       </div>
-      <!-- zone file ประกอบจากค่าที่ผู้ใช้กรอกทั้งหมด — data-text ผูกแบบข้อความเสมอ -->
+      <!--
+        zone file — **ไฟล์จริงบนดิสก์ถ้าอ่านได้** ไม่ใช่ค่าที่ประกอบใหม่จากตาราง
+        สองอย่างนี้ต่างกันได้ และเวลาที่ต่างกันคือเวลาที่ผู้ดูแลต้องการคำตอบมากที่สุด
+
+        `can_edit`/`read_only` มาจากเซิร์ฟเวอร์เป็นคู่ตรงข้าม เพราะตัวผูกค่าไม่มี
+        เครื่องหมาย "ไม่ใช่" และการซ่อนฟอร์มไม่ใช่ด่านความปลอดภัยอยู่แล้ว —
+        capability ตรวจสิทธิ์ของโดเมนนี้ซ้ำที่ชั้นล่างสุดเสมอ
+      -->
       <div class="content-body collapsible" data-zone-panel data-component="api" data-endpoint="/api/v2/domains/{id}/zone-file">
         <h2 data-i18n>Zone file</h2>
-        <pre class="log-view" data-text="content"></pre>
+        <p class="muted mono" data-text="path"></p>
+        <p class="muted" data-text="source_label"></p>
+        <div class="alert alert-warning" data-if="drift" data-text="drift_reason"></div>
+
+        <pre class="log-view" data-if="read_only" data-text="content"></pre>
+
+        <form data-if="can_edit" data-form="zoneFile" action="/api/v2/domains/{id}/zone-file" method="post"
+              data-method="PUT" data-ajax-submit="true" data-reload-table="dnsRecords"
+              data-confirm="Replace every DNS record for this domain with what is written here?">
+          <div class="alert" data-i18n>Editing here replaces every record at once — records you delete from the text are deleted for real. SOA and NS lines are rebuilt from the panel settings, so changes to them are ignored.</div>
+          <fieldset>
+            <div>
+              <span class="form-control">
+                <textarea name="content" rows="20" spellcheck="false" autocomplete="off"
+                          class="mono config-file-editor" data-attr="value:content"></textarea>
+              </span>
+            </div>
+          </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-save" data-loading-text="Checking..." data-i18n>Save and test</button>
+          </fieldset>
+        </form>
       </div>
     </div>
   </main>

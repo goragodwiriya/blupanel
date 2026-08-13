@@ -34,6 +34,8 @@ use Phpcp\Agent\Capability\DiskUsage;
 use Phpcp\Agent\Capability\DnsConfigRead;
 use Phpcp\Agent\Capability\DnsCustomConfig;
 use Phpcp\Agent\Capability\DnsReload;
+use Phpcp\Agent\Capability\DnsZoneImport;
+use Phpcp\Agent\Capability\DnsZoneRead;
 use Phpcp\Agent\Capability\DnsZoneWrite;
 use Phpcp\Agent\Capability\ExpiryCheck;
 use Phpcp\Agent\Capability\BackupCreate;
@@ -191,6 +193,8 @@ final class CapabilityRegistry
             DnsReload::class,
             DnsConfigRead::class,
             DnsCustomConfig::class,
+            DnsZoneRead::class,
+            DnsZoneImport::class,
 
             // ฐานข้อมูล
             DbCreate::class,

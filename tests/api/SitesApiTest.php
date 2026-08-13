@@ -275,6 +275,55 @@ test('ลบโดเมนหลักแยกไม่ได้ ต้อง�
     assertSame(ApiProblem::Conflict->value, $response->errorCode(), 'ต้องเป็นรหัส CONFLICT');
 });
 
+test('zone file ต้องเดินผ่านชั้น HTTP ได้ทั้งอ่านและแทนที่ทั้งชุด', static function (): void {
+    /*
+     * **ยิงผ่านชั้น HTTP จริง ไม่ใช่เรียก capability ตรง ๆ**
+     *
+     * ขอบเขตไฟล์ตั้งค่าของเว็บไซต์เคยล้มด้วย 500 ตั้งแต่คำขอแรกเพราะชนิดของค่าเริ่มต้นใน
+     * `Request::get()` — ความผิดพลาดในชั้นบาง ๆ ระหว่าง controller กับ agent ที่เทสต์
+     * ระดับ capability มองไม่เห็นเลยสักตัว
+     *
+     * **agent ไม่ได้รันในแท่นทดสอบ** จึงตรวจได้ถึงแค่ว่าคำขอเดินไปถึง agent (503) หรือ
+     * สำเร็จทั้งเส้น (200) · สิ่งที่ต้องไม่เกิดคือ 500
+     */
+    $harness = sitesLogin('siteadmin', 'Sites-Admin-Password-11');
+
+    $domainId = (int) $harness->app->db()->value(
+        "SELECT id FROM domains WHERE domain = 'owned.example.com'",
+        [],
+        0,
+    );
+
+    /*
+     * การอ่านต้องไม่พังเมื่อ agent ไม่ตอบ — เครื่องที่ยังไม่เปิด `dns.enabled` ไม่มีไฟล์
+     * zone อยู่เลยตามปกติ และนั่นต้องไม่ทำให้หน้าดูเรกคอร์ดใช้ไม่ได้ทั้งหน้า
+     */
+    $view = $harness->request('GET', '/api/v2/domains/' . $domainId . '/zone-file');
+
+    assertSame(200, $view->status, 'อ่าน zone file ต้องได้ 200 แม้ agent จะไม่ตอบ · ได้ ' . $view->status);
+    assertTrue(($view->data('content') ?? '') !== '', 'ต้องมีเนื้อไฟล์ให้ดูเสมอ');
+    assertSame('generated', $view->data('source'), 'ไม่มีไฟล์บนดิสก์ต้องบอกตามจริงว่าเป็นค่าที่ประกอบขึ้น');
+    assertSame(true, $view->data('can_edit'), 'ผู้ที่มีสิทธิ์แก้ต้องได้ธงว่าแก้ได้');
+    assertSame(false, $view->data('read_only'), 'ธงคู่ตรงข้ามต้องสอดคล้องกันเสมอ');
+
+    $save = $harness->request('PUT', '/api/v2/domains/' . $domainId . '/zone-file', [
+        'content' => "@ IN A 203.0.113.5\n",
+    ]);
+
+    assertTrue(
+        in_array($save->status, [200, 503], true),
+        'บันทึกต้องได้ 200 หรือ 503 (ไม่มี agent ในแท่นทดสอบ) · ได้ ' . $save->status
+            . ' ' . ($save->json['error']['message'] ?? ''),
+    );
+
+    // โดเมนที่ไม่มีอยู่ต้องได้ 404 ไม่ใช่ 500 — ด่านนี้อยู่ก่อนเรียก agent
+    assertSame(
+        404,
+        $harness->request('PUT', '/api/v2/domains/999999/zone-file', ['content' => ''])->status,
+        'โดเมนที่ไม่มีอยู่ต้องได้ 404',
+    );
+});
+
 test('เพิ่ม DNS record ตรวจค่าตามชนิดจริง', static function (): void {
     $harness = sitesLogin('siteadmin', 'Sites-Admin-Password-11');
 
