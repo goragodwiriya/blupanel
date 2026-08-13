@@ -54,6 +54,59 @@ test('คลังคำของหน้าเว็บกับของเ�
     assertSame('ไม่พบเว็บไซต์ที่ระบุ', $translator->get('Website not found'), 'ต้องอ่านคลังคำเดียวกันได้');
 });
 
+test('ทุกข้อความบนหน้าจอต้องมีคำแปลไทย', static function (): void {
+    /*
+     * เทสต์เดิมตรึงเฉพาะข้อความที่ **controller** ส่งออกไป — แต่ข้อความส่วนใหญ่ที่ผู้ใช้เห็น
+     * อยู่ใน**เทมเพลต** และไม่มีอะไรตรวจเลย · ตอนไล่ตรวจทั้งโปรเจกต์เจอค้างอยู่ 50 ข้อความ
+     * กระจายใน 9 หน้า ซึ่งขึ้นเป็นภาษาอังกฤษปนอยู่กลางหน้าจอภาษาไทยมาตลอดโดยไม่มีใครเห็น
+     *
+     * ครอบสองที่ที่ผู้ใช้อ่านจริง: ข้อความในธาตุที่มี `data-i18n` และข้อความยืนยันก่อน
+     * ทำคำสั่ง (`data-confirm`) ซึ่งเป็นจุดที่ภาษาผิดแล้วอันตรายที่สุด เพราะคนกำลังจะกด
+     * ยืนยันสิ่งที่ตัวเองอ่านไม่ออก
+     *
+     * `{LNG_...}` เป็นกลไกคนละตัว (แทนค่าฝั่งเซิร์ฟเวอร์) จึงข้ามไป
+     */
+    $lang = json_decode(
+        (string) file_get_contents(PHPCP_ROOT . '/public/assets/spa/lang/th.json'),
+        true,
+    );
+
+    assertTrue(is_array($lang), 'คลังคำต้องอ่านเป็น JSON ได้');
+
+    $missing = [];
+
+    foreach (glob(PHPCP_ROOT . '/public/assets/spa/templates/*.html') ?: [] as $file) {
+        $html = (string) file_get_contents($file);
+        $name = basename($file);
+
+        if (preg_match_all('~<([a-z0-9]+)[^>]*\bdata-i18n\b[^>]*>(.*?)</\1>~is', $html, $matches, PREG_SET_ORDER)) {
+            foreach ($matches as $hit) {
+                $text = trim((string) preg_replace('~\s+~', ' ', strip_tags($hit[2])));
+
+                if ($text === '' || str_contains($text, '{LNG_') || str_contains($text, '{{')) {
+                    continue;
+                }
+
+                if (!array_key_exists($text, $lang)) {
+                    $missing[] = "{$name}: {$text}";
+                }
+            }
+        }
+
+        if (preg_match_all('~data-confirm="([^"]+)"~', $html, $confirms)) {
+            foreach ($confirms[1] as $text) {
+                $text = html_entity_decode($text);
+
+                if (!array_key_exists($text, $lang)) {
+                    $missing[] = "{$name}: {$text}";
+                }
+            }
+        }
+    }
+
+    assertSame([], $missing, "ข้อความบนหน้าจอที่ยังไม่มีคำแปลไทย:\n  " . implode("\n  ", $missing));
+});
+
 test('ภาษาอังกฤษไม่ต้องมีคลังคำ — ข้อความในโค้ดคือคำตอบอยู่แล้ว', static function (): void {
     $translator = Translator::load('en', PHPCP_ROOT . '/public/assets/spa/lang');
 
