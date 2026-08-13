@@ -38,6 +38,7 @@
         {key: 'files', label: 'File Manager', url: '/filemanager', icon: 'icon-folder', permission: 'file.view', newTab: true},
         {key: 'cron', label: 'Cron Jobs', url: '/cron-jobs', icon: 'icon-clock', permission: 'cron.view'},
         {key: 'mail', label: 'Mailboxes', url: '/mailboxes', icon: 'icon-email', permission: 'mail.view'},
+        {key: 'mailqueue', label: 'Mail queue', url: '/mail-queue', icon: 'icon-send', permission: 'settings.manage'},
         {key: 'backups', label: 'Backups', url: '/backups', icon: 'icon-stack', permission: 'backup.view'}
       ]
     },
@@ -447,6 +448,29 @@
   // · exportCsv · print — อย่าเขียนใหม่
   // ---------------------------------------------------------------------------
   const events = window.Now.getManager('eventsystem') || window.EventSystemManager;
+
+  /**
+   * เติมค่าสำเร็จรูปลงช่องกรอก — ปุ่มตัวอย่างที่กดแล้วได้ค่าที่ถูกต้องทันที
+   *
+   *   data-fill-target   id ของช่องที่จะเติม
+   *   data-fill-value    ค่าที่จะใส่
+   *
+   * มีไว้สำหรับค่าที่**เขียนเองถูกยาก แต่ค่าที่ใช้จริงมีไม่กี่แบบ** เช่นตารางเวลาแบบ cron
+   * (`0 3 * * *`) · ผู้ใช้ที่จำรูปแบบไม่ได้ยังกดเลือกได้ ส่วนคนที่รู้ก็พิมพ์เองได้เหมือนเดิม
+   * เพราะช่องยังเป็นข้อความอิสระ ไม่ได้ถูกแทนที่ด้วยรายการตัวเลือกตายตัว
+   *
+   * ยิง `input` ต่อให้ด้วย — ตัวตรวจความถูกต้องกับการผูกค่าของเฟรมเวิร์กฟังเหตุการณ์นี้
+   * การตั้ง `value` เฉย ๆ ไม่ทำให้เกิดเหตุการณ์ใด ๆ ตามมาตรฐาน DOM
+   */
+  events.registerAction('fillField', (event, element) => {
+    const field = document.getElementById(element.dataset.fillTarget || '');
+
+    if (!field) return;
+
+    field.value = element.dataset.fillValue || '';
+    field.dispatchEvent(new Event('input', {bubbles: true}));
+    field.focus();
+  });
 
   /** ส่งสัญญาณให้ ApiComponent ที่ตั้ง `data-refresh-event` ไว้ดึงข้อมูลรอบใหม่ */
   events.registerAction('emit', (event, element) => {

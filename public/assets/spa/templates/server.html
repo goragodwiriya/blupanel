@@ -36,6 +36,26 @@
           <div class="stat-value" data-text="uptime.seconds | duration">—</div>
           <div class="stat-sub" data-text="hostname"></div>
         </div>
+        <!--
+          Swap — ค่านี้ถูกเก็บมาตั้งแต่แรกใน system.metrics แต่ไม่เคยแสดงที่ไหนเลย
+
+          เป็นตัวเลขที่ตอบคำถาม "ต้องเพิ่มแรมไหม" ได้ตรงที่สุด: แรมที่ดูเต็มอาจเป็นแค่
+          แคชของดิสก์ซึ่งไม่ใช่ปัญหา แต่ swap ที่ถูกใช้จริงแปลว่าเครื่องเอาหน่วยความจำ
+          ไปวางบนดิสก์แล้ว — ช้ากว่ากันหลายร้อยเท่าและเป็นสัญญาณว่าแรมไม่พอจริง ๆ
+          · เครื่องที่เปิดเมล (rspamd ~200MB) มักเป็นเครื่องที่ชนเพดานก่อนเพื่อน
+        -->
+        <div class="block3 large6 stat-card" data-show="memory.swap_total > 0">
+          <div class="stat-header icon-stack"><span data-i18n>Swap</span></div>
+          <div class="stat-value" data-text="memory.swap_used | bytes">—</div>
+          <div class="meter"><span data-style="width: {{memory.swap_percent}}%"></span></div>
+          <div class="stat-sub" data-text="memory.swap_total | bytes"></div>
+        </div>
+        <!-- ไม่มี swap เลยก็เป็นข้อมูล ไม่ใช่ช่องว่าง — เครื่องที่ไม่มีจะโดน OOM kill ทันทีที่แรมหมด -->
+        <div class="block3 large6 stat-card" data-show="memory.swap_total === 0">
+          <div class="stat-header icon-stack"><span data-i18n>Swap</span></div>
+          <div class="stat-value" data-i18n>Not configured</div>
+          <div class="stat-sub" data-i18n>Processes are killed when memory runs out</div>
+        </div>
       </div>
       <!--
         กราฟย้อนหลัง — PLAN-V2 เฟส E6
@@ -51,10 +71,10 @@
           -->
           <span class="comment" data-metrics-updated hidden></span>
           <div class="btn-group" data-metrics-ranges>
-            <button type="button" class="btn small is-active" data-range="24h" data-i18n>24 hours</button>
-            <button type="button" class="btn small" data-range="7d" data-i18n>7 days</button>
-            <button type="button" class="btn small" data-range="30d" data-i18n>30 days</button>
-            <button type="button" class="btn small" data-range="1y" data-i18n>1 year</button>
+            <button type="button" class="btn small is-active" data-range="24h" data-i18n>24 {LNG_hours}</button>
+            <button type="button" class="btn small" data-range="7d" data-i18n>7 {LNG_days}</button>
+            <button type="button" class="btn small" data-range="30d" data-i18n>30 {LNG_days}</button>
+            <button type="button" class="btn small" data-range="1y" data-i18n>1 {LNG_year}</button>
           </div>
         </div>
         <p class="comment" data-metrics-empty hidden data-i18n>No data yet — the collector runs every minute, so the first points appear shortly after installation.</p>

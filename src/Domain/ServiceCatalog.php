@@ -20,6 +20,7 @@ final class ServiceCatalog
     public const KIND_DATABASE = 'database';
     public const KIND_SCHEDULER = 'scheduler';
     public const KIND_DNS = 'dns';
+    public const KIND_MAIL = 'mail';
 
     /** เวอร์ชัน PHP ที่ระบบรู้จัก เรียงจากใหม่ไปเก่า */
     public const PHP_VERSIONS = ['8.5', '8.4', '8.3', '8.2', '8.1', '8.0', '7.4'];
@@ -57,6 +58,24 @@ final class ServiceCatalog
         $catalog['mariadb'] = ['label' => 'MariaDB', 'kind' => self::KIND_DATABASE, 'critical' => true];
         $catalog['mysql'] = ['label' => 'MySQL', 'kind' => self::KIND_DATABASE, 'critical' => true];
         $catalog['cron'] = ['label' => 'Cron', 'kind' => self::KIND_SCHEDULER, 'critical' => false];
+
+        /*
+         * เมล (PLAN-MAIL) — สามเดมอนนี้เพิ่มเข้ามาในเฟส M1–M3 แต่ไม่เคยโผล่ในหน้าบริการเลย
+         * ผู้ดูแลจึงมองไม่เห็นว่ามันมีอยู่ ไม่รู้ว่าตัวไหนทำงาน และสั่งเริ่มใหม่จากหน้าเว็บไม่ได้
+         *
+         * **critical ไม่เท่ากันโดยตั้งใจ:**
+         *   postfix  จริงทุกเครื่อง — เป็นทางออกของเมลแจ้งเตือนด้วย ไม่ใช่แค่เมลโฮสติ้ง
+         *            ดับเมื่อไหร่แปลว่าข้อความเตือนทุกฉบับส่งไม่ออกและไม่มีใครรู้
+         *   dovecot  ติดมากับ postfix ทุกเครื่อง แต่มีความหมายเฉพาะเครื่องที่เปิดเมลโฮสติ้ง
+         *   rspamd   เมลยังส่งได้ปกติเมื่อมันล่ม แค่ไม่มีลายเซ็น DKIM
+         *            (`milter_default_action = accept` — ดู hosting.cf.tpl)
+         *
+         * สองตัวหลังจึงไม่ปลุกใครกลางดึกบนเครื่องที่ไม่ได้ทำเมลโฮสติ้ง — ยังเห็นสถานะ
+         * และสั่งงานได้จากหน้าบริการเหมือนกัน
+         */
+        $catalog['postfix'] = ['label' => 'Postfix (SMTP)', 'kind' => self::KIND_MAIL, 'critical' => true];
+        $catalog['dovecot'] = ['label' => 'Dovecot (IMAP/POP3)', 'kind' => self::KIND_MAIL, 'critical' => false];
+        $catalog['rspamd'] = ['label' => 'rspamd (สแปม/DKIM)', 'kind' => self::KIND_MAIL, 'critical' => false];
 
         // กันพลาด: ต่อให้มีใครเผลอเพิ่ม unit ของ panel ลงในรายการข้างบน ก็ถูกตัดทิ้งที่นี่
         return array_filter(

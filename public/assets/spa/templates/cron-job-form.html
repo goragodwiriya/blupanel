@@ -45,6 +45,27 @@
                placeholder="0 3 * * *" autocomplete="off" data-attr="value:schedule">
       </span>
       <div class="comment" data-i18n>Five fields in cron format: minute hour day month weekday</div>
+      <!--
+        ตัวเลือกที่ใช้บ่อย — กดแล้วเติมให้ทันที
+
+        รูปแบบ cron เขียนเองผิดง่ายและผิดแบบเงียบ ๆ (`0 0 * * *` กับ `0 * * * *` ต่างกัน
+        24 เท่า) แต่ค่าที่คนใช้จริงมีไม่กี่แบบ · ปุ่มพวกนี้ทำหน้าที่เป็นทั้งตัวเลือกและ
+        ตัวอย่างในตัวเดียว โดยที่ช่องยังพิมพ์เองได้เหมือนเดิม
+      -->
+      <div class="header-actions" style="margin-top:.5rem">
+        <button type="button" class="btn small" data-action="click.prevent:fillField"
+                data-fill-target="cj_schedule" data-fill-value="*/5 * * * *" data-i18n>Every 5 minutes</button>
+        <button type="button" class="btn small" data-action="click.prevent:fillField"
+                data-fill-target="cj_schedule" data-fill-value="0 * * * *" data-i18n>Hourly</button>
+        <button type="button" class="btn small" data-action="click.prevent:fillField"
+                data-fill-target="cj_schedule" data-fill-value="0 0 * * *" data-i18n>Daily at midnight</button>
+        <button type="button" class="btn small" data-action="click.prevent:fillField"
+                data-fill-target="cj_schedule" data-fill-value="0 2 * * *" data-i18n>Daily at 2 AM</button>
+        <button type="button" class="btn small" data-action="click.prevent:fillField"
+                data-fill-target="cj_schedule" data-fill-value="0 3 * * 0" data-i18n>Weekly on Sunday</button>
+        <button type="button" class="btn small" data-action="click.prevent:fillField"
+                data-fill-target="cj_schedule" data-fill-value="0 4 1 * *" data-i18n>Monthly on the 1st</button>
+      </div>
     </div>
     <div>
       <label for="cj_command" data-i18n>Command</label>

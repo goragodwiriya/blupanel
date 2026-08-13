@@ -120,7 +120,7 @@ final class SystemMetrics implements Capability
         return max(1, $count);
     }
 
-    /** @return array{total:int,used:int,free:int,percent:float,swap_total:int,swap_used:int} */
+    /** @return array{total:int,used:int,free:int,percent:float,swap_total:int,swap_used:int,swap_percent:float} */
     private function memory(Executor $executor): array
     {
         $values = [];
@@ -137,6 +137,7 @@ final class SystemMetrics implements Capability
 
         $swapTotal = $values['SwapTotal'] ?? 0;
         $swapFree = $values['SwapFree'] ?? 0;
+        $swapUsed = max(0, $swapTotal - $swapFree);
 
         return [
             'total' => $total,
@@ -144,7 +145,13 @@ final class SystemMetrics implements Capability
             'free' => $available,
             'percent' => $total > 0 ? round($used / $total * 100, 1) : 0.0,
             'swap_total' => $swapTotal,
-            'swap_used' => max(0, $swapTotal - $swapFree),
+            'swap_used' => $swapUsed,
+            /*
+             * คิดสัดส่วนที่นี่ ไม่ใช่ให้หน้าจอหารเอง — เครื่องที่ไม่มี swap เลยมี
+             * `swap_total = 0` ซึ่งการหารด้วยศูนย์ในเทมเพลตได้ NaN แล้วแถบวัดกว้างเพี้ยน
+             * โดยไม่มีอะไรฟ้อง · เครื่องแบบนั้นมีจริงและพบบ่อย (คอนเทนเนอร์แทบทุกตัว)
+             */
+            'swap_percent' => $swapTotal > 0 ? round($swapUsed / $swapTotal * 100, 1) : 0.0,
         ];
     }
 
