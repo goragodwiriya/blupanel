@@ -8,6 +8,7 @@ use Phpcp\Agent\Capability;
 use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Domain\SettingsRepository;
+use Phpcp\Driver\PanelCertificate;
 use Phpcp\Driver\Mail\MailManager;
 use Phpcp\Driver\Template;
 
@@ -49,9 +50,20 @@ final class SettingsGet implements Capability
         $settings = new SettingsRepository($context->db);
         $mail = new MailManager(new Template($context->config->paths->templates()));
 
+        /*
+         * สถานะใบรับรองของหน้าจัดการอ่านจาก**ไฟล์จริง** ไม่ใช่จากค่าที่บันทึกไว้ —
+         * สองอย่างนี้ต่างกันได้ถ้ามีคนสลับไฟล์ด้วยมือ และเวลาที่ต่างกันคือเวลาที่ผู้ดูแล
+         * ต้องการคำตอบมากที่สุด
+         */
+        $panelCert = (new PanelCertificate())->status(
+            $executor,
+            $settings->get(\Phpcp\Agent\Capability\PanelCertSet::SETTING),
+        );
+
         return [
             'values' => SettingsRepository::mask($settings->all()),
             'mail_status' => $mail->status($executor),
+            'panel_cert' => $panelCert,
         ];
     }
 }

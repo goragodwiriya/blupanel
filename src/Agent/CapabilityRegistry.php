@@ -31,6 +31,7 @@ use Phpcp\Agent\Capability\CustomerSiteAttach;
 use Phpcp\Agent\Capability\DiskQuotaCheck;
 use Phpcp\Agent\Capability\MetricsRecord;
 use Phpcp\Agent\Capability\DiskUsage;
+use Phpcp\Agent\Capability\PanelCertSet;
 use Phpcp\Agent\Capability\DnsConfigRead;
 use Phpcp\Agent\Capability\DnsCustomConfig;
 use Phpcp\Agent\Capability\DnsReload;
@@ -195,6 +196,7 @@ final class CapabilityRegistry
             DnsCustomConfig::class,
             DnsZoneRead::class,
             DnsZoneImport::class,
+            PanelCertSet::class,
 
             // ฐานข้อมูล
             DbCreate::class,

@@ -56,6 +56,44 @@
 
       <div class="content-body">
         <!--
+          ใบรับรองของหน้าจัดการเอง — คนละเรื่องกับหน้า SSL ซึ่งจัดการใบของเว็บไซต์
+
+          สถานะมาจากการอ่าน**ไฟล์จริง**ที่เว็บเซิร์ฟเวอร์ใช้อยู่ ไม่ใช่จากค่าที่บันทึกไว้ ·
+          `self_signed` กับ `hook` ส่งมาจากเซิร์ฟเวอร์เป็นบูลีน เพราะตัวผูกค่าไม่มี
+          เครื่องหมาย "ไม่ใช่" และเงื่อนไขที่ตีความไม่ได้จะทำให้ธาตุ "แสดง" เสมอ
+        -->
+        <form data-form="panelCert" action="/api/v2/settings/panel-certificate" method="post"
+              data-ajax-submit="true" data-load-api="/api/v2/settings" data-emit-event="phpcp:reload"
+              data-confirm="Switch the panel to this certificate? If it does not work the panel restores the old one automatically.">
+          <fieldset>
+            <legend class="icon-lock" data-i18n>Panel certificate</legend>
+            <div class="comment" data-i18n>The certificate the management page itself uses — not the ones for hosted websites. Pick a domain that already has a certificate and the panel keeps it up to date when it renews.</div>
+
+            <div class="alert alert-warning" data-if="panel_cert.self_signed" data-i18n>The panel is using a self-signed certificate, so every browser shows a warning. Clicking through that warning every day trains you to ignore the one warning that will matter.</div>
+
+            <div>
+              <label data-i18n>Certificate in use now</label>
+              <p class="mono" data-text="panel_cert.subject"></p>
+              <div class="comment"><span data-i18n>Issued by</span> <span data-text="panel_cert.issuer"></span></div>
+            </div>
+
+            <div>
+              <label for="panel_cert_domain" data-i18n>Use the certificate of this domain</label>
+              <span class="form-control icon-lock">
+                <input type="text" id="panel_cert_domain" name="domain" autocomplete="off" spellcheck="false"
+                       class="mono" data-attr="value:panel_cert.domain">
+              </span>
+              <div class="comment" data-i18n>Leave blank to go back to the self-signed certificate. The domain must already have a certificate — issue one from its website page first.</div>
+            </div>
+          </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-lock" data-loading-text="Checking..." data-i18n>Apply certificate</button>
+          </fieldset>
+        </form>
+      </div>
+
+      <div class="content-body">
+        <!--
           DNS — ค่าพวกนี้เคยอยู่ใน config.php ซึ่งแปลว่าต้อง ssh เข้าไปแก้ไฟล์เอง
           ทั้งที่เป็นค่าที่ผู้ดูแลต้องตั้งตั้งแต่วันแรกที่จะใช้ DNS ของเครื่องนี้
         -->

@@ -33,6 +33,16 @@ final class SettingsRepository
      * @var array<string,string>
      */
     private const KEYS = [
+        /*
+         * ใบรับรองของ **หน้าจัดการเอง** — เก็บแค่ชื่อโดเมนที่ผูกอยู่ (ว่าง = ใบที่เซ็นเอง)
+         *
+         * **แก้จากฟอร์มตั้งค่าทั่วไปไม่ได้โดยตั้งใจ** เหมือน `webserver.*` — การเปลี่ยนค่านี้
+         * ต้องคัดลอกไฟล์ ตรวจคู่กุญแจ ผ่านตัวตรวจของ Apache และตั้งเวลาถอนคืน ซึ่งทำได้
+         * ที่ `panel.cert_set` เท่านั้น · ถ้าเปิดให้เขียนตรง ๆ ค่าจะเปลี่ยนโดยไฟล์ไม่เปลี่ยนตาม
+         * แล้วหน้าจอจะรายงานสิ่งที่ไม่ตรงกับความจริง
+         */
+        'panel.cert_domain' => 'string',
+
         // การแจ้งเตือนผ่าน Telegram
         'notify.telegram.enabled' => 'bool',
         'notify.telegram.token' => 'secret',
@@ -136,7 +146,8 @@ final class SettingsRepository
     {
         return array_filter(
             self::keys(),
-            static fn (string $key): bool => !str_starts_with($key, 'webserver.'),
+            static fn (string $key): bool => !str_starts_with($key, 'webserver.')
+                && $key !== 'panel.cert_domain',
             ARRAY_FILTER_USE_KEY,
         );
     }

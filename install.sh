@@ -679,9 +679,21 @@ if [ ! -f "$CONF_DIR/tls/panel.crt" ]; then
     -addext "extendedKeyUsage=serverAuth" >/dev/null 2>&1
   chmod 600 "$CONF_DIR/tls/panel.key"
   chmod 644 "$CONF_DIR/tls/panel.crt"
-  ok "สร้าง self-signed certificate สำหรับ $PANEL_HOST (เปลี่ยนเป็น Let's Encrypt ได้ทีหลังใน UI)"
+  ok "สร้าง self-signed certificate สำหรับ $PANEL_HOST (เปลี่ยนเป็น Let's Encrypt ได้ทีหลังในหน้าตั้งค่า)"
 else
   ok "มีใบรับรองอยู่แล้ว"
+fi
+
+# สำเนาของใบที่เซ็นเอง — **ทางกลับที่ต้องมีอยู่จริงเสมอ**
+#
+# หน้าตั้งค่าเปลี่ยนใบของหน้าจัดการเป็นใบจริงได้ และเมื่อเปลี่ยนแล้วไฟล์ panel.crt จะ
+# กลายเป็นใบของ Let's Encrypt · ถ้าไม่มีสำเนานี้ การกลับไปใช้ใบที่เซ็นเองจะต้องสร้างใหม่
+# ตอนที่ทุกอย่างพังแล้ว ซึ่งเป็นเวลาที่แย่ที่สุดที่จะต้องทำอะไรที่ซับซ้อน
+if [ ! -f "$CONF_DIR/tls/panel.selfsigned.crt" ] && [ -f "$CONF_DIR/tls/panel.crt" ]; then
+  cp "$CONF_DIR/tls/panel.crt" "$CONF_DIR/tls/panel.selfsigned.crt"
+  cp "$CONF_DIR/tls/panel.key" "$CONF_DIR/tls/panel.selfsigned.key"
+  chmod 644 "$CONF_DIR/tls/panel.selfsigned.crt"
+  chmod 600 "$CONF_DIR/tls/panel.selfsigned.key"
 fi
 
 # ---------------------------------------------------------------------------

@@ -52,6 +52,8 @@ final class Application
                 'setup' => $this->setup($args),
                 'db:migrate' => $this->migrate(),
                 'sites:rebuild' => $this->sitesRebuild(),
+                'panel:cert' => $this->panelCert($args),
+                'panel:cert-sync' => $this->panelCertSync(),
                 'mail:enable' => $this->mailDomain($args, true),
                 'mail:disable' => $this->mailDomain($args, false),
                 'mail:box-add' => $this->mailBoxAdd($args),
@@ -108,6 +110,8 @@ final class Application
                 'sites:rebuild' => 'สร้างไฟล์ตั้งค่าของทุกเว็บไซต์ใหม่ (หลังเปลี่ยนค่า webserver)'
             ],
             'เมล (กล่องจดหมายจริงบนเครื่องนี้)' => [
+                'panel:cert' => 'ใบรับรองของหน้าจัดการ — `phpcp panel:cert panel.example.com` หรือ `--self-signed`',
+                'panel:cert-sync' => 'คัดลอกใบที่เพิ่งต่ออายุมาให้หน้าจัดการ (certbot เรียกเอง)',
                 'mail:enable' => 'เปิดเมลของโดเมน — `phpcp mail:enable example.com`',
                 'mail:disable' => 'ปิดเมลของโดเมน (กล่องยังอยู่ แต่ไม่รับเมล)',
                 'mail:box-add' => 'สร้างกล่อง — `phpcp mail:box-add me@example.com [--quota=1024] [--password=...]`',
@@ -876,6 +880,59 @@ final class Application
      * @param array<string,mixed> $payload
      * @param string $secretKey คีย์ในผลลัพธ์ที่ต้องแสดงในกรอบ "ครั้งเดียวเท่านั้น"
      */
+    /**
+     * เปลี่ยนใบรับรองของหน้าจัดการจากบรรทัดคำสั่ง
+     *
+     * **ต้องมีทางนี้เสมอ** — ใบที่ผิดทำให้เบราว์เซอร์ปฏิเสธการเชื่อมต่อทั้งหมด แล้วหน้าเว็บ
+     * ซึ่งเป็นที่เดียวที่จะแก้ได้ก็เข้าไม่ได้ไปด้วย · `--self-signed` คือทางกลับที่ใช้ได้
+     * แม้ตอนที่ทุกอย่างพังแล้ว
+     *
+     * @param list<string> $args
+     */
+    private function panelCert(array $args): int
+    {
+        $selfSigned = in_array('--self-signed', $args, true);
+        $domain = $selfSigned ? '' : $this->firstValue($args);
+
+        if (!$selfSigned && $domain === '') {
+            $this->out->fail(
+                'ต้องระบุโดเมน — `phpcp panel:cert panel.example.com` '
+                . 'หรือ `phpcp panel:cert --self-signed` เพื่อกลับไปใช้ใบที่เซ็นเอง',
+            );
+
+            return 1;
+        }
+
+        /*
+         * ไม่ตั้งเวลาถอนคืนเมื่อสั่งจากบรรทัดคำสั่ง — กลไกนั้นมีไว้กันคนที่ทำงานผ่านหน้าเว็บ
+         * ถูกตัดขาดจากเครื่องตัวเอง · คนที่สั่งจากตรงนี้อยู่บนเครื่องแล้วและแก้กลับได้ทันที
+         * การคืนค่าอัตโนมัติจึงกลายเป็นความประหลาดใจที่ไม่มีประโยชน์
+         */
+        return $this->runMailCapability('panel.cert_set', ['domain' => $domain, 'window' => 0]);
+    }
+
+    /**
+     * คัดลอกใบที่เพิ่งต่ออายุมาให้หน้าจัดการ — certbot เรียกผ่าน deploy hook
+     *
+     * อ่านจากค่าตั้งว่าตอนนี้ผูกกับโดเมนไหน แล้วทำซ้ำสิ่งที่เคยทำ · ไม่ผูกกับโดเมนไหนอยู่
+     * ก็จบเงียบ ๆ ด้วยรหัส 0 เพราะ hook ที่คืนค่าไม่เป็นศูนย์ทำให้ certbot รายงานว่าการ
+     * ต่ออายุล้มเหลวทั้งที่ใบใหม่ออกมาเรียบร้อยแล้ว
+     */
+    private function panelCertSync(): int
+    {
+        $app = App::boot();
+        $domain = (new \Phpcp\Domain\SettingsRepository($app->db()))
+            ->get(\Phpcp\Agent\Capability\PanelCertSet::SETTING);
+
+        if ($domain === '') {
+            $this->out->info('หน้าจัดการยังใช้ใบที่เซ็นเอง — ไม่มีอะไรต้องคัดลอก');
+
+            return 0;
+        }
+
+        return $this->runMailCapability('panel.cert_set', ['domain' => $domain, 'window' => 0]);
+    }
+
     private function runMailCapability(string $capability, array $payload, string $secretKey = ''): int
     {
         $app = App::boot();

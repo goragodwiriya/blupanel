@@ -65,10 +65,31 @@ test('คีย์ที่ไม่อยู่ในรายการต้�
     // ถ้าหน้าเว็บเขียนได้ ช่องโหว่เดียวในหน้าตั้งค่าจะกลายเป็นการรันโค้ดทันที
     $allowedPrefixes = ['notify.', 'mail.', 'dns.', 'webserver.'];
 
+    /*
+     * ข้อยกเว้นระบุเป็น**คีย์เต็ม ไม่ใช่คำนำหน้า** — เปิด `panel.` ทั้งหมดแปลว่าคีย์
+     * อันตรายที่จะเพิ่มในอนาคต (`panel.port`, `panel.ip_allowlist`) ผ่านเข้ามาได้เงียบ ๆ
+     * · `panel.cert_domain` ปลอดภัยเพราะไม่ได้ถูกอ่านตอนบูต เป็นแค่บันทึกว่าไฟล์ใบรับรอง
+     * ที่วางอยู่มาจากโดเมนไหน และ `webEditableKeys()` กันไม่ให้เขียนผ่านฟอร์มตั้งค่าทั่วไป
+     * ต้องผ่าน `panel.cert_set` ที่ตรวจคู่กุญแจและตั้งเวลาถอนคืนให้เท่านั้น
+     */
+    $allowedKeys = ['panel.cert_domain'];
+
     foreach (array_keys($keys) as $key) {
+        if (in_array($key, $allowedKeys, true)) {
+            continue;
+        }
+
         assertTrue(
             array_filter($allowedPrefixes, static fn (string $p): bool => str_starts_with($key, $p)) !== [],
             "คีย์ {$key} อยู่นอกขอบเขตที่หน้าเว็บควรแก้ได้",
+        );
+    }
+
+    // ข้อยกเว้นต้องแก้ผ่านฟอร์มตั้งค่าทั่วไปไม่ได้จริง ไม่ใช่แค่ได้รับการยกเว้นในเทสต์นี้
+    foreach ($allowedKeys as $key) {
+        assertTrue(
+            !isset(SettingsRepository::webEditableKeys()[$key]),
+            "คีย์ {$key} ต้องเขียนผ่านฟอร์มตั้งค่าทั่วไปไม่ได้",
         );
     }
 });

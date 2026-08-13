@@ -1680,6 +1680,44 @@ paths:
                   data: { type: object }
                   actions: { type: array, items: { type: object } }
 
+  /settings/panel-certificate:
+    post:
+      tags: [settings]
+      summary: เปลี่ยนใบรับรองของ **หน้าจัดการเอง**
+      description: |
+        `settings.manage` · คนละเรื่องกับ `/certificates` ซึ่งจัดการใบของ*เว็บไซต์*
+
+        คัดลอกใบของโดเมนที่ระบุจาก `/etc/letsencrypt/live/<domain>/` ไปเป็นใบที่เว็บเซิร์ฟเวอร์
+        ของหน้าจัดการใช้ แล้วติดตั้ง deploy hook ให้ certbot คัดลอกซ้ำทุกครั้งที่ต่ออายุ ·
+        ส่ง `domain` เป็นค่าว่างเพื่อกลับไปใช้ใบที่เซ็นเอง
+
+        **คืนค่าอัตโนมัติถ้าไม่กดยืนยัน** เหมือนกฎไฟร์วอลล์และค่าตั้ง SSH — ใบที่ผิดทำให้
+        เบราว์เซอร์ปฏิเสธการเชื่อมต่อทั้งหมด แล้วหน้าเว็บซึ่งเป็นที่เดียวที่จะแก้ได้ก็เข้า
+        ไม่ได้ไปด้วย · `window: 0` = ไม่ตั้งเวลาถอนคืน (ใช้จากบรรทัดคำสั่งเท่านั้น)
+
+        ก่อนสลับจะตรวจว่าใบกับกุญแจเป็นคู่กันจริง ยังไม่หมดอายุ และผ่านตัวตรวจของ Apache ·
+        ไม่ผ่านข้อใดข้อหนึ่ง = ไม่มีอะไรเปลี่ยน
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                domain:
+                  type: string
+                  description: โดเมนที่มีใบรับรองอยู่แล้ว · ค่าว่าง = กลับไปใช้ใบที่เซ็นเอง
+                window:
+                  type: integer
+                  description: วินาทีก่อนถอนคืนอัตโนมัติ · 0 = ไม่ตั้งเวลา
+      responses:
+        "200":
+          description: เปลี่ยนแล้ว รอการยืนยัน
+          content:
+            application/json:
+              schema:
+                type: object
+        "422": { $ref: "#/components/responses/Error" }
+
   /settings/webserver:
     post:
       tags: [settings]

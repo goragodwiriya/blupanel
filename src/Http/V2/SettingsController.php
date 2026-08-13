@@ -161,6 +161,31 @@ final class SettingsController extends ApiController
         return $this->completed((string) ($result['message'] ?? 'Web server changed'), '', is_array($result) ? $result : []);
     }
 
+    /**
+     * เปลี่ยนใบรับรองของหน้าจัดการ
+     *
+     * **คืนค่าอัตโนมัติถ้าไม่กดยืนยัน** เหมือนกฎไฟร์วอลล์และค่าตั้ง SSH — ใบที่ผิดทำให้
+     * เบราว์เซอร์ปฏิเสธการเชื่อมต่อทั้งหมด แล้วหน้าเว็บซึ่งเป็นที่เดียวที่จะแก้ได้ก็เข้า
+     * ไม่ได้ไปด้วย · ส่ง `domain` ว่างเพื่อกลับไปใช้ใบที่เซ็นเอง
+     */
+    public function applyPanelCertificate(Request $request): Response
+    {
+        $result = $this->agent()->data(
+            'panel.cert_set',
+            [
+                'domain' => $request->payloadString('domain'),
+                'window' => (int) $request->payload('window', 0),
+            ],
+            $this->ctx->actor($request),
+        );
+
+        return $this->completed(
+            (string) ($result['message'] ?? 'Panel certificate changed'),
+            '',
+            is_array($result) ? $result : [],
+        );
+    }
+
     /** ส่งเมลทดสอบ */
     public function testMail(Request $request): Response
     {

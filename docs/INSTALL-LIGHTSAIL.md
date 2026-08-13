@@ -265,33 +265,22 @@ dig +short panel.example.com     # ต้องได้ <STATIC_IP>
 
 ได้ใบรับรองไว้ที่ `/etc/letsencrypt/live/panel.example.com/` แล้ว
 
-### 9.2 ให้หน้าจัดการใช้ใบนั้น — ต้องทำด้วยมือ
+### 9.2 ให้หน้าจัดการใช้ใบนั้น
 
-> **ข้อจำกัดที่ต้องรู้:** ตอนนี้ยังไม่มีปุ่มในหน้าเว็บสำหรับเปลี่ยนใบรับรองของ*ตัวหน้าจัดการเอง*
-> · หน้าจัดการอ่านไฟล์ที่ `/etc/phpcp/tls/panel.crt` กับ `panel.key` เสมอ ซึ่งตัวติดตั้ง
-> สร้างเป็นใบเซ็นเองไว้ให้ตอนแรก
+หน้า **SERVER → ตั้งค่า → ใบรับรองของหน้าจัดการ** → ใส่ `panel.example.com` → **ใช้ใบรับรองนี้**
 
-ชี้ไฟล์ทั้งสองไปที่ใบจริงด้วย symlink — ใช้ symlink ไม่ใช่ copy เพราะ certbot ต่ออายุใบทุก
-60 วันโดยเขียนไฟล์ใหม่ในที่เดิม การ copy จะทำให้หน้าจัดการใช้ใบเก่าที่หมดอายุต่อไปเงียบ ๆ:
+ระบบจะตรวจว่าใบกับกุญแจเป็นคู่กันจริงและยังไม่หมดอายุ ผ่านตัวตรวจของ Apache แล้วจึงสลับให้
+พร้อมติดตั้ง hook ที่คัดลอกใบใหม่ให้เองทุกครั้งที่ certbot ต่ออายุ
 
-```bash
-sudo mv /etc/phpcp/tls/panel.crt /etc/phpcp/tls/panel.crt.selfsigned
-sudo mv /etc/phpcp/tls/panel.key /etc/phpcp/tls/panel.key.selfsigned
+> **เปิดหน้าจัดการในแท็บใหม่เพื่อยืนยันว่ายังเข้าได้จริง แล้วกดยืนยันบนแถบที่ขึ้นมา** ·
+> ไม่กดยืนยันภายในเวลาที่กำหนด ระบบคืนใบเดิมให้เองอัตโนมัติ — กลไกเดียวกับกฎไฟร์วอลล์
+> เพราะใบที่ผิดตัดทางเข้าของคุณเองได้เหมือนกัน
 
-sudo ln -s /etc/letsencrypt/live/panel.example.com/fullchain.pem /etc/phpcp/tls/panel.crt
-sudo ln -s /etc/letsencrypt/live/panel.example.com/privkey.pem   /etc/phpcp/tls/panel.key
-
-sudo systemctl restart phpcp-web
-```
-
-**ต้องให้ Apache ของหน้าจัดการโหลดใบใหม่หลังต่ออายุด้วย** ไม่งั้นอีก 60 วันจะกลับไปเจอ
-คำเตือนอีก ทั้งที่ใบบนดิสก์ถูกต้อง:
+จากบรรทัดคำสั่งก็ได้ ซึ่งเป็นทางที่ใช้ได้**แม้ตอนที่เข้าหน้าเว็บไม่ได้แล้ว**:
 
 ```bash
-sudo mkdir -p /etc/letsencrypt/renewal-hooks/deploy
-printf '#!/bin/sh\nsystemctl restart phpcp-web\n' \
-  | sudo tee /etc/letsencrypt/renewal-hooks/deploy/phpcp-web.sh
-sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/phpcp-web.sh
+sudo phpcp panel:cert panel.example.com     # ใช้ใบของโดเมนนี้
+sudo phpcp panel:cert --self-signed         # กลับไปใช้ใบที่เซ็นเอง
 ```
 
 ตรวจว่าได้ผลจริง:

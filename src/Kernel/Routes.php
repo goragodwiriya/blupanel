@@ -180,6 +180,8 @@ final class Routes
 
         // เปลี่ยนเว็บเซิร์ฟเวอร์ — เส้นทางแยกจาก PATCH /settings เพราะไม่ใช่แค่บันทึกค่า
         // แต่เขียนไฟล์ตั้งค่าของทุกเว็บใหม่แล้วรีสตาร์ตบริการจริง ซึ่งใช้เวลาหลายวินาที
+        // ใบรับรองของหน้าจัดการเอง — คนละเรื่องกับ /certificates ซึ่งเป็นของเว็บไซต์
+        $router->add(new Route('POST', '/api/v2/settings/panel-certificate', V2SettingsController::class, 'applyPanelCertificate', 'settings.manage', 'api.v2.settings.panel_cert'));
         $router->add(new Route('POST', '/api/v2/settings/webserver', V2SettingsController::class, 'applyWebserver', 'settings.manage', 'api.v2.settings.webserver'));
 
         // ชีพจรของตัวจับเวลา — อ่านอย่างเดียว (เฟส A1 ข้อ 7 ที่ค้างไว้ให้เฟส C)
