@@ -127,3 +127,96 @@ test('docroot_override ต้องชนะเลย์เอาต์ — เ�
 
     assertSame('/mnt/legacy/site', $site->docroot(), 'override ต้องมาก่อน');
 });
+
+// --- 6. ทุกทางที่โหลด Site ต้องเห็นเลย์เอาต์เดียวกัน --------------------------
+
+test('SiteRepository::load ต้องคืนเลย์เอาต์ของเจ้าของ ไม่ใช่ค่าเริ่มต้นเสมอ', static function (): void {
+    /*
+     * **เจอบนเซิร์ฟเวอร์จริง (2026-08-13):** `load()` เคยประกอบ UserAccount เองด้วย
+     * สองอาร์กิวเมนต์ จึงทิ้งเลย์เอาต์ไปเงียบ ๆ · ทุกอย่างอื่นในระบบเห็น cpanel
+     * แต่เส้นทางที่ `load()` คืนเป็นของ phpcp — ตัวย้ายเลย์เอาต์จึงไม่ย้ายอะไรเลย
+     * แล้ว vhost ถูกเขียนชี้ไปที่ไดเรกทอรีเปล่า เว็บ 404 ทั้งที่ทุกขั้นรายงานว่าสำเร็จ
+     *
+     * เทสต์ 715 ข้อผ่านหมดตอนนั้น เพราะไม่มีข้อไหนโหลด Site ผ่าน repository จริง
+     * แล้วถามเลย์เอาต์กลับมา — ต้องตรวจที่ทางเข้าจริง ไม่ใช่ที่ value object อย่างเดียว
+     */
+    $root = sys_get_temp_dir() . '/phpcp-layoutrepo-' . getmypid() . '-' . bin2hex(random_bytes(4));
+    mkdir($root, 0750, true);
+    register_shutdown_function(static fn () => exec('rm -rf ' . escapeshellarg($root)));
+
+    $db = new Phpcp\Kernel\Db($root . '/panel.db');
+    $db->migrate(PHPCP_ROOT . '/db/migrations');
+
+    $userId = $db->insert('users', [
+        'username' => 'cpuser', 'display_name' => 'cpuser',
+        'password_hash' => password_hash('x', PASSWORD_DEFAULT), 'role' => Phpcp\Security\Permissions::WEBADMIN,
+        'totp_enabled' => 0, 'must_change_password' => 0, 'status' => 'active', 'failed_attempts' => 0,
+        'email' => '', 'service_status' => 'active', 'uid' => 0, 'gid' => 0,
+        'quota_domains' => -1, 'quota_subdomains' => -1, 'quota_aliases' => -1, 'quota_emails' => -1,
+        'quota_databases' => -1, 'quota_ftp_users' => -1, 'disk_quota_mb' => -1, 'disk_used_mb' => 0,
+        'system_user' => 'cpuser', 'site_layout' => 'cpanel', 'main_domain' => 'shop.test',
+        'created_at' => time(), 'updated_at' => time(),
+    ]);
+
+    $siteId = $db->insert('sites', [
+        'name' => 'ร้านค้า', 'primary_domain' => 'shop.test', 'docroot' => '/tmp/x',
+        'php_version' => '8.4', 'ssl_mode' => 'off', 'status' => 'active', 'disk_used_mb' => 0,
+        'owner_user_id' => $userId, 'docroot_override' => '', 'created_at' => time(), 'updated_at' => time(),
+    ]);
+
+    $site = (new Phpcp\Domain\SiteRepository($db))->load($siteId);
+
+    assertSame(SiteLayout::Cpanel, $site->owner->layout(), 'เลย์เอาต์ของเจ้าของต้องมาถึง Site');
+    assertSame('shop.test', $site->owner->mainDomain, 'โดเมนหลักต้องมาถึง Site');
+    assertSame(
+        Paths::usersDir() . '/cpuser/public_html',
+        $site->docroot(),
+        'docroot ต้องเป็นของเลย์เอาต์ cpanel ไม่ใช่ตกกลับไป phpcp',
+    );
+});
+
+// --- 7. ลำดับการย้ายต้องสลับทิศตามเลย์เอาต์ปลายทาง ---------------------------
+
+test('ลำดับการย้ายต้องถูกทั้งสองทิศ — ทิศเดียวใช้ได้ อีกทิศพังเสมอ', static function (): void {
+    /*
+     * **เจอบนเซิร์ฟเวอร์จริง (2026-08-13):** phpcp วาง log/backup/docroot ไว้ใต้ stateDir
+     * ส่วน cpanel วางแยกกัน · ตอนย้าย cpanel → phpcp ถ้าย้ายลูกก่อน ระบบจะสร้าง
+     * โฟลเดอร์แม่ให้เองเพื่อรองรับลูก แล้วการย้ายแม่ตัวจริงถูกปฏิเสธว่า "ปลายทางมีอยู่แล้ว"
+     * · ตัวย้ายจึงล้มแล้ว rollback ทุกครั้งในทิศนั้น ทั้งที่ทิศตรงข้ามทำงานได้ปกติ
+     */
+    $method = new ReflectionMethod(Phpcp\Agent\Capability\CustomerLayoutSet::class, 'plan');
+    $capability = new Phpcp\Agent\Capability\CustomerLayoutSet();
+
+    foreach ([
+        [SiteLayout::Phpcp, SiteLayout::Cpanel],
+        [SiteLayout::Cpanel, SiteLayout::Phpcp],
+    ] as [$from, $to]) {
+        $owner = siteLayoutUser($from, 'main.test');
+        $plan = $method->invoke($capability, $owner, $to, siteLayoutSite($owner, 'main.test'));
+
+        $movedFrom = [];
+
+        foreach ($plan as $src => $dst) {
+            // ห้ามย้ายอะไรที่อยู่ใต้สิ่งที่ย้ายไปแล้ว — ต้นทางนั้นถูกยกไปทั้งก้อนแล้ว
+            foreach ($movedFrom as $done) {
+                assertTrue(
+                    !str_starts_with(rtrim($src, '/') . '/', rtrim($done, '/') . '/'),
+                    sprintf('%s → %s: ย้าย %s หลังจากยกแม่ %s ไปแล้ว', $from->value, $to->value, $src, $done),
+                );
+            }
+
+            $movedFrom[] = $src;
+        }
+
+        // ปลายทางที่เป็นแม่ของปลายทางอื่นต้องมาก่อน ไม่งั้นถูกสร้างขึ้นเองแล้วชนกัน
+        $targets = array_values($plan);
+        foreach ($targets as $i => $dst) {
+            foreach (array_slice($targets, $i + 1) as $later) {
+                assertTrue(
+                    !str_starts_with(rtrim($dst, '/') . '/', rtrim($later, '/') . '/'),
+                    sprintf('%s → %s: ปลายทาง %s อยู่ใต้ %s ที่ย้ายทีหลัง', $from->value, $to->value, $dst, $later),
+                );
+            }
+        }
+    }
+});

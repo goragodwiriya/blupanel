@@ -163,6 +163,9 @@ final class Routes
         $router->add(new Route('PATCH', '/api/v2/users/{id}', UsersController::class, 'update', 'customer.manage', 'api.v2.users.update'));
         $router->add(new Route('DELETE', '/api/v2/users/{id}', UsersController::class, 'destroy', 'customer.manage', 'api.v2.users.destroy'));
         $router->add(new Route('PUT', '/api/v2/users/{id}/quota', UsersController::class, 'setQuota', 'customer.manage', 'api.v2.users.quota'));
+        // sub-resource แยกจาก PATCH /users/{id} โดยเจตนา — การเปลี่ยนรูปทรงไฟล์**ย้ายไฟล์จริง**
+        // และทำให้เว็บของบัญชีนั้นหยุดชั่วขณะ ต้องเป็นการกดที่ตั้งใจ ไม่ใช่ผลพลอยได้ของการบันทึกฟอร์ม
+        $router->add(new Route('PUT', '/api/v2/users/{id}/layout', UsersController::class, 'setLayout', 'customer.manage', 'api.v2.users.layout'));
         $router->add(new Route('POST', '/api/v2/users/{id}/password-reset', UsersController::class, 'resetPassword', 'customer.manage', 'api.v2.users.password'));
         $router->add(new Route('POST', '/api/v2/users/{id}/sites', UsersController::class, 'attachSites', 'customer.manage', 'api.v2.users.sites.attach'));
         $router->add(new Route('DELETE', '/api/v2/users/{id}/sites/{site_id}', UsersController::class, 'detachSite', 'customer.manage', 'api.v2.users.sites.detach'));

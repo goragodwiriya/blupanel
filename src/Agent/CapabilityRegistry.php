@@ -26,6 +26,7 @@ use Phpcp\Agent\Capability\FileZip;
 use Phpcp\Agent\Capability\AlertCheck;
 use Phpcp\Agent\Capability\CertSync;
 use Phpcp\Agent\Capability\CustomerCreate;
+use Phpcp\Agent\Capability\CustomerLayoutSet;
 use Phpcp\Agent\Capability\CustomerQuotaUpdate;
 use Phpcp\Agent\Capability\CustomerSiteAttach;
 use Phpcp\Agent\Capability\DiskQuotaCheck;
@@ -271,6 +272,7 @@ final class CapabilityRegistry
             CustomerCreate::class,
             CustomerQuotaUpdate::class,
             CustomerSiteAttach::class,
+            CustomerLayoutSet::class,
             ExpiryCheck::class,
 
             // SFTP — หนึ่งบัญชีโฮสติ้ง = หนึ่ง login (PLAN-V2 เฟส E4)

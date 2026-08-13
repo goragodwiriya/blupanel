@@ -1444,6 +1444,52 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
 
+  /users/{id}/layout:
+    put:
+      tags: [users]
+      summary: เปลี่ยนรูปทรงไฟล์ของบัญชี (ย้ายไฟล์จริง)
+      description: |
+        เลือกว่าไฟล์เว็บของบัญชีนี้วางแบบไหน:
+
+        | ค่า      | โดเมนหลัก                        | โดเมนที่เพิ่มทีหลัง   |
+        |----------|----------------------------------|-----------------------|
+        | `phpcp`  | `<บ้าน>/domains/<โดเมน>/public`  | เหมือนกัน             |
+        | `cpanel` | `<บ้าน>/public_html`             | `<บ้าน>/<โดเมน>`      |
+        | `""`     | ตามค่าเริ่มต้นของระบบ (`sites.layout`) |                  |
+
+        **คำสั่งนี้ย้ายไดเรกทอรีจริง** ของทุกเว็บในบัญชี แล้วเขียน vhost กับ FPM pool ใหม่
+        — เว็บจะหยุดให้บริการชั่วขณะ และเส้นทางเต็มที่ลูกค้าเขียนไว้ในสคริปต์จะเปลี่ยน
+        · ถ้าย้ายล้มกลางทาง ไฟล์ทุกตัวถูกย้ายกลับที่เดิมก่อนโยนข้อผิดพลาดออกมา
+
+        แยกจาก `PATCH /users/{id}` โดยเจตนา เพื่อไม่ให้การบันทึกชื่อหรืออีเมล
+        กลายเป็นการย้ายไฟล์ของลูกค้าโดยไม่ตั้งใจ
+      parameters:
+        - { $ref: "#/components/parameters/UserId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [layout]
+              properties:
+                layout:
+                  type: string
+                  enum: ["", "phpcp", "cpanel"]
+                  description: "ค่าว่าง = ตามค่าเริ่มต้นของระบบ"
+      responses:
+        "200":
+          description: จำนวนไดเรกทอรีที่ย้ายและรายชื่อเว็บที่เขียนค่าตั้งใหม่
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
   /users/{id}/sftp:
     parameters:
       - { $ref: "#/components/parameters/UserId" }

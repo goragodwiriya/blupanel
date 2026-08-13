@@ -72,15 +72,18 @@ final class SiteRepository
             return null;
         }
 
-        return Site::fromRow(
-            $row,
-            $this->aliasesOf($id),
-            $this->subdomainPathsOf($id),
-            new UserAccount(
-                (int) $row['owner_user_id'],
-                (string) ($row['owner_system_user'] ?? $row['owner_username']),
-            ),
-        );
+        /*
+         * **ห้ามประกอบ UserAccount เองที่นี่** — ปล่อยให้ Site::fromRow อ่านจากแถวเดียวกัน
+         *
+         * เดิมที่นี่เรียก `new UserAccount($id, $username)` ด้วยสองอาร์กิวเมนต์ ซึ่งทิ้ง
+         * เลย์เอาต์กับโดเมนหลักไปเงียบ ๆ · ผลคือ `load()` คืน Site ที่เจ้าของถูกมองเป็น
+         * เลย์เอาต์เริ่มต้นเสมอ แม้ฐานข้อมูลจะบอกว่า cpanel — เส้นทางที่ได้จึงเป็นของ
+         * เลย์เอาต์ผิด ทั้งที่ทุกอย่างอื่นในระบบเห็นถูก
+         *
+         * เจอบนเซิร์ฟเวอร์จริงตอนทดสอบการย้ายเลย์เอาต์: ไฟล์ไม่ถูกย้าย vhost ชี้ไปที่
+         * ไดเรกทอรีเปล่า แล้วเว็บ 404 ทั้งที่ทุกขั้นตอนรายงานว่าสำเร็จ
+         */
+        return Site::fromRow($row, $this->aliasesOf($id), $this->subdomainPathsOf($id));
     }
 
     public function subdomainPathsOf(int $siteId): array

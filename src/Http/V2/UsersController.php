@@ -389,6 +389,38 @@ final class UsersController extends ApiController
         return $this->completed('Account saved', 'users', is_array($result) ? $result : []);
     }
 
+    /**
+     * เปลี่ยนรูปทรงไฟล์ของบัญชี — **ย้ายไฟล์จริง** ไม่ใช่แค่บันทึกค่า
+     *
+     * แยก endpoint ออกจาก `PATCH /users/{id}` เพราะผลข้างเคียงคนละระดับกันสิ้นเชิง:
+     * ที่นั่นแก้ชื่อกับอีเมล ส่วนที่นี่ย้ายไดเรกทอรีของทุกเว็บในบัญชีแล้วเขียน vhost ใหม่
+     * · ผู้ที่กดบันทึกชื่อผู้ใช้ไม่ควรมีทางย้ายไฟล์ของลูกค้าโดยไม่ตั้งใจ
+     */
+    public function setLayout(Request $request): Response
+    {
+        $result = $this->agent()->data(
+            'customer.layout_set',
+            [
+                'user_id' => $request->paramInt('id'),
+                'layout' => (string) ($request->payload('layout') ?? ''),
+            ],
+            $this->ctx->actor($request),
+        );
+
+        $message = (string) ($result['message'] ?? 'Layout saved');
+
+        return $this->done(
+            $message,
+            [[
+                'type' => 'notification',
+                // ย้ายไฟล์คือเรื่องที่ต้องสะดุดตา ไม่ใช่แถบเขียวที่กวาดสายตาผ่าน
+                'level' => ((int) ($result['moved'] ?? 0)) > 0 ? 'warning' : 'success',
+                'message' => $message,
+            ]],
+            is_array($result) ? $result : [],
+        );
+    }
+
     /** อัปเดตโควตา — ผ่าน capability เสมอ (กฎ -1 = ไม่จำกัด อยู่ที่นั่นที่เดียว) */
     public function setQuota(Request $request): Response
     {

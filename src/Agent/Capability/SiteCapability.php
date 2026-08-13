@@ -37,6 +37,19 @@ abstract class SiteCapability implements Capability
      */
     protected function provisioner(Context $context): SiteProvisioner
     {
+        return self::provisionerFor($context);
+    }
+
+    /**
+     * ตัวเดียวกับ provisioner() แต่เรียกได้จากนอกลำดับชั้นนี้
+     *
+     * `customer.*` บางตัวต้องเขียน vhost/pool ใหม่ (เช่นตอนเปลี่ยนรูปทรงไฟล์ของบัญชี)
+     * แต่สืบทอดจาก `CustomerCapability` จึงเข้าถึงเมธอด protected ตัวบนไม่ได้ ·
+     * ให้เรียกทางนี้แทนการประกอบ driver ขึ้นเองซ้ำ — ประกอบเองแปลว่าอีกไม่นาน
+     * สองที่จะเห็นเว็บเซิร์ฟเวอร์หรือ shared_owner ไม่ตรงกัน
+     */
+    public static function provisionerFor(Context $context): SiteProvisioner
+    {
         $templates = new Template($context->config->paths->templates());
 
         return new SiteProvisioner(
