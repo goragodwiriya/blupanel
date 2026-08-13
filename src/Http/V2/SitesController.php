@@ -183,7 +183,9 @@ final class SitesController extends HostingController
                 'edit' => 'site.edit',
                 'suspend' => 'site.suspend',
                 'delete' => 'site.delete',
-                'manage_domains' => 'domain.manage'
+                'manage_domains' => 'domain.manage',
+                // ไฟล์ตั้งค่าเพิ่มเติมเป็นของผู้ดูแลเครื่อง ไม่ใช่เจ้าของเว็บ
+                'edit_config' => 'settings.manage'
             ])
         ]);
     }
@@ -300,6 +302,48 @@ final class SitesController extends HostingController
      * ผู้ดูแลอาจสั่ง `fail2ban-client` เองจากบรรทัดคำสั่ง หรือ fail2ban อาจไม่ได้โหลด jail
      * เพราะไฟล์ผิด · หน้าจอต้องบอกสิ่งที่เป็นจริงบนเครื่อง ไม่ใช่สิ่งที่เราคิดว่าตั้งไว้
      */
+    /**
+     * ไฟล์ตั้งค่าของเว็บไซต์ — ไฟล์ที่ panel สร้าง (อ่านอย่างเดียว) และไฟล์ของผู้ดูแล
+     */
+    public function config(Request $request): Response
+    {
+        $siteId = $request->paramInt('id');
+
+        if ($this->findSite($siteId) === null) {
+            return $this->siteNotFound();
+        }
+
+        $result = $this->agent()->data('site.config_read', ['site_id' => $siteId], $this->ctx->actor($request));
+
+        return $this->ok(is_array($result) ? $result : []);
+    }
+
+    /**
+     * เขียนไฟล์ตั้งค่าเพิ่มเติมของผู้ดูแล
+     *
+     * ตอบด้วย `refreshed()` เพื่อให้หน้าโหลดใหม่ทั้งหน้า — แถบ "รอการยืนยัน" ของ
+     * RollbackGuard อยู่นอกฟอร์ม ถ้าโหลดเฉพาะฟอร์มผู้ดูแลจะไม่เห็นว่ามีเวลาจำกัด
+     */
+    public function setConfig(Request $request): Response
+    {
+        $siteId = $request->paramInt('id');
+
+        if ($this->findSite($siteId) === null) {
+            return $this->siteNotFound();
+        }
+
+        $result = $this->agent()->data('site.custom_config', [
+            'site_id' => $siteId,
+            'content' => $request->payloadString('content'),
+            'window' => (int) $request->payload('window', 0),
+        ], $this->ctx->actor($request));
+
+        return $this->refreshed(
+            (string) ($result['message'] ?? 'Configuration saved'),
+            extra: is_array($result) ? $result : [],
+        );
+    }
+
     public function rateLimit(Request $request): Response
     {
         $site = $this->findSite($request->paramInt('id'));

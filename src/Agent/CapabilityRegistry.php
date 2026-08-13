@@ -63,6 +63,8 @@ use Phpcp\Agent\Capability\ServiceStatus;
 use Phpcp\Agent\Capability\ServiceStop;
 use Phpcp\Agent\Capability\SiteAddDomain;
 use Phpcp\Agent\Capability\SiteCreate;
+use Phpcp\Agent\Capability\SiteConfigRead;
+use Phpcp\Agent\Capability\SiteCustomConfig;
 use Phpcp\Agent\Capability\SiteDelete;
 use Phpcp\Agent\Capability\SiteRemoveDomain;
 use Phpcp\Agent\Capability\SiteResetOwner;
@@ -174,6 +176,10 @@ final class CapabilityRegistry
             SiteSuspend::class,
             SiteResume::class,
             SiteDelete::class,
+
+            // ค่าตั้งเพิ่มเติมที่ผู้ดูแลเขียนเอง — อ่านไฟล์ที่ generate ได้ แต่แก้ได้เฉพาะไฟล์ของตัวเอง
+            SiteConfigRead::class,
+            SiteCustomConfig::class,
             SiteResetOwner::class,
 
             // DNS — เชื่อม BIND9 จริง (PLAN-V2 เฟส E3)

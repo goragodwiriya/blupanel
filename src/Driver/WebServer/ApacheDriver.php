@@ -199,6 +199,8 @@ final class ApacheDriver implements WebServerDriver
         // ถ้าปล่อยให้เทมเพลต SSL คัดลอกกฎเหล่านี้ไปเอง วันหนึ่งกฎกันไฟล์ .env หรือ .git
         // จะถูกแก้ที่เดียวแล้วลืมอีกที่ กลายเป็นช่องโหว่ที่เปิดเฉพาะบน HTTPS
         $body = new SafeBlock($this->templates->render('apache/vhost-body.conf.tpl', [
+            // ไดเรกทอรีของผู้ดูแล — vhost อ่านเป็นอันสุดท้าย ค่าที่นั่นจึงชนะค่าเริ่มต้น
+            'CUSTOM_DIR' => $executor->path(CustomConfig::directory('apache', $site->domain)),
             'DOCROOT' => $executor->path($site->docroot()),
             'FPM_SOCKET' => $executor->path($site->fpmSocket()),
             'ERROR_LOG' => $executor->path($site->errorLog()),

@@ -542,6 +542,46 @@ paths:
                   data: { type: object }
         "404": { $ref: "#/components/responses/Error" }
 
+  /sites/{id}/config:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [sites]
+      summary: ไฟล์ตั้งค่าของเว็บไซต์ — ที่ระบบสร้าง (อ่านอย่างเดียว) และของผู้ดูแล
+      description: >-
+        `settings.manage` เท่านั้น · ไฟล์ที่ระบบสร้างอ่านจากดิสก์จริง ไม่ใช่เรนเดอร์
+        เทมเพลตใหม่ — สองอย่างนี้ต่างกันได้ และเวลาที่ต่างกันคือเวลาที่ต้องการคำตอบมากที่สุด
+      responses:
+        "200":
+          description: ค่าตั้งของเว็บไซต์
+          content:
+            application/json:
+              schema:
+                type: object
+    put:
+      tags: [sites]
+      summary: เขียนไฟล์ตั้งค่าเพิ่มเติมของผู้ดูแล
+      description: >-
+        เขียนผ่าน ConfigTransaction แล้วให้ตัวตรวจของเว็บเซิร์ฟเวอร์เองตัดสินว่าจะ commit
+        หรือคืนค่า · ผ่านแล้วยังตั้งเวลาถอนคืนไว้ (RollbackGuard) เพราะ configtest ตอบแค่ว่า
+        ไวยากรณ์ถูก ไม่ได้ตอบว่าเว็บยังใช้งานได้ · ต้องยืนยันภายใน `window` วินาที
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content: { type: string, description: เนื้อไฟล์ทั้งไฟล์ · ว่าง = ล้างค่าที่เคยใส่ไว้ }
+                window: { type: integer, description: วินาทีก่อนถอนคืนอัตโนมัติ }
+      responses:
+        "200":
+          description: บันทึกแล้ว รอการยืนยัน
+          content:
+            application/json:
+              schema:
+                type: object
+        "422": { $ref: "#/components/responses/Error" }
+
   /sites/{id}/rate-limit:
     parameters:
       - { $ref: "#/components/parameters/SiteId" }

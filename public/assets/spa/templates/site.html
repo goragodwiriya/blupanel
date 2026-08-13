@@ -106,6 +106,51 @@
         โหลดค่าจาก endpoint ของตัวเองด้วย data-load-api ไม่ใช่จากข้อมูลของหน้า
         เพราะ `status` ต้องมาจาก fail2ban จริง ๆ ไม่ใช่จากสิ่งที่ฐานข้อมูลของ panel จำไว้
       -->
+      <!--
+        ค่าตั้งเพิ่มเติมของผู้ดูแล — สำหรับคนที่รู้ว่ากำลังทำอะไร
+
+        **ไม่ใช่ตัวแก้ไฟล์ vhost** · ไฟล์ vhost ถูกเขียนทับทั้งไฟล์ทุกครั้งที่เว็บไซต์
+        เปลี่ยน สิ่งที่แก้ลงไปตรง ๆ จะหายเงียบ ๆ ในภายหลัง · ที่นี่เขียนลงไฟล์แยกที่
+        panel ไม่แตะ และ vhost อ่านเป็นอันสุดท้าย ค่าที่นี่จึงชนะค่าเริ่มต้นเสมอ
+
+        ทั้งการ์ดเป็นของผู้ดูแลเครื่อง (`settings.manage`) ไม่ใช่เจ้าของเว็บ เพราะไฟล์นี้
+        ถูกอ่านโดยเว็บเซิร์ฟเวอร์ที่ใช้ร่วมกันทั้งเครื่อง
+      -->
+      <div data-if="can['edit_config']">
+      <div class="content-body" data-component="api" data-endpoint="/api/v2/sites/{id}/config" data-refresh-event="phpcp:reload">
+        <h2 class="icon-code" data-i18n>Extra configuration</h2>
+        <p class="muted" data-i18n>For administrators who know the web server syntax. The panel never touches this file, and the generated configuration below reads it last — so anything set here wins.</p>
+        <div class="alert alert-warning" data-i18n>After saving you must open the website and check it really works, then confirm. The configuration test only proves the syntax is valid — rules that block every request pass it too. Without confirmation the previous version is restored automatically.</div>
+        <form data-form="siteCustomConfig" action="/api/v2/sites/{id}/config" method="post" data-method="PUT"
+              data-ajax-submit="true" data-emit-event="phpcp:reload">
+          <fieldset>
+            <div>
+              <label for="custom_config" data-text="custom_path"></label>
+              <span class="form-control">
+                <textarea id="custom_config" name="content" rows="10" spellcheck="false"
+                          class="mono" data-attr="value:custom"></textarea>
+              </span>
+            </div>
+          </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-save" data-loading-text="Checking..." data-i18n>Save and test</button>
+          </fieldset>
+        </form>
+        <!--
+          ไฟล์ที่ panel สร้าง — เปิดดูได้แต่แก้ไม่ได้ และนั่นคือความตั้งใจ · ผู้ดูแลที่จะ
+          เขียนค่าเพิ่มต้องเห็นก่อนว่ามีอะไรอยู่แล้ว ไม่งั้นจะเขียนซ้ำหรือทับของเดิมโดยไม่รู้ตัว
+        -->
+        <details>
+          <summary data-i18n>Show the configuration the panel generates (read-only)</summary>
+          <div data-for="file in generated">
+            <template>
+              <p class="mono muted" data-text="file.path"></p>
+              <pre class="mono scroll" data-text="file.content"></pre>
+            </template>
+          </div>
+        </details>
+      </div>
+      </div>
       <div class="content-body">
         <h2 class="icon-shield" data-i18n>Request rate limit</h2>
         <!--

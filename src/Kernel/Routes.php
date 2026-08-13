@@ -120,6 +120,11 @@ final class Routes
         $router->add(new Route('POST', '/api/v2/sites/{id}/owner-reset', SitesController::class, 'resetOwner', 'site.edit', 'api.v2.sites.owner_reset'));
 
         // จำกัดอัตราคำขอต่อเว็บ — บังคับใช้ด้วย fail2ban (เฟส E5)
+        // ไฟล์ตั้งค่าของเว็บไซต์ — `settings.manage` เท่านั้น ไม่ใช่ `site.edit`
+        // เพราะไฟล์นี้ถูกอ่านโดยเว็บเซิร์ฟเวอร์ที่ใช้ร่วมกันทั้งเครื่อง เขียนผิดแล้ว
+        // configtest ล้ม เว็บทุกเว็บบนเครื่องหยุดโหลดค่าใหม่ตามไปด้วย
+        $router->add(new Route('GET', '/api/v2/sites/{id}/config', SitesController::class, 'config', 'settings.manage', 'api.v2.sites.config'));
+        $router->add(new Route('PUT', '/api/v2/sites/{id}/config', SitesController::class, 'setConfig', 'settings.manage', 'api.v2.sites.config.set'));
         $router->add(new Route('GET', '/api/v2/sites/{id}/rate-limit', SitesController::class, 'rateLimit', 'site.view', 'api.v2.sites.rate_limit'));
         $router->add(new Route('PUT', '/api/v2/sites/{id}/rate-limit', SitesController::class, 'setRateLimit', 'site.edit', 'api.v2.sites.rate_limit.set'));
         $router->add(new Route('GET', '/api/v2/sites/{id}/rate-limit/bans', SitesController::class, 'rateLimitBans', 'site.view', 'api.v2.sites.rate_limit.bans'));
