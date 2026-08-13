@@ -256,6 +256,10 @@ test('คำสั่งที่ตั้งเวลาถอนคืนต�
     $begin = strpos($ui, 'ResponseHandler.process = async function') ?: 0;
     $process = substr($ui, $begin, (strpos($ui, 'const Ui = {', $begin) ?: strlen($ui)) - $begin);
 
+    // ตัดคอมเมนต์ก่อนตรวจ — คำอธิบายในไฟล์ยกรูปแบบที่ห้ามเขียนมาให้ดูตรง ๆ
+    // ถ้าไม่ตัด เทสต์จะฟ้องคำอธิบายที่ดีแทนที่จะฟ้องโค้ดที่ผิด
+    $code = (string) preg_replace('~/\*.*?\*/|//[^\n]*~s', '', $process);
+
     assertTrue(
         str_contains($process, "emit('phpcp:rollback'"),
         'คำตอบที่แนบผลการตั้งเวลาถอนคืนต้องทำให้แถบขึ้นทันที',
@@ -263,6 +267,21 @@ test('คำสั่งที่ตั้งเวลาถอนคืนต�
     assertTrue(
         str_contains($process, 'rollback_id') && str_contains($process, 'pending_rollback'),
         'ต้องรู้จักทั้งสองชื่อ — capability คืน rollback_id ส่วน controller แนบ pending_rollback',
+    );
+
+    /*
+     * **ห้ามเขียน `payload.data || payload`** — FormManager ส่งผลจาก
+     * `normalizeSubmitBindingPayload()` ซึ่งใส่ `data: []` ให้เสมอเมื่อคำตอบไม่มีคีย์นั้น
+     * · อาร์เรย์ว่างเป็น truthy ใน JS การเขียนแบบนั้นจึงไปอ่านอาร์เรย์ว่างแทนตัว payload
+     * แล้วเงื่อนไขไม่มีวันเป็นจริง — แถบไม่ขึ้นและไม่มี error ให้เห็นเลย
+     */
+    assertTrue(
+        !str_contains($code, 'payload.data || payload'),
+        'อาร์เรย์ว่างเป็น truthy — `payload.data || payload` จะไปอ่านอาร์เรย์ว่างแทน payload',
+    );
+    assertTrue(
+        str_contains($code, 'Array.isArray(body.data)'),
+        'ต้องแยกกรณี data ที่เป็นอาร์เรย์ออกจากอ็อบเจกต์ก่อนอ่านค่าข้างใน',
     );
 
     // และแถบต้องฟังสัญญาณนั้นจริง ไม่ใช่ยิงไปแล้วไม่มีใครรับ

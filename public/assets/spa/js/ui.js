@@ -652,9 +652,19 @@
      * สองชื่อเพราะสองชั้นตั้งชื่อต่างกัน: capability คืน `rollback_id`
      * ส่วน controller แนบ `pending_rollback` มาให้หน้าจอนับถอยหลัง
      */
-    const body = (payload && payload.data) || payload || {};
+    /*
+     * **ห้ามเขียน `payload.data || payload`** — FormManager ไม่ได้ส่ง body ดิบเข้ามา
+     * แต่ส่งผลจาก `normalizeSubmitBindingPayload()` ซึ่งใส่ `data: []` ให้เสมอเมื่อ
+     * คำตอบไม่มีคีย์นั้น · อาร์เรย์ว่างเป็น truthy ใน JS การเขียนแบบนั้นจึงไปอ่าน
+     * อาร์เรย์ว่างแทนตัว payload แล้วเงื่อนไขไม่มีวันเป็นจริง (เจอจริง 2026-08-13)
+     *
+     * ดูทั้งระดับบนสุดและระดับ `data` ที่เป็นอ็อบเจกต์ เพราะสองเส้นทางที่เรียกเมธอดนี้
+     * ส่งรูปร่างมาไม่เหมือนกัน: ฟอร์มส่งแบบที่ถูกแปลงแล้ว ปุ่มในแถวตารางส่ง payloadOf()
+     */
+    const body = payload && typeof payload === 'object' ? payload : {};
+    const nested = body.data && !Array.isArray(body.data) && typeof body.data === 'object' ? body.data : {};
 
-    if (body.rollback_id || body.pending_rollback) {
+    if (body.rollback_id || body.pending_rollback || nested.rollback_id || nested.pending_rollback) {
       window.EventManager.emit('phpcp:rollback', {});
     }
 
