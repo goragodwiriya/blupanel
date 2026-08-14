@@ -2525,6 +2525,43 @@ paths:
           description: "`VALIDATION_ERROR` — `range` ไม่อยู่ในรายการที่รองรับ"
           $ref: "#/components/responses/Error"
 
+  /system/hostname:
+    put:
+      tags: [server]
+      summary: ตั้งชื่อโฮสต์ของเครื่อง
+      description: |
+        ตั้งชื่อโฮสต์แบบถาวร (`hostnamectl set-hostname`) พร้อมปรับบรรทัด `127.0.1.1`
+        ใน `/etc/hosts` ให้ตรงกัน — ถ้าไม่ปรับ `hostname -f` จะต้องพึ่ง DNS ล้วน ๆ
+        และคืนชื่อสั้นเมื่อ DNS ยังไม่กระจาย ซึ่งลามไปทำให้ Postfix แนะนำตัวด้วยชื่อผิด
+
+        **ระบบไม่ทำให้สามอย่างนี้** และส่งกลับใน `follow_up` เพื่อให้หน้าจอบอกต่อ:
+        ตั้ง rDNS ที่ผู้ให้บริการคลาวด์ · ขอใบรับรองใหม่ให้ชื่อนี้ · รีสตาร์ต Postfix
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hostname]
+              properties:
+                hostname:
+                  type: string
+                  maxLength: 253
+                  description: "ชื่อเต็มของเครื่อง เช่น srv.example.com"
+      responses:
+        "200":
+          description: ชื่อใหม่ ชื่อเดิม และรายการที่ผู้ดูแลต้องตามไปทำเอง
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
   /system/info:
     get:
       tags: [server]

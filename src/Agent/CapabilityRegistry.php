@@ -46,6 +46,7 @@ use Phpcp\Agent\Capability\RollbackRun;
 use Phpcp\Agent\Capability\SftpDisable;
 use Phpcp\Agent\Capability\SftpEnable;
 use Phpcp\Agent\Capability\SshConfigGet;
+use Phpcp\Agent\Capability\HostnameSet;
 use Phpcp\Agent\Capability\SshConfigSet;
 use Phpcp\Agent\Capability\BackupDelete;
 use Phpcp\Agent\Capability\BackupDestinationTest;
@@ -251,6 +252,9 @@ final class CapabilityRegistry
             FirewallRuleDelete::class,
             FirewallEnable::class,
             FirewallDisable::class,
+
+            // ชื่อโฮสต์ของเครื่อง — Postfix กับใบรับรองอ้างชื่อนี้
+            HostnameSet::class,
 
             // SSH + กลไกคืนค่าอัตโนมัติ
             SshConfigGet::class,

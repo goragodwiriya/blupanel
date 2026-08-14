@@ -125,6 +125,37 @@
           </tbody>
         </table>
       </div>
+      <!--
+        ชื่อโฮสต์ — เดิมเปลี่ยนได้จากคอนโซลเท่านั้น ทั้งที่ Postfix แนะนำตัวด้วยชื่อนี้
+        และใบรับรองของหน้าจัดการอ้างชื่อนี้
+
+        ไม่เช็ค `permissions[...]` ที่นี่เพราะขอบเขตของบล็อกนี้คือคำตอบของ
+        /api/v2/system/info ซึ่งไม่มีคีย์นั้น — นิพจน์ที่ตีความไม่ได้ทำให้ Now.js
+        **แสดง**ธาตุนั้น ผลจึงตรงข้ามกับที่ตั้งใจ · ไม่จำเป็นอยู่แล้วด้วย เพราะทั้งหน้า
+        ต้องมี `server.view` ซึ่งผู้ดูแลเว็บไซต์ไม่มี และตัว endpoint บังคับ
+        `settings.manage` อีกชั้นตอนกดบันทึกจริง
+      -->
+      <div class="content-body" data-component="api" data-endpoint="/api/v2/system/info">
+        <h2 class="icon-host" data-i18n>Change hostname</h2>
+        <form data-form="hostname" action="/api/v2/system/hostname" method="post" data-method="PUT" data-ajax-submit="true" data-emit-event="phpcp:reload">
+          <fieldset>
+            <div>
+              <label for="sys_hostname" data-i18n>Hostname</label>
+              <span class="form-control icon-host">
+                <input type="text" id="sys_hostname" name="hostname" autocomplete="off" spellcheck="false"
+                       placeholder="srv.example.com" data-attr="value:hostname">
+              </span>
+            </div>
+            <fieldset class="notice notice-warning">
+              <legend class="icon-warning" data-i18n>What this does not do</legend>
+              <p data-i18n>The panel sets the name and keeps /etc/hosts in step. It cannot set the reverse DNS of your IP — do that with your cloud provider, or strict mail servers will reject mail from this machine. Certificates naming the old host stay as they are, and Postfix keeps announcing the old name until it restarts.</p>
+            </fieldset>
+          </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
+          </fieldset>
+        </form>
+      </div>
     </div>
   </main>
 </div>

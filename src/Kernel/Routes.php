@@ -226,6 +226,9 @@ final class Routes
         $router->add(new Route('GET', '/api/v2/metrics/history', V2MetricsController::class, 'history', 'dashboard.view', 'api.v2.metrics.history'));
 
         $router->add(new Route('GET', '/api/v2/system/info', SystemController::class, 'info', 'server.view', 'api.v2.system.info'));
+        // ชื่อโฮสต์กระทบทั้งเครื่อง (Postfix แนะนำตัวด้วยชื่อนี้ · ใบรับรองอ้างชื่อนี้)
+        // จึงใช้ settings.manage เหมือนค่าตั้งระดับเครื่องอื่น ไม่ใช่ server.view ที่เป็นแค่การดู
+        $router->add(new Route('PUT', '/api/v2/system/hostname', SystemController::class, 'setHostname', 'settings.manage', 'api.v2.system.hostname'));
         // health ใช้ dashboard.view เพราะทุกบทบาทต้องรู้ได้ว่า agent ล่มหรือไม่ —
         // ลูกค้าที่กดปุ่มแล้วไม่มีอะไรเกิดขึ้นควรเห็นสาเหตุ ไม่ใช่เดาเอง
         $router->add(new Route('GET', '/api/v2/system/health', SystemController::class, 'health', 'dashboard.view', 'api.v2.system.health'));

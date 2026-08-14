@@ -23,6 +23,33 @@ final class SystemController extends ApiController
         return $this->ok($this->agent()->data('system.info', [], $this->ctx->actor($request)));
     }
 
+    /**
+     * ตั้งชื่อโฮสต์ของเครื่อง
+     *
+     * PUT ไม่ใช่ PATCH เพราะส่งค่าทั้งชุด (ชื่อเดียว) · ผลข้างเคียงที่ระบบทำให้ไม่ได้
+     * — rDNS, ใบรับรอง, การรีสตาร์ต Postfix — ถูกส่งกลับใน `follow_up` เพื่อให้หน้าจอ
+     * บอกต่อ แทนที่จะทำเงียบ ๆ แล้วเมลล่มโดยไม่มีใครรู้ว่าเพราะอะไร
+     */
+    public function setHostname(Request $request): Response
+    {
+        $result = $this->agent()->data(
+            'system.hostname_set',
+            ['hostname' => (string) ($request->payload('hostname') ?? '')],
+            $this->ctx->actor($request),
+        );
+
+        return $this->done(
+            (string) ($result['message'] ?? 'Hostname saved'),
+            [[
+                'type' => 'notification',
+                // ชื่อโฮสต์กระทบเมลกับใบรับรอง ผู้ดูแลต้องอ่านสิ่งที่ต้องตามไปทำ
+                'level' => ($result['follow_up'] ?? []) === [] ? 'success' : 'warning',
+                'message' => (string) ($result['message'] ?? ''),
+            ]],
+            is_array($result) ? $result : [],
+        );
+    }
+
     /** สถานะของ panel เอง — ตอบได้แม้ agent ล่ม */
     public function health(Request $request): Response
     {
