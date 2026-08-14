@@ -61,6 +61,13 @@ final class DnsRecord
     public const VALUE_MAX = 4096;
 
     /**
+     * ความยาวสูงสุดของ character-string หนึ่งก้อน (RFC 1035 §3.3.14) — ยาวกว่านี้ BIND
+     * ปฏิเสธทั้งไฟล์ ค่า TXT ที่ยาวกว่านี้จึงต้องถูกตัดเป็นหลายก้อนตอนเขียน
+     * ({@see txtCharacterStrings()}) ไม่ใช่ตอนรับค่า — ค่าที่ผู้ใช้กรอกยังเป็นค่าเดียว
+     */
+    public const TXT_STRING_MAX = 255;
+
+    /**
      * ตรวจค่าที่ผู้ใช้ส่งมาแล้วคืนแถวที่พร้อมเขียนลงฐานข้อมูล
      *
      * @param array<string,mixed> $input
@@ -618,17 +625,36 @@ final class DnsRecord
         ];
 
         foreach ($records as $record) {
-            $lines[] = sprintf(
-                '%-20s %-6s IN %-6s %s%s',
-                $record['name'],
-                $record['ttl'],
-                $record['type'],
-                $record['priority'] !== null ? $record['priority'] . ' ' : '',
-                $record['value'],
-            );
+            $lines[] = self::recordLine($record);
         }
 
         return implode("\n", $lines) . "\n";
+    }
+
+    /**
+     * บรรทัดเดียวของเรกคอร์ด — **ที่เดียวที่ตอบว่าเรกคอร์ดหนึ่งรายการหน้าตาอย่างไร**
+     *
+     * เคยมีสามที่เขียน `sprintf` ก้อนเดียวกันนี้เอง (ไฟล์จริงบนดิสก์, ไฟล์ส่งออกให้ผู้ใช้
+     * ไปวางที่ DNS provider ภายนอก, ช่องแก้ไขทั้งชุด) แล้วมันแยกทางกันจริง ๆ: ไฟล์ส่งออก
+     * เป็นที่เดียวที่ไม่เคยเรียก {@see zoneValue()} เลย จึงไม่ห่อคำพูดให้ TXT และไม่เติม
+     * จุดปิดท้ายให้ CNAME/MX — ค่าที่ผู้ใช้คัดลอกไปวางที่ผู้ให้บริการภายนอกจึงเป็นคนละค่า
+     * กับที่ DNS ของเครื่องนี้ตอบ โดยไม่มีอะไรฟ้อง
+     *
+     * รวมไว้ที่เดียวแล้วการแก้กฎการเขียนค่าครั้งเดียวมีผลกับทุกที่ที่แสดงเรกคอร์ด —
+     * เหมือนที่ zone file ทั้งไฟล์ถูก derive จากฐานข้อมูลเสมอ ไม่ใช่ patch ทีละจุด
+     *
+     * @param array<string,mixed> $record
+     */
+    private static function recordLine(array $record): string
+    {
+        return sprintf(
+            '%-20s %-6s IN %-6s %s%s',
+            (string) $record['name'],
+            (string) $record['ttl'],
+            (string) $record['type'],
+            ($record['priority'] ?? null) !== null ? $record['priority'] . ' ' : '',
+            self::zoneValue((string) $record['type'], (string) $record['value']),
+        );
     }
 
     /**
@@ -656,14 +682,7 @@ final class DnsRecord
         ];
 
         foreach ($records as $record) {
-            $lines[] = sprintf(
-                '%-20s %-6s IN %-6s %s%s',
-                $record['name'],
-                $record['ttl'],
-                $record['type'],
-                $record['priority'] !== null ? $record['priority'] . ' ' : '',
-                self::zoneValue((string) $record['type'], (string) $record['value']),
-            );
+            $lines[] = self::recordLine($record);
         }
 
         return implode("\n", $lines) . "\n";
@@ -706,14 +725,7 @@ final class DnsRecord
         $lines[] = '';
 
         foreach ($records as $record) {
-            $lines[] = sprintf(
-                '%-20s %-6s IN %-6s %s%s',
-                $record['name'],
-                $record['ttl'],
-                $record['type'],
-                $record['priority'] !== null ? $record['priority'] . ' ' : '',
-                self::zoneValue((string) $record['type'], (string) $record['value']),
-            );
+            $lines[] = self::recordLine($record);
         }
 
         return implode("\n", $lines) . "\n";
@@ -749,13 +761,75 @@ final class DnsRecord
             return $value;
         }
 
-        // ใส่คำพูดมาเองแล้วก็ปล่อยไว้ — ไม่งั้นจะซ้อนกันเป็น ""value""
-        if (str_starts_with($value, '"') && str_ends_with($value, '"') && strlen($value) >= 2) {
+        return self::txtCharacterStrings($value);
+    }
+
+    /**
+     * ห่อค่า TXT เป็น character-string ตามที่ RFC 1035 §3.3.14 กำหนด — **ก้อนละไม่เกิน 255 ไบต์**
+     *
+     * ## บั๊กจริงที่ข้อนี้แก้ (เจอบนเซิร์ฟเวอร์จริง 2026-08-14)
+     *
+     * กุญแจ DKIM ขนาด 2048 บิตยาวราว 400 ตัวอักษร · ระบบตั้งใจรองรับอยู่แล้ว
+     * ({@see VALUE_MAX} = 4096 และ {@see zoneRdata()} ต่อสตริงที่ถูกตัดมาแล้วกลับเป็น
+     * ค่าเดียวเพื่อไม่ให้กุญแจขาดกลาง) แต่ตอน**เขียนกลับ**ออกไปห่อเป็นคำพูดก้อนเดียว
+     * ซึ่ง BIND ปฏิเสธทั้งไฟล์ด้วยข้อความที่ไม่บอกใบ้อะไรเลย:
+     *
+     * ```
+     * dns_rdata_fromtext: /etc/bind/zones/<domain>.zone:22: syntax error
+     * ```
+     *
+     * ผลคือทั้งโซนคืนค่าเดิม — เรกคอร์ดที่ไม่เกี่ยวข้องทุกตัวของโดเมนนั้นค้างอยู่กับ
+     * ค่าเก่า ทั้งที่หน้าจอบอกว่าบันทึกแล้ว · การตัดเป็นก้อนตอนเขียนคือการแก้ที่ถูกที่
+     * เพราะ resolver ต่อทุกก้อนกลับเป็นค่าเดียวให้เองอยู่แล้ว ค่าที่ปลายทางได้รับ
+     * จึงเท่าเดิมเป๊ะ ๆ ไม่ว่าจะถูกตัดกี่ก้อน
+     *
+     * ตัดจาก**ไบต์ดิบก่อน escape** ไม่ใช่หลัง — `\"` ยาวสองไบต์ในไฟล์แต่นับเป็นไบต์เดียว
+     * บนสาย การตัดหลัง escape จึงทั้งได้ก้อนที่ยาวเกินจริงและมีโอกาสผ่ากลาง escape
+     * sequence จนคำพูดปิดผิดที่
+     */
+    private static function txtCharacterStrings(string $value): string
+    {
+        $raw = self::txtRawBytes($value);
+
+        if ($raw === '') {
+            return '""';
+        }
+
+        $quoted = array_map(
+            // คำพูดที่อยู่กลางค่าต้อง escape ไม่งั้นมันปิดสตริงก่อนเวลา
+            static fn (string $chunk): string => '"' . str_replace(['\\', '"'], ['\\\\', '\\"'], $chunk) . '"',
+            str_split($raw, self::TXT_STRING_MAX),
+        );
+
+        return implode(' ', $quoted);
+    }
+
+    /**
+     * ค่า TXT ในรูปไบต์จริงบนสาย — ถอดคำพูดออกถ้าค่าที่เก็บไว้ใส่มาแล้ว
+     *
+     * ค่าที่เก็บในฐานข้อมูลมาได้สองแบบ: ไม่มีคำพูดเลย (ฟอร์มเพิ่มเรกคอร์ด และ
+     * {@see zoneRdata()} ที่ถอดให้แล้ว) หรือมีคำพูดติดมา (ผู้ใช้วางค่าตามที่ผู้ให้บริการ
+     * เมลให้มาทั้งก้อน) · ทั้งสองแบบต้องได้ไบต์ชุดเดียวกันก่อนตัด ไม่งั้นค่าที่มีคำพูด
+     * ติดมาจะถูกนับความยาวเกินจริงแล้วตัดผิดตำแหน่ง
+     *
+     * คำพูดต้องครบทุกโทเคนถึงจะถือว่าเป็นการห่อ — ค่าอย่าง `"quoted" ไม่ห่อ` แปลว่า
+     * คำพูดเป็นส่วนหนึ่งของข้อความเอง ต้อง escape ไม่ใช่ถอดทิ้ง
+     */
+    private static function txtRawBytes(string $value): string
+    {
+        if (!str_starts_with($value, '"')) {
             return $value;
         }
 
-        // คำพูดที่อยู่กลางค่าต้อง escape ไม่งั้นมันปิดสตริงก่อนเวลา
-        return '"' . str_replace(['\\', '"'], ['\\\\', '\\"'], $value) . '"';
+        $tokens = self::tokenizeZoneLine($value);
+
+        foreach ($tokens as $token) {
+            if (strlen($token) < 2 || !str_starts_with($token, '"') || !str_ends_with($token, '"')) {
+                return $value;
+            }
+        }
+
+        return implode('', array_map(static fn (string $t): string => self::unquoteZoneToken($t), $tokens));
     }
 
     /**

@@ -181,6 +181,129 @@ test('ชื่อโฮสต์ของ CNAME/MX ถูกเติมจุ�
     assertTrue(str_contains($zone, '10 mail.example.net.'), 'ค่า MX ต้องลงท้ายด้วยจุด');
 });
 
+/*
+ * --- 1c. TXT ที่ยาวเกิน 255 ไบต์ ------------------------------------------------
+ *
+ * **บั๊กจริงบนเซิร์ฟเวอร์ (2026-08-14):** โดเมนที่มีกุญแจ DKIM 2048 บิตซิงก์ไม่ได้เลย
+ * ทั้งโดเมน · BIND ตอบแค่ `dns_rdata_fromtext: <ไฟล์>:22: syntax error` แล้วทั้งโซนถูกคืน
+ * ค่าเดิม — เรกคอร์ดอื่นที่ไม่เกี่ยวข้องเลยค้างอยู่กับค่าเก่าตามไปด้วย
+ *
+ * เทสต์เดิมมี TXT อยู่รายการเดียวคือ `"v=spf1 -all"` ซึ่งสั้นกว่าขีดจำกัดมาก จึงไม่มีอะไร
+ * แตะขอบเลย · ข้อนี้ตรึงขอบไว้ด้วย named-checkzone ตัวจริง ไม่ใช่ด้วยการนับความยาวเอง
+ */
+
+/** กุญแจ DKIM ขนาดเท่าของจริง (2048 บิต) — ยาวเกิน 255 ไบต์แน่นอน */
+function dkimTxtValue(): string
+{
+    return 'v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA'
+        . str_repeat('Ab9Zx', 60) . 'IDAQAB';
+}
+
+test('TXT ที่ยาวเกิน 255 ไบต์ (กุญแจ DKIM) ถูกตัดเป็นหลายก้อนแล้วผ่าน named-checkzone จริง', static function (): void {
+    $dkim = dkimTxtValue();
+
+    assertTrue(strlen($dkim) > DnsRecord::TXT_STRING_MAX, 'ค่าที่ใช้ทดสอบต้องยาวเกินขีดจำกัดจริง ๆ ไม่งั้นเทสต์ไม่ได้ตรวจอะไรเลย');
+
+    $zone = DnsRecord::toAuthoritativeZoneFile(
+        'dkim.test',
+        [['type' => 'TXT', 'name' => 'default._domainkey', 'value' => $dkim, 'ttl' => 3600, 'priority' => null]],
+        1,
+        ['ns1.myhostingcompany.net'],
+        '',
+    );
+
+    [$ok, $output] = checkZoneReal('dkim.test', $zone);
+    assertTrue($ok, "TXT ยาว ๆ ต้องไม่ทำให้ทั้งโซนถูกปฏิเสธ แต่ได้:\n{$output}\n\n--- zone ---\n{$zone}");
+});
+
+test('TXT ที่ยาวเกินขีดจำกัดต้องได้ค่าเดิมกลับมาครบทุกไบต์เมื่ออ่านไฟล์กลับ', static function (): void {
+    // ตัดแล้วต่อกลับไม่ครบ = กุญแจ DKIM ที่ใช้ไม่ได้โดยไม่มีอะไรฟ้อง ซึ่งแย่กว่า
+    // ซิงก์ไม่ผ่านเสียอีก เพราะหน้าจอจะบอกว่าสำเร็จ
+    $dkim = dkimTxtValue();
+
+    $records = [['type' => 'TXT', 'name' => 'default._domainkey', 'value' => $dkim, 'ttl' => 3600, 'priority' => null]];
+    $parsed = DnsRecord::parseZoneFile('dkim.test', DnsRecord::toEditableRecords('dkim.test', $records));
+
+    assertSame(1, count($parsed), 'ต้องได้เรกคอร์ดกลับมาหนึ่งรายการ ไม่ใช่แตกเป็นหลายรายการตามจำนวนก้อน');
+    assertSame($dkim, $parsed[0]['value'], 'ค่าที่อ่านกลับต้องเท่ากับค่าเดิมทุกไบต์');
+});
+
+test('TXT ยาว ๆ ที่เก็บมาพร้อมคำพูดหรือถูกตัดมาแล้ว ให้ผลเหมือนค่าที่ไม่มีคำพูด', static function (): void {
+    /*
+     * ค่าที่เก็บในฐานข้อมูลมาได้สามแบบ: ฟอร์มบันทึกแบบไม่มีคำพูด · ผู้ใช้วางค่าที่ผู้ให้บริการ
+     * เมลให้มาทั้งก้อนพร้อมคำพูด · ผู้ใช้วางค่าที่ถูกตัดเป็นสองสตริงมาแล้ว · ทั้งสามแบบ
+     * หมายถึงกุญแจดอกเดียวกัน จึงต้องได้ไฟล์ที่ BIND อ่านได้เหมือนกันทุกแบบ
+     */
+    $dkim = dkimTxtValue();
+
+    $variants = [
+        'ไม่มีคำพูด' => $dkim,
+        'มีคำพูดครอบทั้งก้อน' => '"' . $dkim . '"',
+        'ถูกตัดมาแล้วสองสตริง' => '"' . substr($dkim, 0, 200) . '" "' . substr($dkim, 200) . '"',
+    ];
+
+    foreach ($variants as $label => $stored) {
+        $zone = DnsRecord::toAuthoritativeZoneFile(
+            'dkim.test',
+            [['type' => 'TXT', 'name' => 'default._domainkey', 'value' => $stored, 'ttl' => 3600, 'priority' => null]],
+            1,
+            ['ns1.myhostingcompany.net'],
+            '',
+        );
+
+        [$ok, $output] = checkZoneReal('dkim.test', $zone);
+        assertTrue($ok, "ค่าแบบ {$label} ต้องผ่าน checkzone: {$output}\n{$zone}");
+
+        $parsed = DnsRecord::parseZoneFile('dkim.test', $zone);
+        assertSame($dkim, $parsed[0]['value'], "ค่าแบบ {$label} ต้องอ่านกลับได้เป็นกุญแจดอกเดิม");
+    }
+});
+
+test('คำพูดที่เป็นส่วนหนึ่งของค่า TXT ต้องถูก escape ไม่ใช่ถูกถอดทิ้ง', static function (): void {
+    // `"บางส่วน" ที่เหลือ` ไม่ใช่การห่อค่า — คำพูดเป็นตัวอักษรในข้อความเอง
+    $records = [['type' => 'TXT', 'name' => '@', 'value' => '"ก้อนแรก" ที่เหลือ', 'ttl' => 3600, 'priority' => null]];
+
+    $zone = DnsRecord::toAuthoritativeZoneFile('quoted.test', $records, 1, ['ns1.myhostingcompany.net'], '');
+
+    [$ok, $output] = checkZoneReal('quoted.test', $zone);
+    assertTrue($ok, "ค่าที่มีคำพูดปนต้องยังผ่าน checkzone: {$output}\n{$zone}");
+
+    $parsed = DnsRecord::parseZoneFile('quoted.test', $zone);
+    assertSame('"ก้อนแรก" ที่เหลือ', $parsed[0]['value'], 'คำพูดในข้อความต้องรอดกลับมาครบ');
+});
+
+test('ไฟล์จริง ไฟล์ส่งออก และช่องแก้ไข ต้องเขียนค่าเรกคอร์ดเหมือนกันทุกบรรทัด', static function (): void {
+    /*
+     * สามที่นี้เคยเขียนบรรทัดเรกคอร์ดเองคนละก้อน แล้วมันแยกทางกันจริง: ไฟล์ส่งออกเป็น
+     * ที่เดียวที่ไม่ห่อคำพูดให้ TXT และไม่เติมจุดปิดท้ายให้ CNAME/MX — ค่าที่ผู้ใช้คัดลอก
+     * ไปวางที่ผู้ให้บริการภายนอกจึงเป็นคนละค่ากับที่ DNS ของเครื่องนี้ตอบ โดยไม่มีอะไรฟ้อง
+     *
+     * ข้อนี้ตรึง "เหมือนกัน" ไว้ ไม่ใช่ตรึงรูปแบบ — รูปแบบเปลี่ยนได้ แต่ต้องเปลี่ยนพร้อมกัน
+     */
+    $records = [
+        ['type' => 'CNAME', 'name' => 'app', 'value' => 'target.example.net', 'ttl' => 3600, 'priority' => null],
+        ['type' => 'MX', 'name' => '@', 'value' => 'mail.example.net', 'ttl' => 3600, 'priority' => 10],
+        ['type' => 'TXT', 'name' => '@', 'value' => 'v=spf1 mx -all', 'ttl' => 3600, 'priority' => null],
+        ['type' => 'TXT', 'name' => 'default._domainkey', 'value' => dkimTxtValue(), 'ttl' => 3600, 'priority' => null],
+    ];
+
+    /** เอาเฉพาะบรรทัดเรกคอร์ด ทิ้งคอมเมนต์ ส่วนหัว และบรรทัดว่าง */
+    $recordLines = static fn (string $text): array => array_values(array_filter(
+        preg_split('/\R/', $text) ?: [],
+        static fn (string $line): bool => trim($line) !== '' && !str_starts_with(trim($line), ';')
+            && !str_starts_with(trim($line), '$') && !preg_match('/^@\s+IN\s+(SOA|NS)\b/', $line)
+            && !preg_match('/^\s+\d/', $line) && !str_contains($line, ')      ;'),
+    ));
+
+    $exported = $recordLines(DnsRecord::toZoneFile('same.test', $records));
+    $editable = $recordLines(DnsRecord::toEditableRecords('same.test', $records));
+    $onDisk = $recordLines(DnsRecord::toAuthoritativeZoneFile('same.test', $records, 1, ['ns1.myhostingcompany.net'], ''));
+
+    assertSame(count($records), count($exported), 'ตัวกรองต้องเหลือเฉพาะบรรทัดเรกคอร์ดครบทุกรายการ');
+    assertSame($onDisk, $exported, 'ไฟล์ส่งออกต้องเขียนค่าเหมือนไฟล์จริงบนดิสก์');
+    assertSame($onDisk, $editable, 'ช่องแก้ไขต้องเขียนค่าเหมือนไฟล์จริงบนดิสก์');
+});
+
 // --- 1b. เส้นทางของ binary ต้องชี้ไปที่ไฟล์ที่มีอยู่จริง -------------------------
 
 test('เส้นทางของเครื่องมือ BIND9 ที่โค้ดใช้ ต้องมีไฟล์อยู่จริงบนเครื่องนี้อย่างน้อยหนึ่งตัวเลือก', static function (): void {
