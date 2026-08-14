@@ -251,3 +251,36 @@ test('www ต้องเป็นโดเมนสำรองอัตโน�
     assertTrue(in_array('shop.example.com', $custom['aliases'], true), 'alias ที่ระบุเองต้องยังอยู่');
     assertTrue(in_array('www.example.com', $custom['aliases'], true), 'และยังได้ www เพิ่มให้');
 });
+
+test('ขอใบรับรองแล้วต้องโหลดเข้าเว็บเซิร์ฟเวอร์ให้ด้วย', static function (): void {
+    /*
+     * **เจอบนเซิร์ฟเวอร์จริง (2026-08-14):** ขอใบใหม่ที่ครอบคลุม `www.` เพิ่ม หน้าจอตอบว่า
+     * สำเร็จ ไฟล์บนดิสก์ถูกต้อง vhost ชี้ถูกที่ — แต่ผู้เยี่ยมชมยังได้ใบเก่าที่ไม่มี `www.`
+     * เพราะเว็บเซิร์ฟเวอร์อ่านใบรับรองตอน start/reload เท่านั้น
+     *
+     * เบราว์เซอร์ขึ้นคำเตือนชื่อไม่ตรงต่อไปโดยไม่มีอะไรบอกว่าทำไม และผู้ดูแลไม่มีทาง
+     * เดาได้ว่าต้องไปกด reload เอง · ตรวจซอร์สโดยตัดคอมเมนต์ออกก่อน
+     */
+    $source = (string) file_get_contents(PHPCP_ROOT . '/src/Agent/Capability/SslIssue.php');
+    $code = implode("\n", array_filter(
+        explode("\n", $source),
+        static fn (string $l): bool => !str_starts_with(ltrim($l), '*')
+            && !str_starts_with(ltrim($l), '//')
+            && !str_starts_with(ltrim($l), '/*'),
+    ));
+
+    assertTrue(str_contains($code, '->reload('), 'ต้อง reload เว็บเซิร์ฟเวอร์หลังขอใบรับรองสำเร็จ');
+
+    // ต้องมาหลังการขอใบ ไม่ใช่ก่อน — reload ก่อนได้ใบใหม่ไม่มีความหมาย
+    $issueAt = strpos($code, '$certbot->issue(');
+    $reloadAt = strpos($code, '->reload(');
+
+    assertTrue(
+        $issueAt !== false && $reloadAt !== false && $issueAt < $reloadAt,
+        'ต้อง reload หลังได้ใบใหม่แล้ว',
+    );
+
+    // ล้มแล้วต้องไม่โยนต่อ — ใบขอสำเร็จไปแล้ว การทำให้ทั้งคำสั่งพังชวนให้กดขอใหม่
+    // ซึ่งกินโควตาของ Let's Encrypt โดยไม่ได้แก้อะไร
+    assertTrue(str_contains($code, "'reloaded' => \$reloaded"), 'ต้องรายงานกลับว่าโหลดสำเร็จหรือไม่');
+});

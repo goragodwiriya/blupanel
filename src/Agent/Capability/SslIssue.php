@@ -93,19 +93,42 @@ final class SslIssue extends SslCapability implements Capability
         $certbot->issue($executor, $site, $domains, $this->resolveEmail($args['email'], $site, $context), $args['staging']);
         $certificate = $certbot->inspect($executor, $site);
 
+        /*
+         * เว็บเซิร์ฟเวอร์อ่านใบรับรองตอน start/reload เท่านั้น — ไฟล์ใหม่บนดิสก์ไม่มีผล
+         * จนกว่าจะสั่งโหลด
+         *
+         * **เจอบนเซิร์ฟเวอร์จริง (2026-08-14):** ขอใบใหม่ที่ครอบคลุม `www.` เพิ่ม หน้าจอ
+         * ตอบว่าสำเร็จและไฟล์บนดิสก์ถูกต้องทุกอย่าง แต่ผู้เยี่ยมชมยังได้ใบเก่าที่ไม่มี
+         * `www.` อยู่ — เบราว์เซอร์ขึ้นคำเตือนชื่อไม่ตรงต่อไปโดยไม่มีอะไรบอกว่าทำไม
+         * และผู้ดูแลไม่มีทางเดาได้ว่าต้องไปกด reload เอง
+         *
+         * ล้มแล้วไม่โยนต่อ: ใบรับรองขอสำเร็จไปแล้วจริง ๆ การทำให้ทั้งคำสั่งกลายเป็น
+         * ข้อผิดพลาดจะชวนให้กดขอใหม่ ซึ่งกินโควตาของ Let's Encrypt โดยไม่ได้แก้อะไร
+         * — รายงานกลับไปว่ายังไม่ได้โหลดแทน
+         */
+        $reloaded = true;
+
+        try {
+            SiteCapability::provisionerFor($context)->reload($executor, $site);
+        } catch (\Throwable) {
+            $reloaded = false;
+        }
+
         return [
             'site_id' => $site->id,
             'domain' => $site->domain,
             'method' => 'letsencrypt',
             'domains' => $domains,
             'certificate' => $certificate,
+            'reloaded' => $reloaded,
             'message' => sprintf(
                 'ขอใบรับรองให้ %s สำเร็จ (ครอบคลุม %d โดเมน หมดอายุใน %d วัน)%s — '
-                . 'กด "เปิดใช้งาน HTTPS" เพื่อเริ่มใช้จริง',
+                . 'กด "เปิดใช้งาน HTTPS" เพื่อเริ่มใช้จริง%s',
                 $site->domain,
                 count($domains),
                 $certificate['days_left'],
                 $args['staging'] ? ' [ใบทดสอบ staging เบราว์เซอร์ไม่เชื่อถือ]' : '',
+                $reloaded ? '' : ' · โหลดใบใหม่เข้าเว็บเซิร์ฟเวอร์ไม่สำเร็จ ผู้เยี่ยมชมยังได้ใบเดิมจนกว่าจะ reload',
             ),
         ];
     }

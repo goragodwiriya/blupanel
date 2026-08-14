@@ -53,7 +53,6 @@
           </fieldset>
         </form>
       </div>
-
       <div class="content-body">
         <!--
           ใบรับรองของหน้าจัดการเอง — คนละเรื่องกับหน้า SSL ซึ่งจัดการใบของเว็บไซต์
@@ -62,28 +61,26 @@
           `self_signed` กับ `hook` ส่งมาจากเซิร์ฟเวอร์เป็นบูลีน เพราะตัวผูกค่าไม่มี
           เครื่องหมาย "ไม่ใช่" และเงื่อนไขที่ตีความไม่ได้จะทำให้ธาตุ "แสดง" เสมอ
         -->
-        <form data-form="panelCert" action="/api/v2/settings/panel-certificate" method="post"
-              data-ajax-submit="true" data-load-api="/api/v2/settings" data-emit-event="phpcp:reload"
-              data-confirm="Switch the panel to this certificate? If it does not work the panel restores the old one automatically.">
+        <form data-form="panelCert" action="/api/v2/settings/panel-certificate" method="post" data-ajax-submit="true" data-load-api="/api/v2/settings"
+              data-emit-event="phpcp:reload" data-confirm="Switch the panel to this certificate? If it does not work the panel restores the old one automatically.">
           <fieldset>
             <legend class="icon-lock" data-i18n>Panel certificate</legend>
-            <div class="comment" data-i18n>The certificate the management page itself uses — not the ones for hosted websites. Pick a domain that already has a certificate and the panel keeps it up to date when it renews.</div>
-
-            <div class="alert alert-warning" data-if="panel_cert.self_signed" data-i18n>The panel is using a self-signed certificate, so every browser shows a warning. Clicking through that warning every day trains you to ignore the one warning that will matter.</div>
-
+            <div class="comment" data-i18n>The certificate the management page itself uses — not the ones for hosted websites. Pick a domain that already has a certificate and the
+              panel keeps it up to date when it renews.</div>
+            <div class="alert alert-warning" data-if="panel_cert.self_signed" data-i18n>The panel is using a self-signed certificate, so every browser shows a warning. Clicking
+              through that warning every day trains you to ignore the one warning that will matter.</div>
             <div>
               <label data-i18n>Certificate in use now</label>
               <p class="mono" data-text="panel_cert.subject"></p>
               <div class="comment"><span data-i18n>Issued by</span> <span data-text="panel_cert.issuer"></span></div>
             </div>
-
             <div>
               <label for="panel_cert_domain" data-i18n>Use the certificate of this domain</label>
               <span class="form-control icon-lock">
-                <input type="text" id="panel_cert_domain" name="domain" autocomplete="off" spellcheck="false"
-                       class="mono" data-attr="value:panel_cert.domain">
+                <input type="text" id="panel_cert_domain" name="domain" autocomplete="off" spellcheck="false" class="mono" data-attr="value:panel_cert.domain">
               </span>
-              <div class="comment" data-i18n>Leave blank to go back to the self-signed certificate. The domain must already have a certificate — issue one from its website page first.</div>
+              <div class="comment" data-i18n>Leave blank to go back to the self-signed certificate. The domain must already have a certificate — issue one from its website page
+                first.</div>
             </div>
           </fieldset>
           <fieldset class="submit">
@@ -91,7 +88,6 @@
           </fieldset>
         </form>
       </div>
-
       <div class="content-body">
         <!--
           รูปทรงไฟล์เริ่มต้น — มีผลกับ**บัญชีที่สร้างหลังจากนี้**เท่านั้น
@@ -115,13 +111,15 @@
                 </select>
               </span>
             </div>
-            <div class="comment" data-i18n>Applies to accounts created from now on. Accounts that already have sites keep their current layout until you change it on their own page — that one moves real files.</div>
+            <div class="comment" data-i18n>Applies to accounts created from now on. Accounts that already have sites keep their current layout until you change it on their own page
+              — that one moves real files.</div>
           </fieldset>
           <fieldset class="submit">
             <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
           </fieldset>
         </form>
-
+      </div>
+      <div class="content-body">
         <!--
           DNS — ค่าพวกนี้เคยอยู่ใน config.php ซึ่งแปลว่าต้อง ssh เข้าไปแก้ไฟล์เอง
           ทั้งที่เป็นค่าที่ผู้ดูแลต้องตั้งตั้งแต่วันแรกที่จะใช้ DNS ของเครื่องนี้
@@ -137,16 +135,15 @@
             <div>
               <label for="dns_nameservers" data-i18n>Name servers</label>
               <span class="form-control icon-service">
-                <input type="text" id="dns_nameservers" name="dns.nameservers" autocomplete="off"
-                       placeholder="ns1.example.com, ns2.example.com" data-attr="value:values['dns.nameservers']">
+                <input type="text" id="dns_nameservers" name="dns.nameservers" autocomplete="off" placeholder="ns1.example.com, ns2.example.com"
+                       data-attr="value:values['dns.nameservers']">
               </span>
             </div>
             <div class="comment" data-i18n>At least one is required — BIND9 refuses a zone with no NS record.</div>
             <div>
               <label for="dns_soa_email" data-i18n>DNS administrator email</label>
               <span class="form-control icon-email">
-                <input type="email" id="dns_soa_email" name="dns.soa_email" autocomplete="off"
-                       placeholder="hostmaster@example.com" data-attr="value:values['dns.soa_email']">
+                <input type="email" id="dns_soa_email" name="dns.soa_email" autocomplete="off" placeholder="hostmaster@example.com" data-attr="value:values['dns.soa_email']">
               </span>
             </div>
           </fieldset>
@@ -155,7 +152,6 @@
           </fieldset>
         </form>
       </div>
-
       <div class="content-body">
         <form data-form="settings" action="/api/v2/settings" method="post" data-method="PATCH" data-ajax-submit="true" data-load-api="/api/v2/settings">
           <fieldset>
@@ -178,8 +174,9 @@
                 </span>
               </div>
               <div>
-                <button type="button" id="test_telegram" class="btn fullwidth center icon-send" data-action="click.prevent:requestApi" data-api-url="/api/v2/settings/notification-test"
-                        data-api-method="post" data-param-channel="telegram" data-required-fields="notify_telegram_token,notify_telegram_chat_id" data-required-message="Please fill in" data-loading-text="Sending..."
+                <button type="button" id="test_telegram" class="btn fullwidth center icon-send" data-action="click.prevent:requestApi"
+                        data-api-url="/api/v2/settings/notification-test" data-api-method="post" data-param-channel="telegram"
+                        data-required-fields="notify_telegram_token,notify_telegram_chat_id" data-required-message="Please fill in" data-loading-text="Sending..."
                         data-notify-success="true" data-i18n>Send test notification</button>
               </div>
             </div>
@@ -206,8 +203,8 @@
               </div>
               <div>
                 <button type="button" class="btn fullwidth center icon-send" data-action="click.prevent:requestApi" data-api-url="/api/v2/settings/notification-test"
-                        data-api-method="post" data-param-channel="email" data-required-fields="notify_email_to" data-required-message="Please fill in" data-loading-text="Sending..."
-                        data-notify-success="true" data-i18n>Send test notification</button>
+                        data-api-method="post" data-param-channel="email" data-required-fields="notify_email_to" data-required-message="Please fill in"
+                        data-loading-text="Sending..." data-notify-success="true" data-i18n>Send test notification</button>
               </div>
             </div>
             <div class="comment" data-i18n>Uses the outgoing mail settings below — save first, then send the test</div>
@@ -221,7 +218,8 @@
             <div>
               <label for="notify_webhook_url" data-i18n>Webhook URL</label>
               <span class="form-control icon-link">
-                <input type="text" id="notify_webhook_url" name="notify.webhook.url" autocomplete="off" placeholder="https://example.com/hooks/phpcp" data-attr="value:values['notify.webhook.url']">
+                <input type="text" id="notify_webhook_url" name="notify.webhook.url" autocomplete="off" placeholder="https://example.com/hooks/phpcp"
+                       data-attr="value:values['notify.webhook.url']">
               </span>
             </div>
             <div class="form-group bottom">
@@ -233,8 +231,8 @@
               </div>
               <div>
                 <button type="button" class="btn fullwidth center icon-send" data-action="click.prevent:requestApi" data-api-url="/api/v2/settings/notification-test"
-                        data-api-method="post" data-param-channel="webhook" data-required-fields="notify_webhook_url" data-required-message="Please fill in" data-loading-text="Sending..."
-                        data-notify-success="true" data-i18n>Send test notification</button>
+                        data-api-method="post" data-param-channel="webhook" data-required-fields="notify_webhook_url" data-required-message="Please fill in"
+                        data-loading-text="Sending..." data-notify-success="true" data-i18n>Send test notification</button>
               </div>
             </div>
             <div class="comment" data-i18n>Must be https — the receiver verifies the X-Phpcp-Signature header with this secret</div>
@@ -275,7 +273,6 @@
           </fieldset>
         </form>
       </div>
-
       <div class="content-body">
         <!--
           เมลขาออก — ฟอร์มของตัวเองด้วยเหตุผลเดียวกับเว็บเซิร์ฟเวอร์ข้างบน
@@ -318,11 +315,11 @@
             <div>
               <label for="mail_hostname" data-i18n>Mail hostname</label>
               <span class="form-control icon-world">
-                <input type="text" id="mail_hostname" name="mail.hostname" autocomplete="off"
-                       placeholder="mail.example.com" data-attr="value:values['mail.hostname']">
+                <input type="text" id="mail_hostname" name="mail.hostname" autocomplete="off" placeholder="mail.example.com" data-attr="value:values['mail.hostname']">
               </span>
             </div>
-            <div class="comment" data-i18n>The name this server announces to other mail servers. It must have a dot, and its reverse DNS (PTR) should match — otherwise many providers treat the mail as spam.</div>
+            <div class="comment" data-i18n>The name this server announces to other mail servers. It must have a dot, and its reverse DNS (PTR) should match — otherwise many
+              providers treat the mail as spam.</div>
             <div>
               <label for="mail_relay_host" data-i18n>Relay host</label>
               <span class="form-control icon-database">
@@ -386,15 +383,12 @@
             <thead>
               <tr>
                 <th data-field="label" data-i18n>{LNG_Name}</th>
-                <th data-field="level" class="center" data-cell-class="center"
-                    data-template="<span class='pill pill-${level_tone}'>{LNG_${level}}</span>"
-                    data-i18n>{LNG_Status}</th>
+                <th data-field="level" class="center" data-cell-class="center" data-template="<span class='pill pill-${level_tone}'>{LNG_${level}}</span>" data-i18n>{LNG_Status}
+                </th>
                 <th data-field="value" class="center" data-cell-class="center right" data-format="fixed:1" data-i18n>{LNG_Value}</th>
-                <th data-field="first_at" class="center" data-cell-class="center"
-                    data-format="datetime" data-empty-text="—" data-i18n>{LNG_Since}</th>
+                <th data-field="first_at" class="center" data-cell-class="center" data-format="datetime" data-empty-text="—" data-i18n>{LNG_Since}</th>
                 <th data-field="duration" class="center" data-cell-class="center" data-format="duration" data-i18n>{LNG_Duration}</th>
-                <th data-field="notified_at" class="center" data-cell-class="center"
-                    data-format="datetime" data-empty-text="—" data-i18n>{LNG_Last notified}</th>
+                <th data-field="notified_at" class="center" data-cell-class="center" data-format="datetime" data-empty-text="—" data-i18n>{LNG_Last notified}</th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -410,11 +404,9 @@
               <tr>
                 <th data-field="name" data-i18n>{LNG_Name}</th>
                 <th data-field="schedule" class="center" data-cell-class="center mono" data-i18n>{LNG_Schedule}</th>
-                <th data-field="last_run_at" class="center" data-cell-class="center"
-                    data-format="datetime" data-empty-text="—" data-i18n>{LNG_Last run}</th>
-                <th data-field="last_status" class="center" data-cell-class="center"
-                    data-template="<span class='pill pill-${status_tone}'>{LNG_${status_label}}</span>"
-                    data-i18n>{LNG_Status}</th>
+                <th data-field="last_run_at" class="center" data-cell-class="center" data-format="datetime" data-empty-text="—" data-i18n>{LNG_Last run}</th>
+                <th data-field="last_status" class="center" data-cell-class="center" data-template="<span class='pill pill-${status_tone}'>{LNG_${status_label}}</span>" data-i18n>
+                  {LNG_Status}</th>
                 <th data-field="last_error" data-empty-text="—" data-i18n>{LNG_Detail}</th>
               </tr>
             </thead>
