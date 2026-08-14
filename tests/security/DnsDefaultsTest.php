@@ -15,6 +15,43 @@ use Phpcp\Domain\ServerAddress;
 
 group('DnsZoneDefaults — zone ที่ใช้งานได้ตั้งแต่วินาทีแรก');
 
+/**
+ * ฐานข้อมูลเปล่าพร้อมตัวช่วยสร้างเว็บและโดเมน
+ *
+ * @return array{db:Phpcp\Kernel\Db,site:callable,domain:callable}
+ */
+function dnsDefaultsFixture(): array
+{
+    $root = sys_get_temp_dir() . '/phpcp-dnsfx-' . getmypid() . '-' . bin2hex(random_bytes(4));
+    mkdir($root, 0750, true);
+    register_shutdown_function(static fn () => exec('rm -rf ' . escapeshellarg($root)));
+
+    $db = new Phpcp\Kernel\Db($root . '/panel.db');
+    $db->migrate(PHPCP_ROOT . '/db/migrations');
+
+    $userId = $db->insert('users', [
+        'username' => 'dnsfx', 'display_name' => 'dnsfx',
+        'password_hash' => password_hash('x', PASSWORD_DEFAULT), 'role' => Phpcp\Security\Permissions::WEBADMIN,
+        'totp_enabled' => 0, 'must_change_password' => 0, 'status' => 'active', 'failed_attempts' => 0,
+        'email' => '', 'service_status' => 'active', 'uid' => 0, 'gid' => 0,
+        'quota_domains' => -1, 'quota_subdomains' => -1, 'quota_aliases' => -1, 'quota_emails' => -1,
+        'quota_databases' => -1, 'quota_ftp_users' => -1, 'disk_quota_mb' => -1, 'disk_used_mb' => 0,
+        'created_at' => time(), 'updated_at' => time(),
+    ]);
+
+    return [
+        'db' => $db,
+        'site' => static fn (string $domain): int => $db->insert('sites', [
+            'name' => $domain, 'primary_domain' => $domain, 'docroot' => '/tmp/x',
+            'php_version' => '8.4', 'ssl_mode' => 'off', 'status' => 'active', 'disk_used_mb' => 0,
+            'owner_user_id' => $userId, 'docroot_override' => '', 'created_at' => time(), 'updated_at' => time(),
+        ]),
+        'domain' => static fn (int $siteId, string $domain): int => $db->insert('domains', [
+            'site_id' => $siteId, 'domain' => $domain, 'type' => 'primary', 'created_at' => time(),
+        ]),
+    ];
+}
+
 test('เนมเซิร์ฟเวอร์ที่อยู่ในโดเมนตัวเองต้องได้ glue record — ขาดแล้ว zone ทั้งไฟล์โหลดไม่ขึ้น', static function (): void {
     /*
      * **เจอบนเซิร์ฟเวอร์จริง (2026-08-14):** named-checkzone ปฏิเสธ zone แรกของเครื่อง
@@ -122,4 +159,56 @@ test('เรียกซ้ำต้องไม่สร้างเรกค�
 
     $total = (int) $db->value('SELECT count(*) FROM dns_records WHERE domain_id = :id', ['id' => $domainId]);
     assertSame(4, $total, 'ต้องมี CNAME เดิม + @ + ns1 + ns2 = 4 · ได้ ' . $total);
+});
+
+test('สร้าง zone แม่ต้องไม่ทำให้เว็บลูกที่ให้บริการอยู่กลายเป็น NXDOMAIN', static function (): void {
+    /*
+     * **เจอบนเซิร์ฟเวอร์จริง (2026-08-14):** เครื่องให้บริการ srv.example.com อยู่ก่อน
+     * โดยอาศัยเรกคอร์ดที่ผู้รับจดโดเมน · ผู้ดูแลสร้างเว็บ example.com แล้วชี้ NS มาที่
+     * เครื่องนี้ → zone ใหม่ไม่มีชื่อ srv เลย → เว็บที่ใช้งานได้อยู่ล่มทันที และ certbot
+     * ต่ออายุใบรับรองไม่ได้อีกเพราะพิสูจน์สิทธิ์ไม่ผ่าน · ไม่มีอะไรเตือนสักคำ
+     */
+    $fx = dnsDefaultsFixture();
+
+    // มี srv.example.com ให้บริการอยู่ก่อนแล้ว
+    $fx['domain']($fx['site']('srv.example.com'), 'srv.example.com');
+
+    // แล้วค่อยรับ zone แม่มาดูแล
+    $parentId = $fx['domain']($fx['site']('example.com'), 'example.com');
+
+    $created = Phpcp\Domain\DnsZoneDefaults::seed(
+        $fx['db'], $parentId, 'example.com', '203.0.113.10', ['ns1.example.com'],
+    );
+
+    assertTrue(in_array('srv', $created, true), 'zone แม่ต้องมีชื่อของเว็บลูกที่มีอยู่ · ได้: ' . implode(', ', $created));
+});
+
+test('โดเมนที่อยู่ใต้ zone ที่เครื่องดูแลอยู่แล้ว ต้องเป็นเรกคอร์ดใน zone นั้น ไม่ใช่ zone แยก', static function (): void {
+    $fx = dnsDefaultsFixture();
+    $parentId = $fx['domain']($fx['site']('example.com'), 'example.com');
+    $childId = $fx['domain']($fx['site']('srv.example.com'), 'srv.example.com');
+
+    $parent = Phpcp\Domain\DnsZoneDefaults::parentZone($fx['db'], 'srv.example.com', $childId);
+
+    assertTrue($parent !== null, 'ต้องหา zone แม่เจอ');
+    assertSame('example.com', $parent['domain'], 'zone แม่ต้องเป็น example.com');
+    assertSame('srv', $parent['label'], 'ชื่อในzone ต้องเป็น srv');
+
+    // โดเมนที่ไม่มีแม่บนเครื่องนี้ต้องได้ zone ของตัวเอง
+    $otherId = $fx['domain']($fx['site']('other.com'), 'other.com');
+    assertSame(null, Phpcp\Domain\DnsZoneDefaults::parentZone($fx['db'], 'other.com', $otherId), 'ไม่มีแม่ = zone ของตัวเอง');
+});
+
+test('zone ที่ใกล้ที่สุดต้องเป็นเจ้าของ ไม่ใช่ zone บนสุด', static function (): void {
+    // เครื่องที่โฮสต์ทั้ง example.com และ sub.example.com เป็น zone แยกกันจริง ๆ
+    // ชื่อ a.sub.example.com ต้องไปอยู่ใน sub.example.com ไม่ใช่ example.com
+    $fx = dnsDefaultsFixture();
+    $fx['domain']($fx['site']('example.com'), 'example.com');
+    $fx['domain']($fx['site']('sub.example.com'), 'sub.example.com');
+    $leafId = $fx['domain']($fx['site']('a.sub.example.com'), 'a.sub.example.com');
+
+    $parent = Phpcp\Domain\DnsZoneDefaults::parentZone($fx['db'], 'a.sub.example.com', $leafId);
+
+    assertSame('sub.example.com', $parent['domain'], 'ต้องเลือก zone ที่ใกล้ที่สุด');
+    assertSame('a', $parent['label'], 'ชื่อในzone ต้องเป็น a');
 });

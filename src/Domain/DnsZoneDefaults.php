@@ -88,14 +88,141 @@ final class DnsZoneDefaults
             'name',
         );
 
+        $wanted = self::forDomain($domain, $ip, $nameservers);
+
+        /*
+         * โดเมนที่เครื่องนี้ให้บริการอยู่แล้วและอยู่**ใต้** zone ที่กำลังสร้าง ต้องมีชื่อ
+         * อยู่ใน zone นี้ด้วยตั้งแต่วินาทีแรก
+         *
+         * **เจอบนเซิร์ฟเวอร์จริง 2026-08-14:** เครื่องให้บริการ `srv.example.com` อยู่ก่อน
+         * โดยอาศัยเรกคอร์ดที่ผู้รับจดโดเมน · พอผู้ดูแลสร้างเว็บ `example.com` แล้วชี้ NS
+         * มาที่เครื่องนี้ zone ใหม่ไม่มีชื่อ `srv` เลย — เว็บที่ใช้งานได้อยู่กลายเป็น
+         * NXDOMAIN ทันทีและ certbot ต่ออายุใบรับรองไม่ได้อีก โดยไม่มีอะไรเตือนสักคำ
+         *
+         * การรับ zone มาดูแลต้องไม่ทำให้สิ่งที่เครื่องนี้ให้บริการอยู่แล้วหายไป
+         */
+        foreach ($db->all('SELECT domain FROM domains WHERE id <> :id', ['id' => $domainId]) as $row) {
+            $label = self::labelInside((string) $row['domain'], $domain);
+
+            if ($label === null || $label === '@') {
+                continue;
+            }
+
+            foreach (self::forSubdomain($label, $ip) as $record) {
+                $wanted[] = $record;
+            }
+        }
+
         $created = [];
 
-        foreach (self::forDomain($domain, $ip, $nameservers) as $record) {
+        foreach ($wanted as $record) {
             if (in_array($record['name'], $existing, true)) {
                 continue;
             }
 
             $db->insert('dns_records', ['domain_id' => $domainId] + $record);
+            $created[] = $record['name'];
+        }
+
+        return $created;
+    }
+
+    /**
+     * zone ที่ **ควร** เก็บเรกคอร์ดของโดเมนนี้ — null = โดเมนนี้เป็น zone ของตัวเอง
+     *
+     * ## ทำไมต้องมี
+     *
+     * เว็บสองแห่งที่เป็นแม่ลูกกันทางชื่อ (`example.com` กับ `srv.example.com`) ถูกเก็บ
+     * เป็นสองแถวใน `domains` เท่ากัน · แต่ในโลกของ DNS มันไม่เท่ากันเลย: เมื่อเครื่องนี้
+     * เป็นเจ้าของ zone `example.com` แล้ว **ชื่อ `srv.example.com` ต้องเป็นเรกคอร์ด
+     * อยู่ข้างใน zone นั้น** ไม่ใช่ zone แยกอีกไฟล์ (นอกจากจะตั้งใจ delegate ออกไป
+     * ซึ่งเป็นงานคนละอย่างที่ต้องมี NS record บอกชัด)
+     *
+     * **เจอบนเซิร์ฟเวอร์จริง 2026-08-14:** เครื่องมี `srv.example.com` ให้บริการอยู่ก่อน
+     * โดยอาศัยเรกคอร์ดที่ผู้รับจดโดเมน · พอผู้ดูแลสร้างเว็บ `example.com` แล้วชี้ NS
+     * มาที่เครื่องนี้ zone ใหม่ไม่มีชื่อ `srv` อยู่เลย — `srv.example.com` จึงกลายเป็น
+     * NXDOMAIN ทันที เว็บที่ใช้งานได้อยู่ล่มโดยไม่มีอะไรเตือน และ certbot ต่ออายุ
+     * ใบรับรองไม่ได้อีกเลยเพราะพิสูจน์สิทธิ์ไม่ผ่าน
+     *
+     * เลือก zone ที่ยาวที่สุดที่ครอบชื่อนี้ — เครื่องที่โฮสต์ทั้ง `example.com` และ
+     * `sub.example.com` เป็น zone แยกกันจริง ๆ ต้องได้ zone ที่ใกล้ที่สุดเป็นเจ้าของ
+     *
+     * @return array{id:int,domain:string,label:string}|null
+     */
+    public static function parentZone(Db $db, string $domain, int $exceptDomainId = 0): ?array
+    {
+        $domain = strtolower(rtrim(trim($domain), '.'));
+        $best = null;
+
+        foreach ($db->all('SELECT id, domain FROM domains') as $row) {
+            $candidate = strtolower(rtrim((string) $row['domain'], '.'));
+
+            if ((int) $row['id'] === $exceptDomainId || $candidate === $domain) {
+                continue;
+            }
+
+            if (!str_ends_with($domain, '.' . $candidate)) {
+                continue;
+            }
+
+            if ($best === null || strlen($candidate) > strlen($best['domain'])) {
+                $best = [
+                    'id' => (int) $row['id'],
+                    'domain' => $candidate,
+                    'label' => substr($domain, 0, -strlen('.' . $candidate)),
+                ];
+            }
+        }
+
+        return $best;
+    }
+
+    /**
+     * เรกคอร์ดของชื่อที่อยู่ **ใต้ zone ของคนอื่น** — ใช้แทน forDomain() ในกรณีนั้น
+     *
+     * ได้ `srv` กับ `www.srv` เทียบเท่ากับ `@` กับ `www` ของ zone ปกติ เพื่อให้
+     * พฤติกรรมที่ผู้ดูแลเห็นเหมือนกันไม่ว่าโดเมนจะอยู่ระดับไหน
+     *
+     * @return list<array{type:string,name:string,value:string,ttl:int,priority:null}>
+     */
+    public static function forSubdomain(string $label, string $ip): array
+    {
+        if (!ServerAddress::isIpv4($ip) || trim($label) === '') {
+            return [];
+        }
+
+        return array_map(
+            static fn (string $name): array => [
+                'type' => 'A',
+                'name' => $name,
+                'value' => $ip,
+                'ttl' => self::TTL,
+                'priority' => null,
+            ],
+            [$label, 'www.' . $label],
+        );
+    }
+
+    /**
+     * เขียนเรกคอร์ดของ subdomain ลง zone แม่ — เรียกซ้ำได้
+     *
+     * @return list<string>
+     */
+    public static function seedSubdomain(Db $db, int $parentDomainId, string $label, string $ip): array
+    {
+        $existing = array_column(
+            $db->all('SELECT name FROM dns_records WHERE domain_id = :id', ['id' => $parentDomainId]),
+            'name',
+        );
+
+        $created = [];
+
+        foreach (self::forSubdomain($label, $ip) as $record) {
+            if (in_array($record['name'], $existing, true)) {
+                continue;
+            }
+
+            $db->insert('dns_records', ['domain_id' => $parentDomainId] + $record);
             $created[] = $record['name'];
         }
 

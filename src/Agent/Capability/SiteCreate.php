@@ -357,18 +357,36 @@ final class SiteCreate extends SiteCapability
         }
 
         try {
-            $created = DnsZoneDefaults::seed(
-                $context->db,
-                (int) $row['id'],
-                $site->domain,
-                $ip,
-                $context->config->dnsNameservers(),
-            );
+            /*
+             * โดเมนที่อยู่ใต้ zone ที่เครื่องนี้ดูแลอยู่แล้ว ต้องเป็น**เรกคอร์ดใน zone นั้น**
+             * ไม่ใช่ zone แยกอีกไฟล์ — ดูเหตุผลเต็มที่ DnsZoneDefaults::parentZone()
+             */
+            $parent = DnsZoneDefaults::parentZone($context->db, $site->domain, (int) $row['id']);
+
+            if ($parent !== null) {
+                $created = DnsZoneDefaults::seedSubdomain($context->db, $parent['id'], $parent['label'], $ip);
+                $zoneId = $parent['id'];
+            } else {
+                $created = DnsZoneDefaults::seed(
+                    $context->db,
+                    (int) $row['id'],
+                    $site->domain,
+                    $ip,
+                    $context->config->dnsNameservers(),
+                );
+                $zoneId = (int) $row['id'];
+            }
 
             $write = (new BindZoneManager($executor, $context->config, $context->db))
-                ->writeZone($context->db->first('SELECT * FROM domains WHERE id = :id', ['id' => (int) $row['id']]));
+                ->writeZone($context->db->first('SELECT * FROM domains WHERE id = :id', ['id' => $zoneId]));
 
-            return ['seeded' => true, 'ip' => $ip, 'records' => $created, 'pushed' => $write['pushed'] ?? false];
+            return [
+                'seeded' => true,
+                'ip' => $ip,
+                'records' => $created,
+                'zone' => $parent['domain'] ?? $site->domain,
+                'pushed' => $write['pushed'] ?? false,
+            ];
         } catch (\Throwable $e) {
             return ['seeded' => false, 'ip' => $ip, 'reason' => $e->getMessage()];
         }
