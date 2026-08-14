@@ -406,10 +406,26 @@ final class MariaDbManager
         $this->execute($executor, 'FLUSH PRIVILEGES');
     }
 
-    /** สำรองฐานข้อมูลเป็นไฟล์ SQL คืนขนาดไฟล์ */
+    /**
+     * สำรองฐานข้อมูลเป็นไฟล์ `.sql.gz` คืนขนาดไฟล์ที่เขียนจริง
+     *
+     * **บีบอัดเสมอ ไม่ใช่ทางเลือก** — ไฟล์นี้ไปอยู่ในบ้านของลูกค้าและนับในโควตาของเขา
+     * (PLAN-BACKUP-V2 ข้อ B9) · ข้อความ SQL บีบได้ราว 5-10 เท่า ส่วนต่างนั้นคือพื้นที่
+     * ที่ลูกค้าจ่ายไปกับไฟล์ที่เก็บซ้ำ ๆ ทุกคืน
+     *
+     * บีบด้วย zlib ในโปรเซสแทนการต่อท่อไปยังคำสั่ง `gzip` เพราะ `exec()` ของโปรเจกต์นี้
+     * รับ argv ล้วน ไม่มี shell ให้ต่อท่อ (โดยเจตนา — ดู RealExecutor) · การเขียนไฟล์ดิบ
+     * ลงดิสก์ก่อนแล้วค่อยเรียก gzip จะสร้างช่วงที่ไฟล์ **ไม่บีบอัด** อยู่ในโควตาของลูกค้า
+     * และเหลือไฟล์ค้างถ้าล้มกลางทาง · ผลลัพธ์เป็นไฟล์ gzip มาตรฐานที่ `gunzip`/`zcat`
+     * อ่านได้เหมือนกัน
+     */
     public function dump(Executor $executor, string $database, string $target): int
     {
         self::assertDatabaseName($database);
+
+        if (!str_ends_with($target, '.gz')) {
+            throw new ExecutionFailed('ไฟล์สำรองฐานข้อมูลต้องลงท้ายด้วย .gz');
+        }
 
         $binary = $executor->exists(self::DUMP) ? self::DUMP : self::DUMP_FALLBACK;
 
@@ -432,9 +448,15 @@ final class MariaDbManager
             throw new ExecutionFailed('สำรองฐานข้อมูลไม่สำเร็จ: '.trim($result->stderr));
         }
 
-        $executor->writeFile($executor->path($target), $result->stdout, 0600);
+        $compressed = gzencode($result->stdout, 6);
 
-        return strlen($result->stdout);
+        if ($compressed === false) {
+            throw new ExecutionFailed('บีบอัดไฟล์สำรองฐานข้อมูลไม่สำเร็จ');
+        }
+
+        $executor->writeFile($executor->path($target), $compressed, 0600);
+
+        return strlen($compressed);
     }
 
     /**

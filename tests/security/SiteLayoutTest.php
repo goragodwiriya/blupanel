@@ -38,7 +38,29 @@ test('เลย์เอาต์ phpcp ต้องได้เส้นทา�
 
     assertSame($home . '/domains/main.test/public', $site->docroot(), 'docroot เดิม');
     assertSame($home . '/domains/main.test/logs', $site->logDir(), 'log เดิม');
-    assertSame($home . '/domains/main.test/backups', $site->backupDir(), 'backup เดิม');
+});
+
+test('โฟลเดอร์สำรองเป็นของบัญชี ไม่ใช่ของเว็บ และเหมือนกันทุกเลย์เอาต์', static function (): void {
+    /*
+     * เดิมเป็นรายเว็บและต่างกันตามเลย์เอาต์ (`domains/<โดเมน>/backups` กับ
+     * `backups/<โดเมน>`) · ตั้งแต่ PLAN-BACKUP-V2 ไฟล์สำรองเป็นของ**เจ้าของข้อมูล**
+     * ที่ต้องหยิบเองได้ผ่าน SFTP — หนึ่งบัญชีหนึ่งโฟลเดอร์ ชื่อโดเมนอยู่ในชื่อไฟล์
+     *
+     * เหมือนกันทุกเลย์เอาต์เป็นเรื่องสำคัญ ไม่ใช่ความบังเอิญ: การย้ายเลย์เอาต์จึงไม่ต้อง
+     * ขยับไฟล์สำรองเลย ซึ่งเป็นการย้ายที่ชนกันเองเมื่อบัญชีมีหลายเว็บ (หลายโฟลเดอร์
+     * ต้นทางชี้ไปที่ปลายทางเดียวกัน)
+     */
+    $home = Paths::usersDir() . '/lucy';
+
+    foreach ([SiteLayout::Phpcp, SiteLayout::Cpanel] as $layout) {
+        foreach (['main.test', 'shop.test'] as $domain) {
+            assertSame(
+                $home . '/backup',
+                siteLayoutSite(siteLayoutUser($layout), $domain)->backupDir(),
+                sprintf('%s/%s: โฟลเดอร์สำรองต้องเป็นของบัญชี', $layout->value, $domain),
+            );
+        }
+    }
 });
 
 test('บัญชีที่ยังไม่เคยเลือกต้องตกไปที่ค่าเริ่มต้นของระบบ ไม่ใช่ล้ม', static function (): void {

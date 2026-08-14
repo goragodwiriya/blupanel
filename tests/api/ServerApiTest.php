@@ -71,8 +71,9 @@ function serverEndpoints(): array
         ['GET', '/api/v2/security/scan', []],
         ['GET', '/api/v2/backup-destinations', []],
         ['POST', '/api/v2/backup-destinations', ['name' => 'x', 'driver' => 'local', 'path' => '/tmp/x']],
-        ['GET', '/api/v2/backup-schedules', []],
-        ['POST', '/api/v2/backup-schedules', ['label' => 'x', 'type' => 'site', 'schedule' => '0 1 * * *']],
+        ['GET', '/api/v2/backup-schedule', []],
+        ['PATCH', '/api/v2/backup-schedule', ['schedule' => '0 1 * * *']],
+        ['GET', '/api/v2/backup-targets', []],
         ['GET', '/api/v2/system/info', []],
     ];
 }
@@ -248,71 +249,64 @@ test('ทุกเส้นทางของ B3.4 ตอบ JSON และม�
     }
 });
 
-test('ตารางเวลาสำรองแตะงานของระบบไม่ได้เลย', static function (): void {
-    // ในตาราง `scheduled_jobs` มี `rollback.run` ที่เป็นกลไกกันผู้ดูแลล็อกตัวเองออกจาก
-    // เครื่อง · ถ้า endpoint นี้แก้มันได้ ก็เท่ากับปิดการป้องกันของระบบผ่านหน้าเว็บ
-    //
-    // ต้องได้ **404 ไม่ใช่ 403** — งานของระบบไม่ใช่ทรัพยากรของ endpoint นี้เลย
-    // ไม่ใช่ทรัพยากรที่มีอยู่แต่ห้ามแตะ
+test('ตารางเวลาสำรองตรึง capability ไว้ที่ backup.run เสมอ ไม่ว่าจะส่งอะไรมา', static function (): void {
+    /*
+     * เลือก capability เองได้ = ตั้งเวลาให้ระบบรันคำสั่งอะไรก็ได้ในนามของ "ระบบ"
+     * ซึ่งเป็นสิทธิ์สูงสุดที่มีในระบบนี้
+     *
+     * ตั้งแต่ PLAN-BACKUP-V2 ข้อ B10 ตารางเวลาเหลือ**ตัวเดียวทั้งเครื่อง** ชื่อคงที่
+     * `backup.auto` · ผู้เรียกจึงสร้างแถวใหม่ไม่ได้เลย ได้แค่แก้เวลาของแถวเดียวนั้น
+     * — ช่องทางแทรก capability ปิดไปพร้อมกับการตัด CRUD ทิ้ง ไม่ใช่ด้วยการกรองค่า
+     */
     $harness = serverLogin('srvadmin', 'Server-Admin-Pass-11');
 
-    // ฐานข้อมูลของ harness เพิ่งถูกสร้าง จึงต้องเติมงานตั้งต้นก่อน — ตัวเดียวกับที่
-    // `phpcp setup` และ `phpcp db:migrate` เรียกบนเครื่องจริง
+    $response = $harness->request('PATCH', '/api/v2/backup-schedule', [
+        'schedule' => '0 2 * * *',
+        'capability' => 'service.restart',
+        'name' => 'rollback.run',
+    ]);
+
+    assertSame(200, $response->status, 'ต้องแก้เวลาได้ตามปกติ');
+
+    $rows = $harness->app->db()->all("SELECT name, capability, schedule FROM scheduled_jobs WHERE name LIKE 'backup%'");
+
+    assertSame(1, count($rows), 'ตารางเวลาสำรองต้องมีแถวเดียวเสมอ');
+    assertSame('backup.auto', $rows[0]['name'], 'ชื่องานต้องคงที่ ผู้เรียกตั้งเองไม่ได้');
+    assertSame('backup.run', $rows[0]['capability'], 'capability ต้องเป็น backup.run เสมอ');
+    assertSame('0 2 * * *', $rows[0]['schedule'], 'เวลาที่ตั้งต้องถูกบันทึกจริง');
+});
+
+test('ตารางเวลาสำรองแตะงานของระบบไม่ได้เลย', static function (): void {
+    // ในตาราง `scheduled_jobs` มี `rollback.run` ที่เป็นกลไกกันผู้ดูแลล็อกตัวเองออกจาก
+    // เครื่อง · endpoint นี้อ้างงานด้วยชื่อคงที่ `backup.auto` เท่านั้น จึงไม่มีทาง
+    // ให้ผู้เรียกชี้ไปที่งานอื่นได้เลย — ไม่ใช่แค่ "ตรวจแล้วปฏิเสธ"
+    $harness = serverLogin('srvadmin', 'Server-Admin-Pass-11');
+
     (new Phpcp\Domain\ScheduledJobRepository($harness->app->db()))->installDefaults();
 
     $systemJob = $harness->app->db()->first(
-        'SELECT id FROM scheduled_jobs WHERE name = :name',
+        'SELECT id, enabled FROM scheduled_jobs WHERE name = :name',
         ['name' => 'rollback.run'],
     );
 
     assertTrue($systemJob !== null, 'ต้องมีงาน rollback.run อยู่จริงถึงจะทดสอบได้');
 
-    $id = (int) $systemJob['id'];
+    // เส้นทางเดิมที่รับ id ต้องไม่มีอยู่แล้ว — ไม่ใช่มีอยู่แต่ตอบ 403
+    $response = $harness->request('PATCH', '/api/v2/backup-schedules/'.(int) $systemJob['id'], ['enabled' => 0]);
 
-    foreach ([['PATCH', ['enabled' => 0]], ['DELETE', []]] as [$method, $body]) {
-        $response = $harness->request($method, '/api/v2/backup-schedules/'.$id, $body);
+    assertSame(404, $response->status, 'เส้นทางที่รับรหัสงานต้องไม่มีอยู่แล้ว');
 
-        assertSame(404, $response->status, "{$method} งานของระบบต้องได้ 404");
-    }
-
-    // และงานนั้นต้องยังเปิดอยู่จริง ๆ ไม่ใช่แค่ตอบ 404 แต่แก้ไปแล้ว
-    $after = $harness->app->db()->first('SELECT enabled FROM scheduled_jobs WHERE id = :id', ['id' => $id]);
+    $after = $harness->app->db()->first('SELECT enabled FROM scheduled_jobs WHERE id = :id', ['id' => (int) $systemJob['id']]);
 
     assertSame(1, (int) $after['enabled'], 'งานของระบบต้องยังเปิดใช้งานอยู่');
-});
-
-test('ตารางเวลาสำรองตรึง capability ไว้ที่ backup.create เสมอ', static function (): void {
-    // เลือก capability เองได้ = ตั้งเวลาให้ระบบรันคำสั่งอะไรก็ได้ในนามของ "ระบบ"
-    // ซึ่งเป็นสิทธิ์สูงสุดที่มีในระบบนี้
-    $harness = serverLogin('srvadmin', 'Server-Admin-Pass-11');
-
-    $response = $harness->request('POST', '/api/v2/backup-schedules', [
-        'label' => 'พยายามแทรกคำสั่ง',
-        'type' => 'config',
-        'schedule' => '0 1 * * *',
-        'capability' => 'service.restart',
-    ]);
-
-    assertSame(201, $response->status, 'ต้องสร้างได้ตามปกติ');
-
-    // คำตอบของคำสั่งคืนชื่องานที่สร้าง ไม่ใช่ทรัพยากรทั้งก้อน
-    $row = $harness->app->db()->first(
-        'SELECT capability FROM scheduled_jobs WHERE name = :name',
-        ['name' => $response->data('name')],
-    );
-
-    assertSame('backup.create', $row['capability'], 'capability ต้องเป็น backup.create เสมอ ไม่ว่าจะส่งอะไรมา');
 });
 
 test('ตารางเวลาสำรองปฏิเสธรูปแบบเวลาที่ผิด', static function (): void {
     $harness = serverLogin('srvadmin', 'Server-Admin-Pass-11');
 
-    foreach (['ทุกวัน', '* * *', '99 * * * *', ''] as $bad) {
-        $response = $harness->request('POST', '/api/v2/backup-schedules', [
-            'label' => 'เวลาผิด '.$bad,
-            'type' => 'site',
-            'schedule' => $bad,
-        ]);
+    // ค่าว่างแปลว่า "ไม่เปลี่ยนเวลา" ไม่ใช่เวลาที่ผิด — จึงไม่อยู่ในรายการนี้
+    foreach (['ทุกวัน', '* * *', '99 * * * *'] as $bad) {
+        $response = $harness->request('PATCH', '/api/v2/backup-schedule', ['schedule' => $bad]);
 
         assertSame(422, $response->status, "ตารางเวลา '{$bad}' ต้องถูกปฏิเสธ");
     }

@@ -311,57 +311,44 @@ test('ลูกค้าแตะงาน cron ของเว็บคนอ�
     );
 });
 
-test('ลูกค้าไม่เห็นและกู้ไฟล์สำรองระดับระบบไม่ได้', static function (): void {
+test('รายการไฟล์สำรองต้องอ่านจากโฟลเดอร์จริง ไม่ใช่จากตาราง', static function (): void {
+    /*
+     * **นี่คือใจกลางของ PLAN-BACKUP-V2 ข้อ B4** — โฟลเดอร์ `<บ้าน>/backup` เปิดให้
+     * ลูกค้าเข้าถึงผ่าน SFTP โดยตั้งใจ เขาลบไฟล์ของตัวเองได้ทุกเมื่อ · แถวในตาราง
+     * `backups` ที่บันทึกไว้ตอนสร้างจึงเป็นคำโกหกที่รอเวลา: หน้าจอยังโชว์รายการ
+     * ปุ่มกู้คืนยังกดได้ แล้วล้มตอนที่ผู้ใช้ต้องการมันที่สุด
+     *
+     * เทสต์นี้จึง**ตั้งใจเติมแถวลงตารางเก่าไว้** แล้วยืนยันว่าไม่มีแถวไหนหลุดออกมา
+     * ทางหน้าจอเลย · ตอนที่ agent ไม่ตอบ คำตอบต้องเป็น 503 ตรง ๆ ไม่ใช่รายการจากตาราง
+     * ซึ่งเป็นคำตอบที่ผิดแบบที่ดูเหมือนคำตอบที่ถูก
+     */
     $harness = hostingLogin('hostowner', 'Hosting-Owner-Pass-22');
+
+    assertTrue(
+        (int) $harness->app->db()->value('SELECT count(*) FROM backups', [], 0) > 0,
+        'ต้องมีแถวค้างอยู่ในตารางเก่าจริง ๆ ถึงจะพิสูจน์ได้ว่ารายการไม่ได้อ่านจากมัน',
+    );
 
     $list = $harness->request('GET', '/api/v2/backups');
 
-    assertSame(200, $list->status, 'ลูกค้าต้องดูไฟล์สำรองของตัวเองได้');
-    assertSame(1, $list->json['meta']['total'] ?? 0, 'ต้องเห็นเฉพาะไฟล์ของเว็บตัวเอง');
-    assertSame('site', $list->json['data'][0]['type'], 'ต้องเป็นไฟล์ของเว็บไซต์ ไม่ใช่ของระบบ');
-
-    $configBackupId = (int) $harness->app->db()->value(
-        "SELECT id FROM backups WHERE type = 'config'",
-        [],
-        0,
-    );
-
-    // ไฟล์ระดับระบบมีค่า config ของทั้งเครื่องอยู่ข้างใน — ลูกค้าต้องแตะไม่ได้ทุกทาง
-    //
-    // สองเส้นทางถูกปฏิเสธคนละชั้นและได้รหัสต่างกันอย่างถูกต้อง:
-    //   DELETE → 404 ที่ controller เพราะ webadmin *มี* สิทธิ์ backup.manage
-    //            แต่ไฟล์นี้ไม่ใช่ของเขา จึงต้องเหมือนไม่มีอยู่จริง
-    //   POST restoration → 403 ที่ middleware เพราะ webadmin ไม่มีสิทธิ์ backup.restore
-    //            เลยแม้แต่กับไฟล์ของตัวเอง (การกู้คืนเป็นสิทธิ์แยกต่างหาก)
-    $delete = $harness->request('DELETE', '/api/v2/backups/' . $configBackupId);
-    assertSame(404, $delete->status, 'ลบไฟล์สำรองระดับระบบต้องเหมือนไม่มีไฟล์นั้นอยู่');
-
-    $restore = $harness->request('POST', '/api/v2/backups/' . $configBackupId . '/restoration', ['confirm' => 'x']);
-    assertSame(403, $restore->status, 'ลูกค้าไม่มีสิทธิ์กู้คืนเลย จึงถูกตัดตั้งแต่ชั้น middleware');
-    assertSame(ApiProblem::Forbidden->value, $restore->errorCode(), 'ต้องเป็นรหัส FORBIDDEN');
-
-    // และไฟล์ต้องยังอยู่ครบหลังจากลูกค้าพยายามแตะทั้งสองทาง
-    assertSame(
-        1,
-        (int) $harness->app->db()->value('SELECT count(*) FROM backups WHERE id = :id', ['id' => $configBackupId], 0),
-        'ไฟล์สำรองระดับระบบต้องไม่ถูกแตะเลย',
-    );
+    assertSame(503, $list->status, 'รายการต้องมาจาก agent ที่อ่านโฟลเดอร์จริง');
+    assertSame(ApiProblem::AgentUnavailable->value, $list->errorCode(), 'ต้องเป็นรหัส AGENT_UNAVAILABLE');
+    assertTrue(!isset($list->json['data'][0]), 'ต้องไม่มีแถวจากตารางเก่าหลุดออกมา');
 });
 
-test('ผู้ดูแลระบบเห็นไฟล์สำรองครบทุกชนิดพร้อมขนาดรวม', static function (): void {
-    $harness = hostingLogin('hostadmin', 'Hosting-Admin-Pass-11');
+test('ลูกค้ากู้คืนไม่ได้เลย — เป็นสิทธิ์แยกที่ webadmin ไม่มี', static function (): void {
+    /*
+     * webadmin มี `backup.manage` (สร้าง/ลบสำเนาของตัวเอง) แต่ไม่มี `backup.restore`
+     * · การกู้คืนเขียนทับเว็บที่ให้บริการอยู่ทั้งก้อน จึงถูกตัดตั้งแต่ชั้น middleware
+     * ก่อนที่ controller จะได้เห็นคำขอด้วยซ้ำ
+     */
+    $harness = hostingLogin('hostowner', 'Hosting-Owner-Pass-22');
+    $file = 'host.example.com-files-20260814-010101-aabbcc.tar.gz';
 
-    $response = $harness->request('GET', '/api/v2/backups');
+    $restore = $harness->request('POST', '/api/v2/backups/1/' . $file . '/restoration', ['confirm' => 'x']);
 
-    assertSame(3, $response->json['meta']['total'] ?? 0, 'ผู้ดูแลระบบต้องเห็นทั้งหมด');
-    assertTrue(($response->headers['X-Total-Size'] ?? '') !== '', 'ต้องบอกขนาดรวมทาง header');
-
-    $first = $response->json['data'][0];
-    assertTrue(is_int($first['size_bytes']), 'ขนาดต้องเป็นไบต์ดิบ ไม่ใช่ "5 MB"');
-    assertTrue(strlen((string) $first['checksum']) === 64, 'ต้องส่ง checksum มาให้เห็นว่าไฟล์ตรวจสอบได้');
-
-    $filtered = $harness->request('GET', '/api/v2/backups', query: ['type' => 'config']);
-    assertSame(1, $filtered->json['meta']['total'] ?? 0, 'กรองตามชนิดต้องทำงาน');
+    assertSame(403, $restore->status, 'ลูกค้าไม่มีสิทธิ์กู้คืนเลย จึงถูกตัดตั้งแต่ชั้น middleware');
+    assertSame(ApiProblem::Forbidden->value, $restore->errorCode(), 'ต้องเป็นรหัส FORBIDDEN');
 });
 
 test('กู้คืนต้องใช้สิทธิ์ backup.restore ที่แยกจากการสร้าง/ลบ', static function (): void {
@@ -369,12 +356,10 @@ test('กู้คืนต้องใช้สิทธิ์ backup.restore �
     $harness = hostingHarness();
     $harness->createUser('hostsys', 'Hosting-Sys-Pass-33', Permissions::SYSADMIN);
     $harness = hostingLogin('hostsys', 'Hosting-Sys-Pass-33');
+    $file = 'host.example.com-files-20260814-010101-aabbcc.tar.gz';
 
-    $backupId = (int) $harness->app->db()->value("SELECT id FROM backups WHERE type = 'site'", [], 0);
+    $restore = $harness->request('POST', '/api/v2/backups/1/' . $file . '/restoration', ['confirm' => 'host.example.com']);
 
-    assertSame(200, $harness->request('GET', '/api/v2/backups')->status, 'sysadmin ต้องดูรายการได้');
-
-    $restore = $harness->request('POST', '/api/v2/backups/' . $backupId . '/restoration', ['confirm' => 'host.example.com']);
     assertSame(403, $restore->status, 'sysadmin ต้องกู้คืนไม่ได้');
     assertSame(ApiProblem::Forbidden->value, $restore->errorCode(), 'ต้องเป็นรหัส FORBIDDEN');
 });
@@ -384,7 +369,9 @@ test('ทรัพยากรที่ต้องพึ่ง agent ตอบ 
 
     // certificates และ databases อ่านสถานะจริงจาก agent ทั้งคู่ — agent ล่มต้องบอกให้ชัด
     // ว่าเป็นปัญหาชั่วคราว (503) ไม่ใช่ตอบรายการว่างซึ่งดูเหมือน "ไม่มีข้อมูล"
-    foreach (['/api/v2/certificates', '/api/v2/databases'] as $path) {
+    // `/backups` เข้ากลุ่มนี้ตั้งแต่รายการอ่านจากโฟลเดอร์จริงของลูกค้า — โฟลเดอร์นั้น
+    // เป็นของเขา โหมด 0750 ซึ่งโปรเซสเว็บอ่านไม่ได้ตามที่ตั้งใจไว้ใน SECURITY
+    foreach (['/api/v2/certificates', '/api/v2/databases', '/api/v2/backups'] as $path) {
         $response = $harness->request('GET', $path);
 
         assertSame(503, $response->status, "{$path} ต้องเป็น 503 เมื่อ agent ไม่ตอบ");
@@ -396,7 +383,7 @@ test('ทรัพยากรที่ต้องพึ่ง agent ตอบ 
 test('เส้นทางทั้งหมดของ B3.2 ตอบ JSON และมีรูปร่างตามสัญญา', static function (): void {
     $harness = hostingLogin('hostadmin', 'Hosting-Admin-Pass-11');
     $siteId = hostingSiteId('host.example.com');
-    $backupId = (int) $harness->app->db()->value("SELECT id FROM backups WHERE type = 'site'", [], 0);
+    $backupFile = 'host.example.com-files-20260814-010101-aabbcc.tar.gz';
 
     $cases = [
         ['GET', '/api/v2/certificates', []],
@@ -411,8 +398,8 @@ test('เส้นทางทั้งหมดของ B3.2 ตอบ JSON �
         ['GET', '/api/v2/cron-jobs', []],
         ['DELETE', '/api/v2/cron-jobs/999999', []],
         ['GET', '/api/v2/backups', []],
-        ['POST', '/api/v2/backups/999999/restoration', ['confirm' => 'x']],
-        ['DELETE', '/api/v2/backups/' . $backupId, []],
+        ['POST', '/api/v2/backups/1/' . $backupFile . '/restoration', ['confirm' => 'x']],
+        ['DELETE', '/api/v2/backups/1/' . $backupFile, []],
     ];
 
     foreach ($cases as [$method, $path, $body]) {

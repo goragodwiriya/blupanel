@@ -77,9 +77,12 @@ function backupFixture(SiteLayout $layout, string $domain = 'example.com'): arra
 
     return [
         'site' => $site,
-        'manager' => new BackupManager($root . '/backups'),
+        // ไม่มี "ไดเรกทอรีสำรองของระบบ" ให้ส่งอีกแล้ว — ตัวจัดการเขียนลง
+        // `$site->backupDir()` ซึ่งอยู่ในบ้านของเจ้าของเสมอ
+        'manager' => new BackupManager(),
         'docroot' => $site->docroot(),
         'state' => $site->root(),
+        'backups' => $site->backupDir(),
         'restore' => $root,
     ];
 }

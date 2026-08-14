@@ -33,19 +33,24 @@ final class BackupManager
     public const MANIFEST_SCHEMA = 1;
 
     /**
-     * ที่เก็บไฟล์สำรองเมื่อไม่ได้ระบุ — ตรงกับ `Paths::backups()` ของการติดตั้งแบบ system
+     * ชนิดที่รองรับ — **ไฟล์เว็บกับฐานข้อมูลเท่านั้น**
      *
-     * เดิมเป็นค่าคงที่ที่ใช้ตรง ๆ ทั้งคลาส ซึ่งแปลว่าไดเรกทอรีสำรองถูกตรึงไว้กับ
-     * เส้นทางเดียวของทั้งระบบ · ทำให้ติดตั้งแบบ portable ใช้ไม่ได้ และการทดสอบ
-     * ต้องมีสิทธิ์ root · ตอนนี้รับผ่าน constructor โดยมีค่านี้เป็นค่าปริยาย
+     * เดิมมี `config` (สำรอง `/etc/apache2`, `/etc/php`) และ `full` ที่รวมทุกอย่าง ·
+     * ทั้งคู่เป็นของ**เครื่อง** ไม่ใช่ของลูกค้า จึงไม่มีบ้านให้ไปอยู่ในระบบที่ไฟล์สำรอง
+     * ทุกไฟล์เป็นของเจ้าของข้อมูล · ค่าตั้งของเครื่องสำรองด้วย snapshot ของ VPS หรือ git
+     * ได้ตรงกว่าและกู้กลับได้จริงกว่า (PLAN-BACKUP-V2 §2 ข้อ B2)
      */
-    public const DEFAULT_DIR = '/var/lib/phpcp/backups';
+    public const TYPES = ['site', 'database'];
 
-    /** ชนิดที่รองรับ ตรงกับที่ PROMPT.md กำหนด */
-    public const TYPES = ['site', 'database', 'config', 'full'];
-
+    /**
+     * ไม่มี "ไดเรกทอรีสำรองของระบบ" อีกแล้ว — ปลายทางมาจากเจ้าของข้อมูลเสมอ
+     *
+     * เดิมคลาสนี้ถือเส้นทางเดียวไว้ทั้งตัว (`/var/lib/phpcp/backups`) ซึ่งแปลว่าไฟล์
+     * สำรองของลูกค้าทุกคนไปกองรวมกันในพื้นที่ของ panel · ตอนนี้ทุกเมธอดที่เขียนไฟล์
+     * รับ `Site` แล้วเขียนลง `$site->backupDir()` ซึ่งอยู่ในบ้านของเจ้าของ — ไม่มีทาง
+     * เรียกให้เขียนออกนอกบ้านของเจ้าของข้อมูลได้เลย แม้ผู้เรียกจะพลาด
+     */
     public function __construct(
-        private readonly string $dir = self::DEFAULT_DIR,
         private readonly MariaDbManager $databases = new MariaDbManager(),
     ) {
     }
@@ -64,15 +69,8 @@ final class BackupManager
         return match ($type) {
             'site' => 'ไฟล์เว็บไซต์',
             'database' => 'ฐานข้อมูล',
-            'config' => 'ค่าตั้งเซิร์ฟเวอร์',
-            'full' => 'ทั้งระบบ',
             default => $type,
         };
-    }
-
-    public function directory(): string
-    {
-        return $this->dir;
     }
 
     /**
@@ -89,18 +87,20 @@ final class BackupManager
      *
      * `docroot()` ยังตอบถูกเมื่อเว็บใช้ Domain Pointer (ชี้ออกไปนอกบ้าน) ด้วย
      *
+     * `$owner` (`ผู้ใช้:กลุ่ม`) คือเจ้าของที่ไฟล์ต้องเป็นหลังสร้างเสร็จ · ค่าว่าง = ข้าม
+     * (โหมด shared_owner หรือการทดสอบที่ไม่มี root)
+     *
      * @return array{path:string,bytes:int,checksum:string}
      */
-    public function backupSite(Executor $executor, Site $site): array
+    public function backupSite(Executor $executor, Site $site, string $owner = ''): array
     {
-        $path = $this->pathFor('site-' . $site->domain, 'tar.gz');
+        $dir = $this->prepareDir($executor, $site, $owner);
+        $path = $this->pathFor($dir, $site->domain . '-files', 'tar.gz');
         $root = $executor->path($site->docroot());
 
         if (!$executor->exists($root)) {
             throw new ExecutionFailed("ไม่พบไดเรกทอรีของเว็บไซต์ {$site->domain}");
         }
-
-        $executor->makeDirectory($executor->path($this->dir), 0750);
 
         $manifest = $this->writeManifest($executor, $site, basename($root));
 
@@ -114,7 +114,11 @@ final class BackupManager
                 self::TAR,
                 '--create', '--gzip',
                 '--file', $executor->path($path),
-                '--directory', dirname($manifest), self::MANIFEST,
+                // **ทุกเส้นทางที่ส่งให้คำสั่งจริงต้องผ่าน `path()` เสมอ** — เส้นทางเชิง
+                // ตรรกะ (`/home/...`) กับเส้นทางบนดิสก์ต่างกันในโหมด sandbox · ลืมที่นี่
+                // ที่เดียวแล้ว tar หาใบแจ้งข้อมูลไม่เจอ แล้วทั้งคำสั่งล้มทั้งที่ทุกอย่างอื่นถูก
+                // (เจอบนเครื่องจริงตอนทดสอบรอบแรกของ PLAN-BACKUP-V2)
+                '--directory', dirname($executor->path($manifest)), self::MANIFEST,
                 '--directory', dirname($root),
                 '--exclude', 'tmp',
                 basename($root),
@@ -125,10 +129,68 @@ final class BackupManager
         }
 
         if (!$result->ok()) {
+            /*
+             * **เก็บเศษไฟล์ที่ tar สร้างค้างไว้ก่อนล้ม**
+             *
+             * tar สร้างไฟล์ปลายทางตั้งแต่วินาทีแรกแล้วค่อยเขียนลงไป · ล้มกลางทางจึงเหลือ
+             * `.tar.gz` ขนาด 20 ไบต์ (gzip เปล่า) นอนอยู่ในโฟลเดอร์ของลูกค้า — รายการ
+             * อ่านจากโฟลเดอร์จริง มันจึงโผล่ขึ้นมาพร้อมปุ่มกู้คืนเหมือนไฟล์สำรองปกติ
+             * แล้วกินโควตาของเขาด้วย · ไฟล์สำรองปลอมที่ไม่มีใครรู้ว่าปลอมคือสิ่งที่
+             * อันตรายที่สุดในระบบนี้
+             */
+            $executor->removePath($executor->path($path));
+
             throw new ExecutionFailed('สร้างไฟล์สำรองไม่สำเร็จ: ' . trim($result->stderr));
         }
 
+        $this->handOver($executor, $path, $owner);
+
         return $this->describe($executor, $path);
+    }
+
+    /**
+     * เตรียมโฟลเดอร์สำรองของบัญชีให้พร้อมและ**เป็นของลูกค้าจริง ๆ**
+     *
+     * agent รันเป็น root · ไดเรกทอรีที่มันสร้างจึงเป็นของ root และลูกค้าเปิดผ่าน SFTP
+     * ไม่ได้เลย ทั้งที่ทั้งระบบนี้รื้อใหม่เพื่อให้เขาหยิบไฟล์ของตัวเองได้ · โฟลเดอร์นี้
+     * อาจมีอยู่แล้วจากตอน provision (`SiteLayout::requiredDirectories()`) แต่บัญชีที่
+     * สร้างก่อนหน้านั้นยังไม่มี — จึงต้องตั้งเจ้าของทุกครั้ง ไม่ใช่เฉพาะตอนสร้างใหม่
+     */
+    private function prepareDir(Executor $executor, Site $site, string $owner): string
+    {
+        $dir = $site->backupDir();
+
+        $executor->makeDirectory($executor->path($dir), 0750);
+
+        if ($owner !== '') {
+            // ไม่ใช่ -R เพราะไฟล์ข้างในเป็นของลูกค้าคนเดียวกันอยู่แล้ว และการไล่ทั้ง
+            // โฟลเดอร์ทุกครั้งที่สำรองคือการเดินไฟล์เก่าทั้งหมดโดยไม่ได้อะไรเพิ่ม
+            $executor->exec(['/usr/bin/chown', $owner, $executor->path($dir)], timeout: 30);
+        }
+
+        return $dir;
+    }
+
+    /**
+     * ยกไฟล์ที่เพิ่งสร้างให้เจ้าของข้อมูล
+     *
+     * tar/mysqldump ที่รันด้วย root ได้ไฟล์ root:root โหมด 0600 · **ลูกค้าดาวน์โหลด
+     * สำเนาของตัวเองไม่ได้** และลบทิ้งเองก็ไม่ได้ ซึ่งขัดกับข้อตกลงทั้งหมดของระบบนี้
+     * (B1, B4: ตัวไฟล์คือความจริงเพราะลูกค้าลบมันเองได้)
+     *
+     * 0640 ไม่ใช่ 0644 — กลุ่มคือกลุ่มของเว็บเซิร์ฟเวอร์ ส่วนคนอื่นบนเครื่องไม่ต้องอ่าน
+     * ไฟล์ที่มีทั้งเว็บและฐานข้อมูลของลูกค้ารายนี้อยู่ข้างใน
+     */
+    private function handOver(Executor $executor, string $path, string $owner): void
+    {
+        if ($owner === '') {
+            return;
+        }
+
+        $resolved = $executor->path($path);
+
+        $executor->exec(['/usr/bin/chown', $owner, $resolved], timeout: 60);
+        $executor->changeMode($resolved, 0640);
     }
 
     /**
@@ -162,7 +224,7 @@ final class BackupManager
 
         // ไดเรกทอรีของตัวเอง เพราะ `-C <dir> backup.json` ต้องการให้ชื่อไฟล์ใน archive
         // เป็น `backup.json` เปล่า ๆ ไม่มีเส้นทางนำหน้า
-        $directoryPath = $this->dir . '/.manifest-' . bin2hex(random_bytes(6));
+        $directoryPath = $site->backupDir() . '/.manifest-' . bin2hex(random_bytes(6));
 
         $executor->makeDirectory($executor->path($directoryPath), 0700);
         $executor->writeFile(
@@ -201,55 +263,23 @@ final class BackupManager
     }
 
     /**
-     * สำรองฐานข้อมูลเป็นไฟล์ SQL
+     * สำรองฐานข้อมูลของเว็บหนึ่งแห่ง ลงบ้านของเจ้าของเว็บนั้น
+     *
+     * ชื่อไฟล์ขึ้นต้นด้วยโดเมนเหมือนไฟล์เว็บ เพราะทั้งสองอย่างอยู่โฟลเดอร์เดียวกันแล้ว
+     * · ต่อด้วยชื่อฐานข้อมูลเพราะเว็บหนึ่งแห่งมีได้หลายฐาน — ไฟล์ที่แยกไม่ออกว่าเป็น
+     * ฐานไหนคือไฟล์ที่ลูกค้าเดาเอาเองตอนกู้คืน
      *
      * @return array{path:string,bytes:int,checksum:string}
      */
-    public function backupDatabase(Executor $executor, string $database): array
+    public function backupDatabase(Executor $executor, Site $site, string $database, string $owner = ''): array
     {
-        $path = $this->pathFor('db-' . $database, 'sql');
+        $dir = $this->prepareDir($executor, $site, $owner);
+        // .sql.gz ไม่ใช่ .sql ดิบ — ข้อความ SQL บีบอัดได้ราว 5-10 เท่า และไฟล์นี้
+        // นับในโควตาของลูกค้าแล้ว (B9)
+        $path = $this->pathFor($dir, $site->domain . '-db-' . $database, 'sql.gz');
 
-        $executor->makeDirectory($executor->path($this->dir), 0750);
         $this->databases->dump($executor, $database, $path);
-
-        return $this->describe($executor, $path);
-    }
-
-    /**
-     * สำรองค่าตั้งของเซิร์ฟเวอร์ที่ panel เป็นคนดูแล
-     *
-     * ไม่รวมไฟล์ของ panel เอง (/etc/phpcp) เพราะมี secret key อยู่ —
-     * ไฟล์สำรองที่มีคีย์ปนอยู่จะทำให้ความเสียหายตอนไฟล์สำรองรั่วรุนแรงกว่าเดิมมาก
-     *
-     * @return array{path:string,bytes:int,checksum:string}
-     */
-    public function backupConfig(Executor $executor): array
-    {
-        $path = $this->pathFor('config', 'tar.gz');
-        $executor->makeDirectory($executor->path($this->dir), 0750);
-
-        $sources = [];
-        foreach (['/etc/apache2', '/etc/php'] as $candidate) {
-            if ($executor->exists($executor->path($candidate))) {
-                $sources[] = ltrim($candidate, '/');
-            }
-        }
-
-        if ($sources === []) {
-            throw new ExecutionFailed('ไม่พบไดเรกทอรีค่าตั้งที่จะสำรอง');
-        }
-
-        $result = $executor->exec([
-            self::TAR,
-            '--create', '--gzip',
-            '--file', $executor->path($path),
-            '--directory', $executor->path('/'),
-            ...$sources,
-        ], timeout: 300);
-
-        if (!$result->ok()) {
-            throw new ExecutionFailed('สำรองค่าตั้งไม่สำเร็จ: ' . trim($result->stderr));
-        }
+        $this->handOver($executor, $path, $owner);
 
         return $this->describe($executor, $path);
     }
@@ -271,7 +301,8 @@ final class BackupManager
         $this->assertIntact($executor, $archive, $checksum);
 
         // ขั้นที่ 1 — สำรองของเดิมไว้ก่อน กู้ผิดตัวแล้วยังย้อนกลับได้
-        $safety = $this->backupSite($executor, $site);
+        // (ไฟล์นิรภัยเป็นของลูกค้าเหมือนไฟล์อื่น — ส่ง $owner ต่อไปด้วย)
+        $safety = $this->backupSite($executor, $site, $owner);
 
         if ($safety['path'] === $archive) {
             throw new ExecutionFailed('ไฟล์สำรองนิรภัยชนกับไฟล์ต้นฉบับ — ยกเลิกการกู้คืนเพื่อไม่ให้ข้อมูลหาย');
@@ -401,18 +432,25 @@ final class BackupManager
         }
     }
 
-    public function delete(Executor $executor, string $archive): void
+    /**
+     * ลบไฟล์สำรองหนึ่งไฟล์ · `$dir` คือขอบเขตที่ยอมให้ลบได้เท่านั้น
+     *
+     * ผู้เรียกต้องส่งไดเรกทอรีสำรอง**ของเจ้าของไฟล์นั้น** มาเสมอ — ด่านนี้จึงเป็น
+     * ตัวกันไม่ให้คำสั่งลบของบัญชีหนึ่งเอื้อมไปถึงไฟล์ของอีกบัญชี ทั้งที่ทั้งคู่อยู่
+     * ใต้ `/home` เหมือนกัน
+     */
+    public function delete(Executor $executor, string $dir, string $archive): void
     {
         // ตัด .. ทิ้งก่อนเทียบ prefix
         //
-        // การเทียบสตริงอย่างเดียวหลอกได้ด้วย /var/lib/phpcp/backups/../panel.db
-        // ซึ่งขึ้นต้นตรงตามที่ต้องการทุกประการ แต่ชี้ไปยังไฟล์ฐานข้อมูลของ panel เอง
+        // การเทียบสตริงอย่างเดียวหลอกได้ด้วย /home/cust/backup/../.ssh/authorized_keys
+        // ซึ่งขึ้นต้นตรงตามที่ต้องการทุกประการ แต่ชี้ออกไปนอกโฟลเดอร์สำรอง
         if (preg_match('#(^|/)\.\.(/|$)#', $archive) === 1) {
             throw new ValidationError('เส้นทางไฟล์สำรองต้องไม่มี ..');
         }
 
         $resolved = $executor->path($archive);
-        $expected = rtrim($executor->path($this->dir), '/');
+        $expected = rtrim($executor->path($dir), '/');
 
         if (!str_starts_with($resolved, $expected . '/')) {
             throw new ValidationError('ลบได้เฉพาะไฟล์ในไดเรกทอรีสำรองเท่านั้น');
@@ -460,13 +498,13 @@ final class BackupManager
      *
      * ต่อท้ายด้วยค่าสุ่มจึงไม่ใช่เรื่องความสวยงาม แต่เป็นการกันข้อมูลหาย
      */
-    private function pathFor(string $label, string $extension): string
+    private function pathFor(string $dir, string $label, string $extension): string
     {
         $safe = preg_replace('/[^a-zA-Z0-9._-]/', '-', $label) ?? 'backup';
 
         return sprintf(
             '%s/%s-%s-%s.%s',
-            $this->dir,
+            rtrim($dir, '/'),
             $safe,
             date('Ymd-His'),
             bin2hex(random_bytes(3)),

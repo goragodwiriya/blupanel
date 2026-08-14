@@ -1,8 +1,12 @@
 <!--
   ฟอร์มสร้างไฟล์สำรอง — คนละเทมเพลตกับตารางตาม FRAMEWORK_GUIDE Pattern 3
 
-  สี่ช่องกรอกถือว่าน้อย จึงเปิดใน Modal ตามคำสั่งที่มากับคำตอบของ API
+  สามช่องกรอกถือว่าน้อย จึงเปิดใน Modal ตามคำสั่งที่มากับคำตอบของ API
   ไม่มีฟอร์มแก้ไขคู่กัน เพราะไฟล์สำรองแก้ไม่ได้ — สร้าง กู้คืน หรือลบเท่านั้น
+
+  ไฟล์ไปอยู่ใน `<บ้านของเจ้าของเว็บ>/backup/` เสมอ และนับในโควตาของเขา
+  (PLAN-BACKUP-V2 ข้อ B1) — ผู้เลือกจึงต้องเลือก **เว็บ** ก่อนเสมอ ไม่มีชนิดที่
+  ไม่ผูกกับเว็บอีกแล้ว (`config`/`full` ถูกตัดทิ้งตามข้อ B2)
 -->
 <form data-form="backupCreate"
       action="/api/v2/backups"
@@ -14,10 +18,8 @@
       <label for="nb_type" data-i18n>Type</label>
       <span class="form-control icon-menus">
         <select id="nb_type" name="type" required data-value="type">
-          <option value="site">site</option>
-          <option value="database">database</option>
-          <option value="config">config</option>
-          <option value="full">full</option>
+          <option value="site" data-i18n>Website files</option>
+          <option value="database" data-i18n>Database</option>
         </select>
       </span>
     </div>
@@ -27,28 +29,26 @@
     -->
     <div data-component="api" data-endpoint="/api/v2/sites">
       <label for="nb_site" data-i18n>Website</label>
-      <div class="comment" data-i18n>Used only when the type is site</div>
+      <div class="comment" data-i18n>The file goes into this website owner's backup folder</div>
       <span class="form-control icon-website">
-        <select id="nb_site" name="site_id" data-for="site in data" data-value="site_id">
+        <select id="nb_site" name="site_id" required data-for="site in data" data-value="site_id">
           <template>
             <option data-attr="value:site.id" data-text="site.domain"></option>
           </template>
         </select>
       </span>
     </div>
+    <!--
+      เว็บที่มีฐานข้อมูลเดียวไม่ต้องกรอก — เซิร์ฟเวอร์หาให้เอง · เว็บที่มีหลายฐาน
+      ถูกปฏิเสธพร้อมบอกรายชื่อ แทนที่จะเดาแล้วสำรองผิดฐานโดยรายงานว่าสำเร็จ
+    -->
     <div>
       <label for="nb_db" data-i18n>Database name</label>
       <span class="form-control icon-database">
         <input type="text" id="nb_db" name="database" maxlength="64"
                autocomplete="off" data-attr="value:database">
       </span>
-    </div>
-    <div>
-      <label for="nb_note" data-i18n>Note</label>
-      <span class="form-control icon-edit">
-        <input type="text" id="nb_note" name="note" maxlength="200"
-               autocomplete="off" data-attr="value:note">
-      </span>
+      <div class="comment" data-i18n>Leave empty when the website has only one database</div>
     </div>
   </fieldset>
   <fieldset class="submit right">

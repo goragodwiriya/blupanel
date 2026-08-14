@@ -134,7 +134,7 @@ final readonly class Site
      */
     public function backupDir(): string
     {
-        return $this->owner->layout()->backupDir($this->owner->home(), $this->domain);
+        return $this->owner->backupDir();
     }
 
     /**

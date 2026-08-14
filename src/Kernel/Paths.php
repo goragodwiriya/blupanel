@@ -48,11 +48,6 @@ final class Paths
     /** บ้านของผู้ใช้ที่ใช้จริง — static ด้วยเหตุผลเดียวกับ $sitesDir */
     private static string $usersDir = self::DEFAULT_USERS_DIR;
 
-    /** ที่เก็บไฟล์สำรองของการติดตั้งแบบ system — เปลี่ยนตาม layout ผ่าน useBackupsDir() */
-    private const DEFAULT_BACKUPS_DIR = '/var/lib/phpcp/backups';
-
-    private static string $backupsDir = self::DEFAULT_BACKUPS_DIR;
-
     /**
      * รูปทรงของไฟล์ใต้บ้านผู้ใช้ที่ใช้เป็นค่าเริ่มต้น — ดู {@see \Phpcp\Domain\SiteLayout}
      *
@@ -126,24 +121,6 @@ final class Paths
     public static function usersDir(): string
     {
         return self::$usersDir;
-    }
-
-    /**
-     * ที่เก็บไฟล์สำรอง แบบ static — ให้ `FileRoots` เข้าถึงได้โดยไม่ต้องมี Config
-     *
-     * `backups()` ที่เป็น instance method ยังเป็นแหล่งความจริง · ค่านี้ถูกตั้งจาก
-     * ที่นั่นตอน boot เพราะ `FileRoots::forActor()` รับแค่ actor กับ db ตามสัญญาเดิม
-     * และการเพิ่ม Config เข้าไปแปลว่าต้องแก้ทุกผู้เรียกเพื่อค่าเดียว
-     */
-    public static function backupsDir(): string
-    {
-        return self::$backupsDir;
-    }
-
-    /** ตั้งจาก App::boot() จุดเดียว กฎเดียวกับ useUsersDir() */
-    public static function useBackupsDir(string $dir): void
-    {
-        self::$backupsDir = self::assertHostingDir($dir, 'backups.dir') ?? self::DEFAULT_BACKUPS_DIR;
     }
 
     /** เปลี่ยนบ้านของผู้ใช้ — เรียกจาก Config::load() จุดเดียว กฎเดียวกับ useSitesDir() */
@@ -290,7 +267,12 @@ final class Paths
     }
 
     /**
-     * @return mixed
+     * ที่พักของไฟล์สำรองที่ดึงมาจากปลายทางนอกเครื่อง — **ไม่ใช่ที่เก็บถาวรอีกแล้ว**
+     *
+     * ไฟล์สำรองของลูกค้าอยู่ที่ `<บ้าน>/backup` ของเขาเอง (PLAN-BACKUP-V2 ข้อ B1) ·
+     * ที่นี่เหลือไว้สำหรับช่วงเวลาสั้น ๆ ระหว่างที่ `backup.import` ดึงไฟล์ลงมาแล้วยัง
+     * ไม่รู้ว่าเป็นของบ้านไหน จนกว่าจะอ่าน `backup.json` ข้างในเสร็จ · หลังจากนั้นไฟล์
+     * ถูกย้ายเข้าบ้านทันที ที่นี่จึงว่างเสมอในสภาพปกติ
      */
     public function backups(): string
     {

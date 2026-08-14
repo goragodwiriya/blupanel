@@ -225,26 +225,14 @@ final class Seeder
                 ]);
             }
 
-            $backups = [
-                ['สำรองอัตโนมัติรายวัน — example.com', 'site', 'example.com', 1_240_000_000, 'ok', 1],
-                ['สำรองฐานข้อมูล — shop_db', 'database', 'shop.com', 420_000_000, 'ok', 1],
-                ['สำรองค่าตั้งเซิร์ฟเวอร์', 'config', null, 2_400_000, 'ok', 2],
-                ['สำรองเต็มระบบรายสัปดาห์', 'full', null, 4_800_000_000, 'ok', 7],
-                ['สำรองอัตโนมัติรายวัน — legacy', 'site', 'legacy.example.com', 0, 'failed', 1]
-            ];
-
-            foreach ($backups as $index => [$name, $type, $site, $size, $status, $ageDays]) {
-                $db->insert('backups', [
-                    'name' => $name,
-                    'type' => $type,
-                    'site_id' => $site === null ? null : $siteIds[$site],
-                    'path' => '/var/lib/phpcp/backups/'.date('Y-m-d', $now - $ageDays * $day).'-'.$index.'.tar.zst',
-                    'size_bytes' => $size,
-                    'checksum' => $status === 'ok' ? hash('sha256', $name) : null,
-                    'status' => $status,
-                    'created_at' => $now - $ageDays * $day
-                ]);
-            }
+            /*
+             * **ไม่มีข้อมูลสำรองตัวอย่างอีกแล้ว** (PLAN-BACKUP-V2 ข้อ B4)
+             *
+             * รายการไฟล์สำรองอ่านจากโฟลเดอร์จริงในบ้านของลูกค้า ไม่ใช่จากตาราง ·
+             * แถวตัวอย่างที่ไม่มีไฟล์อยู่จริงจึงไม่โผล่ที่ไหนเลย และการสร้างไฟล์ปลอม
+             * ขนาดกิกะไบต์ลงบ้านผู้ใช้เพื่อให้หน้าจอมีอะไรแสดงก็ไม่ใช่สิ่งที่ตัวสร้าง
+             * ข้อมูลตัวอย่างควรทำ — กดปุ่ม "สร้างข้อมูลสำรอง" หนึ่งครั้งได้ของจริงกว่า
+             */
 
             // งานตามเวลาของระบบ — reset() ลบทั้งตารางไป จึงต้องเติมกลับให้ครบทุกตัว
             // ไม่ใช่แค่ expiry.check ไม่งั้นสภาพแวดล้อมทดสอบจะไม่มี auto-rollback
@@ -258,7 +246,6 @@ final class Seeder
                 'SSL Certificates' => count($certificates),
                 'ฐานข้อมูล' => count($databases),
                 'งานอัตโนมัติ' => count($crons),
-                'ข้อมูลสำรอง' => count($backups),
                 'บัญชีโฮสติ้ง' => count($accounts),
                 'งานตามเวลา' => count($scheduledJobs),
                 'ไฟล์ log' => $this->seedLogs()

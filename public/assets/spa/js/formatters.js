@@ -95,8 +95,11 @@
    * data-row-actions แบบประกาศแล้ว (ดู backups.html) ส่วนนี้ต้องเป็นโค้ดจริงเพราะ
    * ปลายทางที่จะส่งไปถูกเลือกไว้ **นอกแถว** (ตัวเลือกเหนือตาราง) — data-param-* ของ
    * data-row-actions ประกอบตอนเรนเดอร์แถว จึงอ่านค่าที่ผู้ใช้เพิ่งเลือกทีหลังไม่ได้
+   *
+   * ไฟล์ถูกอ้างด้วย **บัญชี + ชื่อไฟล์** ไม่ใช่รหัสแถว ตั้งแต่รายการอ่านจากโฟลเดอร์จริง
+   * (PLAN-BACKUP-V2 ข้อ B4) — ทั้งสองค่าจึงต้องมาจากแถว ไม่ใช่จากค่าเดียวในคอลัมน์
    */
-  window.formatBackupActions = (cell, id) => {
+  window.formatBackupActions = (cell, userId, row) => {
     cell.textContent = '';
 
     if (!window.PhpcpAuth.can('backup.offsite')) return;
@@ -105,8 +108,56 @@
     push.type = 'button';
     push.className = 'btn small icon-cloud';
     push.dataset.action = 'click.prevent:pushOffsite';
-    push.dataset.backupId = String(id);
+    // ผูกกับคอลัมน์ `user_id` เพราะ `name` ถูกใช้เป็นคอลัมน์ชื่อไฟล์ไปแล้ว —
+    // ตารางเดียวมี data-field ซ้ำกันไม่ได้ · ชื่อไฟล์อ่านจากแถวแทน
+    push.dataset.backupUser = String(userId || 0);
+    push.dataset.backupFile = String((row && row.name) || '');
     push.title = t('Copy to the selected destination');
     cell.appendChild(push);
   };
+
+  /**
+   * ช่องติ๊ก "สำรองบัญชีนี้ไหม" — เปลี่ยนแล้วบันทึกทันที ไม่มีปุ่ม Save
+   *
+   * **ต้องเป็นตัวจัดรูปแบบจริง ไม่ใช่ `data-template`** — ตัวจัดรูปแบบได้ทั้งแถวเป็น
+   * อาร์กิวเมนต์ที่สาม จึงรู้รหัสบัญชี และผูก `change` ได้จริง · `data-template`
+   * ประกอบได้แค่ข้อความ ช่องติ๊กที่วาดจากมันจะกดได้แต่ไม่มีอะไรเกิดขึ้น
+   *
+   * บันทึกทันทีเพราะค่านี้เป็นสวิตช์เดี่ยว ๆ ที่ไม่ต้องยืนยันอะไรร่วมกับช่องอื่น ·
+   * ล้มแล้วต้อง**ติ๊กกลับ**ให้ตรงกับความจริงบนเซิร์ฟเวอร์ ไม่ใช่ปล่อยให้หน้าจอโชว์
+   * สถานะที่ไม่มีอยู่จริง ซึ่งจะทำให้ผู้ดูแลเชื่อว่าเปิดสำรองให้ลูกค้ารายนั้นแล้ว
+   */
+  function backupTargetToggle(field) {
+    return (cell, value, row) => {
+      cell.textContent = '';
+
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = isOn(value) || value === true;
+      box.disabled = !(row && row.can_manage);
+      box.title = t('Include this account in the automatic backup round');
+
+      box.addEventListener('change', async () => {
+        const body = {};
+        body[field] = box.checked;
+
+        box.disabled = true;
+
+        try {
+          await window.PhpcpApi.patch('/backup-targets/' + Number(row.id), body);
+          window.NotificationManager.success(window.Now.translate('Saved'));
+        } catch (error) {
+          box.checked = !box.checked;
+          window.NotificationManager.error(error.message);
+        } finally {
+          box.disabled = false;
+        }
+      });
+
+      cell.appendChild(box);
+    };
+  }
+
+  window.formatBackupFilesToggle = backupTargetToggle('backup_files');
+  window.formatBackupDatabaseToggle = backupTargetToggle('backup_database');
 })();

@@ -132,13 +132,22 @@ enum SiteLayout: string
         };
     }
 
-    /** ที่เก็บสำเนาสำรองของเว็บหนึ่งแห่ง */
-    public function backupDir(string $home, string $domain): string
+    /**
+     * ที่เก็บสำเนาสำรอง — **ของบัญชี ไม่ใช่ของเว็บ** และเหมือนกันทุกเลย์เอาต์
+     *
+     * ไฟล์สำรองเป็นของลูกค้า จึงอยู่ในบ้านของลูกค้า: นับในโควตาของเขา ดาวน์โหลดเองได้
+     * ผ่าน SFTP และตัวจัดการไฟล์ที่เขาเข้าถึงอยู่แล้ว (ดู PLAN-BACKUP-V2 §2 ข้อ B1)
+     * · เดิมอยู่ที่ `/var/lib/phpcp/backups` ซึ่งเป็นพื้นที่ของ panel — ลูกค้าเอาสำเนา
+     * ของตัวเองออกมาไม่ได้เลย และขนาดไฟล์ไม่ถูกนับเป็นต้นทุนของใคร
+     *
+     * **ไม่รับชื่อโดเมนโดยเจตนา** — หนึ่งบัญชีมีโฟลเดอร์เดียว ชื่อโดเมนอยู่ในชื่อไฟล์
+     * (`<โดเมน>-files-<เวลา>.tar.gz`) · โฟลเดอร์รายโดเมนแปลว่าลูกค้าต้องไล่เปิดทีละอัน
+     * เพื่อหาสำเนาล่าสุด และทำให้ "รายการไฟล์สำรองของบัญชีนี้" ต้องรวมผลจากหลายที่
+     * ทั้งที่มันเป็นคำถามเดียว
+     */
+    public function backupDir(string $home): string
     {
-        return match ($this) {
-            self::Phpcp => $this->stateDir($home, $domain) . '/backups',
-            self::Cpanel => $home . '/backups/' . $domain,
-        };
+        return $home . '/backup';
     }
 
     /**
@@ -154,7 +163,7 @@ enum SiteLayout: string
         return [
             $this->docroot($home, $domain, $isMain) => 0750,
             $this->logDir($home, $domain) => 0750,
-            $this->backupDir($home, $domain) => 0750,
+            $this->backupDir($home) => 0750,
             $this->stateDir($home, $domain) => 0750,
         ];
     }

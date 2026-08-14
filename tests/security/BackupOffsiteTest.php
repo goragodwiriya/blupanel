@@ -3,16 +3,20 @@
 declare(strict_types=1);
 
 /**
- * ไฟล์สำรองนอกเครื่องและนโยบายเก็บย้อนหลัง — PLAN-V2 เฟส E1
+ * ไฟล์สำรองนอกเครื่องและนโยบายเก็บย้อนหลัง
  *
- * เฟสนี้แก้ความเสี่ยงที่แผนระบุว่าสูงที่สุดในระบบ: ไฟล์สำรองอยู่บนดิสก์ก้อนเดียวกับ
- * ข้อมูลจริง ดิสก์พังครั้งเดียวจึงเสียทั้งสองอย่างพร้อมกัน
+ * แก้ความเสี่ยงที่แผนระบุว่าสูงที่สุดในระบบ: ไฟล์สำรองอยู่บนดิสก์ก้อนเดียวกับข้อมูลจริง
+ * ดิสก์พังครั้งเดียวจึงเสียทั้งสองอย่างพร้อมกัน
+ *
+ * **ตั้งแต่ PLAN-BACKUP-V2 ไฟล์สำรองอยู่ใน `<บ้าน>/backup` ของลูกค้า และ*ตัวไฟล์*คือ
+ * แหล่งความจริง** (ข้อ B4) — ไม่มีแถวในตาราง `backups` ให้ยึดอีกแล้ว · เทสต์ชุดนี้จึง
+ * วางไฟล์จริงลงโฟลเดอร์จริงแล้ววัดจากสิ่งที่เหลืออยู่บนดิสก์ ซึ่งตรงกับที่ผู้ใช้เห็น
  *
  * สิ่งที่ชุดนี้เฝ้า เรียงตามความเสียหายถ้าพลาด:
  *   1. **ความลับของปลายทางต้องไม่หลุดออกมากับแถวข้อมูล** — กุญแจ ssh ที่รั่วคือสิทธิ์
  *      เข้าเครื่องสำรองซึ่งเก็บข้อมูลของทุกเว็บบนเครื่องนี้
- *   2. **ตัวเก็บกวาดต้องไม่ลบไฟล์ที่ยังไม่มีสำเนานอกเครื่อง** — นั่นคือการทำข้อมูลหาย
- *      ด้วยมือตัวเองในงานที่รันตอนตี 5 โดยไม่มีใครดู
+ *   2. **ตัวเก็บกวาดต้องไม่แตะไฟล์ที่ระบบไม่ได้สร้าง** — โฟลเดอร์นั้นเป็นของลูกค้า
+ *      เขาวางไฟล์ของเขาเองไว้ได้ และงานที่รันตอนตี 5 ต้องไม่ลบมันทิ้ง
  *   3. **เรียกซ้ำแล้วต้องได้ผลเท่าเดิม** — agent เป็นโปรเซสที่รันค้างเป็นเดือน สถานะที่
  *      สะสมข้ามการเรียกทำให้รอบหลัง ๆ ลบเกินโดยไม่มีอะไรฟ้อง
  */
@@ -23,43 +27,47 @@ use Phpcp\Agent\Capability\BackupPush;
 use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\RealExecutor;
 use Phpcp\Domain\BackupDestinationRepository;
-use Phpcp\Driver\Backup\DestinationFactory;
 use Phpcp\Driver\Backup\LocalDestination;
 use Phpcp\Kernel\Config;
+use Phpcp\Kernel\Paths;
 use Phpcp\Security\Permissions;
 use Phpcp\Security\Secret;
 
 group('BackupOffsite — ไฟล์สำรองต้องออกไปอยู่นอกดิสก์ก้อนเดิมได้จริง');
 
-/** สภาพแวดล้อมทดสอบที่แยกจากข้อมูลจริง — ฐานข้อมูลชั่วคราวของตัวเอง */
+/**
+ * สภาพแวดล้อมทดสอบที่แยกจากข้อมูลจริง — บ้านผู้ใช้ปลอมใต้ temp dir
+ *
+ * ตั้ง `Paths::useUsersDir()` **ทุกครั้งที่เรียก** ไม่ใช่แค่ตอนสร้างครั้งแรก · ค่านั้น
+ * เป็น static ของทั้งโปรเซส และเทสต์ไฟล์อื่น (BackupRestoreTest) ก็เปลี่ยนมันเหมือนกัน
+ * — การตั้งครั้งเดียวตอนสร้างแปลว่าผลของเทสต์ขึ้นอยู่กับลำดับการรัน
+ */
 function offsiteFixture(): array
 {
     static $fixture = null;
 
     if ($fixture !== null) {
+        Paths::useUsersDir($fixture['users']);
+
         return $fixture;
     }
 
     $root = sys_get_temp_dir() . '/phpcp-offsite-' . getmypid() . '-' . bin2hex(random_bytes(4));
     mkdir($root . '/remote', 0750, true);
+    mkdir($root . '/home/tester/backup', 0750, true);
 
-    // ไฟล์สำรอง "ต้นทาง" ต้องอยู่ในไดเรกทอรีสำรองจริงของการติดตั้งนี้ เพราะ
-    // `BackupManager` ปฏิเสธการลบไฟล์นอกไดเรกทอรีนั้นโดยเจตนา (กันการลบไฟล์ใดก็ได้
-    // บนเครื่องผ่านหน้าเว็บ) · เทสต์จึงต้องเดินบนเส้นทางเดียวกับของจริง ไม่ใช่หลบไป
-    // ใช้ที่ชั่วคราวแล้วทดสอบเส้นทางที่ผู้ใช้ไม่เคยเดิน
-    $backups = Config::load(PHPCP_ROOT)->paths->backups();
-    mkdir($backups, 0750, true);
+    Paths::useUsersDir($root . '/home');
 
     $db = new Phpcp\Kernel\Db($root . '/panel.db');
     $db->migrate(PHPCP_ROOT . '/db/migrations');
 
-    // `backups.site_id` → `sites.id` → `sites.owner_user_id` → `users.id`
-    // ต้องมีทั้งสายให้ครบ ไม่งั้นการ insert จะล้มด้วย FK แล้วเทสต์พังตามกันทั้งชุด
+    // บัญชีโฮสติ้งจริงหนึ่งบัญชี — ต้องมี `system_user` ไม่งั้นตัวเก็บกวาดมองไม่เห็น
+    // (บัญชีที่ยังไม่มีบ้าน = ยังไม่มีโฟลเดอร์สำรองให้เดิน)
     $db->insert('users', [
         'id' => 1,
         'username' => 'tester',
         'password_hash' => password_hash('x', PASSWORD_DEFAULT),
-        'role' => Permissions::SUPERADMIN,
+        'role' => Permissions::WEBADMIN,
         'totp_enabled' => 0,
         'must_change_password' => 0,
         'status' => 'active',
@@ -74,7 +82,11 @@ function offsiteFixture(): array
         'quota_emails' => -1,
         'quota_databases' => -1,
         'quota_ftp_users' => -1,
+        'disk_quota_mb' => -1,
         'disk_used_mb' => 0,
+        'system_user' => 'tester',
+        'site_layout' => 'cpanel',
+        'main_domain' => 'test1.example.com',
         'created_at' => time(),
         'updated_at' => time(),
     ]);
@@ -83,13 +95,13 @@ function offsiteFixture(): array
         $db->insert('sites', [
             'id' => $siteId,
             'primary_domain' => 'test' . $siteId . '.example.com',
-            'docroot' => '/srv/phpcp/sites/test' . $siteId,
+            'docroot' => $root . '/home/tester/public_html',
             'php_version' => '8.4',
             'ssl_mode' => 'off',
             'status' => 'active',
             'disk_used_mb' => 0,
             'owner_user_id' => 1,
-            'docroot_override' => 0,
+            'docroot_override' => '',
             'created_at' => time(),
             'updated_at' => time(),
         ]);
@@ -101,18 +113,12 @@ function offsiteFixture(): array
         $db,
     );
 
-    register_shutdown_function(static function () use ($root, $backups): void {
-        exec('rm -rf ' . escapeshellarg($root));
-
-        // เก็บกวาดเฉพาะไฟล์ที่เทสต์นี้สร้าง — ไดเรกทอรีสำรองจริงอาจมีของอื่นอยู่
-        foreach (glob($backups . '/phpcp-test-*') ?: [] as $leftover) {
-            @unlink($leftover);
-        }
-    });
+    register_shutdown_function(static fn () => exec('rm -rf ' . escapeshellarg($root)));
 
     return $fixture = [
         'root' => $root,
-        'backups' => $backups,
+        'users' => $root . '/home',
+        'backups' => $root . '/home/tester/backup',
         'db' => $db,
         'context' => $context,
         'executor' => new RealExecutor(),
@@ -122,30 +128,35 @@ function offsiteFixture(): array
     ];
 }
 
-/** ใส่แถวไฟล์สำรองพร้อมไฟล์จริงบนดิสก์ */
-function seedBackup(
-    array $fixture,
-    string $name,
-    int $createdAt,
-    int $siteId = 1,
-    string $offsite = 'none',
-    ?int $destinationId = null,
-): int {
-    $path = $fixture['backups'] . '/phpcp-test-' . bin2hex(random_bytes(6)) . '.tar.gz';
-    file_put_contents($path, str_repeat($name, 20));
+/**
+ * วางไฟล์สำรองจริงลงโฟลเดอร์ของบัญชี พร้อมกำหนดเวลาแก้ไขไฟล์
+ *
+ * เวลาแก้ไขของ**ไฟล์**คือสิ่งที่ตัวเก็บกวาดอ่าน ไม่ใช่คอลัมน์ในตาราง — ไฟล์ที่ลูกค้า
+ * คัดลอกกลับเข้ามาเองจึงมีอายุตามความจริงของมัน ไม่ใช่ตามที่ระบบเคยจดไว้
+ */
+function seedBackupFile(array $fixture, string $domain, int $modifiedAt, string $suffix = '.tar.gz'): string
+{
+    $path = sprintf(
+        '%s/%s-files-%s-%s%s',
+        $fixture['backups'],
+        $domain,
+        date('Ymd-His', $modifiedAt),
+        bin2hex(random_bytes(3)),
+        $suffix,
+    );
 
-    return $fixture['db']->insert('backups', [
-        'name' => $name,
-        'type' => 'site',
-        'site_id' => $siteId,
-        'path' => $path,
-        'size_bytes' => filesize($path),
-        'checksum' => hash_file('sha256', $path),
-        'status' => 'ok',
-        'created_at' => $createdAt,
-        'offsite_status' => $offsite,
-        'destination_id' => $destinationId,
-    ]);
+    file_put_contents($path, str_repeat('ข้อมูลสำรอง', 20));
+    touch($path, $modifiedAt);
+
+    return $path;
+}
+
+/** ล้างโฟลเดอร์สำรองให้ว่างก่อนเริ่มเทสต์ที่นับจำนวนไฟล์ */
+function clearBackupDir(array $fixture): void
+{
+    foreach (glob($fixture['backups'] . '/*') ?: [] as $file) {
+        @unlink($file);
+    }
 }
 
 test('ปลายทางคืนแถวออกมาโดยไม่มีความลับติดไปด้วย', static function (): void {
@@ -179,7 +190,7 @@ test('ส่งไฟล์ออกไปแล้วต้องยืนย�
     $fixture = offsiteFixture();
     $destination = new LocalDestination($fixture['root'] . '/remote', $fixture['backups']);
 
-    $source = $fixture['backups'] . '/phpcp-test-probe.tar.gz';
+    $source = $fixture['backups'] . '/probe.tar.gz';
     file_put_contents($source, str_repeat('ข้อมูลสำรอง', 500));
 
     $remote = $destination->push($fixture['executor'], $source, 'probe.tar.gz');
@@ -188,7 +199,7 @@ test('ส่งไฟล์ออกไปแล้วต้องยืนย�
     assertSame(hash_file('sha256', $source), hash_file('sha256', $remote), 'เนื้อหาต้องตรงกันทุกไบต์');
 
     // ดึงกลับได้ — ปลายทางที่ส่งออกได้อย่างเดียวยังไม่นับว่าแก้ปัญหา
-    $back = $fixture['backups'] . '/phpcp-test-probe-back.tar.gz';
+    $back = $fixture['backups'] . '/probe-back.tar.gz';
     $destination->pull($fixture['executor'], $remote, $back);
     assertSame(hash_file('sha256', $source), hash_file('sha256', $back), 'ไฟล์ที่ดึงกลับต้องตรงกับต้นฉบับ');
 
@@ -196,6 +207,9 @@ test('ส่งไฟล์ออกไปแล้วต้องยืนย�
     $destination->delete($fixture['executor'], $remote);
     $destination->delete($fixture['executor'], $remote);
     assertTrue(!is_file($remote), 'ไฟล์ต้องถูกลบที่ปลายทาง');
+
+    @unlink($source);
+    @unlink($back);
 });
 
 test('ปลายทางปฏิเสธเส้นทางที่ออกนอกขอบเขตของตัวเอง', static function (): void {
@@ -212,56 +226,77 @@ test('ปลายทางปฏิเสธเส้นทางที่อ�
     }
 });
 
-test('ตัวเก็บกวาดต้องไม่ลบไฟล์ที่ยังไม่มีสำเนานอกเครื่อง', static function (): void {
-    // ข้อนี้คือหัวใจของทั้งเฟส — ลบสำเนาเดียวที่มีอยู่ทิ้งตอนตี 5 คือการทำข้อมูลหายเอง
+test('ตัวเก็บกวาดต้องไม่แตะไฟล์ที่ระบบไม่ได้สร้าง', static function (): void {
+    /*
+     * โฟลเดอร์นี้เป็นของลูกค้าและเปิดให้เขาเข้าถึงผ่าน SFTP โดยตั้งใจ — เขาคัดลอกไฟล์
+     * สำรองจากเครื่องเก่าเข้ามาเก็บไว้ได้ และนั่นอาจเป็นสำเนาเดียวที่เขามี · นโยบาย
+     * "เก็บ N ชุด / ลบเกิน M วัน" เป็นนโยบายของ**ระบบสำรองอัตโนมัติ** จึงมีผลเฉพาะกับ
+     * ไฟล์ที่ระบบเป็นคนสร้าง ซึ่งจับได้จากชื่อที่ขึ้นต้นด้วยโดเมนของบัญชีนั้น
+     */
     $fixture = offsiteFixture();
-    $fixture['db']->run('DELETE FROM backups');
-
-    // นโยบาย 1 วัน / ไม่เก็บชุดล่าสุดเลย — ตัดกฎ "เก็บ N ชุดล่าสุด" ออกจากสมการ
-    // เพื่อให้เทสต์นี้วัดเรื่องสำเนานอกเครื่องอย่างเดียว
-    $destinationId = $fixture['repo']->create('ปลายทางที่เปิดอยู่', 'local', ['path' => $fixture['root'] . '/remote'], '', 1, 0);
+    clearBackupDir($fixture);
 
     $old = time() - 365 * 86400;
-    seedBackup($fixture, 'ยังไม่ได้ส่ง', $old, 1, 'none', $destinationId);
-    seedBackup($fixture, 'ส่งไม่สำเร็จ', $old, 1, 'failed', $destinationId);
-    seedBackup($fixture, 'ส่งแล้ว', $old, 1, 'ok', $destinationId);
+    $mine = seedBackupFile($fixture, 'test1.example.com', $old);
+
+    $stranger = $fixture['backups'] . '/ไฟล์ที่ลูกค้าเอามาเอง.tar.gz';
+    file_put_contents($stranger, 'ของลูกค้า');
+    touch($stranger, $old);
 
     $prune = new BackupPrune();
-    $result = $prune->run($prune->validate(['dry_run' => true]), $fixture['executor'], $fixture['context']);
+    $result = $prune->run(
+        $prune->validate(['days' => 30, 'keep' => 0, 'dry_run' => false]),
+        $fixture['executor'],
+        $fixture['context'],
+    );
 
-    $names = array_column($result['removed'], 'name');
+    assertSame(
+        [basename($mine)],
+        array_column($result['removed'], 'file'),
+        'ต้องลบเฉพาะไฟล์ที่ระบบสร้างเอง',
+    );
+    assertTrue(is_file($stranger), 'ไฟล์ของลูกค้าต้องยังอยู่ครบ');
 
-    assertSame(['ส่งแล้ว'], $names, 'ต้องลบเฉพาะไฟล์ที่มีสำเนานอกเครื่องแล้วเท่านั้น');
+    @unlink($stranger);
 });
 
 test('ตัวเก็บกวาดเก็บ N ชุดล่าสุดไว้เสมอ แม้ทุกชุดจะเก่าเกินกำหนด', static function (): void {
-    // เครื่องที่ไม่ได้สำรองมานานต้องไม่ตื่นมาแล้วพบว่าไฟล์สำรองถูกลบเกลี้ยง
+    // บัญชีที่ไม่ได้สำรองมานานต้องไม่ตื่นมาแล้วพบว่าไฟล์สำรองถูกลบเกลี้ยง
     $fixture = offsiteFixture();
-    $fixture['db']->run('DELETE FROM backups');
+    clearBackupDir($fixture);
 
     $old = time() - 365 * 86400;
+    $files = [];
+
     for ($i = 0; $i < 10; $i++) {
-        seedBackup($fixture, 'ชุด ' . $i, $old + $i, 42, 'ok');
+        $files[$i] = basename(seedBackupFile($fixture, 'test42.example.com', $old + $i));
     }
 
     $prune = new BackupPrune();
-    $result = $prune->run($prune->validate(['days' => 30, 'keep' => 3, 'dry_run' => true]), $fixture['executor'], $fixture['context']);
+    $result = $prune->run(
+        $prune->validate(['days' => 30, 'keep' => 3, 'dry_run' => true]),
+        $fixture['executor'],
+        $fixture['context'],
+    );
 
     assertSame(7, $result['removed_count'], 'ต้องเหลือ 3 ชุดล่าสุดไว้');
 
-    $kept = array_diff(array_map(static fn (int $i): string => 'ชุด ' . $i, range(0, 9)), array_column($result['removed'], 'name'));
-    assertSame(['ชุด 7', 'ชุด 8', 'ชุด 9'], array_values($kept), 'ชุดที่เก็บไว้ต้องเป็นชุดที่ใหม่ที่สุด');
+    $kept = array_values(array_diff($files, array_column($result['removed'], 'file')));
+    sort($kept);
+
+    assertSame([$files[7], $files[8], $files[9]], $kept, 'ชุดที่เก็บไว้ต้องเป็นชุดที่ใหม่ที่สุด');
 });
 
 test('เรียกตัวเก็บกวาดซ้ำในโปรเซสเดียวกัน ต้องได้ผลเท่าเดิม', static function (): void {
     // agent รันค้างเป็นเดือน · เคยใช้ static ในเมธอดตรวจ ทำให้ตัวนับสะสมข้ามการเรียก
     // แล้วรอบที่สองเห็นว่าทุกกลุ่มครบโควตาตั้งแต่แถวแรก จึงลบไฟล์ที่ต้องเก็บไว้
     $fixture = offsiteFixture();
-    $fixture['db']->run('DELETE FROM backups');
+    clearBackupDir($fixture);
 
     $old = time() - 365 * 86400;
+
     for ($i = 0; $i < 6; $i++) {
-        seedBackup($fixture, 'ซ้ำ ' . $i, $old + $i, 43, 'ok');
+        seedBackupFile($fixture, 'test43.example.com', $old + $i);
     }
 
     $prune = new BackupPrune();
@@ -274,51 +309,96 @@ test('เรียกตัวเก็บกวาดซ้ำในโปร�
     assertSame(2, $first['removed_count'], 'เก็บ 4 จาก 6 จึงลบ 2');
 });
 
-test('ตัวเก็บกวาดลบทั้งแถวและไฟล์จริงบนดิสก์', static function (): void {
+test('ตัวเก็บกวาดนับแยกตามเว็บและชนิด ไม่ใช่รวมทั้งบัญชี', static function (): void {
+    /*
+     * "เก็บ 2 ชุดล่าสุด" ต้องหมายถึง 2 ชุดของ**สิ่งนั้น** ไม่ใช่ 2 ชุดรวมทุกอย่างใน
+     * โฟลเดอร์ — ไม่งั้นเว็บที่สำรองบ่อยจะกินโควตาการเก็บของเว็บอื่นจนหมด แล้วเว็บที่
+     * สำรองเดือนละครั้งจะไม่เหลือไฟล์เลยสักไฟล์
+     */
     $fixture = offsiteFixture();
-    $fixture['db']->run('DELETE FROM backups');
+    clearBackupDir($fixture);
 
-    $destinationId = $fixture['repo']->create('ปลายทางลบจริง', 'local', ['path' => $fixture['root'] . '/remote'], '', 1, 0);
-    $id = seedBackup($fixture, 'ลบจริง', time() - 365 * 86400, 44, 'ok', $destinationId);
-    $path = (string) $fixture['db']->value('SELECT path FROM backups WHERE id = :id', ['id' => $id]);
+    $old = time() - 365 * 86400;
+
+    for ($i = 0; $i < 3; $i++) {
+        seedBackupFile($fixture, 'test44.example.com', $old + $i);
+        seedBackupFile($fixture, 'test45.example.com', $old + $i);
+        seedBackupFile($fixture, 'test44.example.com', $old + $i, '.sql.gz');
+    }
+
+    $prune = new BackupPrune();
+    $result = $prune->run(
+        $prune->validate(['days' => 30, 'keep' => 2, 'dry_run' => true]),
+        $fixture['executor'],
+        $fixture['context'],
+    );
+
+    // สามกลุ่ม (test44 ไฟล์, test44 ฐานข้อมูล, test45 ไฟล์) กลุ่มละ 3 เก็บ 2 จึงลบกลุ่มละ 1
+    assertSame(3, $result['removed_count'], 'ต้องลบกลุ่มละหนึ่งไฟล์ ไม่ใช่ลบรวมกัน');
+});
+
+test('ตัวเก็บกวาดลบไฟล์จริงบนดิสก์ ไม่ใช่แค่รายงานว่าลบ', static function (): void {
+    $fixture = offsiteFixture();
+    clearBackupDir($fixture);
+
+    $path = seedBackupFile($fixture, 'test46.example.com', time() - 365 * 86400);
 
     assertTrue(is_file($path), 'ต้องมีไฟล์อยู่ก่อนลบ');
 
-    // ไม่ระบุ days/keep — ให้ใช้ค่าของปลายทางที่ผูกไว้ (1 วัน / ไม่เก็บชุดล่าสุด)
     $prune = new BackupPrune();
-    $prune->run($prune->validate([]), $fixture['executor'], $fixture['context']);
+    $prune->run($prune->validate(['days' => 30, 'keep' => 0]), $fixture['executor'], $fixture['context']);
 
-    assertTrue(!is_file($path), 'ไฟล์บนดิสก์ต้องถูกลบด้วย ไม่ใช่ลบแต่แถว');
-    assertSame(null, $fixture['db']->first('SELECT id FROM backups WHERE id = :id', ['id' => $id]), 'แถวต้องหายไป');
+    assertTrue(!is_file($path), 'ไฟล์บนดิสก์ต้องถูกลบจริง');
 });
 
-test('ส่งไฟล์ที่ checksum ไม่ตรง ต้องถูกปฏิเสธก่อนออกจากเครื่อง', static function (): void {
-    // ไฟล์เสียที่ถูกส่งออกไปเก็บ = ไฟล์สำรองปลอมที่ไม่มีใครรู้ว่าปลอมจนถึงวันที่ต้องใช้
+test('ส่งไฟล์ที่ไม่มีอยู่ในโฟลเดอร์ของบัญชี ต้องถูกปฏิเสธก่อนออกจากเครื่อง', static function (): void {
+    /*
+     * ชื่อไฟล์มาจากหน้าจอที่อ่านโฟลเดอร์ไว้ก่อนหน้า — ระหว่างนั้นลูกค้าลบไฟล์ของตัวเอง
+     * ได้ผ่าน SFTP · ต้องตอบว่า "ไฟล์ไม่อยู่แล้ว" ไม่ใช่สร้างไฟล์เปล่าที่ปลายทาง
+     * หรือส่งไฟล์อื่นที่ชื่อใกล้เคียงออกไป
+     */
     $fixture = offsiteFixture();
     $destinationId = $fixture['repo']->create('ปลายทางตรวจ', 'local', ['path' => $fixture['root'] . '/remote'], '', 30, 7);
-
-    $id = seedBackup($fixture, 'ไฟล์เสีย', time(), 45);
-    $fixture['db']->update('backups', ['checksum' => str_repeat('0', 64)], ['id' => $id]);
 
     $push = new BackupPush();
 
     assertRejects(
         Phpcp\Agent\ValidationError::class,
         static fn () => $push->run(
-            $push->validate(['backup_id' => $id, 'destination_id' => $destinationId]),
+            $push->validate([
+                'user_id' => 1,
+                'file' => 'test45.example.com-files-20200101-000000-abcdef.tar.gz',
+                'destination_id' => $destinationId,
+            ]),
             $fixture['executor'],
             $fixture['context'],
         ),
-        'ไฟล์ที่ checksum ไม่ตรงต้องไม่ถูกส่งออก',
+        'ไฟล์ที่ไม่มีอยู่ต้องไม่ถูกส่งออก',
     );
+});
+
+test('ชื่อไฟล์ที่ส่งออกต้องเป็นชื่อล้วน — กันการหยิบไฟล์อื่นบนเครื่อง', static function (): void {
+    // ค่านี้ถูกต่อเข้ากับเส้นทางบ้านของลูกค้า · ยอมให้มี `/` หรือ `..` แปลว่าผู้เรียก
+    // เลือกได้ว่าจะส่งไฟล์ไหนบนเครื่องออกไปนอกเครื่อง
+    $push = new BackupPush();
+
+    foreach (['../.ssh/id_rsa', 'sub/dir.tar.gz', '../../etc/shadow.tar.gz', 'x.txt'] as $bad) {
+        assertRejects(
+            Phpcp\Agent\ValidationError::class,
+            static fn () => $push->validate(['user_id' => 1, 'file' => $bad, 'destination_id' => 1]),
+            "ชื่อ '{$bad}' ต้องถูกปฏิเสธตั้งแต่ชั้นตรวจค่า",
+        );
+    }
 });
 
 test('ผู้ดูแลเว็บไซต์ส่งไฟล์สำรองออกนอกเครื่องไม่ได้', static function (): void {
     // ปลายทางเป็นทรัพยากรของทั้งเครื่อง — เลือกปลายทางได้เท่ากับเลือกได้ว่าจะส่ง
     // ข้อมูลของเว็บไซต์ออกไปที่ไหน
     $fixture = offsiteFixture();
+    clearBackupDir($fixture);
+
     $destinationId = $fixture['repo']->create('ปลายทางสิทธิ์', 'local', ['path' => $fixture['root'] . '/remote'], '', 30, 7);
-    $id = seedBackup($fixture, 'ของลูกค้า', time(), 46);
+    $file = basename(seedBackupFile($fixture, 'test46.example.com', time()));
 
     $webadmin = new Context(
         new Actor(9, 'somchai', Permissions::WEBADMIN, '127.0.0.1', 'test'),
@@ -331,7 +411,7 @@ test('ผู้ดูแลเว็บไซต์ส่งไฟล์สำ�
     assertRejects(
         Phpcp\Agent\PermissionDenied::class,
         static fn () => $push->run(
-            $push->validate(['backup_id' => $id, 'destination_id' => $destinationId]),
+            $push->validate(['user_id' => 1, 'file' => $file, 'destination_id' => $destinationId]),
             $fixture['executor'],
             $webadmin,
         ),
@@ -343,12 +423,13 @@ test('ทุก capability ของเรื่องนี้ถูกทำ�
     // ไม่ถูกทำเครื่องหมาย = ไม่เข้า audit และทำงานจริงในโหมด dryrun ทั้งที่ไม่ควร
     $registry = new Phpcp\Agent\CapabilityRegistry();
 
-    foreach (['backup.push', 'backup.prune', 'backup.destination_test'] as $name) {
+    foreach (['backup.push', 'backup.prune', 'backup.run', 'backup.destination_test'] as $name) {
         $capability = $registry->resolve($name);
 
         assertTrue($capability->isMutating(), "{$name} ต้องถูกทำเครื่องหมายว่าเปลี่ยนแปลงระบบ");
         // `backup.offsite` ไม่ใช่ `backup.manage` โดยเจตนา — `backup.manage` เป็นสิทธิ์
-        // หมวด Hosting ที่ผู้ดูแลเว็บไซต์มี ส่วนปลายทางนอกเครื่องเป็นของทั้งเครื่อง
+        // หมวด Hosting ที่ผู้ดูแลเว็บไซต์มี ส่วนปลายทางนอกเครื่องกับรอบสำรองอัตโนมัติ
+        // เป็นของทั้งเครื่อง
         assertSame('backup.offsite', $capability->permission(), "{$name} ต้องใช้สิทธิ์ backup.offsite");
     }
 });

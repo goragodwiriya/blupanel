@@ -3834,19 +3834,27 @@ paths:
   /backups:
     get:
       tags: [backups]
-      summary: รายการไฟล์สำรอง
+      summary: รายการไฟล์สำรอง — อ่านจากโฟลเดอร์จริงของแต่ละบัญชี
       description: |
-        ไฟล์สำรองระดับระบบ (type `config`) ไม่ผูกกับเว็บไซต์ใด ผู้ดูแลเว็บไซต์จึงไม่เห็น
-        — ข้างในมีค่า config ของทั้งเครื่อง
+        **อ่านจาก `<บ้าน>/backup` ของลูกค้าทุกครั้ง ไม่ใช่จากตาราง** (PLAN-BACKUP-V2 ข้อ B4)
+        โฟลเดอร์นั้นเปิดให้ลูกค้าเข้าถึงผ่าน SFTP โดยตั้งใจ เขาลบไฟล์ของตัวเองได้ทุกเมื่อ
+        — รายการที่มาจากตารางจึงเพี้ยนทันทีที่เขาทำ และปุ่มกู้คืนจะชี้ไปที่ของที่ไม่มีอยู่
+
+        ต้องผ่าน agent เพราะโฟลเดอร์เป็นของลูกค้าโหมด 0750 ซึ่งโปรเซสเว็บอ่านไม่ได้
+        ตามที่ SECURITY ตั้งใจไว้ · agent ล่มจึงตอบ 503 ไม่ใช่รายการว่าง
       parameters:
         - { $ref: "#/components/parameters/Page" }
         - { $ref: "#/components/parameters/PerPage" }
-        - name: type
-          in: query
-          schema: { type: string, enum: [site, database, config, full] }
-        - name: site_id
+        - name: user_id
           in: query
           schema: { type: integer }
+          description: 0 = ทุกบัญชีที่ผู้เรียกมีสิทธิ์เห็น
+        - name: type
+          in: query
+          schema: { type: string, enum: [site, database] }
+        - name: domain
+          in: query
+          schema: { type: string }
       responses:
         "200":
           description: รายการไฟล์สำรอง
@@ -3865,109 +3873,139 @@ paths:
                     items: { $ref: "#/components/schemas/Backup" }
                   meta: { $ref: "#/components/schemas/PageMeta" }
         "401": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
 
     post:
       tags: [backups]
-      summary: สร้างไฟล์สำรอง
+      summary: สร้างไฟล์สำรองลงในโฟลเดอร์ของเจ้าของเว็บ
+      description: |
+        ไฟล์ไปอยู่ที่ `<บ้านของเจ้าของ>/backup/` **นับในโควตาของเขา** และเป็นของเขา
+        (chown ให้ทันทีหลังสร้าง ไม่งั้นดาวน์โหลดผ่าน SFTP ไม่ได้)
+
+        ชนิด `config`/`full` ถูกตัดทิ้งตั้งแต่ข้อ B2 — ค่าตั้งของเครื่องไม่ใช่ของลูกค้า
+        คนไหน จึงไม่มีบ้านให้ไปอยู่ · สำรองด้วย snapshot ของ VPS หรือ git ตรงกว่า
+
+        โควตาเต็มจะถูกปฏิเสธ **ก่อน**เริ่มเขียน พร้อมบอกว่าใช้ไปเท่าไรจากเท่าไร
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [type]
+              required: [type, site_id]
               properties:
-                type: { type: string, enum: [site, database, config, full] }
-                site_id: { type: integer, description: "ต้องระบุเมื่อ type = site" }
-                database: { type: string, description: "ต้องระบุเมื่อ type = database" }
-                note: { type: string, maxLength: 120 }
+                type: { type: string, enum: [site, database] }
+                site_id: { type: integer }
+                database:
+                  type: string
+                  description: "ไม่ระบุ = ฐานเดียวของเว็บนั้น · เว็บที่มีหลายฐานต้องเลือก"
       responses:
         "201":
           description: สร้างแล้ว — ไฟล์พร้อมใช้ตั้งแต่ตอนที่คำตอบกลับไปถึง
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  ok: { type: boolean, const: true }
-                  data: { $ref: "#/components/schemas/Backup" }
+              schema: { $ref: "#/components/schemas/CommandResponse" }
         "404": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
-        "500": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
 
-  /backups/{id}:
+  /backups/{user}/{file}:
+    parameters:
+      - name: user
+        in: path
+        required: true
+        schema: { type: integer }
+        description: บัญชีเจ้าของโฟลเดอร์ที่ไฟล์นั้นอยู่
+      - name: file
+        in: path
+        required: true
+        schema: { type: string }
+        description: |
+          ชื่อไฟล์ล้วน ไม่มีเส้นทางนำหน้า · ต้องลงท้ายด้วย `.tar.gz` หรือ `.sql.gz`
+          ค่าที่มี `/` หรือ `..` ถูกปฏิเสธตั้งแต่ชั้นตรวจค่าของ capability
     delete:
       tags: [backups]
-      summary: ลบไฟล์สำรอง
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: integer }
+      summary: ลบไฟล์สำรองหนึ่งไฟล์
+      description: |
+        ไฟล์ถูกอ้างด้วย **บัญชี + ชื่อไฟล์** ไม่ใช่รหัสแถว — สิ่งที่ผู้ใช้กดลบคือไฟล์ที่
+        เขาเห็นในโฟลเดอร์ของตัวเอง ไม่ใช่บันทึกที่ panel เคยเขียนไว้ว่าเคยมีไฟล์นั้น
+
+        "ไฟล์ไม่อยู่แล้ว" เป็นสภาพปกติ (ลูกค้าลบเองผ่าน SFTP ได้) จึงตอบ 422 พร้อมบอก
+        ว่าไฟล์หายไประหว่างทาง ไม่ใช่ 500
       responses:
         "200":
           description: สำเร็จ — คำตอบของคำสั่งพร้อม `actions` ให้หน้าจอทำตาม
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CommandResponse" }
-        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
 
-  /backups/{id}/restoration:
+  /backups/{user}/{file}/restoration:
+    parameters:
+      - name: user
+        in: path
+        required: true
+        schema: { type: integer }
+      - name: file
+        in: path
+        required: true
+        schema: { type: string }
     post:
       tags: [backups]
-      summary: กู้คืนจากไฟล์สำรอง
+      summary: กู้คืนเว็บไซต์จากไฟล์สำรอง
       description: |
-        **คำสั่งที่อันตรายที่สุดในระบบ** — เขียนทับข้อมูลปัจจุบันทั้งหมด
+        **คำสั่งที่อันตรายที่สุดในระบบ** — เขียนทับไฟล์เว็บปัจจุบันทั้งหมด
 
-        กลไกป้องกันที่ทำงานทุกครั้ง: ต้องยืนยันด้วยชื่อเป้าหมาย · ตรวจ checksum ของไฟล์
-        ก่อนแตะข้อมูลจริง (ไฟล์ที่ไม่มี checksum กู้ไม่ได้เลย) · สร้างไฟล์สำรองนิรภัย
-        ของสถานะปัจจุบันไว้ก่อนเขียนทับ จึงย้อนกลับไปจุดก่อนกู้ได้
+        กลไกป้องกันที่ทำงานทุกครั้ง: ต้องพิมพ์ชื่อโดเมนยืนยัน · อ่าน `backup.json`
+        ในไฟล์เพื่อยืนยันว่าเป็นไฟล์ของเว็บนี้จริง (ชื่อไฟล์ไม่ใช่คำสัญญา ลูกค้า
+        เปลี่ยนชื่อเองได้) · ตรวจ checksum ที่คำนวณสด ๆ ซ้ำอีกครั้งก่อนแตะข้อมูลจริง ·
+        สร้างไฟล์สำรองนิรภัยของสถานะปัจจุบันไว้ก่อนเขียนทับ จึงย้อนกลับได้
 
         ใช้สิทธิ์ `backup.restore` ซึ่งแยกจาก `backup.manage` ที่ใช้สร้าง/ลบ
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: integer }
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [confirm]
+              required: [site_id, confirm]
               properties:
-                confirm: { type: string, description: "ชื่อโดเมนหรือชื่อเป้าหมายของไฟล์สำรองนั้น" }
+                site_id: { type: integer, description: "เว็บปลายทางที่จะถูกเขียนทับ" }
+                confirm: { type: string, description: "ชื่อโดเมนของเว็บปลายทาง" }
       responses:
         "200":
           description: กู้คืนสำเร็จ
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  ok: { type: boolean, const: true }
-                  data: { type: object }
+              schema: { $ref: "#/components/schemas/CommandResponse" }
         "403": { $ref: "#/components/responses/Error" }
-        "404": { $ref: "#/components/responses/Error" }
         "422":
-          description: "`VALIDATION_ERROR` — ไม่ยืนยัน หรือ checksum ไม่ตรง (ไฟล์ถูกแก้)"
+          description: "`VALIDATION_ERROR` — ไม่ยืนยัน · ไฟล์เป็นของเว็บอื่น · หรือไฟล์ถูกแก้"
           $ref: "#/components/responses/Error"
+        "503": { $ref: "#/components/responses/Error" }
 
-  /backups/{id}/offsite-copy:
+  /backups/{user}/{file}/offsite-copy:
+    parameters:
+      - name: user
+        in: path
+        required: true
+        schema: { type: integer }
+      - name: file
+        in: path
+        required: true
+        schema: { type: string }
     post:
       tags: [backups]
       summary: ส่งไฟล์สำรองออกไปเก็บที่ปลายทางนอกเครื่อง
       description: |
-        ตรวจ checksum ก่อนส่งเสมอ — ไฟล์ที่เสียแล้วถูกส่งออกไปเก็บ คือไฟล์สำรองปลอม
-        ที่ไม่มีใครรู้ว่าปลอมจนถึงวันที่ต้องใช้จริง
+        ตรวจ checksum ที่คำนวณจากไฟล์เดี๋ยวนั้นก่อนส่งเสมอ — ไฟล์ที่เสียแล้วถูกส่งออกไป
+        เก็บ คือไฟล์สำรองปลอมที่ไม่มีใครรู้ว่าปลอมจนถึงวันที่ต้องใช้จริง
+
+        ชื่อที่ปลายทางเติมชื่อบัญชีนำหน้าเสมอ (`<บัญชี>-<ชื่อไฟล์>`) เพราะปลายทางเดียว
+        รับไฟล์จากทุกบัญชีบนเครื่อง
 
         ชื่อเป็นคำนาม (`offsite-copy` = สำเนาที่อยู่นอกเครื่อง) ตาม §4.1 ไม่ใช่กริยา
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: integer }
       requestBody:
         required: true
         content:
@@ -3982,36 +4020,32 @@ paths:
           description: ส่งสำเร็จ
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  ok: { type: boolean, const: true }
-                  data:
-                    type: object
-                    properties:
-                      remote_path: { type: string }
-                      destination: { type: string }
-                      bytes: { type: integer }
+              schema: { $ref: "#/components/schemas/CommandResponse" }
         "403": { $ref: "#/components/responses/Error" }
-        "404": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
 
   /backups/storage:
     get:
       tags: [backups]
-      summary: ที่เก็บไฟล์สำรองบนเครื่องนี้
+      summary: โฟลเดอร์ที่ไฟล์สำรองอยู่ พร้อมจำนวนและขนาดรวม
       description: |
-        ตอบว่าไฟล์สำรองไปอยู่ที่ไหนจริง ๆ พร้อมพื้นที่ว่างของ filesystem นั้น
+        ตอบว่าไฟล์สำรองไปอยู่ที่ไหนจริง ๆ · ตั้งแต่ PLAN-BACKUP-V2 คำตอบนี้มีความหมาย
+        กับลูกค้าโดยตรง ไม่ใช่แค่กับผู้ดูแล: เป็นเส้นทางที่เขา `cd` เข้าไปได้จริงผ่าน
+        SFTP แล้วดาวน์โหลดสำเนาของตัวเองออกมา
 
         **แยกเป็นเส้นทางของตัวเอง ไม่ใช่ `meta` ของ `/backups`** เพราะ `meta.*` ผูกกับ
         `data-text`/`data-if` ของ Now.js ไม่ได้ — คอมโพเนนต์เห็นเฉพาะชั้น `data`
 
-        `scope` คือคีย์ขอบเขตของตัวจัดการไฟล์ ใช้ต่อเป็น `/app/filemanager?root=<scope>`
-        ได้ทันที · ไดเรกทอรีนี้อยู่ใต้ `/var/lib/phpcp` ที่ปกติถูกกันไว้ทั้งก้อน จึงมี
-        ข้อยกเว้นเฉพาะทางให้ (ดู `SelfProtection::allowAlso`)
+        `scope` ว่างเสมอแล้ว — ขอบเขต `backups` ของตัวจัดการไฟล์ถูกถอนทิ้งพร้อมกับ
+        ข้อยกเว้นใน `SelfProtection` เพราะไฟล์ไม่ได้อยู่ในพื้นที่ของ panel อีกต่อไป
+      parameters:
+        - name: user_id
+          in: query
+          schema: { type: integer }
       responses:
         "200":
-          description: ที่เก็บและพื้นที่ว่าง
+          description: โฟลเดอร์และขนาดรวม
           content:
             application/json:
               schema:
@@ -4021,27 +4055,31 @@ paths:
                   data:
                     type: object
                     properties:
-                      path: { type: string }
-                      scope: { type: string, description: คีย์ขอบเขตของตัวจัดการไฟล์ }
+                      path: { type: string, description: "เส้นทางจริง · ผู้ดูแลที่เห็นหลายบัญชีได้รูปแบบที่มี <บัญชี>" }
+                      scope: { type: string, description: "ว่างเสมอ — คงไว้เพื่อความเข้ากันได้ของหน้าจอ" }
                       files: { type: integer, description: จำนวนไฟล์สำรองที่ผู้เรียกเห็นได้ }
                       bytes: { type: integer, description: ขนาดรวมของไฟล์เหล่านั้น }
-                      free_bytes: { type: integer, description: "พื้นที่ว่างของ filesystem · 0 = อ่านไม่ได้" }
-                      total_bytes: { type: integer }
         "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
 
   /backups/imports:
     post:
       tags: [backups]
-      summary: นำไฟล์สำรองจากปลายทางนอกเครื่องกลับมาลงทะเบียน
+      summary: ดึงไฟล์สำรองจากปลายทางนอกเครื่องกลับเข้าโฟลเดอร์ของเจ้าของ
       description: |
-        **ทางเดียวที่ทำให้สำเนานอกเครื่องอ่านกลับได้** — `backup.push` บันทึกผลลงตาราง
-        ของเครื่องต้นทาง ส่วนการกู้คืนเริ่มจากตารางของเครื่องที่กู้ · ไฟล์ที่ไปนอนอยู่
-        อีกเครื่องจึงเป็นแค่ `.tar.gz` ที่ panel ที่นั่นไม่รู้จัก จนกว่าจะนำเข้าทางนี้
+        **ทางเดียวที่ทำให้สำเนานอกเครื่องอ่านกลับได้** — ไม่งั้นไฟล์ที่ไปนอนอยู่อีกเครื่อง
+        เป็นแค่ `.tar.gz` ที่ต้องแตกเองแล้วไล่ตั้งเจ้าของไฟล์เอง ซึ่งเป็นงานที่คนทำตอน
+        ตกใจแล้วพลาดได้ง่ายที่สุด
 
         ปลายทางรู้ว่าไฟล์เป็นของโดเมนไหนจาก `backup.json` ที่รากของ archive ซึ่งอ่านได้
         โดยไม่ต้องแตกทั้งก้อน · เว็บไซต์ชื่อนั้น**ต้องมีอยู่บนเครื่องนี้ก่อน** ระบบไม่สร้างให้
+        — และเมื่อไม่มีเว็บ ก็ไม่มีบ้านที่จะวางไฟล์ลงไปด้วย
 
-        จบที่การลงทะเบียนเท่านั้น ไม่กู้คืนต่อให้ — กู้คืนยังต้องกดแยกและพิมพ์ชื่อโดเมนยืนยัน
+        ไฟล์ลงที่ `<บ้านของเจ้าของเว็บนั้น>/backup/` **ไม่ใช่บ้านของคนที่กดปุ่ม** (ข้อ B5)
+        · ดึงลงที่พักของ panel ก่อนแล้วค่อยย้ายเข้าบ้าน เพราะตอนเริ่มดึงยังไม่มีใครรู้ว่า
+        บ้านไหนคือบ้านที่ถูก
+
+        จบที่การวางไฟล์เท่านั้น ไม่กู้คืนต่อให้ — กู้คืนยังต้องกดแยกและพิมพ์ชื่อโดเมนยืนยัน
       requestBody:
         required: true
         content:
@@ -4056,7 +4094,7 @@ paths:
                   description: ชื่อไฟล์ล้วนที่ปลายทาง ไม่มีไดเรกทอรีนำหน้า
       responses:
         "200":
-          description: นำเข้าและลงทะเบียนแล้ว
+          description: นำเข้าและวางไว้ในโฟลเดอร์ของเจ้าของแล้ว
           content:
             application/json:
               schema:
@@ -4064,7 +4102,8 @@ paths:
                 properties:
                   ok: { type: boolean, const: true }
                   message: { type: string }
-                  id: { type: integer, description: รหัสไฟล์สำรองบนเครื่องนี้ }
+                  file: { type: string, description: ชื่อไฟล์ในโฟลเดอร์ของเจ้าของ }
+                  user_id: { type: integer, description: บัญชีที่ได้รับไฟล์ }
                   domain: { type: string }
                   site_id: { type: integer }
                   source_host: { type: string, description: ชื่อเครื่องที่สร้างไฟล์นี้ }
@@ -4234,17 +4273,71 @@ paths:
                       message: { type: string }
         "404": { $ref: "#/components/responses/Error" }
 
-  /backup-schedules/form:
+  /backup-schedule:
     get:
       tags: [backups]
-      summary: โครงเปล่าของฟอร์มตั้งเวลาสำรอง พร้อมคำสั่งเปิด modal
+      summary: รอบสำรองอัตโนมัติ — ตัวเดียวทั้งเครื่อง
       description: |
-        คืนค่าเริ่มต้นของฟอร์มพร้อม `actions: [{type: modal, template: ...}]`
-        หน้าเว็บจึงยิงคำขอเดียวแล้วส่งคำตอบต่อให้ ResponseHandler โดยไม่ต้องรู้ว่า
-        เทมเพลตของฟอร์มชื่ออะไร — รูปแบบเดียวกับ `GET /databases/form`
+        ต้องใช้สิทธิ์ `backup.offsite` (superadmin/sysadmin) **ไม่ใช่ `backup.manage`**
+        ซึ่งเป็นสิทธิ์หมวด Hosting ที่ผู้ดูแลเว็บไซต์มีอยู่แล้ว
+
+        **เอกพจน์โดยเจตนา** (PLAN-BACKUP-V2 ข้อ B10) · ของเดิมเป็น CRUD ของตารางเวลา
+        หลายชุด หนึ่งแถวต่อหนึ่งเว็บหนึ่งชนิด — เครื่องที่มีลูกค้าห้าสิบรายต้องดูแล
+        ตารางเวลาเป็นร้อยชุดด้วยมือ และเว็บที่สร้างใหม่จะไม่ถูกสำรองเลยจนกว่าจะมีใครนึกได้
+
+        ตอนนี้ "สำรองอะไรบ้าง" อยู่ที่ `/backup-targets` ส่วนที่นี่ตอบแค่ "รอบนั้นเดินตอนไหน"
+
+        เก็บเป็นแถวในตาราง `scheduled_jobs` ชื่อคงที่ `backup.auto` capability ตรึงไว้ที่
+        `backup.run` — ผู้เรียกตั้งเองไม่ได้ทั้งคู่ · แถวถูกสร้างให้เองตอนอ่านครั้งแรก
       responses:
         "200":
-          description: โครงเปล่าและคำสั่งเปิด modal
+          description: รอบสำรองอัตโนมัติ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/BackupSchedule" }
+                  meta:
+                    type: object
+                    properties:
+                      presets:
+                        type: object
+                        description: ตารางเวลาสำเร็จรูปพร้อมคำอธิบายภาษาไทย
+        "403": { $ref: "#/components/responses/Error" }
+
+    patch:
+      tags: [backups]
+      summary: แก้เวลาและนโยบายเก็บไฟล์ของรอบสำรอง
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled: { type: integer, enum: [0, 1] }
+                schedule: { type: string, description: "cron 5 ฟิลด์ · ค่าว่าง = ไม่เปลี่ยน" }
+                days: { type: integer, description: "ลบไฟล์ที่เก่ากว่ากี่วัน · 0 = ไม่ลบตามอายุ" }
+                keep: { type: integer, description: "เก็บกี่ชุดล่าสุดเสมอ ต่อหนึ่งเว็บหนึ่งชนิด" }
+      responses:
+        "200":
+          description: บันทึกแล้ว
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /backup-schedule/form:
+    get:
+      tags: [backups]
+      summary: ฟอร์มตั้งเวลาพร้อมคำสั่งเปิด modal
+      description: |
+        คืน**ค่าปัจจุบัน** ไม่ใช่ฟอร์มเปล่า — งานนี้มีตัวเดียวและมีอยู่ตลอด สิ่งที่ผู้ใช้
+        ทำได้คือแก้ค่าของมัน ไม่ใช่สร้างของใหม่
+      responses:
+        "200":
+          description: ค่าปัจจุบันและคำสั่งเปิด modal
           content:
             application/json:
               schema:
@@ -4254,22 +4347,39 @@ paths:
                   data: { type: object }
                   actions: { type: array, items: { type: object } }
 
-  /backup-schedules:
-    get:
+  /backup-schedule/runs:
+    post:
       tags: [backups]
-      summary: ตารางเวลาสำรองอัตโนมัติ
+      summary: เดินรอบสำรองเดี๋ยวนี้โดยไม่รอ cron
       description: |
-        ต้องใช้สิทธิ์ `backup.offsite` (superadmin/sysadmin) **ไม่ใช่ `backup.manage`**
-        ซึ่งเป็นสิทธิ์หมวด Hosting ที่ผู้ดูแลเว็บไซต์มีอยู่แล้ว
+        เป็นคำสั่งเดียวกับที่ cron เรียกทุกประการ (`backup.run`) · ผู้ดูแลต้องพิสูจน์ได้ว่า
+        สิ่งที่ตั้งไว้ทำงานจริง **ก่อน**คืนแรก ไม่ใช่รู้ตอนที่ไฟล์สำรองควรจะมีแล้วแต่ไม่มี
 
-        เก็บเป็นแถวในตาราง `scheduled_jobs` เดิม แต่**เห็นและแก้ได้เฉพาะงานที่ทรัพยากร
-        นี้สร้างเอง** (ชื่อขึ้นต้นด้วย `backup.auto.`)
-
-        งานของระบบอย่าง `rollback.run` และ `expiry.check` ไม่อยู่ในนี้และแก้ผ่าน API
-        ไม่ได้เลย — การปิดมันคือการลดการป้องกันของระบบผ่านหน้าเว็บ
+        ล้มหนึ่งบัญชีไม่ทำให้ทั้งรอบล้ม — รายการที่ล้มกลับมากับคำตอบใน `failed`
       responses:
         "200":
-          description: รายการตารางเวลา
+          description: รอบทำงานจบแล้ว
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /backup-targets:
+    get:
+      tags: [backups]
+      summary: บัญชีไหนถูกสำรองอัตโนมัติบ้าง
+      description: |
+        **สวิตช์อยู่ที่บัญชี ไม่ใช่ที่เว็บ** (ข้อ B3) — ไฟล์สำรองอยู่ในบ้านของบัญชีและนับ
+        ในโควตาของบัญชี · การเปิด-ปิดรายเว็บทำให้ผู้ดูแลต้องกลับมาตั้งค่าใหม่ทุกครั้งที่
+        ลูกค้าเพิ่มเว็บ ซึ่งเป็นจังหวะที่คนลืมได้ง่ายที่สุด และผลของการลืมคือเว็บที่ไม่มี
+        สำเนาเลยโดยไม่มีอะไรฟ้อง
+
+        สองสวิตช์แยกกัน (ข้อ B8): เว็บสแตติกไม่มีฐานข้อมูล และบางบัญชีเก็บไฟล์เว็บไว้ใน
+        git อยู่แล้วจึงต้องการเฉพาะฐานข้อมูล
+      responses:
+        "200":
+          description: บัญชีโฮสติ้งทั้งหมดพร้อมสถานะสวิตช์
           content:
             application/json:
               schema:
@@ -4278,95 +4388,35 @@ paths:
                   ok: { type: boolean, const: true }
                   data:
                     type: array
-                    items: { $ref: "#/components/schemas/BackupSchedule" }
-                  meta:
-                    type: object
-                    properties:
-                      presets:
-                        type: object
-                        description: ตารางเวลาสำเร็จรูปพร้อมคำอธิบายภาษาไทย
+                    items: { $ref: "#/components/schemas/BackupTarget" }
         "403": { $ref: "#/components/responses/Error" }
 
-    post:
-      tags: [backups]
-      summary: ตั้งเวลาสำรองอัตโนมัติ
-      description: |
-        `capability` ถูกตรึงไว้ที่ `backup.create` เสมอและผู้เรียกเลือกไม่ได้ — ถ้าเลือกได้
-        ก็เท่ากับตั้งเวลาให้ระบบรันคำสั่งอะไรก็ได้ในนามของ "ระบบ" ซึ่งเป็นสิทธิ์สูงสุดที่มี
-
-        ระบุ `destination_id` เพื่อให้ **สร้างแล้วส่งออกนอกเครื่องในคำสั่งเดียว** ·
-        ถ้าไม่ระบุ ไฟล์จะอยู่บนดิสก์ก้อนเดียวกับข้อมูลจริงต่อไป
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [label, type, schedule]
-              properties:
-                label: { type: string, description: "ชื่อที่ผู้ใช้ตั้ง — ใช้สร้างชื่องานแบบ ASCII ให้เอง" }
-                type: { type: string, enum: [site, database, config, full] }
-                schedule: { type: string, description: "cron 5 ฟิลด์" }
-                site_id: { type: integer }
-                database: { type: string }
-                destination_id: { type: integer, description: "0 = เก็บไว้ในเครื่องอย่างเดียว" }
-      responses:
-        "201":
-          description: ตั้งเวลาแล้ว
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok: { type: boolean, const: true }
-                  data: { $ref: "#/components/schemas/BackupSchedule" }
-        "409": { $ref: "#/components/responses/Error" }
-        "422": { $ref: "#/components/responses/Error" }
-
-  /backup-schedules/{id}:
+  /backup-targets/{id}:
     parameters:
       - name: id
         in: path
         required: true
         schema: { type: integer }
+        description: รหัสบัญชีโฮสติ้ง (`users.id` ที่ role = webadmin)
     patch:
       tags: [backups]
-      summary: แก้ไขตารางเวลา
-      description: |
-        ส่ง id ของงานระบบมาจะได้ **404 เหมือนงานที่ไม่มีอยู่จริง** ไม่ใช่ 403 — งานเหล่านั้น
-        ไม่ใช่ทรัพยากรของ endpoint นี้เลย
+      summary: เปิด/ปิดการสำรองอัตโนมัติของบัญชีหนึ่ง
       requestBody:
         content:
           application/json:
             schema:
               type: object
               properties:
-                enabled: { type: integer, enum: [0, 1] }
-                schedule: { type: string }
-                destination_id: { type: integer }
+                backup_files: { type: boolean }
+                backup_database: { type: boolean }
       responses:
         "200":
-          description: แก้ไขแล้ว
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok: { type: boolean, const: true }
-                  data: { $ref: "#/components/schemas/BackupSchedule" }
-        "404": { $ref: "#/components/responses/Error" }
-        "422": { $ref: "#/components/responses/Error" }
-
-    delete:
-      tags: [backups]
-      summary: ลบตารางเวลา
-      responses:
-        "200":
-          description: สำเร็จ — คำตอบของคำสั่งพร้อม `actions` ให้หน้าจอทำตาม
+          description: บันทึกแล้ว
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CommandResponse" }
         "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
 
   /backup-destinations/host-key:
     post:
@@ -4919,16 +4969,17 @@ components:
 
     BackupSchedule:
       type: object
+      description: |
+        รอบสำรองอัตโนมัติ — มีตัวเดียวทั้งเครื่อง (ข้อ B10) · `name` กับ `capability`
+        ไม่ถูกส่งออกมาเพราะเป็นค่าคงที่ (`backup.auto` / `backup.run`) ที่ผู้เรียก
+        เลือกไม่ได้
       properties:
         id: { type: integer }
-        name: { type: string, description: "ชื่องานใน scheduled_jobs — ขึ้นต้นด้วย backup.auto." }
-        label: { type: string, description: "ชื่อที่ผู้ใช้ตั้ง (รองรับภาษาไทย) — คอลัมน์ name เป็น ASCII เพราะเป็นกุญแจ" }
-        schedule: { type: string }
+        schedule: { type: string, description: "cron 5 ฟิลด์" }
         schedule_label: { type: string, description: "คำอธิบายภาษาไทยของตารางเวลา" }
-        type: { type: string, enum: [site, database, config, full] }
-        site_id: { type: integer }
-        destination_id: { type: integer, description: "0 = ไม่ส่งออกนอกเครื่อง" }
         enabled: { type: boolean }
+        days: { type: integer, description: "นโยบายเก็บไฟล์ — ลบไฟล์ที่เก่ากว่ากี่วัน" }
+        keep: { type: integer, description: "เก็บกี่ชุดล่าสุดเสมอ ต่อหนึ่งเว็บหนึ่งชนิด" }
         last_run_at: { type: [integer, "null"], description: "null = ยังไม่เคยรัน" }
         last_status: { type: string }
         last_error: { type: string }
@@ -4936,7 +4987,24 @@ components:
         run_tone: { type: string, enum: [muted, ok, danger], description: "สีของป้าย run_status — pill-${run_tone}" }
         can_manage:
           type: boolean
-          description: สิทธิ์ `backup.offsite` ของผู้เรียก — เงื่อนไขปุ่มในตารางอ่านได้แค่ค่าในแถวเดียวกัน
+          description: สิทธิ์ `backup.offsite` ของผู้เรียก — เงื่อนไขปุ่มอ่านได้แค่ค่าในชั้น data
+
+    BackupTarget:
+      type: object
+      description: |
+        บัญชีโฮสติ้งหนึ่งบัญชีกับสวิตช์สำรองอัตโนมัติของมัน · โควตามาด้วยเพราะไฟล์สำรอง
+        นับในโควตาของลูกค้า — ผู้ดูแลต้องเห็นก่อนกดเปิด ไม่ใช่รู้ตอนที่เว็บเขียนไฟล์ไม่ได้
+      properties:
+        id: { type: integer, description: "users.id ของบัญชีโฮสติ้ง" }
+        username: { type: string }
+        backup_dir: { type: string, description: "โฟลเดอร์จริงที่ไฟล์ของบัญชีนี้อยู่" }
+        backup_files: { type: boolean }
+        backup_database: { type: boolean }
+        sites: { type: integer, description: จำนวนเว็บของบัญชีนี้ }
+        databases: { type: integer, description: จำนวนฐานข้อมูลของบัญชีนี้ }
+        disk_quota_mb: { type: integer, description: "-1 = ไม่จำกัด" }
+        disk_used_mb: { type: integer }
+        can_manage: { type: boolean, description: สิทธิ์ `backup.offsite` ของผู้เรียก }
 
     BackupDestination:
       type: object
@@ -5020,32 +5088,32 @@ components:
 
     Backup:
       type: object
+      description: |
+        ไฟล์สำรองหนึ่งไฟล์ที่มีอยู่จริงในโฟลเดอร์ของลูกค้า — ไม่ใช่แถวในตาราง (ข้อ B4)
+        · จึงไม่มี `id`, `status`, `checksum` หรือ `offsite_status`: ทั้งหมดนั้นเคยเป็น
+        สิ่งที่ระบบจดไว้ตอนสร้าง ซึ่งพิสูจน์อะไรไม่ได้เมื่อไฟล์อยู่ในมือเจ้าของที่ลบ
+        เปลี่ยนชื่อ หรือคัดลอกทับได้ตลอดเวลา
       properties:
-        id: { type: integer }
-        name: { type: string }
-        type: { type: string, enum: [site, database, config, full] }
-        site_id: { type: [integer, "null"] }
-        path: { type: string }
+        name: { type: string, description: "ชื่อไฟล์ล้วน — คู่กับ user_id คือกุญแจของทรัพยากรนี้" }
+        path: { type: string, description: "เส้นทางเต็ม ใช้บอกลูกค้าว่าไฟล์อยู่ที่ไหนใน SFTP" }
+        type: { type: string, enum: [site, database], description: "ตัดสินจากนามสกุลไฟล์" }
+        type_label: { type: string }
+        type_tone: { type: string, enum: [ok, info], description: "สีของป้าย type — pill-${type_tone}" }
+        domain: { type: string, description: "ว่าง = จับคู่กับเว็บของบัญชีนี้ไม่ได้" }
+        site_id: { type: integer, description: "0 = ไม่มีเว็บที่ตรงกับชื่อไฟล์" }
+        user_id: { type: integer, description: บัญชีเจ้าของโฟลเดอร์ }
+        username: { type: string }
         size_bytes: { type: integer }
-        checksum:
-          type: string
-          description: SHA-256 ของไฟล์ · ไฟล์ที่ไม่มีค่านี้กู้คืนไม่ได้เลยโดยเจตนา
-        status: { type: string, enum: [running, ok, failed] }
-        status_tone: { type: string, enum: [ok, danger, warn, muted], description: "สีของป้าย status — pill-${status_tone}" }
-        created_at: { type: [integer, "null"] }
-        site_domain: { type: string }
-        destination_id: { type: [integer, "null"] }
-        destination_name: { type: string }
-        offsite_status: { type: string, enum: [none, ok, failed] }
-        offsite_tone: { type: string, enum: [muted, ok, danger], description: "สีของป้าย offsite_status — pill-${offsite_tone}" }
-        offsite_at: { type: [integer, "null"] }
-        offsite_error: { type: string }
+        modified_at: { type: integer, description: "เวลาแก้ไขของไฟล์เอง ไม่ใช่เวลาที่ระบบจดไว้" }
+        restorable:
+          type: boolean
+          description: ไฟล์เว็บที่จับคู่กับเว็บที่มีอยู่จริงได้เท่านั้นที่กู้คืนอัตโนมัติได้
         can_manage:
           type: boolean
           description: สิทธิ์ `backup.manage` ของผู้เรียก
         can_restore:
           type: boolean
-          description: สิทธิ์ `backup.restore` ของผู้เรียก
+          description: สิทธิ์ `backup.restore` ของผู้เรียก **และ** ไฟล์นี้กู้คืนได้
         can_offsite:
           type: boolean
           description: สิทธิ์ `backup.offsite` ของผู้เรียก

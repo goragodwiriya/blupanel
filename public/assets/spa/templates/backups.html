@@ -8,12 +8,12 @@
       <header>
         <div>
           <h1 class="icon-stack" data-i18n>Backups</h1>
-          <p data-i18n>Backup archives and restore points</p>
+          <p data-i18n>Backup files live in each account's own home folder</p>
         </div>
         <div class="header-actions" data-if="permissions['backup.manage']">
           <!--
             ฟอร์มอยู่คนละเทมเพลตตาม FRAMEWORK_GUIDE Pattern 3 — หน้านี้มีแต่ตาราง
-            สี่ช่องกรอกถือว่าน้อย จึงเปิดใน Modal ที่เซิร์ฟเวอร์เป็นคนสั่ง
+            สามช่องกรอกถือว่าน้อย จึงเปิดใน Modal ที่เซิร์ฟเวอร์เป็นคนสั่ง
           -->
           <button type="button" class="btn btn-primary icon-plus"
                   data-action="click.prevent:requestApi"
@@ -21,238 +21,212 @@
                   data-i18n>Create backup</button>
         </div>
       </header>
+
       <!--
-        สำรองอัตโนมัติ — เฟส E1
-        เลือกปลายทางไว้ด้วยได้ แล้ว backup.create จะสร้างและส่งออกในคำสั่งเดียว
-        ซึ่งจำเป็นเพราะ scheduler เรียก capability ได้ทีละตัวต่อหนึ่งงาน
+        สำรองอัตโนมัติ — **รอบเดียวทั้งเครื่อง** (PLAN-BACKUP-V2 ข้อ B6, B10)
+
+        ของเดิมเป็นตารางเวลาหลายชุด หนึ่งแถวต่อหนึ่งเว็บหนึ่งชนิด ซึ่งแปลว่าเว็บที่
+        สร้างใหม่จะไม่ถูกสำรองเลยจนกว่าจะมีใครนึกได้ว่าต้องไปเพิ่มตารางเวลาให้มัน
+        · ตอนนี้เหลือคำถามเดียวตรงนี้ว่า "รอบเดินตอนไหน" ส่วน "สำรองของใครบ้าง"
+        อยู่ที่ตารางบัญชีข้างล่าง
       -->
       <div class="content-body" data-if="permissions['backup.offsite']">
         <div class="flex middle fullwidth">
           <h2 class="icon-clock" data-i18n>Automatic backups</h2>
-          <button type="button" class="btn icon-plus" data-action="click.prevent:requestApi"
-                  data-api-url="/api/v2/backup-schedules/form" data-api-method="get" data-i18n>Add schedule</button>
-        </div>
-        <div class="tablebody">
-          <table class="table border fullwidth" data-table="schedules" data-source="/api/v2/backup-schedules" data-page-size="25" data-row-actions='{
-                   "disable": {
-                     "title": "Disable",
-                     "className": "btn small icon-ban",
-                     "method": "patch",
-                     "url": "/api/v2/backup-schedules/{id}",
-                     "params": {"enabled": false},
-                     "condition": "${can_manage && enabled}"
-                   },
-                   "enable": {
-                     "title": "Enable",
-                     "className": "btn small icon-play",
-                     "method": "patch",
-                     "url": "/api/v2/backup-schedules/{id}",
-                     "params": {"enabled": true},
-                     "condition": "${can_manage && !enabled}"
-                   },
-                   "delete": {
-                     "title": "Delete",
-                     "className": "btn small btn-danger icon-delete",
-                     "method": "delete",
-                     "url": "/api/v2/backup-schedules/{id}",
-                     "condition": "${can_manage}",
-                     "confirm": "Remove this automatic backup schedule?"
-                   }
-                 }'>
-            <thead>
-              <tr>
-                <th data-field="label" data-i18n>{LNG_Name}</th>
-                <th data-field="type" class="center" data-cell-class="center" data-i18n>{LNG_Type}</th>
-                <th data-field="schedule_label" data-i18n>{LNG_Schedule}</th>
-                <th data-field="enabled" class="center" data-cell-class="center" data-format="boolean" data-true-text="{LNG_Yes}" data-false-text="{LNG_No}" data-i18n>
-                  {LNG_Enabled}</th>
-                <th data-field="run_status" class="center" data-cell-class="center" data-template="<span class='pill pill-${run_tone}'>{LNG_${run_status}}</span>" data-i18n>
-                  {LNG_Last run}</th>
-                <th data-field="last_run_at" class="center" data-cell-class="center" data-format="datetime" data-empty-text="—" data-i18n>{LNG_When}</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </div>
-    <!--
-        ปลายทางนอกเครื่อง — เฟส E1
-        เห็นเฉพาะผู้ดูแลระดับเซิร์ฟเวอร์ เพราะปลายทางเป็นทรัพยากรของทั้งเครื่อง
-        และการเลือกปลายทางได้เท่ากับเลือกได้ว่าจะส่งข้อมูลของเว็บไซต์ออกไปที่ไหน
-      -->
-    <div class="content-body" data-if="permissions['backup.offsite']">
-      <div class="flex middle fullwidth">
-        <h2 class="icon-cloud" data-i18n>Offsite destinations</h2>
-        <!--
-          ฟอร์มปลายทางมีสิบกว่าช่อง จึงเป็น**หน้าเว็บของตัวเอง** ไม่ใช่ Modal
-          ตาม FRAMEWORK_GUIDE · id=0 คือของใหม่ ปุ่มแก้ไขในแถวใช้ไฟล์เดียวกัน
-        -->
-        <a class="btn icon-plus" href="/app/backup-destination?id=0" data-route="/backup-destination?id=0" data-i18n>Add destination</a>
-      </div>
-      <p class="muted" data-i18n>Backups stay on the same disk as the live data until they are copied somewhere else</p>
-      <!--
-        นำไฟล์ที่อยู่ปลายทางกลับมา — ทางเดียวที่ทำให้สำเนานอกเครื่องใช้กู้คืนได้จริง
-
-        แถวใน `backups` ถูกบันทึกไว้ที่เครื่องต้นทางเท่านั้น เครื่องนี้จึงไม่รู้จักไฟล์
-        ที่ถูกส่งมาวางไว้ จนกว่าจะนำเข้าทางนี้ · ระบบอ่านจาก backup.json ที่รากของ
-        ไฟล์สำรองว่าเป็นของโดเมนไหน แล้วผูกกับเว็บชื่อเดียวกันบนเครื่องนี้ให้เอง
-      -->
-      <form class="form-inline" data-form="backupImport" action="/api/v2/backups/imports" method="post"
-            data-ajax-submit="true" data-validate="true"
-            data-component="api" data-endpoint="/api/v2/backup-destinations" data-refresh-event="phpcp:reload">
-        <div>
-          <label for="import_from" data-i18n>Bring a file back from</label>
-          <span class="form-control icon-cloud">
-            <select id="import_from" name="destination_id" required data-for="d in data">
-              <template>
-                <option data-attr="value:d.id" data-text="d.name"></option>
-              </template>
-            </select>
-          </span>
-        </div>
-        <div>
-          <label for="import_name" data-i18n>File name at the destination</label>
-          <span class="form-control icon-stack">
-            <input type="text" id="import_name" name="remote_name" required maxlength="255"
-                   autocomplete="off" placeholder="site-example.com-20260814-193000-a1b2c3.tar.gz">
-          </span>
-          <div class="comment" data-i18n>The name shown on the source machine after it was copied offsite. The website must already exist here.</div>
-        </div>
-        <div>
-          <button type="submit" class="btn icon-download" data-i18n>Import</button>
-        </div>
-      </form>
-      <div class="tablebody">
-        <table class="table border fullwidth" data-table="destinations" data-source="/api/v2/backup-destinations" data-page-size="25" data-row-actions='{
-                   "edit": {
-                     "title": "Edit",
-                     "className": "btn small btn-success icon-edit",
-                     "method": "get",
-                     "url": "/app/backup-destination?id={id}",
-                     "condition": "${can_manage}"
-                   },
-                   "test": {
-                     "title": "Test",
-                     "className": "btn small icon-refresh",
-                     "method": "post",
-                     "url": "/api/v2/backup-destinations/{id}/verification",
-                     "condition": "${can_manage}"
-                   },
-                   "delete": {
-                     "title": "Delete",
-                     "className": "btn small btn-danger icon-delete",
-                     "method": "delete",
-                     "url": "/api/v2/backup-destinations/{id}",
-                     "condition": "${can_manage}",
-                     "confirm": "Remove this destination? Files already copied there are left alone."
-                   }
-                 }'>
-          <thead>
-            <tr>
-              <th data-field="name" data-i18n>{LNG_Name}</th>
-              <th data-field="driver" class="center" data-cell-class="center" data-i18n>{LNG_Type}</th>
-              <th data-field="target_display" data-cell-class="mono" data-i18n>{LNG_Target}</th>
-              <th data-field="retention_label" class="center" data-cell-class="center" data-i18n>{LNG_Retention}</th>
-              <th data-field="health_status" class="center" data-cell-class="center" data-template="<span class='pill pill-${health_tone}'>{LNG_${health_status}}</span>" data-i18n>
-                {LNG_Last check}</th>
-              <th data-field="last_ok_at" class="center" data-cell-class="center" data-format="datetime" data-empty-text="—" data-i18n>{LNG_When}</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </div>
-    <div class="content-body">
-      <!--
-        ไฟล์สำรองเก็บไว้ที่ไหนบนเครื่องนี้ — ต้องบอก ไม่ใช่ให้เดา
-
-        ระบบสำรองข้อมูลมีไว้ใช้ตอนที่อย่างอื่นพังไปหมดแล้ว · ผู้ดูแลที่ไม่รู้ว่าไฟล์
-        อยู่ที่ไหน ตรวจเองไม่ได้เลยว่ามีของอยู่จริงไหม ขนาดเท่าไร ดิสก์จะเต็มเมื่อไร
-        ทำได้แค่เชื่อสิ่งที่ตารางบอก ซึ่งเป็นท่าที่แย่ที่สุดสำหรับเรื่องนี้
-
-        **คอมโพเนนต์ของตัวเอง ไม่ใช่ `meta` ของตาราง** — `meta.*` ผูกกับ `data-text`
-        ไม่ได้ (คอมโพเนนต์เห็นเฉพาะชั้น `data`) ป้ายที่ผูกกับ meta จะไม่ขึ้นเลย
-        เส้นทางต่างกันตาม layout ของการติดตั้ง จึงประกอบในเทมเพลตเองไม่ได้ด้วย
-      -->
-      <div class="flex middle fullwidth" data-component="api" data-endpoint="/api/v2/backups/storage"
-           data-refresh-event="phpcp:reload">
-        <p class="comment">
-          <span data-i18n>Stored on this machine at</span>
-          <code class="mono" data-text="path"></code>
-          —
-          <span data-text="files | number"></span> <span data-i18n>files</span>,
-          <span data-text="bytes | bytes"></span>
-          <span data-show="free_bytes > 0">(<span data-i18n>free</span> <span data-text="free_bytes | bytes"></span>)</span>
-        </p>
-        <a class="btn small icon-folder" data-attr="href:'/app/filemanager?root=' + scope"
-           target="_blank" rel="noopener" data-i18n>Open in File Manager</a>
-      </div>
-      <!--
-          เลือกปลายทางครั้งเดียวตรงนี้ แล้วปุ่ม "ส่งออก" ของทุกแถวใช้ค่านี้ — ดีกว่ามี
-          ตัวเลือกซ้ำในทุกแถว และดีกว่าเดาปลายทางให้เองเมื่อมีมากกว่าหนึ่งที่ · ตัวเลือกนี้
-          อยู่นอกแถว ปุ่ม "ส่งออก" (formatBackupActions ใน js/formatters.js) จึงต้องเป็น
-          โค้ดจริง — data-row-actions ประกอบค่าจากแถวเดียวล้วน ๆ อ่านค่านี้ไม่ได้
-        -->
-      <div class="tablebody">
-        <form data-table-filter="backups" class="table_nav">
-          <div>
-            <label for="pageSize" data-i18n>Lines</label>
-            <span class="form-control">
-              <select name="pageSize">
-                <option value="10" data-i18n>10 {LNG_entries}</option>
-                <option value="25" data-i18n>25 {LNG_entries}</option>
-                <option value="50" data-i18n>50 {LNG_entries}</option>
-                <option value="100" data-i18n>100 {LNG_entries}</option>
-              </select>
-            </span>
+          <div class="header-actions">
+            <button type="button" class="btn icon-clock" data-action="click.prevent:requestApi"
+                    data-api-url="/api/v2/backup-schedule/form" data-api-method="get" data-i18n>Schedule</button>
+            <!--
+              เดินรอบเดี๋ยวนี้ — ผู้ดูแลต้องพิสูจน์ได้ว่าค่าที่ตั้งไว้ทำงานจริงก่อนถึงคืนแรก
+              `apiRefresh` เพราะคำตอบมี action ให้หน้าจอทำตาม (requestApi ทิ้งคำสั่งพวกนั้น)
+            -->
+            <button type="button" class="btn icon-play" data-action="click.prevent:apiRefresh"
+                    data-api-url="/api/v2/backup-schedule/runs" data-api-method="post"
+                    data-confirm="Run a full backup round now?" data-notify-success="true"
+                    data-target="backups" data-i18n>Run now</button>
+            <!--
+              ปลายทางมีได้ชุดเดียว (§4.2) — ปุ่มเดียวที่พาไปหน้าฟอร์มของมัน
+              ฟอร์มมีสิบกว่าช่องจึงเป็นหน้าเว็บของตัวเอง ไม่ใช่ Modal
+            -->
+            <a class="btn icon-cloud" href="/app/backup-destination?id=0"
+               data-route="/backup-destination?id=0" data-i18n>Offsite destination</a>
           </div>
-          <div data-if="permissions['backup.offsite']" data-component="api" data-endpoint="/api/v2/backup-destinations" data-refresh-event="phpcp:reload">
-            <label for="offsite_to" data-i18n>Copy to</label>
+        </div>
+        <div class="flex middle fullwidth" data-component="api" data-endpoint="/api/v2/backup-schedule"
+             data-refresh-event="phpcp:reload">
+          <p class="comment">
+            <span data-show="enabled" data-i18n>Runs</span>
+            <span data-show="!enabled" class="pill pill-muted" data-i18n>Off</span>
+            <strong data-text="schedule_label"></strong>
+            —
+            <span data-i18n>keeps</span> <span data-text="keep"></span> <span data-i18n>copies</span>,
+            <span data-i18n>deletes after</span> <span data-text="days"></span> <span data-i18n>days</span>
+            ·
+            <span data-i18n>Last run</span>
+            <span data-attr="class:'pill pill-' + run_tone" data-text="run_status"></span>
+            <span data-show="last_run_at" data-text="last_run_at | datetime"></span>
+          </p>
+        </div>
+        <p class="comment" data-i18n>Files are written into each account's own folder and count against that account's disk quota.</p>
+        <!--
+          นำไฟล์ที่อยู่ปลายทางกลับมา (ข้อ B5) — ทางเดียวที่ทำให้สำเนานอกเครื่องใช้กู้คืน
+          ได้จริง · ระบบอ่านจาก `backup.json` ที่รากของไฟล์ว่าเป็นของโดเมนไหน แล้ววาง
+          ไฟล์ลงในบ้านของ**เจ้าของเว็บนั้น** ไม่ใช่ของคนที่กดปุ่ม
+        -->
+        <form class="form-inline" data-form="backupImport" action="/api/v2/backups/imports" method="post"
+              data-ajax-submit="true" data-validate="true"
+              data-component="api" data-endpoint="/api/v2/backup-destinations" data-refresh-event="phpcp:reload">
+          <div>
+            <label for="import_from" data-i18n>Bring a file back from</label>
             <span class="form-control icon-cloud">
-              <select id="offsite_to" data-offsite-destination data-for="d in data">
+              <select id="import_from" name="destination_id" required data-for="d in data">
                 <template>
                   <option data-attr="value:d.id" data-text="d.name"></option>
                 </template>
               </select>
             </span>
           </div>
+          <div>
+            <label for="import_name" data-i18n>File name at the destination</label>
+            <span class="form-control icon-stack">
+              <input type="text" id="import_name" name="remote_name" required maxlength="255"
+                     autocomplete="off" placeholder="cust-example.com-files-20260814-193000-a1b2c3.tar.gz">
+            </span>
+            <div class="comment" data-i18n>The name shown at the destination. The website must already exist here.</div>
+          </div>
+          <div>
+            <button type="submit" class="btn icon-download" data-i18n>Import</button>
+          </div>
         </form>
-        <table class="table border fullwidth" data-table="backups" data-source="/api/v2/backups" data-default-sort="created_at desc" data-page-size="25" data-row-actions='{
+      </div>
+
+      <!--
+        บัญชีไหนถูกสำรองบ้าง — **สวิตช์อยู่ที่บัญชี ไม่ใช่ที่เว็บ** (ข้อ B3)
+
+        ไฟล์สำรองอยู่ในบ้านของบัญชีและนับในโควตาของบัญชี · เปิดที่บัญชีแล้วเว็บใหม่
+        ของบัญชีนั้นเข้ารอบเองทันที ไม่ต้องมีใครกลับมาตั้งค่าใหม่ทุกครั้งที่ลูกค้า
+        เพิ่มเว็บ — ซึ่งเป็นจังหวะที่คนลืมได้ง่ายที่สุดและผลของการลืมคือเว็บที่ไม่มี
+        สำเนาเลยโดยไม่มีอะไรฟ้อง
+      -->
+      <div class="content-body" data-if="permissions['backup.offsite']">
+        <h2 class="icon-users" data-i18n>Accounts included</h2>
+        <div class="tablebody">
+          <table class="table border fullwidth" data-table="backup-targets"
+                 data-source="/api/v2/backup-targets" data-page-size="25">
+            <thead>
+              <tr>
+                <th data-field="username" data-i18n>{LNG_Account}</th>
+                <th data-field="sites" class="center" data-cell-class="center" data-i18n>{LNG_Websites}</th>
+                <th data-field="databases" class="center" data-cell-class="center" data-i18n>{LNG_Databases}</th>
+                <!--
+                  ช่องติ๊กต้องเป็นตัวจัดรูปแบบจริง ไม่ใช่ data-template — ตัวจัดรูปแบบ
+                  ได้ทั้งแถวเป็นอาร์กิวเมนต์ที่สาม จึงรู้ทั้งรหัสบัญชีและสถานะปัจจุบัน
+                  และผูกเหตุการณ์ change ได้ (data-template ประกอบได้แค่ข้อความ)
+                -->
+                <th data-field="backup_files" class="center" data-cell-class="center"
+                    data-formatter="formatBackupFilesToggle" data-i18n>{LNG_Back up files}</th>
+                <th data-field="backup_database" class="center" data-cell-class="center"
+                    data-formatter="formatBackupDatabaseToggle" data-i18n>{LNG_Back up databases}</th>
+                <th data-field="backup_dir" data-cell-class="mono" data-i18n>{LNG_Folder}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="content-body">
+        <!--
+          ไฟล์สำรองเก็บไว้ที่ไหน — ตอนนี้คำตอบมีความหมายกับลูกค้าโดยตรง
+
+          เป็นเส้นทางที่เขา cd เข้าไปได้จริงผ่าน SFTP แล้วดาวน์โหลดสำเนาของตัวเอง
+          ออกมา · ไม่ต้องมีขอบเขตพิเศษของตัวจัดการไฟล์อีกแล้ว เพราะโฟลเดอร์นี้อยู่ใน
+          บ้านของเขาซึ่งเขาเปิดดูได้อยู่แล้ว
+
+          **คอมโพเนนต์ของตัวเอง ไม่ใช่ `meta` ของตาราง** — `meta.*` ผูกกับ `data-text`
+          ไม่ได้ (คอมโพเนนต์เห็นเฉพาะชั้น `data`) ป้ายที่ผูกกับ meta จะไม่ขึ้นเลย
+        -->
+        <div class="flex middle fullwidth" data-component="api" data-endpoint="/api/v2/backups/storage"
+             data-refresh-event="phpcp:reload">
+          <p class="comment">
+            <span data-i18n>Kept in the account's home folder at</span>
+            <code class="mono" data-text="path"></code>
+            —
+            <span data-text="files | number"></span> <span data-i18n>files</span>,
+            <span data-text="bytes | bytes"></span>
+          </p>
+        </div>
+        <!--
+          เลือกปลายทางครั้งเดียวตรงนี้ แล้วปุ่ม "ส่งออก" ของทุกแถวใช้ค่านี้ · ตัวเลือกนี้
+          อยู่นอกแถว ปุ่ม "ส่งออก" (formatBackupActions ใน js/formatters.js) จึงต้องเป็น
+          โค้ดจริง — data-row-actions ประกอบค่าจากแถวเดียวล้วน ๆ อ่านค่านี้ไม่ได้
+        -->
+        <div class="tablebody">
+          <form data-table-filter="backups" class="table_nav">
+            <div>
+              <label for="pageSize" data-i18n>Lines</label>
+              <span class="form-control">
+                <select name="pageSize">
+                  <option value="10" data-i18n>10 {LNG_entries}</option>
+                  <option value="25" data-i18n>25 {LNG_entries}</option>
+                  <option value="50" data-i18n>50 {LNG_entries}</option>
+                  <option value="100" data-i18n>100 {LNG_entries}</option>
+                </select>
+              </span>
+            </div>
+            <div data-if="permissions['backup.offsite']" data-component="api" data-endpoint="/api/v2/backup-destinations" data-refresh-event="phpcp:reload">
+              <label for="offsite_to" data-i18n>Copy to</label>
+              <span class="form-control icon-cloud">
+                <select id="offsite_to" data-offsite-destination data-for="d in data">
+                  <template>
+                    <option data-attr="value:d.id" data-text="d.name"></option>
+                  </template>
+                </select>
+              </span>
+            </div>
+          </form>
+          <!--
+            ไฟล์ถูกอ้างด้วย **บัญชี + ชื่อไฟล์** ไม่ใช่รหัสแถว — รายการอ่านจากโฟลเดอร์
+            จริงของลูกค้า ไม่มีรหัสแถวให้อ้างอีกแล้ว (ข้อ B4)
+
+            ปุ่มกู้คืนขึ้นเฉพาะไฟล์ที่ `restorable` — ไฟล์ฐานข้อมูลกับไฟล์ที่จับคู่กับ
+            เว็บไม่ได้ (ลูกค้าคัดลอกมาเอง) ยังแสดงในรายการเพราะกินโควตาของเขาจริง
+            แต่กู้คืนอัตโนมัติไม่ได้
+          -->
+          <table class="table border fullwidth" data-table="backups" data-source="/api/v2/backups" data-default-sort="modified_at desc" data-page-size="25" data-row-actions='{
                    "restore": {
                      "title": "Restore",
                      "className": "btn small icon-refresh",
                      "method": "post",
-                     "url": "/api/v2/backups/{id}/restoration",
-                     "params": {"confirm": "{site_domain}"},
-                     "condition": "${can_restore && site_domain}",
+                     "url": "/api/v2/backups/{user_id}/{name}/restoration",
+                     "params": {"confirm": "{domain}", "site_id": "{site_id}"},
+                     "condition": "${can_restore}",
                      "confirm": "Restoring overwrites the current files of this website."
                    },
                    "delete": {
                      "title": "Delete",
                      "className": "btn small btn-danger icon-delete",
                      "method": "delete",
-                     "url": "/api/v2/backups/{id}",
+                     "url": "/api/v2/backups/{user_id}/{name}",
                      "condition": "${can_manage}",
                      "confirm": "Permanently delete this backup file?"
                    }
                  }'>
-          <thead>
-            <tr>
-              <th data-field="name" data-i18n>{LNG_Name}</th>
-              <th data-field="type" class="center" data-cell-class="center" data-i18n>{LNG_Type}</th>
-              <th data-field="size_bytes" data-format="bytes" class="center" data-cell-class="center" data-i18n>{LNG_Size}</th>
-              <th data-field="status" class="center" data-cell-class="center" data-template="<span class='pill pill-${status_tone}'>{LNG_${status}}</span>" data-i18n>{LNG_Status}
-              </th>
-              <th data-field="offsite_status" class="center" data-cell-class="center" data-template="<span class='pill pill-${offsite_tone}'>{LNG_${offsite_status}}</span>"
-                  data-i18n>{LNG_Offsite copy}</th>
-              <th data-field="created_at" data-format="datetime" class="center" data-cell-class="center" data-i18n>{LNG_Created}</th>
-              <th data-field="id" data-formatter="formatBackupActions" data-i18n>{LNG_Offsite}</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+            <thead>
+              <tr>
+                <th data-field="name" data-cell-class="mono" data-i18n>{LNG_File}</th>
+                <th data-field="domain" data-empty-text="—" data-i18n>{LNG_Website}</th>
+                <th data-field="type_label" class="center" data-cell-class="center" data-template="<span class='pill pill-${type_tone}'>${type_label}</span>" data-i18n>{LNG_Type}</th>
+                <th data-field="username" class="center" data-cell-class="center" data-i18n>{LNG_Account}</th>
+                <th data-field="size_bytes" data-format="bytes" class="center" data-cell-class="center" data-i18n>{LNG_Size}</th>
+                <th data-field="modified_at" data-format="datetime" class="center" data-cell-class="center" data-i18n>{LNG_Created}</th>
+                <th data-field="user_id" data-formatter="formatBackupActions" data-i18n>{LNG_Offsite}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </div>
     </div>
-</div>
-</main>
+  </main>
 </div>

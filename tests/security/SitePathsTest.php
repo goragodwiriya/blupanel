@@ -480,7 +480,7 @@ test('ค่าเริ่มต้นต้อง chown เสมอ — ก�
         ['/usr/bin/chown -R sitefiles:www-data /home/sitefiles/.phpcp/example.test',
          '/usr/bin/chown -R sitefiles:www-data /home/sitefiles/public_html',
          '/usr/bin/chown -R sitefiles:www-data /home/sitefiles/logs/example.test',
-         '/usr/bin/chown -R sitefiles:www-data /home/sitefiles/backups/example.test'],
+         '/usr/bin/chown -R sitefiles:www-data /home/sitefiles/backup'],
         $executor->commands,
         'โหมดปกติต้อง chown บ้านของเว็บไซต์',
     );
@@ -507,7 +507,7 @@ test('Domain Pointer ต้อง chown โฟลเดอร์ปลายท�
             '/usr/bin/chown -R sitefiles:www-data /home/sitefiles/.phpcp/example.test',
             '/usr/bin/chown -R sitefiles:www-data /home/sitefiles/public_html',
             '/usr/bin/chown -R sitefiles:www-data /home/sitefiles/logs/example.test',
-            '/usr/bin/chown -R sitefiles:www-data /home/sitefiles/backups/example.test',
+            '/usr/bin/chown -R sitefiles:www-data /home/sitefiles/backup',
             '/usr/bin/chown -R sitefiles:www-data /mnt/Server/htdocs/legacy-project',
         ],
         $executor->commands,

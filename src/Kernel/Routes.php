@@ -8,6 +8,7 @@ use Phpcp\Http\V2\AlertsController;
 use Phpcp\Http\V2\BackupDestinationsController;
 use Phpcp\Http\V2\BackupSchedulesController;
 use Phpcp\Http\V2\BackupsController;
+use Phpcp\Http\V2\BackupTargetsController;
 use Phpcp\Http\V2\CertificatesController;
 use Phpcp\Http\V2\ConfigFilesController;
 use Phpcp\Http\V2\CronJobsController;
@@ -336,11 +337,19 @@ final class Routes
         // ที่เก็บไฟล์สำรองบนเครื่องนี้ — เหตุผลเดียวกับ /form ที่ต้องมาก่อน {id}
         $router->add(new Route('GET', '/api/v2/backups/storage', BackupsController::class, 'storage', 'backup.view', 'api.v2.backups.storage'));
         $router->add(new Route('POST', '/api/v2/backups', BackupsController::class, 'store', 'backup.manage', 'api.v2.backups.store'));
-        $router->add(new Route('DELETE', '/api/v2/backups/{id}', BackupsController::class, 'destroy', 'backup.manage', 'api.v2.backups.destroy'));
+
+        /*
+         * ไฟล์ถูกอ้างด้วย **บัญชี + ชื่อไฟล์** ไม่ใช่รหัสแถว
+         *
+         * ตั้งแต่รายการอ่านจากโฟลเดอร์จริง (ข้อ B4) ไม่มีรหัสแถวให้อ้างอีกแล้ว · และนั่น
+         * ตรงกับความจริงมากกว่า: สิ่งที่ผู้ใช้กดลบคือไฟล์ที่เขาเห็นในโฟลเดอร์ของตัวเอง
+         * ไม่ใช่บันทึกที่ panel เคยเขียนไว้ว่าเคยมีไฟล์นั้น
+         */
+        $router->add(new Route('DELETE', '/api/v2/backups/{user}/{file}', BackupsController::class, 'destroy', 'backup.manage', 'api.v2.backups.destroy'));
         // กู้คืนใช้สิทธิ์แยกจากการสร้าง/ลบ — เป็นคำสั่งที่เขียนทับข้อมูลปัจจุบันทั้งหมด
-        $router->add(new Route('POST', '/api/v2/backups/{id}/restoration', BackupsController::class, 'restore', 'backup.restore', 'api.v2.backups.restore'));
+        $router->add(new Route('POST', '/api/v2/backups/{user}/{file}/restoration', BackupsController::class, 'restore', 'backup.restore', 'api.v2.backups.restore'));
         // สำเนาที่อยู่นอกเครื่องของไฟล์สำรองนั้น — คำนามตาม §4.1 ไม่ใช่กริยา "push"
-        $router->add(new Route('POST', '/api/v2/backups/{id}/offsite-copy', BackupsController::class, 'pushOffsite', 'backup.offsite', 'api.v2.backups.offsite'));
+        $router->add(new Route('POST', '/api/v2/backups/{user}/{file}/offsite-copy', BackupsController::class, 'pushOffsite', 'backup.offsite', 'api.v2.backups.offsite'));
 
         // นำไฟล์สำรองที่อยู่ปลายทางนอกเครื่องกลับมาลงทะเบียน — ทางเดียวที่ทำให้
         // สำเนานอกเครื่อง "อ่านกลับได้" ไม่ใช่เขียนได้อย่างเดียว (ดู BackupImport)
@@ -358,11 +367,23 @@ final class Routes
 
         $router->add(new Route('POST', '/api/v2/backup-destinations/{id}/verification', BackupDestinationsController::class, 'verify', 'backup.offsite', 'api.v2.backup_destinations.verify'));
 
-        // --- ตารางเวลาสำรองอัตโนมัติ — แตะได้เฉพาะงานที่ทรัพยากรนี้สร้างเอง ---
-        $router->add(new Route('GET', '/api/v2/backup-schedules', BackupSchedulesController::class, 'index', 'backup.offsite', 'api.v2.backup_schedules.index'));
-        $router->add(new Route('GET', '/api/v2/backup-schedules/form', BackupSchedulesController::class, 'form', 'backup.offsite', 'api.v2.backup_schedules.form'));
-        $router->add(new Route('POST', '/api/v2/backup-schedules', BackupSchedulesController::class, 'store', 'backup.offsite', 'api.v2.backup_schedules.store'));
-        $router->add(new Route('PATCH', '/api/v2/backup-schedules/{id}', BackupSchedulesController::class, 'update', 'backup.offsite', 'api.v2.backup_schedules.update'));
-        $router->add(new Route('DELETE', '/api/v2/backup-schedules/{id}', BackupSchedulesController::class, 'destroy', 'backup.offsite', 'api.v2.backup_schedules.destroy'));
+        /*
+         * --- ตารางเวลาสำรองอัตโนมัติ — **ตัวเดียวทั้งเครื่อง** (ข้อ B10) ---
+         *
+         * เอกพจน์โดยเจตนา · ของเดิมเป็น CRUD ของตารางเวลาหลายชุด ซึ่งแปลว่าผู้ดูแลที่มี
+         * ลูกค้าห้าสิบรายต้องดูแลตารางเวลาเป็นร้อยชุดด้วยมือ และเว็บที่สร้างใหม่จะไม่ถูก
+         * สำรองเลยจนกว่าจะมีใครนึกได้ · ตอนนี้ "สำรองอะไรบ้าง" อยู่ที่สวิตช์รายบัญชี
+         * (`/api/v2/backup-targets`) ส่วนที่นี่ตอบแค่ "รอบนั้นเดินตอนไหน"
+         */
+        $router->add(new Route('GET', '/api/v2/backup-schedule', BackupSchedulesController::class, 'show', 'backup.offsite', 'api.v2.backup_schedule.show'));
+        $router->add(new Route('GET', '/api/v2/backup-schedule/form', BackupSchedulesController::class, 'form', 'backup.offsite', 'api.v2.backup_schedule.form'));
+        $router->add(new Route('PATCH', '/api/v2/backup-schedule', BackupSchedulesController::class, 'update', 'backup.offsite', 'api.v2.backup_schedule.update'));
+        // เดินรอบเดี๋ยวนี้โดยไม่รอ cron — ผู้ดูแลต้องพิสูจน์ได้ว่าค่าที่ตั้งไว้ทำงานจริง
+        // ก่อนถึงคืนแรก ไม่ใช่รู้ตอนที่ไฟล์สำรองควรจะมีแล้วแต่ไม่มี
+        $router->add(new Route('POST', '/api/v2/backup-schedule/runs', BackupSchedulesController::class, 'runNow', 'backup.offsite', 'api.v2.backup_schedule.run'));
+
+        // --- บัญชีไหนถูกสำรองอัตโนมัติบ้าง (ข้อ B3) ---
+        $router->add(new Route('GET', '/api/v2/backup-targets', BackupTargetsController::class, 'index', 'backup.offsite', 'api.v2.backup_targets.index'));
+        $router->add(new Route('PATCH', '/api/v2/backup-targets/{id}', BackupTargetsController::class, 'update', 'backup.offsite', 'api.v2.backup_targets.update'));
     }
 }

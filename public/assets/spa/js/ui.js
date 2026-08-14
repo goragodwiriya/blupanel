@@ -551,8 +551,13 @@
       return;
     }
 
+    // ไฟล์ถูกอ้างด้วยบัญชี + ชื่อไฟล์ ไม่ใช่รหัสแถว — ชื่อไฟล์ต้องเข้ารหัสก่อนต่อเป็น URL
+    // เพราะมันเป็นชื่อที่ลูกค้าเปลี่ยนเองได้ (จุด ขีด และอะไรก็ตามที่เขาตั้ง)
+    const path = '/backups/' + Number(element.dataset.backupUser)
+      + '/' + encodeURIComponent(element.dataset.backupFile) + '/offsite-copy';
+
     try {
-      const result = await window.PhpcpApi.post('/backups/' + element.dataset.backupId + '/offsite-copy', {
+      const result = await window.PhpcpApi.post(path, {
         destination_id: destination,
       });
 

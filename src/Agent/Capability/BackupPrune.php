@@ -8,28 +8,36 @@ use Phpcp\Agent\Capability;
 use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Domain\BackupDestinationRepository;
+use Phpcp\Domain\BackupFiles;
+use Phpcp\Domain\UserAccount;
 use Phpcp\Driver\Backup\DestinationFactory;
 use Phpcp\Driver\BackupManager;
 use Phpcp\Security\Secret;
 use Phpcp\Support\Validator;
 
 /**
- * ลบไฟล์สำรองที่เก่าเกินนโยบาย — PLAN-V2 เฟส E1
+ * ลบไฟล์สำรองที่เก่าเกินนโยบาย ออกจากโฟลเดอร์ของแต่ละบัญชี
  *
- * **ถูกออกแบบให้ทำงานโดยไม่มีคนดู** (scheduler เรียกทุกวัน) กฎทุกข้อจึงเอียงไปทาง
+ * **ถูกออกแบบให้ทำงานโดยไม่มีคนดู** (cron เรียกทุกวัน) กฎทุกข้อจึงเอียงไปทาง
  * "เก็บไว้ก่อน" เมื่อไม่แน่ใจ:
  *
- *   1. **เก็บ N ชุดล่าสุดเสมอ** แม้จะเกินจำนวนวันไปแล้ว — เครื่องที่ไม่ได้สำรองมานาน
+ *   1. **เก็บ N ชุดล่าสุดเสมอ** แม้จะเกินจำนวนวันไปแล้ว — บัญชีที่ไม่ได้สำรองมานาน
  *      ต้องไม่ตื่นมาแล้วพบว่าไฟล์สำรองถูกลบเกลี้ยงเพราะทุกไฟล์ "เก่าเกิน 30 วัน"
- *   2. **ไม่ลบไฟล์ที่ยังส่งออกนอกเครื่องไม่สำเร็จ** — ไฟล์นั้นคือสำเนาเดียวที่มีอยู่
- *   3. **ไม่ลบไฟล์ที่ยังไม่มีปลายทาง** ถ้าปลายทางถูกตั้งไว้แล้วในระบบ · การลบสำเนา
- *      ในเครื่องทิ้งโดยที่ยังไม่มีสำเนานอกเครื่อง คือการทำให้ข้อมูลหายด้วยมือตัวเอง
+ *   2. **นับแยกตามเว็บและชนิด** — "เก็บ 7 ชุดล่าสุด" ต้องหมายถึง 7 ชุดของสิ่งนั้น
+ *      ไม่ใช่ 7 ชุดรวมทั้งบัญชี ซึ่งจะทำให้เว็บที่สำรองบ่อยกินโควตาของเว็บอื่นจนหมด
+ *   3. **ไม่แตะไฟล์ที่จับคู่กับเว็บไม่ได้** — ไฟล์ที่ลูกค้าคัดลอกเข้ามาเองหรือเปลี่ยน
+ *      ชื่อเอง ไม่ใช่ของที่ระบบสร้าง จึงไม่ใช่ของที่ระบบจะลบทิ้งตามนโยบายของตัวเอง
  *
- * ลบทั้งสองที่: ไฟล์ในเครื่องตามนโยบายของระบบ และไฟล์ที่ปลายทางตามนโยบายของปลายทางนั้น
+ * ## ทำไมไม่ตรวจ "มีสำเนานอกเครื่องหรือยัง" อีกแล้ว
+ *
+ * กฎเดิมข้อนั้นอ่านจากคอลัมน์ `offsite_status` ในตาราง `backups` ซึ่งเลิกเป็นแหล่ง
+ * ความจริงไปแล้ว (ข้อ B4) · ความจริงใหม่คือ **ไฟล์อยู่ในบ้านของลูกค้า** เขาลบเองได้
+ * ทุกเมื่ออยู่แล้ว การให้ตัวเก็บกวาดยึดสถานะที่บันทึกไว้เมื่อวานจึงไม่ได้กันอะไรจริง
+ * · สิ่งที่กันข้อมูลหายในระบบใหม่คือข้อ 1 กับข้อ 2 ซึ่งอ่านจากไฟล์ที่มีอยู่จริงเดี๋ยวนั้น
  */
-final class BackupPrune implements Capability
+final class BackupPrune extends BackupCapability implements Capability
 {
-    /** ค่าปริยายเมื่อไม่ได้ระบุ — ตรงกับค่าปริยายของคอลัมน์ในตารางปลายทาง */
+    /** ค่าปริยายเมื่อไม่ได้ระบุ */
     private const DEFAULT_DAYS = 30;
     private const DEFAULT_KEEP = 7;
 
@@ -38,6 +46,13 @@ final class BackupPrune implements Capability
         return 'backup.prune';
     }
 
+    /**
+     * สิทธิ์ของ**ทั้งเครื่อง** ไม่ใช่ของหมวด Hosting
+     *
+     * ตัวนี้เดินโฟลเดอร์ของทุกบัญชีในรอบเดียวและลบไฟล์ของลูกค้าตามนโยบายที่ผู้ดูแล
+     * ตั้งไว้ · `backup.manage` เป็นสิทธิ์ที่ผู้ดูแลเว็บไซต์มีติดตัว การใช้สิทธิ์นั้น
+     * แปลว่าลูกค้ารายหนึ่งสั่งรอบเก็บกวาดของทั้งเครื่องได้
+     */
     public function permission(): string
     {
         return 'backup.offsite';
@@ -56,67 +71,59 @@ final class BackupPrune implements Capability
     public function validate(array $args): array
     {
         return [
-            // 0 = ใช้ค่าจากปลายทางแต่ละที่ · ระบุมาเพื่อบังคับค่าเดียวกันทั้งหมดได้
-            'days' => Validator::optionalInt($args, 'days', 0, 0),
-            'keep' => Validator::optionalInt($args, 'keep', 0, 0),
+            'days' => Validator::optionalInt($args, 'days', self::DEFAULT_DAYS, 0),
+            'keep' => Validator::optionalInt($args, 'keep', self::DEFAULT_KEEP, 0),
+            // 0 = ทุกบัญชี
+            'user_id' => Validator::optionalInt($args, 'user_id', 0, 0),
             'dry_run' => (bool) ($args['dry_run'] ?? false),
         ];
     }
 
     public function run(array $args, Executor $executor, Context $context): array
     {
-        $destinations = new BackupDestinationRepository($context->db, new Secret($context->config->secretKey()));
-        $factory = new DestinationFactory($destinations, $context->config->paths->backups());
-        $manager = new BackupManager($context->config->paths->backups());
+        $accounts = $args['user_id'] > 0
+            ? [$this->ownerAccount($context, $args['user_id'])]
+            : $this->visibleAccounts($context);
 
-        $hasDestinations = $destinations->enabled() !== [];
+        $manager = new BackupManager();
         $removed = [];
-        $kept = [];
+        $kept = 0;
 
-        // นับลำดับความใหม่ของแต่ละกลุ่ม **ต่อการเรียกหนึ่งครั้ง**
-        //
-        // เคยเขียนเป็น `static` ในเมธอดตรวจ ซึ่งเป็นบั๊กที่ร้ายแรงเงียบ ๆ: agent เป็น
-        // โปรเซสที่รันค้างเป็นเดือน ตัวนับจึงสะสมข้ามการเรียก แล้วรอบที่สองเป็นต้นไป
-        // จะเห็นว่าทุกกลุ่ม "มีของครบโควตาแล้ว" ตั้งแต่แถวแรก แล้วลบไฟล์ที่ต้องเก็บไว้
-        $seen = [];
-
-        foreach ($this->candidates($context) as $row) {
-            $days = $args['days'] > 0 ? $args['days'] : (int) ($row['retention_days'] ?? self::DEFAULT_DAYS);
-            $keep = $args['keep'] > 0 ? $args['keep'] : (int) ($row['retention_count'] ?? self::DEFAULT_KEEP);
-
-            // นับแยกตามชนิดและเว็บไซต์ — "เก็บ 7 ชุดล่าสุด" ต้องหมายถึง 7 ชุดของสิ่งนั้น
-            // ไม่ใช่ 7 ชุดรวมทั้งระบบ ซึ่งจะทำให้เว็บที่สำรองบ่อยกินโควตาของเว็บอื่นจนหมด
-            $bucket = $row['type'] . ':' . ($row['site_id'] ?? 0);
-            $seen[$bucket] = ($seen[$bucket] ?? 0) + 1;
-
-            $reason = $this->keepReason($row, $days, $keep, $hasDestinations, $seen[$bucket]);
-
-            if ($reason !== null) {
-                $kept[] = ['id' => (int) $row['id'], 'name' => $row['name'], 'reason' => $reason];
-                continue;
-            }
-
-            if ($args['dry_run']) {
-                $removed[] = ['id' => (int) $row['id'], 'name' => $row['name'], 'simulated' => true];
-                continue;
-            }
-
-            // ลบที่ปลายทางก่อน แล้วค่อยลบในเครื่อง
+        foreach ($accounts as $account) {
+            // นับลำดับความใหม่ **ต่อการเรียกหนึ่งครั้งและต่อหนึ่งบัญชี**
             //
-            // ถ้าทำกลับกันแล้วการลบที่ปลายทางล้ม จะเหลือไฟล์กำพร้าที่ปลายทางซึ่งไม่มี
-            // แถวไหนในฐานข้อมูลอ้างถึงอีกแล้ว — กินพื้นที่ไปเรื่อย ๆ โดยไม่มีใครเห็น
-            if (($row['remote_path'] ?? null) !== null && ($row['destination_id'] ?? null) !== null) {
-                $destination = $destinations->find((int) $row['destination_id']);
+            // เคยเขียนเป็น static ในเมธอดตรวจ ซึ่งเป็นบั๊กที่ร้ายแรงเงียบ ๆ: agent
+            // เป็นโปรเซสที่รันค้างเป็นเดือน ตัวนับจึงสะสมข้ามการเรียก แล้วรอบที่สอง
+            // เป็นต้นไปจะเห็นว่าทุกกลุ่ม "มีของครบโควตาแล้ว" ตั้งแต่แถวแรก
+            $seen = [];
 
-                if ($destination !== null) {
-                    $factory->make($destination)->delete($executor, (string) $row['remote_path']);
+            foreach ($this->filesOf($executor, $context, $account) as $file) {
+                // ไฟล์ที่ไม่รู้ว่าเป็นของเว็บไหน = ไม่ใช่ของที่ระบบสร้าง จึงไม่ใช่ของที่ระบบลบ
+                if ($file['domain'] === '') {
+                    $kept++;
+                    continue;
                 }
+
+                $bucket = $file['type'] . ':' . $file['domain'];
+                $seen[$bucket] = ($seen[$bucket] ?? 0) + 1;
+
+                if ($this->keepReason($file, $args['days'], $args['keep'], $seen[$bucket]) !== null) {
+                    $kept++;
+                    continue;
+                }
+
+                if (!$args['dry_run']) {
+                    $manager->delete($executor, $account->backupDir(), $file['path']);
+                    $this->deleteOffsite($executor, $context, $account, $file['name']);
+                }
+
+                $removed[] = [
+                    'user_id' => $account->userId,
+                    'file' => $file['name'],
+                    'bytes' => $file['bytes'],
+                    'simulated' => $args['dry_run'],
+                ];
             }
-
-            $manager->delete($executor, (string) $row['path']);
-            $context->db->run('DELETE FROM backups WHERE id = :id', ['id' => (int) $row['id']]);
-
-            $removed[] = ['id' => (int) $row['id'], 'name' => $row['name'], 'bytes' => (int) $row['size_bytes']];
         }
 
         $bytes = array_sum(array_column($removed, 'bytes'));
@@ -124,53 +131,73 @@ final class BackupPrune implements Capability
         return [
             'removed' => $removed,
             'removed_count' => count($removed),
-            'kept_count' => count($kept),
+            'kept_count' => $kept,
             'freed_bytes' => $bytes,
             'dry_run' => $args['dry_run'],
-            'message' => $args['dry_run']
-                ? sprintf('จะลบ %d รายการ คืนพื้นที่ %s ไบต์', count($removed), number_format($bytes))
-                : sprintf('ลบ %d รายการ คืนพื้นที่ %s ไบต์', count($removed), number_format($bytes)),
+            'message' => sprintf(
+                $args['dry_run'] ? 'จะลบ %d ไฟล์ คืนพื้นที่ %s ไบต์' : 'ลบ %d ไฟล์ คืนพื้นที่ %s ไบต์',
+                count($removed),
+                number_format($bytes),
+            ),
         ];
     }
 
     /**
-     * ไฟล์สำรองพร้อมนโยบายของปลายทางที่มันถูกส่งไป
+     * ลบสำเนานอกเครื่องของไฟล์ที่เพิ่งลบไป — ชื่อที่ปลายทางคำนวณได้ ไม่ต้องจำ
+     *
+     * `backup.push` ตั้งชื่อไฟล์ปลายทางเป็น `<ชื่อบัญชี>-<ชื่อไฟล์>` เสมอ · นโยบายเก็บ
+     * ไฟล์จึงมีผลทั้งสองที่โดยไม่ต้องมีตารางคอยจำว่าไฟล์ไหนไปอยู่ที่ไหน — ซึ่งเป็นตาราง
+     * ที่จะเพี้ยนทันทีที่ลูกค้าลบไฟล์ของตัวเอง เหมือนที่ตาราง `backups` เพี้ยนมาแล้ว
+     *
+     * **ล้มแล้วไม่ทำให้ทั้งรอบล้ม** · ปลายทางที่ติดต่อไม่ได้คืนงานเก็บกวาดของบัญชีที่
+     * เหลือให้ทำต่อได้ · ไฟล์ที่ค้างอยู่ปลายทางกินพื้นที่ แต่ไม่ทำให้ข้อมูลใครหาย
+     */
+    private function deleteOffsite(Executor $executor, Context $context, UserAccount $account, string $file): void
+    {
+        $destinations = new BackupDestinationRepository($context->db, new Secret($context->config->secretKey()));
+        $factory = new DestinationFactory($destinations, $account->backupDir());
+
+        foreach ($destinations->enabled() as $row) {
+            try {
+                $config = is_array($row['config'] ?? null) ? $row['config'] : [];
+                $base = rtrim((string) ($config['path'] ?? ''), '/');
+                $name = $account->username . '-' . $file;
+
+                $factory->make($row)->delete($executor, $base === '' ? $name : $base . '/' . $name);
+            } catch (\Throwable) {
+                continue;
+            }
+        }
+    }
+
+    /**
+     * ไฟล์ของบัญชีเดียว เรียงใหม่สุดก่อน — โฟลเดอร์ที่อ่านไม่ได้ต้องไม่ทำให้ทั้งรอบล้ม
      *
      * @return list<array<string,mixed>>
      */
-    private function candidates(Context $context): array
+    private function filesOf(Executor $executor, Context $context, UserAccount $account): array
     {
-        return $context->db->all(
-            'SELECT b.*, d.retention_days, d.retention_count
-               FROM backups b
-          LEFT JOIN backup_destinations d ON d.id = b.destination_id
-              ORDER BY b.created_at DESC',
-        );
+        try {
+            return BackupFiles::listFor($executor, $account, $this->domainsOf($context, $account->userId));
+        } catch (\Throwable) {
+            return [];
+        }
     }
 
     /**
      * เหตุผลที่ต้องเก็บไฟล์นี้ไว้ — null แปลว่าลบได้
      *
-     * @param array<string,mixed> $row
+     * @param array<string,mixed> $file
      * @param int $rank ลำดับความใหม่ในกลุ่มของตัวเอง — 1 คือใหม่ที่สุด
      */
-    private function keepReason(array $row, int $days, int $keep, bool $hasDestinations, int $rank): ?string
+    private function keepReason(array $file, int $days, int $keep, int $rank): ?string
     {
         if ($keep > 0 && $rank <= $keep) {
             return 'อยู่ใน ' . $keep . ' ชุดล่าสุด';
         }
 
-        if ($days > 0 && (time() - (int) $row['created_at']) < $days * 86400) {
+        if ($days > 0 && (time() - (int) $file['modified_at']) < $days * 86400) {
             return 'ยังไม่เกิน ' . $days . ' วัน';
-        }
-
-        // ข้อที่กันข้อมูลหายจริง ๆ สองข้อ
-        if (($row['status'] ?? '') === 'running') {
-            return 'กำลังสร้างอยู่';
-        }
-
-        if ($hasDestinations && ($row['offsite_status'] ?? 'none') !== 'ok') {
-            return 'ยังไม่มีสำเนานอกเครื่อง';
         }
 
         return null;

@@ -544,16 +544,18 @@ CREATE TABLE cron_jobs (
   last_run_at INTEGER, last_exit_code INTEGER
 );
 
-CREATE TABLE backups (
-  id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL,
-  type TEXT NOT NULL CHECK(type IN ('site','database','config','full')),
-  site_id INTEGER REFERENCES sites(id) ON DELETE SET NULL,
-  path TEXT NOT NULL, size_bytes INTEGER,
-  checksum TEXT,                            -- sha256 ตรวจก่อน restore เสมอ
-  status TEXT NOT NULL,                     -- running | ok | failed
-  created_at INTEGER NOT NULL
-);
+-- ตาราง `backups` **เลิกใช้เป็นแหล่งความจริงแล้ว** (PLAN-BACKUP-V2 ข้อ B4)
+--
+-- ไฟล์สำรองอยู่ที่ `<บ้านของเจ้าของ>/backup/` ซึ่งลูกค้าเข้าถึงได้ผ่าน SFTP โดยตั้งใจ —
+-- เขาลบไฟล์ของตัวเองได้ทุกเมื่อ แถวที่บันทึกไว้ตอนสร้างจึงเพี้ยนทันทีที่เขาทำ
+-- รายการบนหน้าจอจึงอ่านจากโฟลเดอร์จริงผ่าน `backup.list` แทน และ `backup.json`
+-- ที่ฝังอยู่ในตัวไฟล์ทำให้ไฟล์อธิบายตัวเองได้ครบโดยไม่ต้องมีแถวคู่ขนาน
+-- (ตารางยังอยู่ในสคีมาจนกว่าจะแน่ใจว่าไม่มีการติดตั้งไหนต้องอ่านของเก่าอีก)
+
+-- สวิตช์ "บัญชีนี้ถูกสำรองอัตโนมัติไหม" อยู่บน users:
+--   users.backup_files     0/1   สำรองไฟล์เว็บของทุกเว็บในบัญชี
+--   users.backup_database  0/1   สำรองฐานข้อมูล (เฉพาะเว็บที่มีฐานเดียว)
+-- แล้ว cron ตัวเดียวของทั้งเครื่อง (`backup.run`) เดินตามสวิตช์นั้นทุกรอบ
 
 -- คิวงานยาว (backup, ออก SSL, ติดตั้ง PHP extension)
 CREATE TABLE jobs (
@@ -710,7 +712,7 @@ v1 ส่ง `ApacheDriver` (เครื่องเป้าหมายมี
 
 ```
 1. useradd -r -M -s /usr/sbin/nologin -d /srv/phpcp/sites/<domain> web_<id>
-2. mkdir -p .../{public,logs,tmp,backups}  → chown web_<id>:web_<id>, chmod 750
+2. mkdir -p .../{public,logs,tmp} + <บ้าน>/backup  → chown <ผู้ใช้>:<กลุ่มเว็บ>, chmod 750
 3. เขียน PHP-FPM pool: /etc/php/<ver>/fpm/pool.d/<domain>.conf
       user/group = web_<id>
       listen = /run/php/<domain>-<ver>.sock  (listen.owner = www-data)
@@ -755,7 +757,8 @@ UI          → GET /api/jobs/{id}/stream (SSE) → progress bar + log สด
 /etc/phpcp/fpm/              config tree ของ FPM master ที่รัน panel เอง
 /etc/phpcp/vhosts.d/         vhost ของเว็บไซต์ที่ panel สร้าง (คนละชุดกับ httpd/ ข้างบน)
 /var/lib/phpcp/panel.db      SQLite (0600 phpcp-web:phpcp)
-/var/lib/phpcp/backups/      ไฟล์สำรอง
+/var/lib/phpcp/backups/      ที่พักชั่วคราวของไฟล์ที่ดึงกลับมาจากปลายทางนอกเครื่องเท่านั้น
+                             (ไฟล์สำรองจริงอยู่ที่ <บ้านของลูกค้า>/backup — ดู PLAN-BACKUP-V2)
 /var/log/phpcp/{panel,agent,audit}.log
 /run/phpcp/agent.sock        unix socket ของ agent (0660 root:phpcp)
 /run/phpcp/panel-fpm.sock    socket ของ FPM ที่รัน panel

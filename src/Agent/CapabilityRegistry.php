@@ -53,8 +53,10 @@ use Phpcp\Agent\Capability\BackupDestinationTest;
 use Phpcp\Agent\Capability\BackupPrune;
 use Phpcp\Agent\Capability\BackupHostKeyScan;
 use Phpcp\Agent\Capability\BackupImport;
+use Phpcp\Agent\Capability\BackupList;
 use Phpcp\Agent\Capability\BackupPush;
 use Phpcp\Agent\Capability\BackupRestore;
+use Phpcp\Agent\Capability\BackupRun;
 use Phpcp\Agent\Capability\CronSync;
 use Phpcp\Agent\Capability\DbAccountCredentials;
 use Phpcp\Agent\Capability\DbAccountRotate;
@@ -214,6 +216,8 @@ final class CapabilityRegistry
 
             // สำรองและกู้คืนข้อมูล
             BackupCreate::class,
+            BackupRun::class,
+            BackupList::class,
             BackupRestore::class,
             BackupDelete::class,
             BackupPush::class,

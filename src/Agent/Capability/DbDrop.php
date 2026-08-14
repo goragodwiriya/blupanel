@@ -7,6 +7,8 @@ namespace Phpcp\Agent\Capability;
 use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\ValidationError;
+use Phpcp\Domain\Site;
+use Phpcp\Domain\SiteRepository;
 use Phpcp\Driver\Db\MariaDbManager;
 use Phpcp\Support\Validator;
 
@@ -64,9 +66,21 @@ final class DbDrop extends DbCapability
         }
 
         // สำรองก่อนเสมอ — ถ้าสำรองไม่ได้ก็ไม่ลบ
-        $stamp = date('Ymd-His');
-        $backupPath = '/var/lib/phpcp/backups/db-' . $name . '-' . $stamp . '.sql';
+        $site = $this->ownerSite($context, $name);
+        $backupPath = $this->safetyPath($context, $site, $name);
+
+        $executor->makeDirectory($executor->path(dirname($backupPath)), 0750);
+
         $bytes = $manager->dump($executor, $name, $backupPath);
+
+        // ยกไฟล์ให้เจ้าของข้อมูล — ไม่งั้นลูกค้าที่ลบผิดตัวต้องขอให้ผู้ดูแลไปหยิบ
+        // ไฟล์ของเขาเองให้ ทั้งที่มันอยู่ในบ้านของเขาแล้ว
+        $owner = $site === null ? '' : BackupCapability::ownerString($context, $site->owner);
+
+        if ($owner !== '') {
+            $executor->exec(['/usr/bin/chown', $owner, $executor->path($backupPath)], timeout: 60);
+            $executor->changeMode($executor->path($backupPath), 0640);
+        }
 
         $manager->dropDatabase($executor, $name);
 
@@ -77,7 +91,6 @@ final class DbDrop extends DbCapability
             $manager->dropUser($executor, $user['username'], $user['host']);
         }
 
-        $this->recordBackup($context, $name, $backupPath, $bytes);
         $this->invalidateSizesCache($executor, $context);
 
         return [
@@ -139,17 +152,39 @@ final class DbDrop extends DbCapability
         });
     }
 
-    private function recordBackup(Context $context, string $name, string $path, int $bytes): void
+    /**
+     * ไฟล์สำรองก่อนลบไปอยู่ที่ไหน — **ในบ้านของเจ้าของฐานข้อมูลนั้น**
+     *
+     * เดิมไปกองที่ `/var/lib/phpcp/backups` แล้วบันทึกแถวไว้ในตาราง · ลูกค้าที่ลบ
+     * ฐานข้อมูลผิดตัวจึงต้องขอให้ผู้ดูแลไปหยิบไฟล์ให้ ทั้งที่มันเป็นข้อมูลของเขาเอง
+     * · ตอนนี้ไฟล์ลงในโฟลเดอร์สำรองของเขา แล้วโผล่ในรายการเองเพราะรายการอ่านจาก
+     * โฟลเดอร์จริง (PLAN-BACKUP-V2 ข้อ B4) — ไม่ต้องมีแถวไหนคอยชี้ให้
+     *
+     * ฐานข้อมูลที่ไม่ได้ผูกกับเว็บของ panel ไม่มีบ้านให้ไปอยู่ จึงตกไปที่ที่พักของ panel
+     * ตามเดิม — ไม่ใช่เหตุผลที่จะข้ามการสำรอง
+     */
+    private function safetyPath(Context $context, ?Site $site, string $name): string
     {
-        $context->db->insert('backups', [
-            'name' => 'ก่อนลบฐานข้อมูล ' . $name,
-            'type' => 'database',
-            'site_id' => null,
-            'path' => $path,
-            'size_bytes' => $bytes,
-            'checksum' => null,
-            'status' => 'ok',
-            'created_at' => time(),
-        ]);
+        $stamp = date('Ymd-His');
+
+        if ($site === null) {
+            return $context->config->paths->backups() . '/db-' . $name . '-' . $stamp . '.sql.gz';
+        }
+
+        // ขึ้นต้นด้วยโดเมนเหมือนไฟล์สำรองอื่น ๆ เพื่อให้รายการที่อ่านจากโฟลเดอร์
+        // จับคู่ไฟล์กับเว็บได้ (ดู BackupFiles::domainOf) · ASCII ล้วนเพราะชื่อนี้
+        // ถูกส่งกลับมาเป็นส่วนหนึ่งของ URL ตอนกดลบจากหน้าจอ
+        return sprintf('%s/%s-db-%s-before-drop-%s.sql.gz', $site->backupDir(), $site->domain, $name, $stamp);
+    }
+
+    /** เว็บที่เป็นเจ้าของฐานข้อมูลนี้ — null = ฐานที่ไม่ได้อยู่ในความดูแลของ panel */
+    private function ownerSite(Context $context, string $name): ?Site
+    {
+        $row = $context->db->first(
+            'SELECT s.id FROM databases_ d JOIN sites s ON s.id = d.site_id WHERE d.db_name = :n',
+            ['n' => $name],
+        );
+
+        return $row === null ? null : (new SiteRepository($context->db))->load((int) $row['id']);
     }
 }

@@ -1,77 +1,65 @@
 <!--
-  ฟอร์มตั้งเวลาสำรองอัตโนมัติ — คนละเทมเพลตกับตารางตาม FRAMEWORK_GUIDE Pattern 3
+  รอบสำรองอัตโนมัติ — **ตัวเดียวทั้งเครื่อง** (PLAN-BACKUP-V2 ข้อ B10)
 
-  ห้าช่องกรอกถือว่าน้อย จึงเปิดใน Modal ตามคำสั่งที่มากับคำตอบของ API
-  ไม่มีฟอร์มแก้ไขคู่กัน เพราะเซิร์ฟเวอร์ยังรับเฉพาะการสร้างใหม่ — แก้ตารางเวลาเดิม
-  ทำผ่านปุ่มเปิด/ปิดในตาราง
+  ไม่มีช่อง "ชนิด" กับ "เว็บไซต์" อีกแล้ว: คำถามนั้นย้ายไปอยู่ที่สวิตช์รายบัญชีในหน้า
+  Backups ส่วนที่นี่ตอบแค่ "รอบเดินตอนไหน และเก็บย้อนหลังแค่ไหน"
+
+  PATCH ไม่ใช่ POST — งานนี้มีอยู่ตลอด ผู้ใช้แก้ค่าของมันได้อย่างเดียว สร้างใหม่ไม่ได้
 -->
-<form data-form="scheduleCreate"
-      action="/api/v2/backup-schedules"
-      method="post"
+<form data-form="scheduleSave"
+      action="/api/v2/backup-schedule"
+      method="patch"
       data-ajax-submit="true"
       data-validate="true">
   <fieldset>
-    <div class="form-group">
-      <div class="width50">
-        <label for="ns_label" data-i18n>Name</label>
-        <span class="form-control icon-edit">
-          <input type="text" id="ns_label" name="label" required maxlength="100"
-                 autocomplete="off" data-attr="value:label">
-        </span>
-      </div>
-      <div class="width50">
-        <label for="ns_type" data-i18n>Type</label>
-        <span class="form-control icon-menus">
-          <select id="ns_type" name="type" required data-value="type">
-            <option value="site">site</option>
-            <option value="database">database</option>
-            <option value="config">config</option>
-            <option value="full">full</option>
-          </select>
-        </span>
-      </div>
-    </div>
-    <div class="form-group">
-      <div class="width50" data-component="api" data-endpoint="/api/v2/sites">
-        <label for="ns_site" data-i18n>Website</label>
-        <span class="form-control icon-website">
-          <select id="ns_site" name="site_id" data-for="site in data" data-value="site_id">
-            <template>
-              <option data-attr="value:site.id" data-text="site.domain"></option>
-            </template>
-          </select>
-        </span>
-      </div>
-      <div class="width50">
-        <label for="ns_schedule" data-i18n>Schedule</label>
-        <span class="form-control icon-clock">
-          <select id="ns_schedule" name="schedule" required data-value="schedule">
-            <option value="0 1 * * *" data-i18n>Every day at 01:00</option>
-            <option value="0 * * * *" data-i18n>Every hour</option>
-            <option value="0 3 * * 0" data-i18n>Every week (Sunday 03:00)</option>
-            <option value="0 4 1 * *" data-i18n>Every month (the 1st at 04:00)</option>
-          </select>
-        </span>
-      </div>
-    </div>
-    <!--
-      ต้องเลือกปลายทาง — สำรองอัตโนมัติที่ทิ้งไฟล์ไว้บนดิสก์ก้อนเดียวกับข้อมูลจริง
-      ไม่ได้แก้ปัญหาที่เฟสนี้ตั้งใจแก้เลย · ถ้ายังไม่มีปลายทาง ตัวเลือกจะว่าง
-      และคำอธิบายข้างล่างบอกให้ไปเพิ่มก่อน
-    -->
-    <div data-component="api" data-endpoint="/api/v2/backup-destinations" data-refresh-event="phpcp:reload">
-      <label for="ns_dest" data-i18n>Copy to</label>
-      <span class="form-control icon-cloud">
-        <select id="ns_dest" name="destination_id" required data-for="d in data" data-value="destination_id">
-          <template>
-            <option data-attr="value:d.id" data-text="d.name"></option>
-          </template>
+    <div>
+      <label for="ns_schedule" data-i18n>Schedule</label>
+      <span class="form-control icon-clock">
+        <select id="ns_schedule" name="schedule" required data-value="schedule">
+          <option value="0 1 * * *" data-i18n>Every day at 01:00</option>
+          <option value="0 * * * *" data-i18n>Every hour</option>
+          <option value="0 3 * * 0" data-i18n>Every week (Sunday 03:00)</option>
+          <option value="0 4 1 * *" data-i18n>Every month (the 1st at 04:00)</option>
         </select>
       </span>
-      <div class="comment" data-i18n>Add a destination first. Backups that stay on this machine are lost with the disk they are on.</div>
+    </div>
+    <div class="form-group">
+      <!--
+        นโยบายเก็บไฟล์อยู่ตรงนี้เพราะมันเป็นเรื่องเดียวกับรอบ: ทุกรอบสร้างไฟล์ใหม่
+        ถ้าไม่มีใครเก็บกวาด โควตาของลูกค้าจะเต็มด้วยสำเนาของตัวเองภายในไม่กี่สัปดาห์
+
+        `keep` มาก่อน `days` เพราะมันคือกฎที่กันข้อมูลหาย — บัญชีที่ไม่ได้สำรองมานาน
+        ต้องไม่ตื่นมาแล้วพบว่าไฟล์ถูกลบเกลี้ยงเพราะทุกไฟล์ "เก่าเกินกำหนด"
+      -->
+      <div class="width50">
+        <label for="ns_keep" data-i18n>Always keep the latest</label>
+        <span class="form-control icon-stack">
+          <input type="number" id="ns_keep" name="keep" min="0" max="365" required
+                 data-attr="value:keep">
+        </span>
+        <div class="comment" data-i18n>copies of each website, whatever their age</div>
+      </div>
+      <div class="width50">
+        <label for="ns_days" data-i18n>Delete files older than</label>
+        <span class="form-control icon-clock">
+          <input type="number" id="ns_days" name="days" min="0" max="3650" required
+                 data-attr="value:days">
+        </span>
+        <div class="comment" data-i18n>days · 0 = never delete by age</div>
+      </div>
+    </div>
+    <div>
+      <label for="ns_enabled" data-i18n>Enabled</label>
+      <span class="form-control icon-menus">
+        <select id="ns_enabled" name="enabled" data-value="enabled ? '1' : '0'">
+          <option value="1" data-i18n>Yes</option>
+          <option value="0" data-i18n>No</option>
+        </select>
+      </span>
+      <div class="comment" data-i18n>Accounts are picked from the switches on the Backups page. Nothing is backed up until at least one is on.</div>
     </div>
   </fieldset>
   <fieldset class="submit right">
-    <button type="submit" class="btn btn-primary icon-save" data-i18n>Add schedule</button>
+    <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
   </fieldset>
 </form>

@@ -7,15 +7,21 @@ namespace Phpcp\Agent\Capability;
 use Phpcp\Agent\Capability;
 use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
-use Phpcp\Agent\PermissionDenied;
-use Phpcp\Agent\ValidationError;
-use Phpcp\Domain\SiteRepository;
+use Phpcp\Domain\BackupFiles;
 use Phpcp\Driver\BackupManager;
-use Phpcp\Security\Permissions;
 use Phpcp\Support\Validator;
 
-/** ลบไฟล์สำรอง — ลบได้เฉพาะไฟล์ในไดเรกทอรีสำรองเท่านั้น */
-final class BackupDelete implements Capability
+/**
+ * ลบไฟล์สำรองหนึ่งไฟล์ในโฟลเดอร์ของบัญชี
+ *
+ * รับ**ชื่อไฟล์** ไม่ใช่รหัสแถวในตาราง เพราะตัวไฟล์คือแหล่งความจริงแล้ว · ลูกค้าลบ
+ * ไฟล์เดียวกันนี้เองผ่าน SFTP ได้อยู่แล้ว ปุ่มนี้จึงเป็นแค่ทางที่สะดวกกว่า ไม่ใช่
+ * ทางเดียว — และด้วยเหตุนั้น "ไฟล์ไม่อยู่แล้ว" จึงเป็นสภาพปกติ ไม่ใช่ข้อผิดพลาดของระบบ
+ *
+ * ขอบเขตการลบถูกจำกัดสองชั้น: ชื่อต้องเป็นชื่อล้วน (`BackupFiles::assertName()`) และ
+ * เส้นทางที่คลาย symlink แล้วต้องยังอยู่ใต้โฟลเดอร์ของบัญชีนั้น (`BackupManager::delete()`)
+ */
+final class BackupDelete extends BackupCapability implements Capability
 {
     public static function name(): string
     {
@@ -34,38 +40,30 @@ final class BackupDelete implements Capability
 
     public function summary(): string
     {
-        return 'ลบไฟล์ข้อมูลสำรอง';
+        return 'ลบไฟล์สำรองในโฟลเดอร์ของบัญชี';
     }
 
     public function validate(array $args): array
     {
-        return ['backup_id' => Validator::requireInt($args, 'backup_id', 1)];
+        return [
+            'user_id' => Validator::requireInt($args, 'user_id', 1),
+            'file' => BackupFiles::assertName(Validator::requireString($args, 'file', 255)),
+        ];
     }
 
     public function run(array $args, Executor $executor, Context $context): array
     {
-        $backup = $context->db->first('SELECT * FROM backups WHERE id = :id', ['id' => $args['backup_id']]);
+        $owner = $this->ownerAccount($context, $args['user_id']);
+        $path = BackupFiles::resolve($owner, $args['file']);
 
-        if ($backup === null) {
-            throw new ValidationError('ไม่พบข้อมูลสำรองที่ระบุ');
-        }
+        $this->assertFileExists($executor, $path);
 
-        $siteId = (int) ($backup['site_id'] ?? 0);
-        $actor = $context->actor;
-
-        if ($siteId > 0
-            && $actor->userId !== 0
-            && !in_array($actor->role, [Permissions::SUPERADMIN, Permissions::SYSADMIN], true)
-            && !(new SiteRepository($context->db))->isOwnedBy($siteId, $actor->userId)) {
-            throw new PermissionDenied('คุณไม่มีสิทธิ์ลบข้อมูลสำรองนี้');
-        }
-
-        (new BackupManager($context->config->paths->backups()))->delete($executor, (string) $backup['path']);
-        $context->db->run('DELETE FROM backups WHERE id = :id', ['id' => (int) $backup['id']]);
+        (new BackupManager())->delete($executor, $owner->backupDir(), $path);
 
         return [
-            'backup_id' => (int) $backup['id'],
-            'message' => 'ลบข้อมูลสำรอง "' . $backup['name'] . '" แล้ว',
+            'user_id' => $owner->userId,
+            'file' => $args['file'],
+            'message' => 'ลบไฟล์สำรอง "' . $args['file'] . '" แล้ว',
         ];
     }
 }

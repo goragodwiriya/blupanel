@@ -11,39 +11,44 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\PermissionDenied;
 use Phpcp\Agent\ValidationError;
 use Phpcp\Domain\BackupDestinationRepository;
+use Phpcp\Domain\BackupFiles;
 use Phpcp\Domain\SiteRepository;
 use Phpcp\Driver\Backup\DestinationFactory;
 use Phpcp\Driver\BackupManager;
-use Phpcp\Security\Permissions;
 use Phpcp\Security\Secret;
 use Phpcp\Support\Validator;
 
 /**
- * ดึงไฟล์สำรองจากปลายทางนอกเครื่องกลับมาลงทะเบียนบนเครื่องนี้
+ * ดึงไฟล์สำรองจากปลายทางนอกเครื่องกลับเข้าโฟลเดอร์ของเจ้าของ
  *
  * ## ทำไมต้องมี
  *
- * `backup.push` ส่งไฟล์ออกไปแล้วบันทึกผลลง `backups` **ของเครื่องต้นทาง** ส่วน
- * `backup.restore` เริ่มจากแถวใน `backups` **ของเครื่องที่กู้** · ไฟล์ที่ไปนอนอยู่อีก
- * เครื่องจึงเป็นแค่ `.tar.gz` ที่ panel ที่นั่นไม่รู้จัก และไม่มีทางทำให้รู้จักได้เลย
+ * วันที่เครื่องต้นทางพัง สำเนาที่อุตส่าห์ส่งไปเก็บไว้อีกเครื่องต้องเอากลับมาใช้ผ่าน panel
+ * ได้ · ไม่งั้นมันเป็นแค่ `.tar.gz` ที่ต้องแตกเองแล้วไล่ตั้งเจ้าของไฟล์เอง ซึ่งเป็นงาน
+ * ที่คนทำตอนตกใจแล้วพลาดได้ง่ายที่สุด — สำเนานอกเครื่องที่ **เขียนได้อย่างเดียว
+ * อ่านกลับไม่ได้** กลับหัวกับเหตุผลที่มันมีอยู่
  *
- * ผลคือสำเนานอกเครื่อง **เขียนได้อย่างเดียว อ่านกลับไม่ได้** — ซึ่งกลับหัวกับเหตุผล
- * ที่มันมีอยู่: วันที่เครื่องต้นทางพัง สำเนาที่อุตส่าห์ส่งไปเก็บกลับใช้ผ่าน panel ไม่ได้
- * ต้องแตก tar เองแล้วไล่ตั้งเจ้าของไฟล์เอง ซึ่งเป็นงานที่คนทำตอนตกใจแล้วพลาดได้ง่ายที่สุด
+ * ## ไฟล์ลงที่ไหน
+ *
+ * `<บ้านของเจ้าของ>/backup/` เหมือนไฟล์ที่สร้างบนเครื่องนี้เอง (ข้อ B5) — ไม่ใช่พื้นที่
+ * ของ panel · เจ้าของคือเจ้าของ**เว็บที่ใบแจ้งข้อมูลระบุ** ไม่ใช่คนที่กดปุ่ม: ไฟล์ของ
+ * shop.example.com ต้องไปอยู่ในบ้านของคนที่ดูแล shop.example.com เสมอ ไม่งั้นมันจะไป
+ * กินโควตาของผู้ดูแลที่บังเอิญเป็นคนกด และคนที่ควรได้ไฟล์คืนก็ยังหาไม่เจอ
  *
  * ## ปลายทางรู้ได้อย่างไรว่าไฟล์นี้เป็นของใคร
  *
  * จาก `backup.json` ที่อยู่ที่รากของ archive ({@see BackupManager::writeManifest()}) —
- * อ่านออกมาได้โดยไม่ต้องแตกทั้งก้อน จึงรู้ว่าเป็นของโดเมนไหนก่อนตัดสินใจว่าจะทับที่ไหน
+ * อ่านออกมาได้โดยไม่ต้องแตกทั้งก้อน จึงรู้ว่าเป็นของโดเมนไหนก่อนตัดสินใจว่าจะวางที่ไหน
+ * · ดึงลงที่พักของ panel ก่อนแล้วค่อยย้ายเข้าบ้าน เพราะตอนเริ่มดึงยังไม่มีใครรู้ว่า
+ * บ้านไหนคือบ้านที่ถูก และการเดาแล้วย้ายทีหลังแปลว่าโควตาของคนที่เดาถูกหักไปแล้ว
  *
  * ## สิ่งที่จงใจ**ไม่**ทำ
  *
- * ไม่กู้คืนให้อัตโนมัติ · จบที่การลงทะเบียนเท่านั้น แล้วให้ผู้ดูแลกดกู้คืนเอง ซึ่งต้อง
- * พิมพ์ชื่อโดเมนยืนยันตามเดิม — "ดึงไฟล์จากที่เก็บ" กับ "เขียนทับเว็บที่ใช้งานอยู่"
- * เป็นคนละการตัดสินใจ และการรวบสองอย่างเข้าด้วยกันแปลว่าพิมพ์ชื่อไฟล์ผิดครั้งเดียว
- * เว็บที่ยังดีอยู่ก็หายไปแล้ว
+ * ไม่กู้คืนให้อัตโนมัติ · จบที่การวางไฟล์ไว้ในโฟลเดอร์ แล้วให้ผู้ดูแลกดกู้คืนเอง ซึ่ง
+ * ต้องพิมพ์ชื่อโดเมนยืนยันตามเดิม — "ดึงไฟล์จากที่เก็บ" กับ "เขียนทับเว็บที่ใช้งานอยู่"
+ * เป็นคนละการตัดสินใจ
  */
-final class BackupImport implements Capability
+final class BackupImport extends BackupCapability implements Capability
 {
     public static function name(): string
     {
@@ -62,7 +67,7 @@ final class BackupImport implements Capability
 
     public function summary(): string
     {
-        return 'ดึงไฟล์สำรองจากปลายทางนอกเครื่องกลับมาลงทะเบียน';
+        return 'ดึงไฟล์สำรองจากปลายทางนอกเครื่องกลับเข้าโฟลเดอร์ของเจ้าของ';
     }
 
     public function validate(array $args): array
@@ -75,8 +80,7 @@ final class BackupImport implements Capability
 
     public function run(array $args, Executor $executor, Context $context): array
     {
-        if (!in_array($context->actor->role, [Permissions::SUPERADMIN, Permissions::SYSADMIN], true)
-            && $context->actor->userId !== 0) {
+        if (!self::isAdmin($context->actor->role) && $context->actor->userId !== 0) {
             throw new PermissionDenied('การดึงไฟล์สำรองจากนอกเครื่องต้องใช้สิทธิ์ผู้ดูแลเซิร์ฟเวอร์');
         }
 
@@ -98,18 +102,19 @@ final class BackupImport implements Capability
             throw new ValidationError('ไม่พบปลายทางที่ระบุ');
         }
 
-        $manager = new BackupManager($context->config->paths->backups());
-        $destination = (new DestinationFactory($destinations, $context->config->paths->backups()))->make($row);
+        // ที่พักของ panel — ยังไม่ใช่ของใคร จนกว่าใบแจ้งข้อมูลจะบอกว่าไฟล์นี้เป็นของเว็บไหน
+        $staging = $context->config->paths->backups();
+        $local = $staging . '/imported-' . date('Ymd-His') . '-' . $name;
 
-        $local = $context->config->paths->backups() . '/imported-' . date('Ymd-His') . '-' . $name;
+        $executor->makeDirectory($executor->path($staging), 0750);
 
-        $executor->makeDirectory($executor->path($context->config->paths->backups()), 0750);
+        $destination = (new DestinationFactory($destinations, $staging))->make($row);
         $destination->pull($executor, $this->remotePath($row, $name), $local);
 
         try {
-            return $this->register($executor, $context, $manager, $local, $name, (int) $row['id']);
+            return $this->deliver($executor, $context, $local, $name);
         } catch (\Throwable $e) {
-            // ลงทะเบียนไม่ได้ = ไฟล์นี้ใช้อะไรไม่ได้ · เก็บไว้ก็มีแต่จะสับสนว่ามีของ
+            // ส่งถึงเจ้าของไม่ได้ = ไฟล์นี้ใช้อะไรไม่ได้ · ทิ้งที่พักไว้ก็มีแต่จะสับสน
             $executor->removePath($executor->path($local));
 
             throw $e;
@@ -117,18 +122,13 @@ final class BackupImport implements Capability
     }
 
     /**
-     * ตรวจใบแจ้งข้อมูล หาเว็บปลายทาง แล้วบันทึกเป็นไฟล์สำรองของเครื่องนี้
+     * ตรวจใบแจ้งข้อมูล หาเจ้าของ แล้วย้ายไฟล์เข้าบ้านของเขา
      *
      * @return array<string,mixed>
      */
-    private function register(
-        Executor $executor,
-        Context $context,
-        BackupManager $manager,
-        string $local,
-        string $name,
-        int $destinationId,
-    ): array {
+    private function deliver(Executor $executor, Context $context, string $local, string $name): array
+    {
+        $manager = new BackupManager();
         $manifest = $manager->readManifest($executor, $local);
 
         if ($manifest === null) {
@@ -157,6 +157,8 @@ final class BackupImport implements Capability
          * การสร้างเว็บคือการเขียน vhost, FPM pool, บัญชีระบบ และ DNS ซึ่งขึ้นกับค่าตั้ง
          * ของเครื่องนี้ ไม่ใช่ของเครื่องต้นทาง · เดาแทนผู้ดูแลแล้วผิดจะได้เว็บที่ตั้งค่า
          * ครึ่ง ๆ กลาง ๆ ซึ่งหาสาเหตุยากกว่าข้อความว่า "ยังไม่มีเว็บนี้ สร้างก่อน"
+         *
+         * และเมื่อไม่มีเว็บ ก็ไม่มีบ้านที่จะวางไฟล์ลงไปด้วย
          */
         $site = (new SiteRepository($context->db))->findByDomain($domain);
 
@@ -167,47 +169,67 @@ final class BackupImport implements Capability
             );
         }
 
-        $resolved = $executor->path($local);
-        $stat = $executor->stat($resolved);
-        $checksum = @hash_file('sha256', $resolved);
+        $owner = $this->ownerAccount($context, (int) $site['owner_user_id']);
 
-        if ($stat === null || $checksum === false) {
-            throw new ExecutionFailed('ดึงไฟล์มาแล้วแต่อ่านไม่ได้');
+        $this->assertQuotaAllows($context, $owner);
+
+        $target = $owner->backupDir() . '/' . $this->localName($domain, $name);
+
+        $executor->makeDirectory($executor->path($owner->backupDir()), 0750);
+        $executor->rename($executor->path($local), $executor->path($target));
+
+        $ownerString = self::ownerString($context, $owner);
+
+        if ($ownerString !== '') {
+            $executor->exec(['/usr/bin/chown', $ownerString, $executor->path($target)], timeout: 60);
+            $executor->changeMode($executor->path($target), 0640);
         }
 
-        $label = 'นำเข้าจากนอกเครื่อง — ' . $domain
-            . ' (' . (string) ($manifest['hostname'] ?? 'ไม่ทราบเครื่องต้นทาง') . ')';
+        $stat = $executor->stat($executor->path($target));
 
-        $id = $context->db->insert('backups', [
-            'name' => $label,
-            'type' => 'site',
-            'site_id' => (int) $site['id'],
-            'path' => $local,
-            'size_bytes' => (int) $stat['size'],
-            'checksum' => $checksum,
-            'status' => 'ok',
-            // มาจากปลายทางไหน — ผู้ดูแลต้องตามรอยได้ว่าของก้อนนี้มาจากที่เก็บอันไหน
-            'destination_id' => $destinationId,
-            'remote_path' => $name,
-            'offsite_status' => 'ok',
-            'offsite_at' => time(),
-            'created_at' => time(),
-        ]);
+        if ($stat === null) {
+            throw new ExecutionFailed('ย้ายไฟล์เข้าโฟลเดอร์ของเจ้าของแล้วแต่หาไฟล์ไม่พบ');
+        }
 
         return [
-            'id' => $id,
             'domain' => $domain,
             'site_id' => (int) $site['id'],
+            'user_id' => $owner->userId,
+            'file' => basename($target),
             'source_host' => (string) ($manifest['hostname'] ?? ''),
             'created_at' => (int) ($manifest['created_at'] ?? 0),
             'bytes' => (int) $stat['size'],
             'message' => sprintf(
-                'นำเข้าไฟล์สำรองของ %s แล้ว (จาก %s · %s) — กดกู้คืนเพื่อเขียนทับเว็บนี้',
+                'นำเข้าไฟล์สำรองของ %s ไปไว้ที่ %s แล้ว (จาก %s · %s) — กดกู้คืนเพื่อเขียนทับเว็บนี้',
                 $domain,
+                $owner->backupDir(),
                 (string) ($manifest['hostname'] ?? 'ไม่ทราบ'),
                 date('j/n/Y H:i', (int) ($manifest['created_at'] ?? time())),
             ),
         ];
+    }
+
+    /**
+     * ชื่อไฟล์ในโฟลเดอร์ของเจ้าของ
+     *
+     * ขึ้นต้นด้วยโดเมนเหมือนไฟล์ที่สร้างบนเครื่องนี้ เพื่อให้รายการที่อ่านจากโฟลเดอร์
+     * จับคู่ไฟล์กับเว็บได้ ({@see \Phpcp\Domain\BackupFiles::domainOf()}) — ชื่อที่ปลายทาง
+     * เป็นของเครื่องอื่น จะเป็นอะไรก็ได้ · ต่อท้ายด้วยเวลาเพื่อไม่ให้นำเข้าซ้ำแล้วทับของเดิม
+     */
+    private function localName(string $domain, string $remote): string
+    {
+        // ชนิดต้องตรงกับนามสกุล ไม่ใช่ตั้งเป็น "files" ไว้ก่อน — รายการอ่านชนิดจาก
+        // นามสกุล ส่วนคนอ่านชื่อไฟล์อ่านจากคำกลาง สองอย่างนี้ขัดกันไม่ได้
+        $isDatabase = str_ends_with($remote, BackupFiles::DB_SUFFIX);
+
+        return sprintf(
+            '%s-%s-imported-%s-%s%s',
+            $domain,
+            $isDatabase ? 'db' : 'files',
+            date('Ymd-His'),
+            bin2hex(random_bytes(3)),
+            $isDatabase ? BackupFiles::DB_SUFFIX : BackupFiles::SITE_SUFFIX,
+        );
     }
 
     /**

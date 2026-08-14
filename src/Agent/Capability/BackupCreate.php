@@ -9,22 +9,27 @@ use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\PermissionDenied;
 use Phpcp\Agent\ValidationError;
-use Phpcp\Domain\SiteRepository;
 use Phpcp\Driver\BackupManager;
-use Phpcp\Security\Permissions;
 use Phpcp\Support\Validator;
 
 /**
- * สร้างข้อมูลสำรอง — PROMPT.md รองรับ 4 ชนิด
+ * สร้างไฟล์สำรอง **ลงบ้านของเจ้าของเว็บ** — ไฟล์เว็บหรือฐานข้อมูล
  *
- * บันทึก checksum ลงฐานข้อมูลทุกครั้ง เพราะการกู้คืนจะปฏิเสธไฟล์ที่ไม่มี checksum
- * ไฟล์สำรองที่ยืนยันความครบถ้วนไม่ได้ ถือว่าใช้กู้คืนไม่ได้
+ * ## สิ่งที่เปลี่ยนไปจากของเดิม (PLAN-BACKUP-V2)
  *
- * **`destination_id` ทำให้ "สร้างแล้วส่งออก" เป็นคำสั่งเดียว** (เฟส E1) — จำเป็นกับงาน
- * ตามเวลา เพราะ scheduler เรียก capability ได้ทีละตัวต่อหนึ่งงาน · ถ้าต้องแยกสองขั้น
- * จะมีช่วงที่ไฟล์สำรองอยู่บนดิสก์ก้อนเดียวกับข้อมูลจริงโดยไม่มีอะไรพามันออกไป
+ * เดิมเขียนลง `/var/lib/phpcp/backups` ซึ่งเป็นพื้นที่ของ panel แล้วบันทึกแถวลงตาราง
+ * `backups` เป็นแหล่งความจริง · ตอนนี้ไฟล์ไปอยู่ที่ `<บ้าน>/backup` ของลูกค้า:
+ * เขาดาวน์โหลดเองได้ ลบเองได้ และมันนับในโควตาของเขา — **จึงไม่บันทึกแถวคู่ขนานอีก**
+ * (ดู {@see \Phpcp\Domain\BackupFiles} ว่าทำไมแถวที่ลูกค้าลบไฟล์ทิ้งได้จึงเป็นโทษ)
+ *
+ * ชนิด `config`/`full` ถูกตัดทิ้ง — ค่าตั้งของเครื่องไม่ใช่ของลูกค้าคนไหน จึงไม่มีบ้าน
+ * ให้ไปอยู่ · สำรองด้วย snapshot ของ VPS หรือ git ตรงกว่า (ข้อ B2)
+ *
+ * `destination_id` ยังอยู่ เพราะงานตามเวลาเรียก capability ได้ทีละตัวต่อหนึ่งงาน —
+ * ถ้าต้องแยก "สร้าง" กับ "ส่งออก" เป็นสองคำสั่ง จะมีช่วงที่ไฟล์สำรองอยู่บนดิสก์ก้อน
+ * เดียวกับข้อมูลจริงโดยไม่มีอะไรพามันออกไป
  */
-final class BackupCreate implements Capability
+final class BackupCreate extends BackupCapability implements Capability
 {
     public static function name(): string
     {
@@ -43,18 +48,15 @@ final class BackupCreate implements Capability
 
     public function summary(): string
     {
-        return 'สร้างข้อมูลสำรองของเว็บไซต์ ฐานข้อมูล หรือค่าตั้งระบบ';
+        return 'สร้างไฟล์สำรองของเว็บไซต์หรือฐานข้อมูล ลงในโฟลเดอร์สำรองของเจ้าของ';
     }
 
     public function validate(array $args): array
     {
-        $type = BackupManager::assertType(Validator::requireString($args, 'type', 16));
-
         return [
-            'type' => $type,
-            'site_id' => isset($args['site_id']) ? Validator::requireInt($args, 'site_id', 0) : 0,
+            'type' => BackupManager::assertType(Validator::requireString($args, 'type', 16)),
+            'site_id' => Validator::requireInt($args, 'site_id', 1),
             'database' => Validator::optionalString($args, 'database', '', 64),
-            'note' => Validator::optionalString($args, 'note', '', 120),
             // 0 = เก็บไว้ในเครื่องอย่างเดียว · ระบุมาแล้วจะส่งออกต่อทันทีหลังสร้างเสร็จ
             'destination_id' => Validator::optionalInt($args, 'destination_id', 0, 0),
         ];
@@ -62,46 +64,79 @@ final class BackupCreate implements Capability
 
     public function run(array $args, Executor $executor, Context $context): array
     {
-        $manager = new BackupManager($context->config->paths->backups());
-        $type = $args['type'];
+        $site = $this->siteFor($context, $args['site_id']);
+        $owner = $site->owner;
 
-        // ค่าตั้งระบบเป็นของทั้งเครื่อง จึงจำกัดไว้ที่ผู้ดูแลระดับเซิร์ฟเวอร์
-        if (in_array($type, ['config', 'full'], true)
-            && !in_array($context->actor->role, [Permissions::SUPERADMIN, Permissions::SYSADMIN], true)
-            && $context->actor->userId !== 0) {
-            throw new PermissionDenied('การสำรองค่าตั้งระบบต้องใช้สิทธิ์ผู้ดูแลเซิร์ฟเวอร์');
-        }
+        $this->assertQuotaAllows($context, $owner);
 
-        $created = [];
+        $manager = new BackupManager();
+        $ownerString = self::ownerString($context, $owner);
 
-        if (in_array($type, ['site', 'full'], true)) {
-            $created[] = $this->siteBackup($manager, $executor, $context, $args, $type);
-        }
+        $created = $args['type'] === 'database'
+            ? $manager->backupDatabase($executor, $site, $this->database($context, $site->id, $args['database']), $ownerString)
+            : $manager->backupSite($executor, $site, $ownerString);
 
-        if (in_array($type, ['database', 'full'], true)) {
-            $created[] = $this->databaseBackup($manager, $executor, $context, $args, $type);
-        }
+        $file = [
+            'type' => $args['type'],
+            'domain' => $site->domain,
+            'user_id' => $owner->userId,
+            'name' => basename($created['path']),
+            'path' => $created['path'],
+            'bytes' => $created['bytes'],
+            'checksum' => $created['checksum'],
+        ];
 
-        if (in_array($type, ['config', 'full'], true)) {
-            $result = $manager->backupConfig($executor);
-            $created[] = $this->record($context, 'config', 0, 'ค่าตั้งเซิร์ฟเวอร์', $result, $args['note']);
-        }
-
-        if ($created === []) {
-            throw new ValidationError('ไม่มีอะไรให้สำรอง — ตรวจสอบชนิดและเป้าหมายที่เลือก');
-        }
-
-        $bytes = array_sum(array_column($created, 'bytes'));
-        $offsite = $this->pushAll($created, $args['destination_id'], $executor, $context);
+        $offsite = $this->push($file, $args['destination_id'], $executor, $context);
 
         return [
-            'created' => $created,
-            'count' => count($created),
-            'bytes' => $bytes,
+            'created' => [$file],
+            'count' => 1,
+            'bytes' => $created['bytes'],
             'offsite' => $offsite,
-            'message' => sprintf('สร้างข้อมูลสำรอง %d รายการ รวม %s ไบต์', count($created), number_format($bytes))
-                . ($offsite === [] ? '' : sprintf(' · ส่งออกนอกเครื่อง %d รายการ', count(array_filter($offsite, static fn (array $r): bool => $r['ok'])))),
+            'message' => sprintf(
+                'สำรอง%s %s แล้ว (%s ไบต์) เก็บที่ %s',
+                BackupManager::typeLabel($args['type']),
+                $site->domain,
+                number_format($created['bytes']),
+                $owner->backupDir(),
+            ) . ($offsite === [] ? '' : ' · ' . $offsite['message']),
         ];
+    }
+
+    /**
+     * ฐานข้อมูลที่จะสำรอง — ต้องเป็นของเว็บนี้จริง
+     *
+     * เว็บที่มีฐานเดียวไม่ต้องระบุ · การเดาให้เมื่อมีหลายฐานคือการสำรองผิดฐานแล้ว
+     * รายงานว่าสำเร็จ ซึ่งรู้ตัวตอนกู้คืนเท่านั้น
+     *
+     * @throws ValidationError|PermissionDenied
+     */
+    private function database(Context $context, int $siteId, string $requested): string
+    {
+        $owned = array_map(
+            static fn (array $row): string => (string) $row['db_name'],
+            $context->db->all('SELECT db_name FROM databases_ WHERE site_id = :id ORDER BY db_name', ['id' => $siteId]),
+        );
+
+        if ($owned === []) {
+            throw new ValidationError('เว็บไซต์นี้ยังไม่มีฐานข้อมูลให้สำรอง');
+        }
+
+        if ($requested === '') {
+            if (count($owned) > 1) {
+                throw new ValidationError(
+                    'เว็บไซต์นี้มีหลายฐานข้อมูล (' . implode(', ', $owned) . ') — ต้องเลือกว่าจะสำรองฐานไหน',
+                );
+            }
+
+            return $owned[0];
+        }
+
+        if (!in_array($requested, $owned, true)) {
+            throw new PermissionDenied('ฐานข้อมูลนี้ไม่ได้เป็นของเว็บไซต์ที่เลือก');
+        }
+
+        return $requested;
     }
 
     /**
@@ -109,161 +144,27 @@ final class BackupCreate implements Capability
      *
      * **ส่งไม่สำเร็จไม่ทำให้ทั้งคำสั่งล้ม** โดยตั้งใจ · ไฟล์ในเครื่องสร้างเสร็จแล้วและ
      * ใช้กู้คืนได้อยู่ · การโยน error ทิ้งทั้งงานจะทำให้ผู้ใช้เข้าใจว่าไม่มีไฟล์สำรองเลย
-     * ทั้งที่มี · สถานะการส่งถูกบันทึกลง `offsite_status` ให้หน้าจอกับตัวเก็บกวาดเห็นแทน
-     * (ตัวเก็บกวาดจะไม่ลบไฟล์ที่ยังส่งออกไม่สำเร็จ ดู `BackupPrune`)
+     * ทั้งที่มี — ผลการส่งจึงกลับไปกับคำตอบให้เห็นแทน
      *
-     * @param list<array<string,mixed>> $created
-     * @return list<array{backup_id:int,ok:bool,error:string}>
+     * @param  array<string,mixed> $file
+     * @return array<string,mixed>
      */
-    private function pushAll(array $created, int $destinationId, Executor $executor, Context $context): array
+    private function push(array $file, int $destinationId, Executor $executor, Context $context): array
     {
         if ($destinationId < 1) {
             return [];
         }
 
-        $push = new BackupPush();
-        $results = [];
+        try {
+            $result = (new BackupPush())->run([
+                'user_id' => $file['user_id'],
+                'file' => $file['name'],
+                'destination_id' => $destinationId,
+            ], $executor, $context);
 
-        foreach ($created as $backup) {
-            $id = (int) $backup['id'];
-
-            try {
-                $push->run(['backup_id' => $id, 'destination_id' => $destinationId], $executor, $context);
-                $results[] = ['backup_id' => $id, 'ok' => true, 'error' => ''];
-            } catch (\Throwable $e) {
-                $results[] = ['backup_id' => $id, 'ok' => false, 'error' => $e->getMessage()];
-            }
-        }
-
-        return $results;
-    }
-
-    /** @return array<string,mixed> */
-    private function siteBackup(
-        BackupManager $manager,
-        Executor $executor,
-        Context $context,
-        array $args,
-        string $type,
-    ): array {
-        if ($args['site_id'] < 1) {
-            throw new ValidationError('ต้องเลือกเว็บไซต์ที่จะสำรอง');
-        }
-
-        $site = (new SiteRepository($context->db))->load($args['site_id']);
-
-        if ($site === null) {
-            throw new ValidationError('ไม่พบเว็บไซต์ที่ระบุ');
-        }
-
-        $this->assertSiteAccess($context, $site->id);
-
-        $result = $manager->backupSite($executor, $site);
-
-        return $this->record($context, 'site', $site->id, $site->domain, $result, $args['note']);
-    }
-
-    /** @return array<string,mixed> */
-    private function databaseBackup(
-        BackupManager $manager,
-        Executor $executor,
-        Context $context,
-        array $args,
-        string $type,
-    ): array {
-        $database = $args['database'];
-
-        // โหมด full ที่เลือกเว็บไซต์ไว้ ให้หาฐานข้อมูลที่ผูกกับเว็บนั้นให้เอง
-        if ($database === '' && $args['site_id'] > 0) {
-            $row = $context->db->first(
-                'SELECT db_name FROM databases_ WHERE site_id = :id LIMIT 1',
-                ['id' => $args['site_id']],
-            );
-            $database = (string) ($row['db_name'] ?? '');
-        }
-
-        if ($database === '') {
-            throw new ValidationError('ต้องระบุฐานข้อมูลที่จะสำรอง');
-        }
-
-        $this->assertDatabaseAccess($context, $database);
-
-        $result = $manager->backupDatabase($executor, $database);
-
-        return $this->record($context, 'database', $args['site_id'], $database, $result, $args['note']);
-    }
-
-    /**
-     * @param array{path:string,bytes:int,checksum:string} $result
-     * @return array<string,mixed>
-     */
-    private function record(
-        Context $context,
-        string $type,
-        int $siteId,
-        string $label,
-        array $result,
-        string $note,
-    ): array {
-        $name = BackupManager::typeLabel($type) . ' — ' . $label;
-
-        if ($note !== '') {
-            $name .= ' (' . $note . ')';
-        }
-
-        $id = $context->db->insert('backups', [
-            'name' => $name,
-            'type' => $type,
-            'site_id' => $siteId > 0 ? $siteId : null,
-            'path' => $result['path'],
-            'size_bytes' => $result['bytes'],
-            'checksum' => $result['checksum'],
-            'status' => 'ok',
-            'created_at' => time(),
-        ]);
-
-        return [
-            'id' => $id,
-            'name' => $name,
-            'type' => $type,
-            'path' => $result['path'],
-            'bytes' => $result['bytes'],
-            'checksum' => $result['checksum'],
-        ];
-    }
-
-    private function assertSiteAccess(Context $context, int $siteId): void
-    {
-        $actor = $context->actor;
-
-        if ($actor->userId === 0
-            || in_array($actor->role, [Permissions::SUPERADMIN, Permissions::SYSADMIN], true)) {
-            return;
-        }
-
-        if (!(new SiteRepository($context->db))->isOwnedBy($siteId, $actor->userId)) {
-            throw new PermissionDenied('คุณไม่มีสิทธิ์สำรองข้อมูลของเว็บไซต์นี้');
-        }
-    }
-
-    private function assertDatabaseAccess(Context $context, string $database): void
-    {
-        $actor = $context->actor;
-
-        if ($actor->userId === 0
-            || in_array($actor->role, [Permissions::SUPERADMIN, Permissions::SYSADMIN], true)) {
-            return;
-        }
-
-        $owned = (int) $context->db->value(
-            'SELECT count(*) FROM databases_ d JOIN sites s ON s.id = d.site_id
-             WHERE d.db_name = :n AND s.owner_user_id = :u',
-            ['n' => $database, 'u' => $actor->userId],
-            0,
-        );
-
-        if ($owned === 0) {
-            throw new PermissionDenied('คุณไม่มีสิทธิ์สำรองฐานข้อมูลนี้');
+            return ['ok' => true, 'message' => (string) ($result['message'] ?? 'ส่งออกนอกเครื่องแล้ว')];
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'message' => 'ส่งออกนอกเครื่องไม่สำเร็จ: ' . $e->getMessage()];
         }
     }
 }

@@ -13,16 +13,19 @@ use Phpcp\Support\Validator;
 /**
  * ลบไฟล์และโฟลเดอร์
  *
- * ปฏิเสธการลบโฟลเดอร์โครงสร้างของเว็บไซต์ (public, logs, tmp, backups) —
+ * ปฏิเสธการลบโฟลเดอร์โครงสร้างของเว็บไซต์ (public, logs, tmp, backup) —
  * ไม่ใช่เพราะกลัวผู้ใช้ทำลายข้อมูลตัวเอง แต่เพราะ vhost กับ pool ชี้ไปที่โฟลเดอร์เหล่านี้
  * ลบแล้วเว็บจะ 500 ทันทีและอาการจะดูเหมือนปัญหาที่ตัว PHP ซึ่งตามหาสาเหตุยากมาก
+ *
+ * `backup` เป็นตัวโฟลเดอร์เท่านั้น — **ไฟล์ข้างในลบได้ตามปกติ** และต้องลบได้ ลูกค้า
+ * เป็นเจ้าของสำเนาของตัวเองและตัดสินใจเองได้ว่าจะเก็บอันไหน (PLAN-BACKUP-V2 ข้อ B4)
  */
 final class FileDelete extends FileCapability
 {
     private const MAX_ITEMS = 100;
 
     /** โฟลเดอร์ชั้นบนสุดที่ระบบสร้างให้และห้ามลบ */
-    private const PROTECTED_ROOTS = ['public', 'logs', 'tmp', 'backups'];
+    private const PROTECTED_ROOTS = ['public', 'logs', 'tmp', 'backup'];
 
     public static function name(): string
     {

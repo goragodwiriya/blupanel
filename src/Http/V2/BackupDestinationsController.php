@@ -163,6 +163,26 @@ final class BackupDestinationsController extends ApiController
         }
 
         $repository = $this->repository();
+
+        /*
+         * **ปลายทางมีได้ชุดเดียว** (PLAN-BACKUP-V2 §4.2)
+         *
+         * ปลายทางหลายชุดฟังดูยืดหยุ่น แต่มันสร้างคำถามที่ไม่มีใครตอบไว้: ไฟล์ของบัญชี
+         * ไหนไปที่ไหน · ใครเป็นคนเลือก · ไฟล์ที่ส่งไปที่หนึ่งแล้วนโยบายเก็บของอีกที่หนึ่ง
+         * ลบทิ้ง นับว่ามีสำเนาอยู่ไหม · รอบสำรองอัตโนมัติเป็นกระบวนการเดียวทั้งเครื่อง
+         * (ข้อ B6) จึงต้องมีคำตอบเดียวว่า "สำเนานอกเครื่องอยู่ที่ไหน"
+         *
+         * แก้ของเดิมได้เสมอ — ที่ปฏิเสธคือการ**เพิ่มชุดที่สอง** ไม่ใช่การเปลี่ยนปลายทาง
+         */
+        $existing = $repository->all();
+
+        if ($existing !== []) {
+            return $this->problem(
+                ApiProblem::Conflict,
+                'This server already has an offsite destination — edit it instead of adding a second one',
+            );
+        }
+
         $driver = $request->payloadString('driver');
 
         $error = $this->validateDriver($repository, $driver, $this->configFrom($request), $request->payloadString('secret'));

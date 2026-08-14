@@ -11,23 +11,27 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\PermissionDenied;
 use Phpcp\Agent\ValidationError;
 use Phpcp\Domain\BackupDestinationRepository;
+use Phpcp\Domain\BackupFiles;
 use Phpcp\Driver\Backup\DestinationFactory;
 use Phpcp\Driver\BackupManager;
-use Phpcp\Security\Permissions;
 use Phpcp\Security\Secret;
 use Phpcp\Support\Validator;
 
 /**
- * ส่งไฟล์สำรองที่มีอยู่แล้วออกไปยังปลายทางนอกเครื่อง — PLAN-V2 เฟส E1
+ * ส่งไฟล์สำรองที่มีอยู่แล้วออกไปยังปลายทางนอกเครื่อง
  *
  * **ตรวจ checksum ก่อนส่งเสมอ** · การส่งไฟล์ที่เสียแล้วออกไปเก็บไว้ ทำให้ผู้ดูแลมี
  * "ไฟล์สำรองนอกเครื่อง" ที่กู้ไม่ได้จริง ซึ่งแย่กว่าไม่มีไฟล์นั้นเลย เพราะมันปิดโอกาส
- * ที่จะมีใครสังเกตว่าระบบสำรองพังอยู่
+ * ที่จะมีใครสังเกตว่าระบบสำรองพังอยู่ · checksum คำนวณจากไฟล์เดี๋ยวนั้น ไม่ใช่อ่าน
+ * จากตาราง — โฟลเดอร์เป็นของลูกค้า ไฟล์ในนั้นเปลี่ยนได้ระหว่างสองครั้งที่เรามอง
  *
  * **จำกัดที่ผู้ดูแลระดับเซิร์ฟเวอร์** — ปลายทางเป็นทรัพยากรของทั้งเครื่อง และการเลือก
  * ปลายทางได้เองเท่ากับเลือกได้ว่าจะส่งข้อมูลของเว็บไซต์ออกไปที่ไหน
+ *
+ * ชื่อไฟล์ที่ปลายทางเติมชื่อบัญชีนำหน้า — ปลายทางเดียวรับไฟล์จากทุกบัญชีบนเครื่อง
+ * และสองบัญชีมีเว็บชื่อเดียวกันไม่ได้ก็จริง แต่ไฟล์ที่ลูกค้าเปลี่ยนชื่อเองแล้วชนกันได้
  */
-final class BackupPush implements Capability
+final class BackupPush extends BackupCapability implements Capability
 {
     public static function name(): string
     {
@@ -52,27 +56,22 @@ final class BackupPush implements Capability
     public function validate(array $args): array
     {
         return [
-            'backup_id' => Validator::requireInt($args, 'backup_id', 1),
+            'user_id' => Validator::requireInt($args, 'user_id', 1),
+            'file' => BackupFiles::assertName(Validator::requireString($args, 'file', 255)),
             'destination_id' => Validator::requireInt($args, 'destination_id', 1),
         ];
     }
 
     public function run(array $args, Executor $executor, Context $context): array
     {
-        if (!in_array($context->actor->role, [Permissions::SUPERADMIN, Permissions::SYSADMIN], true)
-            && $context->actor->userId !== 0) {
+        if (!self::isAdmin($context->actor->role) && $context->actor->userId !== 0) {
             throw new PermissionDenied('การส่งไฟล์สำรองออกนอกเครื่องต้องใช้สิทธิ์ผู้ดูแลเซิร์ฟเวอร์');
         }
 
-        $backup = $context->db->first('SELECT * FROM backups WHERE id = :id', ['id' => $args['backup_id']]);
+        $owner = $this->ownerAccount($context, $args['user_id']);
+        $path = BackupFiles::resolve($owner, $args['file']);
 
-        if ($backup === null) {
-            throw new ValidationError('ไม่พบไฟล์สำรองที่ระบุ');
-        }
-
-        if (($backup['status'] ?? '') !== 'ok') {
-            throw new ValidationError('ไฟล์สำรองนี้สร้างไม่สำเร็จ จึงส่งออกไม่ได้');
-        }
+        $this->assertFileExists($executor, $path);
 
         $destinations = new BackupDestinationRepository($context->db, new Secret($context->config->secretKey()));
         $row = $destinations->find($args['destination_id']);
@@ -85,44 +84,38 @@ final class BackupPush implements Capability
             throw new ValidationError('ปลายทางนี้ถูกปิดใช้งานอยู่');
         }
 
-        // ตรวจก่อนส่ง — ไฟล์เสียที่ถูกส่งออกไปคือไฟล์สำรองปลอมที่ไม่มีใครรู้ว่าปลอม
-        (new BackupManager($context->config->paths->backups()))
-            ->assertIntact($executor, (string) $backup['path'], (string) ($backup['checksum'] ?? ''));
+        $checksum = @hash_file('sha256', $executor->path($path));
 
-        $destination = (new DestinationFactory($destinations, $context->config->paths->backups()))->make($row);
-        $remoteName = basename((string) $backup['path']);
+        if ($checksum === false) {
+            throw new ExecutionFailed('อ่านไฟล์สำรองเพื่อตรวจสอบก่อนส่งไม่ได้');
+        }
+
+        // ตรวจซ้ำผ่านด่านเดียวกับที่การกู้คืนใช้ — ไฟล์ที่หายไประหว่างนี้ต้องถูกจับ
+        (new BackupManager())->assertIntact($executor, $path, $checksum);
+
+        $destination = (new DestinationFactory($destinations, $owner->backupDir()))->make($row);
+        $remoteName = $owner->username . '-' . $args['file'];
 
         try {
-            $remotePath = $destination->push($executor, (string) $backup['path'], $remoteName);
+            $remotePath = $destination->push($executor, $path, $remoteName);
         } catch (\Throwable $e) {
-            $context->db->update('backups', [
-                'offsite_status' => 'failed',
-                'offsite_error' => mb_substr($e->getMessage(), 0, 500),
-                'destination_id' => $args['destination_id'],
-            ], ['id' => $args['backup_id']]);
-
             $destinations->recordResult($args['destination_id'], false, $e->getMessage());
 
             throw $e instanceof ExecutionFailed ? $e : new ExecutionFailed($e->getMessage());
         }
 
-        $context->db->update('backups', [
-            'destination_id' => $args['destination_id'],
-            'remote_path' => $remotePath,
-            'offsite_status' => 'ok',
-            'offsite_at' => time(),
-            'offsite_error' => null,
-        ], ['id' => $args['backup_id']]);
-
         $destinations->recordResult($args['destination_id'], true);
 
+        $bytes = (int) ($executor->stat($executor->path($path))['size'] ?? 0);
+
         return [
-            'backup_id' => $args['backup_id'],
+            'user_id' => $owner->userId,
+            'file' => $args['file'],
             'destination_id' => $args['destination_id'],
             'destination' => $row['name'],
             'remote_path' => $remotePath,
-            'bytes' => (int) $backup['size_bytes'],
-            'message' => sprintf('ส่งไฟล์สำรองไปที่ "%s" แล้ว', $row['name']),
+            'bytes' => $bytes,
+            'message' => sprintf('ส่ง %s ไปที่ "%s" แล้ว', $args['file'], $row['name']),
         ];
     }
 }

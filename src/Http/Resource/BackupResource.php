@@ -5,62 +5,43 @@ declare(strict_types=1);
 namespace Phpcp\Http\Resource;
 
 /**
- * ไฟล์สำรองหนึ่งไฟล์
+ * ไฟล์สำรองหนึ่งไฟล์ — **อ่านมาจากโฟลเดอร์จริง ไม่ใช่จากแถวในตาราง**
  *
- * `size_bytes` เป็นไบต์ดิบ ไม่ใช่ "1.2 GB" — หน้าจอจัดรูปแบบเอง และการเรียงตามขนาด
- * ต้องทำจากตัวเลขเท่านั้น
+ * ตั้งแต่ PLAN-BACKUP-V2 ข้อ B4 ตัวไฟล์คือแหล่งความจริง · สิ่งที่ทรัพยากรนี้ส่งออกไป
+ * จึงเป็นสิ่งที่ `stat()` ตอบได้เท่านั้น ไม่มีสถานะที่ระบบเคยจดไว้เมื่อวานปนอยู่เลย
  *
- * `checksum` ส่งมาด้วยเพราะเป็นสิ่งที่พิสูจน์ว่าไฟล์ยังไม่ถูกแก้ — การกู้คืนตรวจค่านี้
- * ทุกครั้งก่อนแตะข้อมูลจริง (ไฟล์สำรองที่ไม่มี checksum กู้ไม่ได้เลยโดยเจตนา)
- * ผู้ดูแลจึงควรเห็นได้ว่าไฟล์ไหนมีค่านี้
+ * `bytes` เป็นไบต์ดิบ ไม่ใช่ "1.2 GB" — หน้าจอจัดรูปแบบเอง และการเรียงตามขนาดต้องทำ
+ * จากตัวเลขเท่านั้น
  *
- * `offsite_status` คือคำตอบของคำถามที่สำคัญที่สุดในหน้านี้: **ไฟล์นี้มีสำเนาอยู่นอก
- * ดิสก์ก้อนนี้แล้วหรือยัง** · แยกสามค่าโดยตั้งใจ — `none` ยังไม่เคยส่ง · `failed`
- * ส่งแล้วล้มเหลว (ต้องเห็นเป็นสีเตือน) · `ok` มีสำเนาแล้ว
+ * **ไม่มี `checksum` และ `offsite_status` อีกแล้ว** · ทั้งคู่เคยมาจากแถวในตาราง ·
+ * checksum ที่บันทึกไว้ตอนสร้างพิสูจน์อะไรไม่ได้เมื่อไฟล์อยู่ในมือลูกค้า — ค่าที่มี
+ * ความหมายคือค่าที่คำนวณจากไฟล์เดี๋ยวนั้น ซึ่งการกู้คืนกับการส่งออกทำเองอยู่แล้วทุกครั้ง
+ *
+ * `restorable` คือคำตอบของคำถามที่หน้าจอต้องใช้จริง: ปุ่มกู้คืนกดได้ไหม · ไฟล์ที่จับคู่
+ * กับเว็บไม่ได้ (ลูกค้าคัดลอกมาเอง หรือมาจากเว็บที่ลบไปแล้ว) ยังแสดงในรายการเพราะมัน
+ * กินโควตาของเขาจริง แต่กู้คืนอัตโนมัติไม่ได้
  */
 final class BackupResource extends Resource
 {
     public static function one(array $row): array
     {
-        $status = self::string($row['status'] ?? '');
-        $offsiteStatus = self::string($row['offsite_status'] ?? 'none');
+        $type = self::string($row['type'] ?? '');
 
-        $backup = [
-            'id' => (int) ($row['id'] ?? 0),
+        return [
+            // ชื่อไฟล์คือกุญแจของทรัพยากรนี้ — คู่กับ `user_id` แล้วอ้างถึงไฟล์ได้ตรงตัว
             'name' => self::string($row['name'] ?? ''),
-            'type' => self::string($row['type'] ?? ''),
-            'site_id' => self::intOrNull($row['site_id'] ?? null),
             'path' => self::string($row['path'] ?? ''),
-            'size_bytes' => (int) ($row['size_bytes'] ?? 0),
-            'checksum' => self::string($row['checksum'] ?? ''),
-            'status' => $status,
-            // สีของป้ายมาจากฝั่งเซิร์ฟเวอร์ เทมเพลตจึงเขียน `pill-${..._tone}` ได้ตรง ๆ
-            'status_tone' => match ($status) {
-                'ok' => 'ok',
-                'failed' => 'danger',
-                'running' => 'warn',
-                default => 'muted',
-            },
-            'created_at' => self::intOrNull($row['created_at'] ?? null),
-            'destination_id' => self::intOrNull($row['destination_id'] ?? null),
-            'offsite_status' => $offsiteStatus,
-            'offsite_tone' => match ($offsiteStatus) {
-                'ok' => 'ok',
-                'failed' => 'danger',
-                default => 'muted',
-            },
-            'offsite_at' => self::intOrNull($row['offsite_at'] ?? null),
-            'offsite_error' => self::string($row['offsite_error'] ?? ''),
+            'type' => $type,
+            'type_label' => $type === 'database' ? 'ฐานข้อมูล' : 'ไฟล์เว็บไซต์',
+            'domain' => self::string($row['domain'] ?? ''),
+            'site_id' => (int) ($row['site_id'] ?? 0),
+            'user_id' => (int) ($row['user_id'] ?? 0),
+            'username' => self::string($row['username'] ?? ''),
+            'size_bytes' => (int) ($row['bytes'] ?? 0),
+            'modified_at' => (int) ($row['modified_at'] ?? 0),
+            'restorable' => (bool) ($row['restorable'] ?? false),
+            // สีของป้ายมาจากฝั่งเซิร์ฟเวอร์ เทมเพลตจึงเขียน `pill-${type_tone}` ได้ตรง ๆ
+            'type_tone' => $type === 'database' ? 'info' : 'ok',
         ];
-
-        if (array_key_exists('destination_name', $row)) {
-            $backup['destination_name'] = self::string($row['destination_name'] ?? '');
-        }
-
-        if (array_key_exists('primary_domain', $row)) {
-            $backup['site_domain'] = self::string($row['primary_domain'] ?? '');
-        }
-
-        return $backup;
     }
 }

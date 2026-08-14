@@ -4,54 +4,45 @@ declare(strict_types=1);
 
 namespace Phpcp\Http\V2;
 
-use Phpcp\Http\ApiProblem;
 use Phpcp\Http\Resource\BackupResource;
+use Phpcp\Kernel\Paths;
 use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * ข้อมูลสำรอง — `/api/v2/backups`
+ * ไฟล์สำรอง — `/api/v2/backups`
  *
- * ไฟล์สำรองระดับระบบ (type `config`) ไม่ผูกกับเว็บไซต์ใด ผู้ดูแลเว็บไซต์จึงไม่เห็น
- * — การกรองด้วย JOIN ทำให้แถวที่ `site_id` เป็น null หลุดออกจากผลลัพธ์ของ webadmin
- * โดยอัตโนมัติ ซึ่งเป็นพฤติกรรมที่ต้องการพอดี
+ * **รายการมาจากโฟลเดอร์จริงในบ้านของลูกค้า ไม่ใช่จากตาราง** (PLAN-BACKUP-V2 ข้อ B4) ·
+ * `<บ้าน>/backup` เปิดให้ลูกค้าเข้าถึงผ่าน SFTP โดยตั้งใจ เขาลบไฟล์ของตัวเองได้ทุกเมื่อ
+ * — แถวในตารางที่บันทึกไว้ตอนสร้างจึงเป็นคำโกหกที่รอเวลา · ที่นี่จึงถาม agent ให้อ่าน
+ * โฟลเดอร์ให้ทุกครั้ง (`backup.list`) แทนการ SELECT
  *
- * **การกู้คืนเป็นคำสั่งที่อันตรายที่สุดในระบบ** — มันเขียนทับข้อมูลปัจจุบันทั้งหมด
- * capability จึงบังคับให้ยืนยันด้วยชื่อโดเมนและตรวจ checksum ของไฟล์ก่อนแตะอะไรเลย
- * ที่นี่ทำเป็น sub-resource `restoration` ตาม §4.1 (คำนาม ไม่ใช่กริยา)
+ * ไฟล์ถูกอ้างด้วย **บัญชี + ชื่อไฟล์** ไม่ใช่รหัสแถว · เส้นทางของ REST จึงเป็น
+ * `/api/v2/backups/{user}/{file}` ซึ่งอ้างถึงตัวไฟล์จริงที่ยังอยู่หรือไม่อยู่ก็ได้
+ * ต่างจากรหัสแถวที่ชี้ไปยังบันทึกที่อาจไม่ตรงกับความจริงแล้ว
  */
 final class BackupsController extends HostingController
 {
-    /** เพดานของรายการ — เครื่องที่เปิดสำรองอัตโนมัติมีไฟล์สะสมเป็นพัน */
-    private const MAX_ROWS = 500;
-
     public function index(Request $request): Response
     {
-        $owner = $this->scopeOwner();
-        $where = $owner === null ? '' : ' WHERE s.owner_user_id = :owner';
-        $params = $owner === null ? [] : ['owner' => $owner];
+        $result = $this->agent()->data('backup.list', [
+            'user_id' => $request->queryInt('user_id', 0),
+        ], $this->ctx->actor($request));
 
-        $rows = $this->app->db()->all(
-            'SELECT b.*, s.primary_domain, d.name AS destination_name
-             FROM backups b
-        LEFT JOIN sites s ON s.id = b.site_id
-        LEFT JOIN backup_destinations d ON d.id = b.destination_id' . $where . '
-             ORDER BY b.created_at DESC LIMIT ' . self::MAX_ROWS,
-            $params,
-        );
+        $files = is_array($result['files'] ?? null) ? $result['files'] : [];
 
         $type = $request->get('type');
         if ($type !== '') {
-            $rows = array_values(array_filter($rows, static fn (array $r): bool => $r['type'] === $type));
+            $files = array_values(array_filter($files, static fn (array $f): bool => $f['type'] === $type));
         }
 
-        $siteId = $request->queryInt('site_id', 0);
-        if ($siteId > 0) {
-            $rows = array_values(array_filter($rows, static fn (array $r): bool => (int) ($r['site_id'] ?? 0) === $siteId));
+        $domain = $request->get('domain');
+        if ($domain !== '') {
+            $files = array_values(array_filter($files, static fn (array $f): bool => $f['domain'] === $domain));
         }
 
         $page = $this->pagination($request);
-        $slice = array_slice($rows, $page['offset'], $page['per_page']);
+        $slice = array_slice($files, $page['offset'], $page['per_page']);
 
         // เงื่อนไขปุ่มในตารางอ่านได้แค่ค่าในแถวเดียวกัน — สิทธิ์จึงต้องมากับแถว
         // (ชื่อแบน ๆ can_manage/can_restore/can_offsite ไม่ใช่ can.manage ซ้อนกัน
@@ -59,58 +50,62 @@ final class BackupsController extends HostingController
         $canManage = $this->ctx->can('backup.manage');
         $canRestore = $this->ctx->can('backup.restore');
         $canOffsite = $this->ctx->can('backup.offsite');
+        $sites = $this->domainToSiteId();
+
         $items = array_map(
-            static fn (array $row): array => $row + [
+            static fn (array $row): array => BackupResource::one($row + [
+                'site_id' => $sites[$row['domain']] ?? 0,
+            ]) + [
                 'can_manage' => $canManage,
-                'can_restore' => $canRestore,
+                'can_restore' => $canRestore && $row['restorable'],
                 'can_offsite' => $canOffsite,
             ],
-            BackupResource::collection($slice),
+            $slice,
         );
 
-        return $this->paginate($items, count($rows), $page['page'], $page['per_page'])
-            ->withHeader('X-Total-Size', (string) array_sum(array_column($rows, 'size_bytes')));
+        return $this->paginate($items, count($files), $page['page'], $page['per_page'])
+            ->withHeader('X-Total-Size', (string) array_sum(array_column($files, 'bytes')));
     }
 
     /**
-     * ที่เก็บไฟล์สำรองบนเครื่องนี้ — **ผู้ดูแลต้องรู้ว่าของอยู่ที่ไหนจริง ๆ**
+     * ที่เก็บไฟล์สำรอง — **ผู้ใช้ต้องรู้ว่าไฟล์ของตัวเองอยู่ที่ไหนจริง ๆ**
      *
-     * หน้าจอไม่เคยบอกเลยว่าไฟล์ไปอยู่ที่ไหน ผู้ดูแลจึงตรวจเองไม่ได้ว่ามีของอยู่จริงไหม
-     * ขนาดเท่าไร หรือดิสก์ใกล้เต็มหรือยัง — ทำได้แค่เชื่อสิ่งที่ตารางบอก ซึ่งเป็นท่า
-     * ที่แย่ที่สุดสำหรับระบบที่ทั้งระบบมีไว้ใช้ "ตอนที่อย่างอื่นพังไปหมดแล้ว"
+     * ตอนนี้คำตอบมีความหมายกับลูกค้าโดยตรง ไม่ใช่แค่กับผู้ดูแล: เส้นทางที่ตอบไปคือ
+     * เส้นทางที่เขา `cd` เข้าไปได้จริงผ่าน SFTP แล้วดาวน์โหลดไฟล์ออกมาเอง
      *
      * **แยกเป็น endpoint ของตัวเอง ไม่ใช่ `meta` ของรายการ** — `meta.*` ผูกกับ
      * `data-text`/`data-if` ของ Now.js ไม่ได้ (คอมโพเนนต์เห็นเฉพาะชั้น `data`)
      * ป้ายที่ผูกกับ meta จึงไม่เคยขึ้นเลย · เรื่องนี้เสียเวลาไปแล้วหนึ่งรอบในหน้า Mailboxes
-     *
-     * พื้นที่ว่างมาจาก filesystem ตรง ๆ ไม่ผ่าน agent — เป็นการอ่านค่าที่โปรเซสเว็บ
-     * ทำได้อยู่แล้วเพราะไดเรกทอรีนี้เป็นของมันเอง · ค่า 0 แปลว่าอ่านไม่ได้ ไม่ใช่เต็ม
      */
     public function storage(Request $request): Response
     {
-        $path = $this->app->config->paths->backups();
+        $result = $this->agent()->data('backup.list', [
+            'user_id' => $request->queryInt('user_id', 0),
+        ], $this->ctx->actor($request));
+
+        $files = is_array($result['files'] ?? null) ? $result['files'] : [];
         $owner = $this->scopeOwner();
 
-        $where = $owner === null ? '' : ' WHERE s.owner_user_id = :owner';
-        $params = $owner === null ? [] : ['owner' => $owner];
+        // ลูกค้าเห็นเส้นทางเดียวคือของตัวเอง · ผู้ดูแลเห็นหลายบัญชีจึงบอกเป็นรูปแบบ
+        $path = $owner === null
+            ? Paths::usersDir() . '/<บัญชี>/backup'
+            : (string) ($this->app->db()->value(
+                'SELECT COALESCE(system_user, username) FROM users WHERE id = :id',
+                ['id' => $owner],
+                '',
+            ));
 
-        $row = $this->app->db()->first(
-            'SELECT COUNT(*) AS files, COALESCE(SUM(b.size_bytes), 0) AS bytes
-             FROM backups b LEFT JOIN sites s ON s.id = b.site_id' . $where,
-            $params,
-        ) ?? [];
-
-        $free = @disk_free_space($path);
-        $total = @disk_total_space($path);
+        if ($owner !== null) {
+            $path = Paths::usersDir() . '/' . $path . '/backup';
+        }
 
         return $this->ok([
             'path' => $path,
-            // คีย์ขอบเขตของตัวจัดการไฟล์ (ดู FileRoots) — หน้าจอลิงก์ไปเปิดดูได้เลย
-            'scope' => 'backups',
-            'files' => (int) ($row['files'] ?? 0),
-            'bytes' => (int) ($row['bytes'] ?? 0),
-            'free_bytes' => $free === false ? 0 : (int) $free,
-            'total_bytes' => $total === false ? 0 : (int) $total,
+            'files' => count($files),
+            'bytes' => (int) ($result['bytes'] ?? 0),
+            // ไฟล์อยู่ในบ้านของลูกค้าแล้ว จึงเปิดดูได้จากขอบเขตไฟล์ที่เขามีอยู่แล้ว
+            // ไม่ต้องมีขอบเขตพิเศษของ panel อีก (ถอนออกแล้วใน PLAN-BACKUP-V2 §4.1)
+            'scope' => '',
         ]);
     }
 
@@ -122,7 +117,7 @@ final class BackupsController extends HostingController
     public function form(Request $request): Response
     {
         return $this->ok(
-            ['type' => 'site', 'site_id' => 0, 'database' => '', 'note' => ''],
+            ['type' => 'site', 'site_id' => 0, 'database' => ''],
             [],
             [[
                 'type' => 'modal',
@@ -138,15 +133,13 @@ final class BackupsController extends HostingController
      * สร้างไฟล์สำรอง
      *
      * ตอบ 201 ไม่ใช่ 202 เพราะ capability ทำงานแบบ synchronous จริง ๆ — ไฟล์พร้อมใช้
-     * ตั้งแต่ตอนที่คำตอบกลับไปถึงผู้เรียกแล้ว · จะเปลี่ยนเป็น 202 ก็ต่อเมื่อย้ายไปเป็น
-     * งานเบื้องหลังจริงในอนาคต (เฟส E1 ที่มีปลายทางนอกเครื่อง)
+     * ตั้งแต่ตอนที่คำตอบกลับไปถึงผู้เรียกแล้ว
      */
     public function store(Request $request): Response
     {
         $siteId = (int) $request->payload('site_id', 0);
 
-        // สำรองของเว็บไซต์ต้องเป็นเว็บที่ผู้เรียกมีสิทธิ์ · type config ไม่ผูกกับเว็บใด
-        if ($siteId > 0 && $this->findSite($siteId) === null) {
+        if ($this->findSite($siteId) === null) {
             return $this->siteNotFound();
         }
 
@@ -154,12 +147,7 @@ final class BackupsController extends HostingController
             'type' => $request->payloadString('type'),
             'site_id' => $siteId,
             'database' => trim($request->payloadString('database')),
-            'note' => trim($request->payloadString('note')),
         ], $this->ctx->actor($request));
-
-        $backup = isset($result['backup_id'])
-            ? $this->app->db()->first('SELECT * FROM backups WHERE id = :id', ['id' => $result['backup_id']])
-            : null;
 
         return $this->done(
             (string) ($result['message'] ?? 'Backup created'),
@@ -169,34 +157,29 @@ final class BackupsController extends HostingController
                  'message' => (string) ($result['message'] ?? 'Backup created')],
                 ['type' => 'redirect', 'url' => 'reload', 'target' => 'backups'],
             ],
-            $result + ['backup_id' => (int) ($backup['id'] ?? 0)],
+            is_array($result) ? $result : [],
             201,
-        )->withHeader('Location', '/api/v2/backups' . ($backup === null ? '' : '/' . $backup['id']));
+        );
     }
 
     /**
-     * กู้คืนจากไฟล์สำรอง — ต้องยืนยันด้วยชื่อโดเมน/ชื่อเป้าหมาย
+     * กู้คืนจากไฟล์สำรอง — ต้องยืนยันด้วยชื่อโดเมน
      *
-     * capability ตรวจ checksum ก่อนเสมอ และสร้างไฟล์สำรองนิรภัยของสถานะปัจจุบันไว้ก่อน
-     * เขียนทับ — ถ้าไฟล์ที่กู้เสียหาย ยังย้อนกลับไปจุดก่อนกู้ได้
+     * capability ตรวจ checksum ก่อนเสมอ อ่านใบแจ้งข้อมูลว่าไฟล์นี้เป็นของเว็บนี้จริง
+     * และสร้างไฟล์สำรองนิรภัยของสถานะปัจจุบันไว้ก่อนเขียนทับ
      */
     public function restore(Request $request): Response
     {
-        $backup = $this->findBackup($request->paramInt('id'));
-
-        if ($backup === null) {
-            return $this->problem(ApiProblem::NotFound, 'Backup not found');
-        }
-
         $result = $this->agent()->data('backup.restore', [
-            'backup_id' => (int) $backup['id'],
+            'site_id' => (int) $request->payload('site_id', 0),
+            'file' => self::fileParam($request),
             'confirm' => trim($request->payloadString('confirm')),
         ], $this->ctx->actor($request));
 
         return $this->completed(
             (string) ($result['message'] ?? 'Backup restored'),
             'backups',
-            $result,
+            is_array($result) ? $result : [],
         );
     }
 
@@ -208,28 +191,23 @@ final class BackupsController extends HostingController
      */
     public function pushOffsite(Request $request): Response
     {
-        $backup = $this->findBackup($request->paramInt('id'));
-
-        if ($backup === null) {
-            return $this->problem(ApiProblem::NotFound, 'Backup not found');
-        }
-
         $result = $this->agent()->data('backup.push', [
-            'backup_id' => (int) $backup['id'],
+            'user_id' => $request->paramInt('user'),
+            'file' => self::fileParam($request),
             'destination_id' => (int) $request->payload('destination_id', 0),
         ], $this->ctx->actor($request));
 
         return $this->completed(
             (string) ($result['message'] ?? 'Backup copied offsite'),
             'backups',
-            $result,
+            is_array($result) ? $result : [],
         );
     }
 
     /**
-     * นำไฟล์สำรองที่อยู่ปลายทางนอกเครื่องกลับมาลงทะเบียนบนเครื่องนี้
+     * นำไฟล์สำรองที่อยู่ปลายทางนอกเครื่องกลับมาไว้ในโฟลเดอร์ของเจ้าของ
      *
-     * จบที่การลงทะเบียน **ไม่กู้คืนต่อให้** — ผู้ดูแลกดกู้คืนเองแล้วพิมพ์ชื่อโดเมนยืนยัน
+     * จบที่การวางไฟล์ **ไม่กู้คืนต่อให้** — ผู้ดูแลกดกู้คืนเองแล้วพิมพ์ชื่อโดเมนยืนยัน
      * ตามเดิม · "ดึงไฟล์จากที่เก็บ" กับ "เขียนทับเว็บที่ใช้งานอยู่" เป็นคนละการตัดสินใจ
      */
     public function import(Request $request): Response
@@ -248,45 +226,56 @@ final class BackupsController extends HostingController
 
     public function destroy(Request $request): Response
     {
-        $backup = $this->findBackup($request->paramInt('id'));
-
-        if ($backup === null) {
-            return $this->problem(ApiProblem::NotFound, 'Backup not found');
-        }
-
-        $this->agent()->data('backup.delete', [
-            'backup_id' => (int) $backup['id'],
+        $result = $this->agent()->data('backup.delete', [
+            'user_id' => $request->paramInt('user'),
+            'file' => self::fileParam($request),
         ], $this->ctx->actor($request));
 
-        return $this->completed('Backup deleted', 'backups', ['backup_id' => (int) $backup['id']]);
+        return $this->completed(
+            (string) ($result['message'] ?? 'Backup deleted'),
+            'backups',
+            is_array($result) ? $result : [],
+        );
     }
 
     /**
-     * โหลดไฟล์สำรองที่ผู้เรียกมีสิทธิ์เห็น
+     * ชื่อไฟล์จากเส้นทาง — ถอดรหัส URL ก่อนเสมอ
      *
-     * ไฟล์ระดับระบบ (`site_id` เป็น null) ผู้ดูแลเว็บไซต์ต้องไม่เห็นและกู้ไม่ได้ —
-     * มันมีค่า config ของทั้งเครื่องอยู่ข้างใน
+     * Router จับคู่กับส่วนของเส้นทางที่ยัง**เข้ารหัสอยู่** และไม่ถอดให้ · ชื่อไฟล์ที่
+     * ระบบสร้างเองปลอดภัยกับ URL อยู่แล้ว แต่โฟลเดอร์นี้เป็นของลูกค้า เขาเปลี่ยนชื่อ
+     * ไฟล์เป็นภาษาไทยหรือใส่ช่องว่างได้ · ไม่ถอด = ปุ่มลบของไฟล์พวกนั้นตอบว่า "ไม่พบไฟล์"
      *
-     * @return array<string,mixed>|null
+     * `%2F` ที่ถอดออกมาเป็น `/` ยังถูก `BackupFiles::assertName()` ปฏิเสธอยู่ดี —
+     * การถอดรหัสไม่ได้เปิดทางให้ไต่ออกนอกโฟลเดอร์
      */
-    private function findBackup(int $id): ?array
+    private static function fileParam(Request $request): string
     {
-        if ($id < 1) {
-            return null;
+        return rawurldecode($request->param('file'));
+    }
+
+    /**
+     * โดเมน → รหัสเว็บไซต์ที่ผู้เรียกมีสิทธิ์เห็น
+     *
+     * ปุ่มกู้คืนต้องส่ง `site_id` ไปด้วย แต่รายการอ่านมาจากชื่อไฟล์ซึ่งรู้แค่ชื่อโดเมน ·
+     * แปลงที่นี่ทีเดียวแทนการ query ต่อแถว
+     *
+     * @return array<string,int>
+     */
+    private function domainToSiteId(): array
+    {
+        $owner = $this->scopeOwner();
+        $rows = $this->app->db()->all(
+            'SELECT id, primary_domain FROM sites'
+            . ($owner === null ? '' : ' WHERE owner_user_id = :owner'),
+            $owner === null ? [] : ['owner' => $owner],
+        );
+
+        $map = [];
+
+        foreach ($rows as $row) {
+            $map[(string) $row['primary_domain']] = (int) $row['id'];
         }
 
-        $backup = $this->app->db()->first('SELECT * FROM backups WHERE id = :id', ['id' => $id]);
-
-        if ($backup === null) {
-            return null;
-        }
-
-        if ($this->scopeOwner() === null) {
-            return $backup;
-        }
-
-        $siteId = (int) ($backup['site_id'] ?? 0);
-
-        return $siteId > 0 && $this->mayAccessSite($siteId) ? $backup : null;
+        return $map;
     }
 }

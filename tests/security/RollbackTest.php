@@ -25,7 +25,7 @@ test('ชื่อไฟล์สำรองต้องไม่ซ้ำแ�
 
     $names = [];
     for ($i = 0; $i < 50; $i++) {
-        $names[] = $method->invoke($manager, 'site-example.test', 'tar.gz');
+        $names[] = $method->invoke($manager, '/home/cust/backup', 'example.test-files', 'tar.gz');
     }
 
     assertSame(50, count(array_unique($names)), 'ชื่อไฟล์สำรอง 50 ครั้งติดกันต้องไม่ซ้ำกันเลย');
@@ -57,17 +57,40 @@ test('checksum ว่างต้องถูกปฏิเสธ ไม่ใ�
     @unlink($executor->path($path));
 });
 
-test('ลบไฟล์สำรองนอกไดเรกทอรีที่กำหนดไม่ได้', static function (): void {
+test('ลบไฟล์สำรองนอกโฟลเดอร์ของบัญชีนั้นไม่ได้', static function (): void {
+    /*
+     * ขอบเขตการลบเป็น **โฟลเดอร์ของบัญชีที่ผู้เรียกส่งมา** ไม่ใช่ไดเรกทอรีเดียวของทั้ง
+     * ระบบอีกแล้ว · ด่านนี้จึงเป็นตัวกันไม่ให้คำสั่งลบของบัญชีหนึ่งเอื้อมไปถึงไฟล์ของ
+     * อีกบัญชี ทั้งที่ทั้งคู่อยู่ใต้ `/home` เหมือนกัน
+     */
     $executor = new \Phpcp\Agent\Executor\SandboxExecutor(sys_get_temp_dir() . '/phpcp-bk2-' . getmypid());
     $manager = new BackupManager();
+    $dir = '/home/cust/backup';
 
-    foreach (['/etc/passwd', '/etc/shadow', '/var/lib/phpcp/panel.db', '/var/lib/phpcp/backups/../panel.db'] as $path) {
+    $outside = [
+        '/etc/passwd',
+        '/etc/shadow',
+        '/var/lib/phpcp/panel.db',
+        '/home/cust/backup/../.ssh/authorized_keys',
+        '/home/cust/public_html/index.php',
+        // บัญชีอื่นที่ชื่อขึ้นต้นเหมือนกัน — การเทียบสตริงดิบจะปล่อยผ่าน
+        '/home/cust2/backup/x.tar.gz',
+    ];
+
+    foreach ($outside as $path) {
         assertRejects(
             ValidationError::class,
-            static fn () => $manager->delete($executor, $path),
+            static fn () => $manager->delete($executor, $dir, $path),
             "ต้องปฏิเสธการลบ {$path}",
         );
     }
+
+    // ไฟล์ในโฟลเดอร์ของบัญชีนั้นต้องลบได้จริง ไม่ใช่ปฏิเสธทุกอย่างแล้วเทสต์ผ่าน
+    $inside = $dir . '/example.test-files-20260814-010101-aabbcc.tar.gz';
+    $executor->writeFile($executor->path($inside), 'ข้อมูลจำลอง');
+    $manager->delete($executor, $dir, $inside);
+
+    assertTrue(!$executor->exists($executor->path($inside)), 'ไฟล์ในโฟลเดอร์ของบัญชีต้องลบได้');
 });
 
 test('ค่าตั้ง SSH รับเฉพาะคีย์และค่าที่กำหนดไว้', static function (): void {
