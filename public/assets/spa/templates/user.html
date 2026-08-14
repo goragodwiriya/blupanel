@@ -222,29 +222,35 @@
             <div class="form-group">
               <div class="width33">
                 <label for="uq_domains" data-i18n>Domains</label>
-                <span class="form-control icon-number"><input type="number" id="uq_domains" name="quota_domains" min="-1" data-allow-negative="true" data-attr="value:quota.domains.limit"></span>
+                <span class="form-control icon-number"><input type="number" id="uq_domains" name="quota_domains" min="-1" data-allow-negative="true"
+                         data-attr="value:quota.domains.limit"></span>
               </div>
               <div class="width33">
                 <label for="uq_subdomains" data-i18n>Subdomains</label>
-                <span class="form-control icon-number"><input type="number" id="uq_subdomains" name="quota_subdomains" min="-1" data-allow-negative="true" data-attr="value:quota.subdomains.limit"></span>
+                <span class="form-control icon-number"><input type="number" id="uq_subdomains" name="quota_subdomains" min="-1" data-allow-negative="true"
+                         data-attr="value:quota.subdomains.limit"></span>
               </div>
               <div class="width33">
                 <label for="uq_databases" data-i18n>Databases</label>
-                <span class="form-control icon-number"><input type="number" id="uq_databases" name="quota_databases" min="-1" data-allow-negative="true" data-attr="value:quota.databases.limit"></span>
+                <span class="form-control icon-number"><input type="number" id="uq_databases" name="quota_databases" min="-1" data-allow-negative="true"
+                         data-attr="value:quota.databases.limit"></span>
               </div>
             </div>
             <div class="form-group">
               <div class="width33">
                 <label for="uq_aliases" data-i18n>Domain aliases</label>
-                <span class="form-control icon-number"><input type="number" id="uq_aliases" name="quota_aliases" min="-1" data-allow-negative="true" data-attr="value:quota.aliases.limit"></span>
+                <span class="form-control icon-number"><input type="number" id="uq_aliases" name="quota_aliases" min="-1" data-allow-negative="true"
+                         data-attr="value:quota.aliases.limit"></span>
               </div>
               <div class="width33">
                 <label for="uq_emails" data-i18n>Email</label>
-                <span class="form-control icon-number"><input type="number" id="uq_emails" name="quota_emails" min="-1" data-allow-negative="true" data-attr="value:quota.emails.limit"></span>
+                <span class="form-control icon-number"><input type="number" id="uq_emails" name="quota_emails" min="-1" data-allow-negative="true"
+                         data-attr="value:quota.emails.limit"></span>
               </div>
               <div class="width33">
                 <label for="uq_disk" data-i18n>Disk space (MB)</label>
-                <span class="form-control icon-number"><input type="number" id="uq_disk" name="disk_quota_mb" min="-1" data-allow-negative="true" data-attr="value:disk_quota_mb"></span>
+                <span class="form-control icon-number"><input type="number" id="uq_disk" name="disk_quota_mb" min="-1" data-allow-negative="true"
+                         data-attr="value:disk_quota_mb"></span>
               </div>
             </div>
             <div class="comment" data-i18n>-1 means unlimited</div>
@@ -286,28 +292,28 @@
         · ชื่อผู้ใช้ SFTP คือชื่อบัญชีเสมอ จึงอยู่ในหัวข้อไปเลย
       -->
       <div class="content-body" data-if="sites && permissions['customer.manage']">
-        <h2 class="icon-folder" data-i18n>SFTP access</h2>
+        <div class="header-actions">
+          <h2 class="icon-folder" data-i18n>SFTP access</h2>
+          <div data-if="sftp_available">
+            <span class="pill pill-ok" data-show="sftp_enabled === true" data-i18n>Enabled</span>
+            <span class="pill pill-muted" data-show="sftp_enabled === false" data-i18n>Disabled</span>
+            <span class="mono" data-show="sftp_enabled === true" data-text="username"></span>
+          </div>
+        </div>
         <!-- แพ็กเกจไม่รวม SFTP — ต่างจาก "รวมแต่ยังไม่ได้เปิด" จึงต้องบอกคนละแบบ -->
         <fieldset class="notice notice-warning" data-if="!sftp_available">
           <legend class="icon-warning" data-i18n>Not included in this package</legend>
           <p data-i18n>The FTP/SFTP quota for this account is 0. Change it above to allow SFTP.</p>
         </fieldset>
         <div data-if="sftp_available">
-          <p>
-            <span class="pill pill-ok" data-show="sftp_enabled === true" data-i18n>Enabled</span>
-            <span class="pill pill-muted" data-show="sftp_enabled === false" data-i18n>Disabled</span>
-            <span class="mono" data-show="sftp_enabled === true" data-text="username"></span>
-          </p>
-          <div class="header-actions">
-            <!-- เปิดครั้งแรกต้องตั้งรหัสผ่านไปพร้อมกัน จึงเป็นปุ่มเดียวกับเปลี่ยนรหัส -->
-            <button type="button" class="btn btn-primary icon-lock" data-show="sftp_enabled === false" data-action="click.prevent:requestApi"
-                    data-api-url="/api/v2/users/{id}/sftp/form" data-api-method="get" data-i18n>Enable SFTP</button>
-            <button type="button" class="btn icon-lock" data-show="sftp_enabled === true" data-action="click.prevent:requestApi"
-                    data-api-url="/api/v2/users/{id}/sftp/form" data-api-method="get" data-i18n>Change password</button>
-            <button type="button" class="btn btn-danger icon-ban" data-show="sftp_enabled === true" data-action="click.prevent:apiRefresh"
-                    data-api-url="/api/v2/users/{id}/sftp" data-api-method="delete" data-emit-event="phpcp:reload"
-                    data-confirm="Disable SFTP for this account? Files and websites are not affected." data-i18n>Disable SFTP</button>
-          </div>
+          <!-- เปิดครั้งแรกต้องตั้งรหัสผ่านไปพร้อมกัน จึงเป็นปุ่มเดียวกับเปลี่ยนรหัส -->
+          <button type="button" class="btn btn-primary icon-lock" data-show="sftp_enabled === false" data-action="click.prevent:requestApi"
+                  data-api-url="/api/v2/users/{id}/sftp/form" data-api-method="get" data-i18n>Enable SFTP</button>
+          <button type="button" class="btn icon-lock" data-show="sftp_enabled === true" data-action="click.prevent:requestApi" data-api-url="/api/v2/users/{id}/sftp/form"
+                  data-api-method="get" data-i18n>Change password</button>
+          <button type="button" class="btn btn-danger icon-ban" data-show="sftp_enabled === true" data-action="click.prevent:apiRefresh" data-api-url="/api/v2/users/{id}/sftp"
+                  data-api-method="delete" data-emit-event="phpcp:reload" data-confirm="Disable SFTP for this account? Files and websites are not affected." data-i18n>Disable
+            SFTP</button>
         </div>
       </div>
     </div>
