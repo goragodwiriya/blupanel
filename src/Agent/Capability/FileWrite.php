@@ -79,6 +79,10 @@ final class FileWrite extends FileCapability
             throw new ValidationError('ไฟล์ชนิดนี้แก้ไขผ่านตัวจัดการไฟล์ไม่ได้');
         }
 
+        // เทียบกับขนาดทั้งไฟล์ ไม่ใช่ส่วนต่างจากของเดิม — ไฟล์ถูกเขียนใหม่ทั้งไฟล์
+        // ผ่านไฟล์ชั่วคราวข้าง ๆ กัน จึงมีจังหวะที่ทั้งสองรุ่นอยู่บนดิสก์พร้อมกัน
+        $this->assertQuotaAllows($context, $scope, strlen($content));
+
         $result = $this->withPath(
             $executor,
             $scope,

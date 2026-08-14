@@ -124,8 +124,11 @@ final class Config
             'agent' => [
                 'socket' => '', // ว่าง = ใช้ค่าจาก Paths
                 'timeout' => 30,
-                // uid ที่อนุญาตให้ต่อ socket ได้ ตรวจด้วย SO_PEERCRED (ว่าง = ไม่ตรวจ)
-                'allowed_uids' => []
+                // uid ที่อนุญาตให้ต่อ socket ได้ ตรวจด้วย SO_PEERCRED เสมอ
+                // (root กับ uid ของ agent เองอยู่ในรายการโดยปริยาย — ดู Server::allowedUids())
+                'allowed_uids' => [],
+                // ชื่อผู้ใช้ของชั้นเว็บ · แปลงเป็น uid ตอนตรวจ เพราะ uid ต่างกันในแต่ละเครื่อง
+                'allowed_users' => ['phpcp-web']
             ],
             'sandbox' => [
                 'prefix' => '' // ว่าง = ใช้ค่าจาก Paths

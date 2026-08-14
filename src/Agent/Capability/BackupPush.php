@@ -66,7 +66,7 @@ final class BackupPush extends BackupCapability implements Capability
 
     public function run(array $args, Executor $executor, Context $context): array
     {
-        if (!self::isAdmin($context->actor->role) && $context->actor->userId !== 0) {
+        if (!self::isAdmin($context->actor->role)) {
             throw new PermissionDenied('การส่งไฟล์สำรองออกนอกเครื่องต้องใช้สิทธิ์ผู้ดูแลเซิร์ฟเวอร์');
         }
 

@@ -84,6 +84,10 @@ final class FileZip extends FileCapability
         $folder = $args['path'];
         $archive = PathGuard::join($folder, $args['archive']);
 
+        // ขนาดของไฟล์บีบอัดรู้ไม่ได้ก่อนบีบเสร็จ — ตรวจได้แค่ว่าโควตายังไม่เต็ม
+        // (`RealExecutor::zip()` มีเพดาน 512 MB ของตัวเองกันของที่ใหญ่เกินจริงอยู่แล้ว)
+        $this->assertQuotaAllows($context, $scope);
+
         $result = $this->withSite($executor, $scope, static function (callable $resolve) use ($executor, $items, $folder, $archive): array {
             $target = $resolve($archive, false);
             if ($executor->stat($target) !== null) {

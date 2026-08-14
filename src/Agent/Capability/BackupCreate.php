@@ -9,7 +9,10 @@ use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\PermissionDenied;
 use Phpcp\Agent\ValidationError;
+use Phpcp\Domain\DiskQuota;
+use Phpcp\Domain\Site;
 use Phpcp\Driver\BackupManager;
+use Phpcp\Driver\Db\MariaDbManager;
 use Phpcp\Support\Validator;
 
 /**
@@ -31,6 +34,11 @@ use Phpcp\Support\Validator;
  */
 final class BackupCreate extends BackupCapability implements Capability
 {
+    private const DU = '/usr/bin/du';
+
+    /** วัดขนาดต้องไม่กลายเป็นตัวที่ทำให้งานสำรองค้าง — เพดานเดียวกับ DiskQuotaCheck */
+    private const MEASURE_TIMEOUT = 120;
+
     public static function name(): string
     {
         return 'backup.create';
@@ -77,13 +85,19 @@ final class BackupCreate extends BackupCapability implements Capability
         $site = $this->siteFor($context, $args['site_id']);
         $owner = $site->owner;
 
-        $this->assertQuotaAllows($context, $owner);
+        // ต้องรู้ว่าจะสำรองฐานไหนก่อนวัดขนาด — และผู้ใช้ควรเห็น "เว็บนี้ไม่มีฐานข้อมูล"
+        // ก่อนเห็น "โควตาไม่พอ" เสมอ เพราะข้อแรกเจาะจงกว่าและแก้ได้ตรงกว่า
+        $database = $args['type'] === 'database'
+            ? $this->database($context, $site->id, $args['database'])
+            : '';
+
+        $this->assertQuotaAllows($context, $owner, $this->estimateBytes($executor, $site, $database));
 
         $manager = new BackupManager();
         $ownerString = self::ownerString($context, $owner);
 
-        $created = $args['type'] === 'database'
-            ? $manager->backupDatabase($executor, $site, $this->database($context, $site->id, $args['database']), $ownerString)
+        $created = $database !== ''
+            ? $manager->backupDatabase($executor, $site, $database, $ownerString)
             : $manager->backupSite($executor, $site, $ownerString);
 
         $file = [
@@ -111,6 +125,60 @@ final class BackupCreate extends BackupCapability implements Capability
                 $owner->backupDir(),
             ) . ($offsite === [] ? '' : ' · ' . $offsite['message']),
         ];
+    }
+
+    /**
+     * ขนาดที่ไฟล์สำรองนี้จะกินอย่างมากที่สุด — ตัวเลขที่ด่านโควตาต้องใช้
+     *
+     * **เป็นขนาดก่อนบีบอัดโดยตั้งใจ** · ไฟล์จริงที่ได้เล็กกว่านี้เกือบเสมอ (ข้อความ
+     * ของเว็บและ SQL บีบได้ราว 5-10 เท่า) แต่ด่านโควตาต้องเผื่อไว้ทางที่ปลอดภัย —
+     * เดาต่ำแล้วผิดคือดิสก์เต็มจนเว็บของลูกค้ารายอื่นเขียนไฟล์ไม่ได้ ส่วนเดาสูงแล้วผิด
+     * คือข้อความที่บอกให้ลบไฟล์เก่าก่อน ซึ่งลูกค้าแก้เองได้ใน 10 วินาที · ข้อความ
+     * ของด่านจึงเขียนว่า "ไม่เกิน" ไม่ใช่ "ต้องการ" ({@see DiskQuota::assertFits()})
+     *
+     * วัดไม่ได้ = คืน UNKNOWN ไม่ใช่ 0 ที่แปลว่า "ไม่กินที่เลย" — บัญชีที่วัดบ้านไม่ได้
+     * ต้องตกไปใช้ด่าน "เต็มหรือยัง" ไม่ใช่ผ่านฉลุยเพราะการวัดล้ม
+     */
+    private function estimateBytes(Executor $executor, Site $site, string $database): int
+    {
+        try {
+            if ($database !== '') {
+                return (new MariaDbManager())->sizes($executor)[$database] ?? DiskQuota::UNKNOWN;
+            }
+
+            return $this->measureDirectory($executor, $site);
+        } catch (\Throwable) {
+            // วัดไม่ได้ต้องไม่ทำให้การสำรองล้มทั้งงาน — ด่านที่เหลือยังกัน "โควตาเต็ม" อยู่
+            return DiskQuota::UNKNOWN;
+        }
+    }
+
+    /**
+     * ขนาดของ docroot เป็นไบต์ — เดินไฟล์ด้วยสิทธิ์เจ้าของตาม ARCHITECTURE §4.4
+     *
+     * เดินต้นไม้ไฟล์เพิ่มอีกรอบก่อน tar จะเดินซ้ำ ซึ่งยอมรับได้: `du` อ่านแต่ metadata
+     * ส่วน tar อ่านเนื้อไฟล์ทั้งหมดแล้วบีบอัด — ต้นทุนต่างกันคนละระดับ
+     */
+    private function measureDirectory(Executor $executor, Site $site): int
+    {
+        $path = $executor->path($site->docroot());
+
+        if (!$executor->exists($path)) {
+            return DiskQuota::UNKNOWN;
+        }
+
+        $result = $executor->asUser($site->systemUser(), static function () use ($executor, $path): array {
+            $run = $executor->exec([self::DU, '-sk', '-x', '--', $path], timeout: self::MEASURE_TIMEOUT);
+
+            return ['ok' => $run->ok(), 'out' => $run->output()];
+        });
+
+        if (($result['ok'] ?? false) !== true
+            || preg_match('/^(\d+)/', (string) ($result['out'] ?? ''), $m) !== 1) {
+            return DiskQuota::UNKNOWN;
+        }
+
+        return ((int) $m[1]) * 1024;
     }
 
     /**

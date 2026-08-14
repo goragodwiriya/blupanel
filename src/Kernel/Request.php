@@ -114,6 +114,23 @@ final class Request
      * X-Forwarded-For เชื่อถือได้ก็ต่อเมื่อคำขอมาจาก proxy ที่เราตั้งไว้เองเท่านั้น
      * ไม่อย่างนั้นผู้โจมตีปลอม header นี้เพื่อหลบ rate limit และ IP allowlist ได้ทันที
      *
+     * ## ทำไมต้องไล่จากขวา ไม่ใช่หยิบตัวซ้ายสุด
+     *
+     * `X-Forwarded-For` เป็นรายการที่ **proxy ต่อท้าย** ทีละชั้น ตัวซ้ายสุดจึงเป็นค่าที่
+     * ชั้นนอกสุดได้รับมา — ซึ่งก็คือค่าที่**ผู้ใช้ส่งมาเอง** ถ้าเขาใส่ header นี้มาด้วย
+     * ตัวเอง · เดิมโค้ดนี้หยิบตัวซ้ายสุด แปลว่าใครก็ตามที่ยิงผ่าน proxy ที่เราเชื่อ
+     * เพียงแค่แนบ `X-Forwarded-For: 1.2.3.4` มาเอง ก็กลายเป็น 1.2.3.4 ในสายตาของระบบ
+     * ทันที — หลบ rate limit ได้ด้วยการเปลี่ยนตัวเลขทุกคำขอ และทำให้การผูก session
+     * กับ IP ({@see \Phpcp\Security\SessionStore::find()}) ไร้ความหมาย เพราะขโมยคุกกี้
+     * ไปแล้วประกาศ IP ของเจ้าของได้เอง
+     *
+     * วิธีที่ถูกคือไล่จาก**ขวาสุด**เข้ามา ข้ามชั้นที่เป็น proxy ของเราเอง แล้วหยุดที่
+     * ตัวแรกที่ไม่ใช่ — ตัวนั้นคือค่าที่ proxy ชั้นในสุดของเรา**เห็นกับตา** ไม่ใช่ค่าที่
+     * ใครก็ได้เขียนใส่มา
+     *
+     * รูปแบบที่อ่านไม่ออกถือว่าเชื่อไม่ได้ทั้งหัว แล้วตกกลับไปใช้ REMOTE_ADDR —
+     * ข้ามรายการที่เพี้ยนแล้วอ่านตัวถัดไปคือการให้ผู้โจมตีเลือกได้ว่าจะให้เราอ่านตัวไหน
+     *
      * @param array<string,mixed> $server
      * @param list<string> $trustedProxies
      */
@@ -130,14 +147,21 @@ final class Request
             return $remote;
         }
 
-        // เอาตัวซ้ายสุดที่เป็น IP ถูกต้อง = ผู้ใช้จริงที่อยู่ปลายสุด
-        foreach (explode(',', $forwarded) as $candidate) {
-            $candidate = trim($candidate);
-            if (filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
+        $chain = explode(',', $forwarded);
+
+        for ($i = count($chain) - 1; $i >= 0; $i--) {
+            $candidate = trim($chain[$i]);
+
+            if (filter_var($candidate, FILTER_VALIDATE_IP) === false) {
+                return $remote;
+            }
+
+            if (!in_array($candidate, $trustedProxies, true)) {
                 return $candidate;
             }
         }
 
+        // ทั้งสายเป็น proxy ของเราเอง — ไม่มีใครนอกระบบอยู่ในนี้เลย
         return $remote;
     }
 

@@ -82,6 +82,9 @@ final class FileUpload extends FileCapability
         $content = $args['content'];
         $overwrite = $args['overwrite'];
 
+        // รู้ขนาดแน่นอนตั้งแต่ validate() แล้ว — ด่านนี้จึงเทียบตัวเลขจริง ไม่ใช่เดา
+        $this->assertQuotaAllows($context, $scope, strlen($content));
+
         $this->withPath(
             $executor,
             $scope,

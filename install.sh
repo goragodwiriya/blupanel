@@ -685,8 +685,22 @@ fi
     mkdir -p "$PMA_DIR"
     ln -s /usr/share/phpmyadmin/* "$PMA_DIR/" 2>/dev/null || true
     # Set blowfish_secret so cookie logins do not hang
+    #
+    # This is the key phpMyAdmin encrypts the stored MySQL password with, so its strength
+    # is the strength of every saved database credential.
+    #
+    # phpMyAdmin uses exactly 32 bytes: longer values are cut to the first 32, shorter ones
+    # are thrown away in favour of a throwaway key that only lasts one session. The old
+    # `openssl rand -hex 16` produced the right *length* (32 hex characters) but every
+    # character was one of only 16 - just 128 bits of entropy in a 32-byte key, and no
+    # warning anywhere because the length looked correct.
+    #
+    # `-base64 24` is exactly 32 characters with no padding and carries 192 bits. Base64
+    # output never contains a quote or a backslash, so it is safe inside the single-quoted
+    # PHP string below. Raw 32 bytes via sodium_hex2bin() would be stronger still, but that
+    # makes the config file fail hard on any machine without the sodium extension.
     if [ -f /etc/phpmyadmin/config.inc.php ]; then
-      PMA_SECRET=$(openssl rand -hex 16)
+      PMA_SECRET=$(openssl rand -base64 24)
       if ! grep -q "blowfish_secret" /etc/phpmyadmin/config.inc.php; then
         echo "\$cfg['blowfish_secret'] = '${PMA_SECRET}';" >> /etc/phpmyadmin/config.inc.php
       fi

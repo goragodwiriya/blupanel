@@ -225,26 +225,68 @@ final class Server
      */
     private function peerAllowed(mixed $connection): bool
     {
-        $allowed = array_map(intval(...), $this->config->list('agent.allowed_uids'));
-        if ($allowed === []) {
-            return true;    // ไม่ได้ตั้งไว้ = พึ่งสิทธิ์ไฟล์ของ socket อย่างเดียว
-        }
-
         $uid = $this->peerUid($connection);
+
         if ($uid === null) {
             $this->logger->warn('ตรวจ uid ของผู้เชื่อมต่อไม่ได้ จึงปฏิเสธไว้ก่อน');
 
             return false;
         }
 
-        // root ต่อได้เสมอ ไม่อย่างนั้น phpcp CLI จะใช้งานไม่ได้
-        if ($uid === 0 || in_array($uid, $allowed, true)) {
+        if (in_array($uid, $this->allowedUids(), true)) {
             return true;
         }
 
         $this->logger->warn('ปฏิเสธการเชื่อมต่อจาก uid ที่ไม่อยู่ในรายการ', ['uid' => $uid]);
 
         return false;
+    }
+
+    /**
+     * uid ที่ยอมให้ต่อ socket ได้ — **ปิดไว้ก่อนเป็นค่าเริ่มต้น ไม่ใช่เปิด**
+     *
+     * เดิมรายการว่างแปลว่า "ไม่ต้องตรวจ" ซึ่งเป็นค่าเริ่มต้นของทุกเครื่อง · ด่านชั้นที่สอง
+     * นี้จึงไม่เคยทำงานเลยในทางปฏิบัติ เหลือแต่สิทธิ์ไฟล์ของ socket (0660 root:phpcp)
+     * เป็นด่านเดียว — แปลว่าอะไรก็ตามที่เข้าไปอยู่ในกลุ่ม `phpcp` ได้ ส่ง
+     * `role=superadmin, user_id=0` เข้ามาแล้วสั่งอะไรก็ได้ทั้งเครื่อง
+     *
+     * สามชุดที่อยู่ในรายการเสมอ และเหตุผลของแต่ละชุด:
+     *
+     *   - **root** — `phpcp` CLI และงานตามเวลารันด้วยสิทธิ์นี้
+     *   - **uid ของ agent เอง** — โหมด portable ไม่มี root เลย ทั้งชั้นเว็บและ agent
+     *     เป็นผู้ใช้คนเดียวกัน · ถ้าไม่มีข้อนี้ การติดตั้งแบบนั้นจะต่อ socket ตัวเอง
+     *     ไม่ได้ตั้งแต่วินาทีแรก
+     *   - **`agent.allowed_users`** — ชื่อผู้ใช้ของชั้นเว็บ (ค่าเริ่มต้น `phpcp-web`)
+     *     แปลงเป็น uid ตอนตรวจ ไม่ใช่ตอนติดตั้ง เพราะ uid ของบัญชีระบบต่างกันไปในแต่ละ
+     *     เครื่อง และเปลี่ยนได้เมื่อย้ายเครื่อง — เลขที่ฝังไว้ในไฟล์ตั้งค่าจะกลายเป็น
+     *     เลขของผู้ใช้คนอื่นเงียบ ๆ
+     *
+     * **ข้อจำกัดที่ต้องรู้:** ด่านนี้กัน "โปรเซสอื่นที่บังเอิญอยู่ในกลุ่มเดียวกัน" ได้
+     * แต่กัน "ชั้นเว็บที่ถูกเจาะแล้ว" ไม่ได้ — โปรเซสนั้น**คือ** `phpcp-web` จริง ๆ
+     * และไม่มีความลับใดที่มันไม่มี (config.php เป็น 0640 root:phpcp) · การผูก HMAC
+     * เพิ่มจึงไม่ช่วยอะไรกับกรณีนั้นเลย · agent ยืนหยัดต่อชั้นเว็บที่ถูกเจาะได้ด้วย
+     * `permission()` ของแต่ละ capability กับด่านความเป็นเจ้าของเท่านั้น — ซึ่งเป็น
+     * เหตุผลที่ {@see Actor::fromArray()} ต้องไม่ยอมรับ "รหัสผู้ใช้ 0 + บทบาทลูกค้า"
+     *
+     * @return list<int>
+     */
+    private function allowedUids(): array
+    {
+        $allowed = [0, posix_geteuid()];
+
+        foreach ($this->config->list('agent.allowed_uids') as $uid) {
+            $allowed[] = (int) $uid;
+        }
+
+        foreach ($this->config->list('agent.allowed_users') as $name) {
+            $identity = @posix_getpwnam((string) $name);
+
+            if ($identity !== false) {
+                $allowed[] = (int) $identity['uid'];
+            }
+        }
+
+        return array_values(array_unique($allowed));
     }
 
     /** @param resource|\Socket $connection */

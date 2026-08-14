@@ -156,7 +156,10 @@ final class WebhookNotifier
         }
 
         $host = (string) (parse_url($url, PHP_URL_HOST) ?? '');
-        $isLocal = in_array($host, ['127.0.0.1', 'localhost', '::1'], true);
+
+        // parse_url คืน IPv6 มาพร้อมวงเล็บ (`[::1]`) — ข้อยกเว้น localhost ที่เขียนไว้
+        // ข้างบนจึงไม่เคยตรงกับ `::1` เลยจนกว่าจะถอดวงเล็บออกก่อนเทียบ
+        $isLocal = in_array(trim($host, '[]'), ['127.0.0.1', 'localhost', '::1'], true);
 
         if (!str_starts_with($url, 'https://') && !$isLocal) {
             throw new ValidationError(
@@ -166,6 +169,87 @@ final class WebhookNotifier
             );
         }
 
+        /*
+         * ชื่อผู้ใช้/รหัสผ่านใน URL — ปฏิเสธ ไม่ใช่ส่งต่อ
+         *
+         * มันจะถูกบันทึกลงตาราง settings เป็นข้อความธรรมดา (คีย์ `notify.webhook.url`
+         * ไม่ใช่ชนิด `secret` จึงไม่ถูกปิดบังตอนส่งกลับไปหน้าจอ) และโผล่ในข้อความ
+         * ผิดพลาดของ curl ด้วย · ใครที่อยากยืนยันตัวตนกับปลายทางควรใช้ HMAC ที่มีอยู่แล้ว
+         */
+        if (parse_url($url, PHP_URL_USER) !== null || parse_url($url, PHP_URL_PASS) !== null) {
+            throw new ValidationError(
+                'URL ของ webhook ต้องไม่มีชื่อผู้ใช้หรือรหัสผ่านฝังอยู่ — ค่านี้ถูกเก็บและ'
+                . 'แสดงเป็นข้อความธรรมดา · ใช้ช่อง "รหัสลับ" เพื่อลงลายเซ็น HMAC แทน',
+            );
+        }
+
+        if (!$isLocal) {
+            self::assertNotInternal($host);
+        }
+
         return $url;
+    }
+
+    /**
+     * ปลายทางต้องไม่ใช่ที่อยู่ภายในเครือข่าย — กัน panel ถูกใช้เป็นตัวยิงแทน (SSRF)
+     *
+     * ผู้ดูแลที่ถูกหลอก (หรือบัญชีผู้ดูแลที่ถูกยึด) ตั้ง URL เป็น `https://10.0.0.5/`
+     * หรือ `https://169.254.169.254/` ได้ · ปลายทางแรกคือบริการภายในที่ไม่ได้เปิดออก
+     * อินเทอร์เน็ต ส่วนตัวหลังคือ metadata ของผู้ให้บริการคลาวด์ ซึ่งตอบ credential
+     * ของเครื่องกลับมา · เครื่องนี้ยิงถึงทั้งคู่ได้ทั้งที่คนนอกยิงไม่ถึง
+     *
+     * **ที่อยู่ที่เป็นตัวเลขตรง ๆ ถูกตรวจเสมอ · ชื่อโฮสต์ตรวจเท่าที่แปลงได้**
+     * ชื่อที่แปลงไม่ออก (DNS ล่ม, ยังไม่ได้ตั้งเรกคอร์ด) ไม่ถูกปฏิเสธ — การทำให้
+     * ฟอร์มตั้งค่าใช้ไม่ได้ทุกครั้งที่ DNS สะดุด แลกกับด่านที่เลี่ยงได้อยู่แล้ว
+     * ไม่คุ้ม · และด่านนี้ตรวจ ณ ตอนบันทึก ไม่ได้ตรึงที่อยู่ไว้ตอนส่ง ชื่อที่ชี้
+     * ไปที่อยู่สาธารณะวันนี้แล้วเปลี่ยนเป็นที่อยู่ภายในพรุ่งนี้ (DNS rebinding)
+     * จึงยังผ่านได้ — ข้อจำกัดที่ยอมรับสำหรับค่าที่มีแต่ผู้ดูแลเท่านั้นที่ตั้งได้
+     */
+    private static function assertNotInternal(string $host): void
+    {
+        $public = FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE;
+
+        foreach (self::addressesOf($host) as $ip) {
+            if (filter_var($ip, FILTER_VALIDATE_IP, $public) === false) {
+                throw new ValidationError(sprintf(
+                    'URL ของ webhook ชี้ไปที่อยู่ภายใน (%s) — ปลายทางต้องเป็นที่อยู่สาธารณะ'
+                    . ' เพื่อไม่ให้เครื่องนี้ถูกใช้ยิงเข้าเครือข่ายภายในแทนผู้อื่น',
+                    $ip,
+                ));
+            }
+        }
+    }
+
+    /** @return list<string> ที่อยู่ของโฮสต์ · ว่าง = แปลงไม่ได้ ซึ่งไม่ถือว่าผิด */
+    private static function addressesOf(string $host): array
+    {
+        if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
+            return [$host];
+        }
+
+        // ตัดวงเล็บของ IPv6 ในรูป URL (`[::1]`) ออกก่อน — parse_url คืนมาพร้อมวงเล็บ
+        $bare = trim($host, '[]');
+
+        if (filter_var($bare, FILTER_VALIDATE_IP) !== false) {
+            return [$bare];
+        }
+
+        $records = @dns_get_record($host, DNS_A | DNS_AAAA);
+
+        if (!is_array($records)) {
+            return [];
+        }
+
+        $addresses = [];
+
+        foreach ($records as $record) {
+            $ip = (string) ($record['ip'] ?? $record['ipv6'] ?? '');
+
+            if ($ip !== '') {
+                $addresses[] = $ip;
+            }
+        }
+
+        return $addresses;
     }
 }

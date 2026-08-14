@@ -151,9 +151,40 @@ final class SessionController extends ApiController
             return $this->problem(ApiProblem::Unauthenticated, 'This account does not have two-factor enabled');
         }
 
+        /*
+         * บัญชีที่ถูกล็อกจากการเดาต้องถูกกันที่ด่านนี้ด้วย ไม่ใช่เฉพาะด่านรหัสผ่าน
+         *
+         * ตัวจำกัดอัตราของ middleware ผูกกับ **IP** (`login:<ip>`) ซึ่งกันคนเดียวยิงรัว
+         * ได้ แต่ไม่กันการกระจายยิงจากหลาย IP · รหัสหกหลักมีความเป็นไปได้ล้านแบบ
+         * ซึ่งน้อยพอที่การกระจายยิงจะได้ผลจริงถ้าไม่มีการนับความล้มเหลว**รายบัญชี**
+         * · ใช้ตัวนับชุดเดียวกับรหัสผ่าน เพราะทั้งสองด่านกันของเดียวกันคือการเดา
+         */
+        if ($users->isLocked($user)) {
+            $seconds = $users->lockRemaining($user);
+
+            $this->audit($request, 'auth.2fa', (string) $user['username'], 'denied', ['reason' => 'บัญชีถูกล็อกชั่วคราว']);
+
+            return $this->problem(
+                ApiProblem::RateLimited,
+                $this->t('Too many failed sign-ins — this account is locked for another {minutes} minutes', ['minutes' => (int) ceil($seconds / 60)]),
+            )->withHeader('Retry-After', (string) max(1, $seconds));
+        }
+
         $code = trim($request->payloadString('code'));
         $secret = new Secret($this->app->config->secretKey());
-        $accepted = Totp::verify($secret->decrypt((string) $user['totp_secret']), $code);
+
+        // รับเฉพาะรหัสที่ใหม่กว่าช่วงเวลาที่ใช้ไปแล้ว — รหัสเดิมใช้ซ้ำไม่ได้แม้ยังไม่หมดอายุ
+        $counter = Totp::verifyAt(
+            $secret->decrypt((string) $user['totp_secret']),
+            $code,
+            (int) ($user['totp_last_counter'] ?? 0),
+        );
+
+        $accepted = $counter !== null;
+
+        if ($accepted) {
+            $users->recordTotpCounter((int) $user['id'], $counter);
+        }
 
         // รหัสสำรองใช้ได้ครั้งเดียว เผื่อทำอุปกรณ์ยืนยันตัวตนหาย
         if (!$accepted) {
@@ -161,10 +192,20 @@ final class SessionController extends ApiController
         }
 
         if (!$accepted) {
+            $users->registerFailure(
+                (int) $user['id'],
+                $this->app->config->int('security.max_login_attempts', 5),
+                $this->app->config->int('security.lockout_seconds', 900),
+            );
+
             $this->audit($request, 'auth.2fa', (string) $user['username'], 'denied');
 
             return $this->problem(ApiProblem::TwoFactorRequired, 'The verification code is not correct', ['code' => 'The verification code is not correct']);
         }
+
+        // ผ่านแล้วต้องล้างตัวนับ ไม่งั้นความล้มเหลวสะสมจากครั้งก่อน ๆ จะไปล็อกบัญชี
+        // ในการเข้าใช้งานครั้งถัดไปทั้งที่คนใช้ทำถูกทุกอย่าง
+        $users->registerSuccess((int) $user['id'], $request->ip, (string) $user['password_hash']);
 
         $store = new SessionStore($this->app->db(), $this->app->config);
         $store->markAuthenticated($this->ctx->sessionId);

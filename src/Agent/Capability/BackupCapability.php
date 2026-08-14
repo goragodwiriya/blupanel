@@ -8,7 +8,7 @@ use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\PermissionDenied;
 use Phpcp\Agent\ValidationError;
-use Phpcp\Domain\Quota;
+use Phpcp\Domain\DiskQuota;
 use Phpcp\Domain\Site;
 use Phpcp\Domain\SiteRepository;
 use Phpcp\Domain\UserAccount;
@@ -38,7 +38,7 @@ abstract class BackupCapability
     {
         $actor = $context->actor;
 
-        if (!self::isAdmin($actor->role) && $actor->userId !== 0 && $userId !== $actor->userId) {
+        if (!self::isAdmin($actor->role) && $userId !== $actor->userId) {
             // "ไม่พบ" ไม่ใช่ "ห้ามเข้าถึง" — คำตอบที่ต่างกันบอกผู้เรียกว่ารหัสไหนมีอยู่จริง
             throw new ValidationError("ไม่พบบัญชีโฮสติ้งรหัส {$userId}");
         }
@@ -80,9 +80,7 @@ abstract class BackupCapability
 
         $actor = $context->actor;
 
-        if (!self::isAdmin($actor->role)
-            && $actor->userId !== 0
-            && !$repository->isOwnedBy($siteId, $actor->userId)) {
+        if (!self::isAdmin($actor->role) && !$repository->isOwnedBy($siteId, $actor->userId)) {
             throw new PermissionDenied('คุณไม่มีสิทธิ์จัดการข้อมูลสำรองของเว็บไซต์นี้');
         }
 
@@ -114,43 +112,16 @@ abstract class BackupCapability
      * การปล่อยให้เขียนไปเรื่อย ๆ จนเต็มแปลว่าเว็บที่ยังให้บริการอยู่เขียน session,
      * แคช หรือไฟล์อัปโหลดไม่ได้กลางคัน ซึ่งเสียหายกว่าการไม่มีสำเนาของคืนนี้มาก
      *
-     * ข้อความต้องบอก "เหลือเท่าไร" ไม่ใช่แค่ "เต็ม" — ลูกค้าต้องตัดสินใจได้ว่าจะลบ
-     * ไฟล์เก่ากี่ไฟล์หรือขอขยายโควตาเท่าไร โดยไม่ต้องเดา
+     * **`$bytes` คือสิ่งที่ขาดไปตลอด** — เดิมด่านนี้ผ่านทันทีที่ "เหลือมากกว่า 0"
+     * โดยไม่เคยเทียบกับขนาดที่กำลังจะเขียน · บัญชีที่เหลือโควตา 1 MB จึงสร้างไฟล์สำรอง
+     * ขนาดเท่าไรก็ได้ ซึ่งทำให้ด่านนี้ไม่ได้กันอะไรเลยในกรณีที่มันมีอยู่เพื่อกัน
      *
+     * @param int $bytes ขนาดที่คาดว่าจะเขียน · {@see DiskQuota::UNKNOWN} เมื่อยังไม่รู้
      * @throws ValidationError
      */
-    protected function assertQuotaAllows(Context $context, UserAccount $owner): void
+    protected function assertQuotaAllows(Context $context, UserAccount $owner, int $bytes = DiskQuota::UNKNOWN): void
     {
-        $row = $context->db->first(
-            'SELECT role, disk_quota_mb, disk_used_mb FROM users WHERE id = :id',
-            ['id' => $owner->userId],
-        );
-
-        if ($row === null || ($row['role'] ?? '') !== Permissions::WEBADMIN) {
-            // บัญชีผู้ดูแลไม่ถูกจำกัดโควตา — กฎเดียวกับ QuotaChecker::checkOwnerCanCreate()
-            return;
-        }
-
-        $limit = (int) ($row['disk_quota_mb'] ?? Quota::UNLIMITED);
-
-        if (Quota::isUnlimited($limit)) {
-            return;
-        }
-
-        $used = (int) ($row['disk_used_mb'] ?? 0);
-        $free = $limit - $used;
-
-        if ($free > 0) {
-            return;
-        }
-
-        throw new ValidationError(sprintf(
-            'พื้นที่ของบัญชี %s เต็มแล้ว (ใช้ %s MB จาก %s MB) — ไฟล์สำรองนับในโควตาด้วย'
-            . ' จึงต้องลบไฟล์สำรองเก่าหรือขยายโควตาก่อน',
-            $owner->username,
-            number_format($used),
-            number_format($limit),
-        ));
+        DiskQuota::assertFits($context->db, $owner->userId, $bytes);
     }
 
     protected static function isAdmin(string $role): bool
@@ -169,7 +140,7 @@ abstract class BackupCapability
         $sql = 'SELECT * FROM users WHERE system_user IS NOT NULL';
         $params = [];
 
-        if (!self::isAdmin($actor->role) && $actor->userId !== 0) {
+        if (!self::isAdmin($actor->role)) {
             $sql .= ' AND id = :id';
             $params['id'] = $actor->userId;
         }

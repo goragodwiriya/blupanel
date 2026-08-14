@@ -97,8 +97,7 @@ final class BackupHostKeyScan implements Capability
 
     public function run(array $args, Executor $executor, Context $context): array
     {
-        if (!in_array($context->actor->role, [Permissions::SUPERADMIN, Permissions::SYSADMIN], true)
-            && $context->actor->userId !== 0) {
+        if (!in_array($context->actor->role, [Permissions::SUPERADMIN, Permissions::SYSADMIN], true)) {
             throw new PermissionDenied('การอ่าน host key ต้องใช้สิทธิ์ผู้ดูแลเซิร์ฟเวอร์');
         }
 

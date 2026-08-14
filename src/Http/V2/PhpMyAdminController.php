@@ -47,7 +47,29 @@ final class PhpMyAdminController extends ApiController
         try {
             $credentials = $this->agent()->data('db.account_credentials', [], $this->ctx->actor($request));
         } catch (AgentException $e) {
-            return $this->problem(ApiProblem::InternalError, $this->t('The database account could not be prepared') . ': '.$e->getMessage());
+            /*
+             * **ไม่ส่งข้อความดิบกลับไปให้ผู้เรียก**
+             *
+             * เส้นทางนี้เปิดให้ทุกคนที่มีสิทธิ์ `db.view` ซึ่งรวมลูกค้าด้วย · ข้อความของ
+             * `ExecutionFailed` ที่ห่อขึ้นมาจากชั้นล่างคือ stderr ของ MariaDB ตรง ๆ
+             * ซึ่งบอกเส้นทาง socket, รุ่นของเซิร์ฟเวอร์ และบางครั้งก็ชื่อผู้ใช้ระบบ
+             * — ข้อมูลตั้งต้นชั้นดีของการเลือกวิธีโจมตี แลกกับการที่ลูกค้าอ่านแล้ว
+             * ก็ทำอะไรกับมันไม่ได้อยู่ดี
+             *
+             * รายละเอียดไปอยู่ใน log ของเครื่องแทน ซึ่งเป็นที่ที่ผู้ดูแลหาอยู่แล้วเวลา
+             * มีคนแจ้งว่าเปิด phpMyAdmin ไม่ได้
+             */
+            $this->app->logger()->error('เตรียมบัญชีฐานข้อมูลสำหรับ phpMyAdmin ไม่สำเร็จ', [
+                'user' => $this->ctx->username(),
+                'error' => $e->getMessage(),
+                'request_id' => $request->requestId,
+            ]);
+
+            return $this->problem(
+                ApiProblem::InternalError,
+                $this->t('The database account could not be prepared')
+                . ' (' . $request->requestId . ')',
+            );
         }
 
         if (!$this->writeSignonSession((string) $credentials['user'], (string) $credentials['password'])) {

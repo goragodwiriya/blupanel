@@ -122,6 +122,21 @@ final class UserRepository
         $this->db->update('users', $data, ['id' => $userId]);
     }
 
+    /**
+     * จดว่ารหัส 2FA ของช่วงเวลาไหนถูกใช้ไปแล้ว — รหัสเดิมต้องใช้ซ้ำไม่ได้
+     *
+     * เก็บหมายเลขช่วงเวลา ไม่ใช่ตัวรหัส · ตัวเลขเดินหน้าอย่างเดียว จึงเทียบง่ายและ
+     * ไม่ต้องเก็บความลับอะไรเพิ่ม ({@see \Phpcp\Security\Totp::verifyAt()})
+     */
+    public function recordTotpCounter(int $userId, int $counter): void
+    {
+        $this->db->update(
+            'users',
+            ['totp_last_counter' => $counter, 'updated_at' => time()],
+            ['id' => $userId],
+        );
+    }
+
     public function registerSuccess(int $userId, string $ip, string $currentHash): void
     {
         $data = [

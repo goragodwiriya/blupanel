@@ -40,6 +40,22 @@ final class SessionStore
      */
     private const ROTATE_GRACE = 30;
 
+    /**
+     * เหตุผลที่ `load()` ปฏิเสธครั้งล่าสุด — ว่าง = ไม่ได้ปฏิเสธ หรือปฏิเสธด้วยเหตุผลปกติ
+     *
+     * มีเฉพาะกรณีที่**ควรมีคนเห็น** (คุกกี้ถูกใช้จาก IP อื่น) · หมดอายุกับ idle timeout
+     * ไม่ถูกเก็บ เพราะเกิดกับผู้ใช้ทุกคนทุกวันและไม่ได้บอกอะไรเลย
+     *
+     * @var array<string,mixed>
+     */
+    private array $rejection = [];
+
+    /** @return array<string,mixed> */
+    public function lastRejection(): array
+    {
+        return $this->rejection;
+    }
+
     public function cookieName(): string
     {
         return $this->config->bool('panel.cookie_secure') ? '__Host-phpcp_sid' : 'phpcp_sid';
@@ -136,6 +152,23 @@ final class SessionStore
          * โดยไม่ทำร้ายเจ้าของ session
          */
         if (!hash_equals((string) $row['ip'], $ip)) {
+            /*
+             * **ปฏิเสธเงียบ ๆ ไม่ได้** — นี่เป็นสัญญาณที่ชัดที่สุดที่ระบบมีว่าคุกกี้
+             * ก้อนหนึ่งถูกนำไปใช้จากที่อื่น · เดิมคำขอถูกตอบกลับเป็น "ยังไม่ได้เข้าสู่ระบบ"
+             * เฉย ๆ ไม่มีร่องรอยอะไรเหลือเลย ผู้ดูแลจึงมองไม่เห็นการขโมยคุกกี้ที่กำลัง
+             * ถูกทดลองใช้อยู่ ทั้งที่ด่านนี้จับได้แล้ว
+             *
+             * เก็บไว้ให้ผู้เรียกบันทึก แทนที่จะบันทึกเอง เพราะคลาสนี้ไม่มี (และไม่ควรมี)
+             * ทางไปถึง audit log · ผู้เรียกคือ {@see \Phpcp\Middleware\SessionMiddleware}
+             */
+            $this->rejection = [
+                'reason' => 'ip_mismatch',
+                'user_id' => (int) $row['user_id'],
+                'username' => (string) ($row['username'] ?? ''),
+                'expected_ip' => (string) $row['ip'],
+                'seen_ip' => $ip,
+            ];
+
             return null;
         }
 

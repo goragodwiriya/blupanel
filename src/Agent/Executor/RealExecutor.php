@@ -21,7 +21,8 @@ use Phpcp\Kernel\Mode;
  */
 final class RealExecutor implements Executor
 {
-    private const MAX_OUTPUT_BYTES = 1_048_576; // 1 MB ต่อ stream
+    // MAX_OUTPUT_BYTES ย้ายไปประกาศใน Executor แล้ว — เป็นสัญญาที่ผู้เรียกต้องรู้
+    // ไม่ใช่รายละเอียดภายใน · `self::MAX_OUTPUT_BYTES` ข้างล่างอ้างถึงค่านั้น
 
     /** จำนวนรายการสูงสุดที่คืนต่อหนึ่งไดเรกทอรี — กันไดเรกทอรีที่มีไฟล์เป็นแสน */
     private const MAX_ENTRIES = 5000;
@@ -510,6 +511,19 @@ final class RealExecutor implements Executor
                     continue;
                 }
 
+                /*
+                 * ชื่อรายการที่ "สะอาด" ยังชี้ออกนอกโฟลเดอร์ได้ ถ้ามี symlink คั่นกลาง
+                 *
+                 * `safeEntryPath()` ตรวจแต่**ตัวอักษร**ในชื่อ (ไม่มี `/` นำหน้า ไม่มี `..`)
+                 * ซึ่งไม่พอ เพราะลูกค้าสร้าง symlink ไว้ในโฟลเดอร์ของตัวเองได้เองผ่าน SFTP
+                 * · รายการชื่อ `logs/x.txt` ที่ `logs` เป็น symlink ชี้ออกไปข้างนอก จะถูก
+                 * เขียนทะลุออกไปตามลิงก์นั้นทันที ทั้งที่ชื่อไม่มีอะไรผิดสักตัว
+                 */
+                if (!self::insideRoot($root, $target)) {
+                    $skipped++;
+                    continue;
+                }
+
                 if (str_ends_with((string) $info['name'], '/')) {
                     $this->makeDirectory($target, 0o750);
                     continue;
@@ -527,6 +541,14 @@ final class RealExecutor implements Executor
                 }
 
                 $this->makeDirectory(dirname($target), 0o750);
+
+                // ตัวไฟล์ปลายทางเองเป็น symlink ที่วางดักไว้ได้เหมือนกัน — `fopen('wb')`
+                // จะเขียนทะลุไปที่ปลายทางของลิงก์ ไม่ใช่ทับตัวลิงก์
+                if (is_link($target)) {
+                    $skipped++;
+                    fclose($stream);
+                    continue;
+                }
 
                 $out = @fopen($target, 'wb');
                 if ($out === false) {
@@ -561,10 +583,32 @@ final class RealExecutor implements Executor
             return $work();
         }
 
-        // ไม่มี pcntl หรือไม่ได้เป็น root = ลดสิทธิ์ไม่ได้ ทำงานตรง ๆ
-        // เกิดได้เฉพาะตอนรัน CLI ด้วยผู้ใช้ธรรมดา ซึ่งสิทธิ์ก็จำกัดอยู่แล้วโดยตัวมันเอง
-        if (!function_exists('pcntl_fork') || posix_geteuid() !== 0) {
+        /*
+         * **สองกรณีนี้ต่างกันคนละขั้ว ห้ามรวมเป็นเงื่อนไขเดียว**
+         *
+         * *ไม่ได้เป็น root* — ลดสิทธิ์ไม่ได้ แต่ก็ไม่จำเป็น เพราะสิทธิ์ที่มีอยู่ก็จำกัด
+         * ด้วยตัวมันเองแล้ว (CLI ของผู้ใช้ธรรมดา, โหมด portable, ชุดทดสอบ) · ทำงานต่อได้
+         *
+         * *เป็น root แต่ไม่มี pcntl* — คือกรณีที่อันตรายที่สุดที่เป็นไปได้: root กำลังจะ
+         * เดินเข้าไปในต้นไม้ไฟล์ที่ลูกค้าควบคุมได้เอง โดยไม่มีการลดสิทธิ์ใด ๆ ซึ่งเป็น
+         * สิ่งเดียวที่ ARCHITECTURE §4.4 มีอยู่เพื่อป้องกัน · เดิมโค้ดนี้เลือก "ทำงานต่อ"
+         * เงียบ ๆ แปลว่าเครื่องที่ปิด pcntl ไว้ (ซึ่งดูเหมือนการตั้งค่าที่ปลอดภัยกว่า)
+         * กลับเป็นเครื่องที่ไม่มีการแยกสิทธิ์เลยทั้งระบบ โดยไม่มีอะไรฟ้องสักอย่าง
+         *
+         * ล้มไปเลยดีกว่า — งานไฟล์ที่ทำไม่ได้ ผู้ดูแลเห็นและแก้ได้ ส่วนงานไฟล์ที่ทำ
+         * ด้วย root ทั้งที่ไม่ควร ไม่มีใครเห็นจนกว่าจะสายเกินไป
+         */
+        if (posix_geteuid() !== 0) {
             return $work();
+        }
+
+        foreach (['pcntl_fork', 'pcntl_waitpid', 'socket_create_pair', 'posix_setuid', 'posix_setgid', 'posix_initgroups'] as $required) {
+            if (!function_exists($required)) {
+                throw new ExecutionFailed(
+                    "เครื่องนี้ไม่มีฟังก์ชัน {$required} จึงลดสิทธิ์จาก root ไปเป็นเจ้าของไฟล์ไม่ได้"
+                    . ' — ปฏิเสธงานไฟล์แทนที่จะทำด้วยสิทธิ์ root (ARCHITECTURE §4.4)',
+                );
+            }
         }
 
         $identity = @posix_getpwnam($systemUser);
@@ -703,6 +747,36 @@ final class RealExecutor implements Executor
      *
      * กัน Zip Slip ด้วยการประกอบเส้นทางเองทีละส่วน ไม่พึ่ง realpath ของไฟล์ที่ยังไม่มี
      */
+    /**
+     * เส้นทางนี้ยังอยู่ใต้ `$root` จริงหรือไม่ หลังคลาย symlink ทุกชั้นแล้ว
+     *
+     * ปลายทางยังไม่มีอยู่ตอนที่ถาม จึงเดินขึ้นไปหา**ชั้นที่มีอยู่จริงชั้นแรก**แล้วคลาย
+     * จากตรงนั้น — ชั้นที่ยังไม่มี เราจะสร้างเองเป็นไดเรกทอรีจริง (`makeDirectory`)
+     * symlink ที่แทรกอยู่ในสายจึงต้องเป็นของที่มีอยู่ก่อนแล้วเสมอ และการเดินขึ้นไป
+     * ย่อมเจอมันแน่นอน
+     *
+     * `$root` ถูก realpath มาแล้วโดยผู้เรียก จึงเทียบตรง ๆ ได้
+     */
+    private static function insideRoot(string $root, string $path): bool
+    {
+        $probe = $path;
+
+        // is_link ด้วย เพราะ symlink ที่ชี้ไปที่ที่ไม่มีอยู่ ทำให้ file_exists ตอบ false
+        while ($probe !== '' && $probe !== '/' && !file_exists($probe) && !is_link($probe)) {
+            $parent = dirname($probe);
+
+            if ($parent === $probe) {
+                break;
+            }
+
+            $probe = $parent;
+        }
+
+        $real = @realpath($probe);
+
+        return $real !== false && ($real === $root || str_starts_with($real, $root . '/'));
+    }
+
     private static function safeEntryPath(string $root, string $name): ?string
     {
         if ($name === '' || str_contains($name, "\0") || str_starts_with($name, '/')) {

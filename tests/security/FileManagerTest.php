@@ -220,6 +220,54 @@ test('unzip ข้าม entry แบบ Zip Slip แทนที่จะเข
     }
 });
 
+test('unzip ต้องไม่เขียนทะลุ symlink ที่วางดักไว้ก่อนแล้ว', static function (): void {
+    /*
+     * ชื่อรายการที่ "สะอาด" ทุกตัวอักษรยังชี้ออกนอกโฟลเดอร์ได้ ถ้ามี symlink คั่นกลาง
+     *
+     * ด่านเดิมตรวจแต่ตัวอักษรในชื่อ (ไม่มี `/` นำหน้า ไม่มี `..`) ซึ่งไม่พอ เพราะลูกค้า
+     * สร้าง symlink ไว้ในโฟลเดอร์ของตัวเองได้เองผ่าน SFTP แล้วค่อยอัปโหลด zip ที่มี
+     * รายการชื่อธรรมดา ๆ ตามเข้าไป · เขียนทะลุออกไปได้โดยที่ไม่มีชื่อไหนผิดสักตัว
+     */
+    if (!class_exists(ZipArchive::class)) {
+        return;
+    }
+
+    $base = fileTestDir('zipsymlink');
+    $destination = $base.'/dest';
+    $outside = $base.'/outside';
+    $archive = $base.'/evil.zip';
+
+    mkdir($destination, 0o700, true);
+    mkdir($outside, 0o700, true);
+    file_put_contents($outside.'/victim.txt', 'ของเดิม');
+
+    // ทั้งสองแบบที่ดักได้: โฟลเดอร์ที่เป็นลิงก์ และตัวไฟล์ปลายทางที่เป็นลิงก์
+    symlink($outside, $destination.'/logs');
+    symlink($outside.'/victim.txt', $destination.'/note.txt');
+
+    $zip = new ZipArchive();
+    $zip->open($archive, ZipArchive::CREATE);
+    $zip->addFromString('logs/victim.txt', 'ถูกเขียนทับแล้ว');
+    $zip->addFromString('note.txt', 'ถูกเขียนทับแล้ว');
+    $zip->addFromString('safe/note.txt', 'ปลอดภัย');
+    $zip->close();
+
+    try {
+        $result = (new RealExecutor())->unzip($archive, $destination);
+
+        assertSame(
+            'ของเดิม',
+            file_get_contents($outside.'/victim.txt'),
+            'ไฟล์ที่อยู่ปลายทางของ symlink ต้องไม่ถูกแตะ',
+        );
+
+        assertSame('ปลอดภัย', file_get_contents($destination.'/safe/note.txt'), 'entry ปกติต้องถูกแตกตามปกติ');
+        assertSame(2, $result['skipped'], 'ต้องรายงานว่าข้ามสองรายการที่ชี้ทะลุออกไป');
+    } finally {
+        fileTestRemove($base);
+    }
+});
+
 test('chmod อนุญาตเฉพาะสิทธิ์ในรายการที่ปลอดภัย', static function (): void {
     $capability = new FileChmod();
 

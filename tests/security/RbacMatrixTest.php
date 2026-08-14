@@ -243,3 +243,29 @@ test('Actor ปฏิเสธบทบาทที่ไม่ถูกต้�
         'ต้องปฏิเสธบทบาทที่ไม่มีในระบบ',
     );
 });
+
+test('Actor ปฏิเสธ "รหัสผู้ใช้ 0 + บทบาทลูกค้า" — เครื่องหมายของระบบ ไม่ใช่ของว่าง', static function (): void {
+    /*
+     * `user_id = 0` คือเครื่องหมายว่า "ผู้สั่งงานคือระบบเอง" ซึ่ง capability ตระกูล
+     * backup เคยใช้เป็นทางลัดข้ามด่านความเป็นเจ้าของทั้งหมด · ค่านั้นมาจาก
+     * `Actor::system()` ที่เป็น SUPERADMIN เสมอ — actor ที่ประกอบขึ้นเองด้วย
+     * `role=webadmin, user_id=0` จึงเคยเดินผ่านด่านเจ้าของได้ทุกด่านโดยไม่มีสิทธิ์
+     * ของผู้ดูแลเลยแม้แต่น้อย
+     */
+    assertRejects(
+        \Phpcp\Agent\ValidationError::class,
+        static fn () => Actor::fromArray(['user_id' => 0, 'username' => 'x', 'role' => Permissions::WEBADMIN]),
+        'บทบาทลูกค้าที่ไม่มีรหัสผู้ใช้ต้องถูกปฏิเสธ',
+    );
+
+    assertRejects(
+        \Phpcp\Agent\ValidationError::class,
+        static fn () => Actor::fromArray(['user_id' => -1, 'username' => 'x', 'role' => Permissions::WEBADMIN]),
+        'รหัสผู้ใช้ติดลบไม่มีความหมายในระบบนี้',
+    );
+
+    // ระบบเองยังต้องประกอบได้ตามปกติ ไม่งั้นงานตามเวลาและ CLI ตายทั้งหมด
+    $system = Actor::fromArray(['user_id' => 0, 'username' => 'system', 'role' => Permissions::SUPERADMIN]);
+
+    assertSame(0, $system->userId, 'ผู้สั่งงานที่เป็นระบบต้องยังใช้รหัส 0 ได้');
+});

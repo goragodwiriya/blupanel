@@ -9,6 +9,7 @@ use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\PermissionDenied;
 use Phpcp\Agent\ValidationError;
+use Phpcp\Domain\DiskQuota;
 use Phpcp\Domain\FileRoots;
 use Phpcp\Domain\FileScope;
 use Phpcp\Support\PathGuard;
@@ -86,6 +87,38 @@ abstract class FileCapability implements Capability
     protected function scope(Context $context, array $args): FileScope
     {
         return FileRoots::require($context->actor, $context->db, (string) $args['root']);
+    }
+
+    /**
+     * โควตาดิสก์ของเจ้าของเว็บรับการเขียนครั้งนี้ไหวหรือไม่
+     *
+     * **ตัวจัดการไฟล์ไม่เคยมีด่านนี้เลย** ทั้งที่เป็นทางที่เขียนข้อมูลเข้าเครื่องได้ตรง
+     * ที่สุด — อัปโหลด เขียนไฟล์ แตกไฟล์ บีบไฟล์ ล้วนเดินผ่านที่นี่โดยไม่มีใครถามว่า
+     * บัญชีนี้ยังมีที่เหลือไหม · บัญชีเดียวจึงเติมดิสก์ที่ใช้ร่วมกันจนเว็บของลูกค้า
+     * รายอื่นเขียน session หรือไฟล์อัปโหลดไม่ได้
+     *
+     * ขอบเขตระดับเครื่องข้ามด่านนี้ เพราะเปิดให้เฉพาะผู้ดูแลระดับเซิร์ฟเวอร์ ซึ่งไม่ถูก
+     * จำกัดโควตาอยู่แล้ว (กฎเดียวกับ QuotaChecker) และไฟล์ระบบไม่ได้เป็นของบัญชีไหน
+     *
+     * @param int $bytes ขนาดที่กำลังจะเขียน · {@see DiskQuota::UNKNOWN} เมื่อยังไม่รู้
+     * @throws ValidationError
+     */
+    protected function assertQuotaAllows(Context $context, FileScope $scope, int $bytes = DiskQuota::UNKNOWN): void
+    {
+        if (!$scope->isSite() || $scope->siteId < 1) {
+            return;
+        }
+
+        $row = $context->db->first(
+            'SELECT owner_user_id FROM sites WHERE id = :id',
+            ['id' => $scope->siteId],
+        );
+
+        if ($row === null) {
+            return;
+        }
+
+        DiskQuota::assertFits($context->db, (int) $row['owner_user_id'], $bytes);
     }
 
     /**

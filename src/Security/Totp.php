@@ -27,20 +27,48 @@ final class Totp
 
     public static function verify(string $base32Secret, string $code): bool
     {
+        return self::verifyAt($base32Secret, $code) !== null;
+    }
+
+    /**
+     * ตรวจรหัสแล้วคืน**หมายเลขช่วงเวลา**ที่ตรง — null = ไม่ตรง
+     *
+     * ## ทำไมต้องคืนหมายเลข ไม่ใช่แค่จริง/เท็จ
+     *
+     * หน้าต่างที่กว้าง ±1 ช่วง (กันนาฬิกาคลาดเคลื่อน) แปลว่ารหัสหนึ่งรหัสใช้ได้นาน
+     * ราว 90 วินาที · ถ้าไม่จำว่ารหัสไหนถูกใช้ไปแล้ว รหัสเดิมก็ใช้ซ้ำได้ตลอดช่วงนั้น
+     * — ซึ่งขัดกับเหตุผลที่ 2FA มีอยู่ · 2FA มีไว้กันกรณีที่**รหัสผ่านหลุดไปแล้ว**
+     * ผู้โจมตีที่เห็นรหัสหกหลักได้ครั้งเดียว (แอบดูจอ, มัลแวร์, ฟิชชิง) จึงต้องไม่เหลือ
+     * เวลาอีกเกือบนาทีครึ่งไว้ใช้รหัสเดียวกันซ้ำหลังเจ้าตัวใช้ไปแล้ว
+     *
+     * ผู้เรียกต้องเก็บค่าที่คืนไปไว้ แล้วส่งกลับมาเป็น `$notBefore` ครั้งถัดไป
+     * ({@see \Phpcp\Domain\UserRepository::recordTotpCounter()})
+     *
+     * @param int $notBefore หมายเลขช่วงเวลาที่ใช้ไปแล้ว · รับเฉพาะที่ใหม่กว่านี้เท่านั้น
+     */
+    public static function verifyAt(string $base32Secret, string $code, int $notBefore = 0): ?int
+    {
         $code = preg_replace('/\D/', '', $code) ?? '';
         if (strlen($code) !== self::DIGITS) {
-            return false;
+            return null;
         }
 
         $counter = intdiv(time(), self::PERIOD);
 
         for ($offset = -self::WINDOW; $offset <= self::WINDOW; $offset++) {
-            if (hash_equals(self::codeAt($base32Secret, $counter + $offset), $code)) {
-                return true;
+            $candidate = $counter + $offset;
+
+            // รหัสของช่วงที่ใช้ไปแล้ว (หรือเก่ากว่านั้น) ต้องไม่ผ่าน แม้จะยังอยู่ในหน้าต่าง
+            if ($candidate <= $notBefore) {
+                continue;
+            }
+
+            if (hash_equals(self::codeAt($base32Secret, $candidate), $code)) {
+                return $candidate;
             }
         }
 
-        return false;
+        return null;
     }
 
     public static function currentCode(string $base32Secret): string

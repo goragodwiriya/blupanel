@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace Phpcp\Middleware;
 
+use Phpcp\Agent\Actor;
 use Phpcp\Kernel\Ctx;
 use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
+use Phpcp\Security\Permissions;
+use Phpcp\Security\RateLimiter;
 use Phpcp\Security\SessionStore;
 
 /**
@@ -41,6 +44,8 @@ final class SessionMiddleware implements Middleware
                 if ($rotatedTo !== null) {
                     $ctx->sessionId = $rotatedTo;
                 }
+            } else {
+                $this->noteRejection($ctx, $request, $store, $rawId);
             }
         }
 
@@ -57,6 +62,58 @@ final class SessionMiddleware implements Middleware
         }
 
         return $response;
+    }
+
+    /**
+     * บันทึกเมื่อ session ที่ยังไม่หมดอายุถูกปฏิเสธเพราะมาจาก IP อื่น
+     *
+     * การผูก session กับ IP เป็นมาตรการกันคุกกี้ถูกขโมยตัวเดียวที่เหลืออยู่ (เลิกผูกกับ
+     * User-Agent ไปแล้วเมื่อ 2026-08-11) · เดิมมันปฏิเสธเงียบ ๆ — ผู้ใช้เห็นแค่ว่าตัวเอง
+     * หลุดออกจากระบบ และผู้ดูแลไม่เห็นอะไรเลย · คุกกี้ที่ถูกขโมยไปทดลองใช้จึงเป็น
+     * เหตุการณ์ที่ระบบ**จับได้แล้วแต่ไม่บอกใคร** ซึ่งเสียของที่สุดในบรรดาความล้มเหลว
+     * ทุกแบบ
+     *
+     * **จำกัดอัตราการบันทึก** เพราะ `audit_log` เป็น hash chain ที่ลบไม่ได้ · คุกกี้
+     * ที่ถูกขโมยแล้วยิงรัวจาก IP เดิมจะเขียนหนึ่งแถวต่อหนึ่งคำขอ ซึ่งกลายเป็นทางทำให้
+     * ตารางโตจนเป็นปัญหาเสียเอง · สามครั้งแรกพอบอกเรื่องแล้ว
+     */
+    private function noteRejection(Ctx $ctx, Request $request, SessionStore $store, string $rawId): void
+    {
+        $rejection = $store->lastRejection();
+
+        if ($rejection === []) {
+            return;
+        }
+
+        try {
+            $bucket = 'session-reject:' . SessionStore::hashId($rawId);
+
+            // 3 ครั้งแรกรัวได้ แล้วเติมกลับชั่วโมงละครั้ง
+            if (!(new RateLimiter($ctx->app->db()))->allow($bucket, 3.0, 1 / 3600)) {
+                return;
+            }
+
+            $ctx->app->audit()->write(
+                new Actor(
+                    userId: (int) ($rejection['user_id'] ?? 0),
+                    username: (string) ($rejection['username'] ?? ''),
+                    role: Permissions::WEBADMIN,
+                    ip: $request->ip,
+                    requestId: $request->requestId,
+                ),
+                'session.ip_mismatch',
+                (string) ($rejection['username'] ?? ''),
+                'warn',
+                [
+                    // ที่อยู่เดิมคือของเจ้าของตัวจริง ที่อยู่ใหม่คือของคนที่ถือคุกกี้อยู่ตอนนี้
+                    'expected_ip' => (string) ($rejection['expected_ip'] ?? ''),
+                    'seen_ip' => (string) ($rejection['seen_ip'] ?? ''),
+                    'path' => $request->path,
+                ],
+            );
+        } catch (\Throwable) {
+            // เขียน audit ไม่ได้ต้องไม่ทำให้คำขอล้ม — session ถูกปฏิเสธไปแล้วอยู่ดี
+        }
     }
 
     /**

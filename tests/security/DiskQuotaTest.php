@@ -316,3 +316,87 @@ test('customer.quota_update ปฏิเสธ disk_quota_mb ที่ต่ำ�
         'ค่าต่ำกว่า -1 ต้องถูกปฏิเสธตั้งแต่ validate()',
     );
 });
+
+// --- 8. DiskQuota::assertFits — ด่านของ "การเขียนหนึ่งครั้ง" -------------------
+//
+// เดิมด่านของไฟล์สำรองผ่านทันทีที่ "เหลือมากกว่า 0" โดยไม่เคยเทียบกับขนาดที่กำลังจะเขียน
+// บัญชีที่เหลือโควตา 1 MB จึงสร้างไฟล์สำรองขนาดเท่าไรก็ได้ · และตัวจัดการไฟล์ไม่มีด่านนี้เลย
+
+test('เขียนเกินที่เหลือต้องถูกปฏิเสธ — ไม่ใช่ผ่านเพราะ "ยังเหลืออยู่นิดหนึ่ง"', static function (): void {
+    $fixture = diskQuotaFixture();
+    $account = seedHostingAccount($fixture, 'almostfull', diskQuotaMb: 1000, diskUsedMb: 999);
+
+    assertRejects(
+        Phpcp\Agent\ValidationError::class,
+        static fn () => Phpcp\Domain\DiskQuota::assertFits($fixture['db'], $account['id'], 40 * 1024 * 1024 * 1024),
+        'เหลือ 1 MB แต่จะเขียน 40 GB — นี่คือบั๊กเดิมที่ด่าน free > 0 ปล่อยผ่าน',
+    );
+});
+
+test('เขียนเท่าที่เหลือพอดีต้องผ่าน — ด่านต้องไม่เข้มจนใช้งานไม่ได้', static function (): void {
+    $fixture = diskQuotaFixture();
+    $account = seedHostingAccount($fixture, 'roomleft', diskQuotaMb: 1000, diskUsedMb: 500);
+
+    Phpcp\Domain\DiskQuota::assertFits($fixture['db'], $account['id'], 500 * 1024 * 1024);
+
+    assertTrue(true, 'เหลือ 500 MB เขียน 500 MB ต้องผ่าน');
+});
+
+test('ขนาดที่รู้ล่วงหน้าไม่ได้ ต้องตกไปใช้ด่าน "เต็มหรือยัง" ไม่ใช่ผ่านฉลุย', static function (): void {
+    $fixture = diskQuotaFixture();
+
+    $full = seedHostingAccount($fixture, 'unknownfull', diskQuotaMb: 1000, diskUsedMb: 1000);
+    $free = seedHostingAccount($fixture, 'unknownfree', diskQuotaMb: 1000, diskUsedMb: 10);
+
+    assertRejects(
+        Phpcp\Agent\ValidationError::class,
+        static fn () => Phpcp\Domain\DiskQuota::assertFits($fixture['db'], $full['id']),
+        'เต็มแล้วต้องปฏิเสธแม้ยังไม่รู้ขนาดที่จะเขียน',
+    );
+
+    Phpcp\Domain\DiskQuota::assertFits($fixture['db'], $free['id']);
+
+    assertTrue(true, 'ยังไม่เต็มและไม่รู้ขนาด ต้องปล่อยผ่าน');
+});
+
+test('โควตาไม่จำกัดต้องผ่านเสมอ ไม่ว่าขนาดเท่าไร', static function (): void {
+    $fixture = diskQuotaFixture();
+    $account = seedHostingAccount($fixture, 'unlimited', diskQuotaMb: -1, diskUsedMb: 999_999);
+
+    Phpcp\Domain\DiskQuota::assertFits($fixture['db'], $account['id'], 100 * 1024 * 1024 * 1024);
+
+    assertTrue(true, '-1 = ไม่จำกัด');
+});
+
+test('บัญชีผู้ดูแลไม่ถูกจำกัดโควตา — กฎเดียวกับ QuotaChecker', static function (): void {
+    $fixture = diskQuotaFixture();
+
+    $adminId = $fixture['db']->insert('users', [
+        'username' => 'ผู้ดูแล-diskquota',
+        'password_hash' => password_hash('x', PASSWORD_DEFAULT),
+        'role' => Permissions::SYSADMIN,
+        'totp_enabled' => 0,
+        'must_change_password' => 0,
+        'status' => 'active',
+        'failed_attempts' => 0,
+        'email' => '',
+        'service_status' => 'active',
+        'system_user' => null,
+        'uid' => 0,
+        'gid' => 0,
+        'quota_domains' => 10,
+        'quota_subdomains' => -1,
+        'quota_aliases' => -1,
+        'quota_emails' => -1,
+        'quota_databases' => -1,
+        'quota_ftp_users' => -1,
+        'disk_quota_mb' => 10,
+        'disk_used_mb' => 10_000,
+        'created_at' => time(),
+        'updated_at' => time(),
+    ]);
+
+    Phpcp\Domain\DiskQuota::assertFits($fixture['db'], $adminId, 50 * 1024 * 1024 * 1024);
+
+    assertTrue(true, 'บัญชีผู้ดูแลข้ามด่านโควตา');
+});

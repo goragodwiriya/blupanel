@@ -64,6 +64,59 @@ test('webhook ยอมให้ http เฉพาะปลายทางใน
     assertTrue($rejected, 'โดเมนที่ขึ้นต้นด้วย localhost ต้องไม่ถูกนับว่าเป็นเครื่องเดียวกัน');
 });
 
+test('webhook ต้องปฏิเสธปลายทางที่เป็นที่อยู่ภายใน — กัน panel ถูกใช้ยิงแทน (SSRF)', static function (): void {
+    /*
+     * ผู้ดูแลที่ถูกหลอก (หรือบัญชีผู้ดูแลที่ถูกยึด) ตั้ง URL ชี้เข้าเครือข่ายภายในได้
+     * ทั้งที่คนนอกยิงไม่ถึง · `169.254.169.254` คือ metadata ของผู้ให้บริการคลาวด์
+     * ซึ่งตอบ credential ของเครื่องกลับมา — เป้าหมายมาตรฐานของช่องโหว่ชนิดนี้
+     *
+     * ใช้ที่อยู่ที่เป็นตัวเลขตรง ๆ ในเทสต์ เพราะต้องไม่พึ่ง DNS — ชุดทดสอบต้องรันได้
+     * บนเครื่องที่ไม่มีเน็ต
+     */
+    $internal = [
+        'https://10.0.0.5/hook',
+        'https://172.16.0.9/hook',
+        'https://192.168.1.1/hook',
+        'https://169.254.169.254/latest/meta-data/',
+        // IPv6 ก็ต้องถูกตรวจ ไม่ใช่ผ่านเพราะเขียนคนละรูป
+        'https://[fd00::1]/hook',
+        'https://[fe80::1]/hook',
+    ];
+
+    foreach ($internal as $url) {
+        $rejected = false;
+
+        try {
+            WebhookNotifier::assertUrl($url);
+        } catch (ValidationError) {
+            $rejected = true;
+        }
+
+        assertTrue($rejected, "ที่อยู่ภายใน {$url} ต้องถูกปฏิเสธ");
+    }
+
+    // ที่อยู่สาธารณะที่เป็นตัวเลขต้องยังผ่าน — ด่านต้องไม่กลายเป็น "ห้าม IP ทุกชนิด"
+    assertSame(
+        'https://8.8.8.8/hook',
+        WebhookNotifier::assertUrl('https://8.8.8.8/hook'),
+        'ที่อยู่สาธารณะต้องผ่าน',
+    );
+});
+
+test('webhook ต้องปฏิเสธ URL ที่มีรหัสผ่านฝังอยู่', static function (): void {
+    // `notify.webhook.url` ไม่ใช่คีย์ชนิด secret จึงไม่ถูกปิดบังตอนส่งกลับไปหน้าจอ
+    // รหัสผ่านที่ฝังมาในนั้นจะถูกแสดงเป็นข้อความธรรมดาและติดไปกับข้อความผิดพลาดของ curl
+    $rejected = false;
+
+    try {
+        WebhookNotifier::assertUrl('https://someone:s3cret@hooks.example.com/x');
+    } catch (ValidationError) {
+        $rejected = true;
+    }
+
+    assertTrue($rejected, 'ชื่อผู้ใช้/รหัสผ่านใน URL ต้องถูกปฏิเสธ');
+});
+
 test('webhook ต้องปฏิเสธข้อความที่ไม่ใช่ URL และยอมรับค่าว่าง', static function (): void {
     $rejected = false;
 

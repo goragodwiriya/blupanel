@@ -36,8 +36,26 @@ final readonly class Actor
             throw new ValidationError('บทบาทผู้ใช้ไม่ถูกต้อง');
         }
 
+        $userId = (int) ($data['user_id'] ?? 0);
+
+        /*
+         * **รหัสผู้ใช้ 0 คือ "ระบบเอง" ไม่ใช่ "ไม่ได้ระบุ"**
+         *
+         * capability หลายตัวใช้ `userId === 0` เป็นเครื่องหมายว่าผู้สั่งงานคือระบบ
+         * แล้วข้ามการตรวจความเป็นเจ้าของทั้งหมด · ค่านั้นมาจาก {@see self::system()}
+         * ซึ่งเป็น SUPERADMIN เสมอ · การยอมรับ "รหัส 0 + บทบาทลูกค้า" จาก payload
+         * จึงเท่ากับเปิดทางให้ actor ที่ประกอบขึ้นเองเดินผ่านด่านเจ้าของทุกด่าน
+         * ทั้งที่ไม่มีสิทธิ์ของผู้ดูแลเลย
+         *
+         * ค่าติดลบไม่มีความหมายในระบบนี้เลย — ปฏิเสธไว้ก่อนดีกว่าปล่อยให้ไปโผล่
+         * เป็นเงื่อนไข SQL ที่ไม่ตรงกับอะไรแล้วตีความว่า "ไม่พบ"
+         */
+        if ($userId < 0 || ($userId === 0 && $role !== Permissions::SUPERADMIN)) {
+            throw new ValidationError('รหัสผู้ใช้ของผู้สั่งงานไม่ถูกต้อง');
+        }
+
         return new self(
-            userId: (int) ($data['user_id'] ?? 0),
+            userId: $userId,
             username: substr((string) ($data['username'] ?? ''), 0, 64),
             role: $role,
             ip: substr((string) ($data['ip'] ?? ''), 0, 45),

@@ -119,6 +119,10 @@ final class FileUnzip extends FileCapability
         $kind = self::kindOf($archive);
         $folder = PathGuard::parent($archive);
 
+        // ขนาดหลังแตกไฟล์รู้ล่วงหน้าไม่ได้ — ตรวจได้แค่ว่าโควตายังไม่เต็ม · ยังจำเป็น
+        // เพราะเส้นทาง tar ไม่มีเพดานไบต์ของตัวเองแบบที่ `RealExecutor::unzip()` มี
+        $this->assertQuotaAllows($context, $scope);
+
         /*
          * `.gz` ไฟล์เดี่ยวไม่มี "โฟลเดอร์ปลายทาง" — มันคลายออกมาเป็นไฟล์ข้าง ๆ ตัวเอง
          * (`x.sql.gz` → `x.sql`) · การสร้างโฟลเดอร์ให้มันจะได้โฟลเดอร์ที่มีไฟล์เดียว
@@ -188,6 +192,22 @@ final class FileUnzip extends FileCapability
 
         if (!$list->ok()) {
             throw new ExecutionFailed('อ่านรายชื่อในไฟล์บีบอัดไม่ได้: ' . trim($list->stderr));
+        }
+
+        /*
+         * **ปฏิเสธเมื่อรายชื่อยาวชนเพดานของ exec()** — ไม่ใช่ตรวจเท่าที่ได้มา
+         *
+         * `exec()` ตัดผลลัพธ์ทิ้งที่ {@see Executor::MAX_OUTPUT_BYTES} · ด่านข้างล่างที่
+         * เดินทีละบรรทัดจึงเคยตรวจแค่ส่วนหัวของ archive ที่ยาวเกินนั้น แล้วปล่อยส่วนที่
+         * เหลือผ่านไปเงียบ ๆ — รายการที่ไต่ออกนอกโฟลเดอร์เพียงแค่ต้องอยู่ท้าย ๆ ก็รอด
+         * · และ `count()` ข้างล่างก็นับจากของที่ถูกตัดแล้ว เพดาน MAX_ENTRIES จึงไม่เคย
+         * ทำงานเลยกับ archive ที่ใหญ่จริง ซึ่งเป็นกรณีเดียวที่มันมีอยู่เพื่อกัน
+         *
+         * archive ที่ยาวขนาดนั้นเกินเพดานรายการอยู่แล้วในทางปฏิบัติ ข้อความจึงเป็น
+         * ข้อความเดียวกัน — "ตรวจไม่ครบ" กับ "เกินกำหนด" นำไปสู่คำตอบเดียวกันคือไม่แตกให้
+         */
+        if (strlen($list->stdout) >= Executor::MAX_OUTPUT_BYTES) {
+            throw new ExecutionFailed('ไฟล์บีบอัดมีรายการมากเกินกำหนด');
         }
 
         $entries = array_values(array_filter(array_map('trim', explode("\n", $list->stdout)), static fn (string $l): bool => $l !== ''));
