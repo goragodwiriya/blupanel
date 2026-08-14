@@ -157,10 +157,13 @@ USERS_DIR="$(printf '%s' "$USERS_DIR" | sed 's:/*$::')"
 check_abs_path "$USERS_DIR" "--users-dir"
 [ "$USERS_DIR" = "/" ] && die "--users-dir cannot be /"
 
-# When pointer roots are empty, fall back to sites_dir automatically
-if [ -z "$POINTER_ROOTS" ]; then
-  POINTER_ROOTS="$SITES_DIR"
-fi
+# No automatic fallback for pointer roots - empty means the feature is off.
+#
+# This used to default to SITES_DIR, which switched Domain Pointer on for every install nobody
+# asked for: the "Parent folder" picker showed up on the create-site page of every production
+# server, offering to point a vhost into the legacy sites directory that migration 0006 stopped
+# using. Letting a vhost serve files from outside the owner's home is a deliberate loosening of
+# the boundary - it has to come from the admin, not from a default.
 
 if [ -n "$POINTER_ROOTS" ]; then
   IFS=',' read -r -a _roots <<< "$POINTER_ROOTS"

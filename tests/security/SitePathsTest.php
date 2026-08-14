@@ -515,3 +515,50 @@ test('Domain Pointer ต้อง chown โฟลเดอร์ปลายท�
         'ต้อง chown ทั้งบ้านของเว็บไซต์และโฟลเดอร์ที่ชี้ไป',
     );
 });
+
+test('Domain Pointer ต้องปิดอยู่จนกว่าผู้ดูแลจะเปิดเอง — ไม่มีการเติมให้', static function (): void {
+    /*
+     * เดิม `docrootRoots()` ใส่ `Paths::sitesDir()` เป็นรายการแรกเสมอ · Domain Pointer
+     * จึงถูกเปิดบนทุกเครื่องโดยไม่มีใครขอ — ช่อง "โฟลเดอร์แม่" โผล่ในหน้าสร้างเว็บของ
+     * เซิร์ฟเวอร์จริงทุกเครื่อง ชี้ไปยัง `sites.dir` ซึ่งเป็นที่เก็บของเลย์เอาต์เก่าที่
+     * migration 0006 เลิกใช้ไปแล้วด้วยซ้ำ
+     *
+     * การยอมให้ vhost เสิร์ฟไฟล์จากนอกบ้านของผู้ใช้เป็นการผ่อนขอบเขต ต้องมาจากการ
+     * ตัดสินใจของผู้ดูแล ไม่ใช่ค่าที่ติดมาเอง
+     */
+    $load = static function (array $roots): array {
+        $root = sys_get_temp_dir() . '/phpcp-pointer-' . getmypid() . '-' . bin2hex(random_bytes(4));
+        mkdir($root . '/etc', 0750, true);
+        register_shutdown_function(static fn () => exec('rm -rf ' . escapeshellarg($root)));
+
+        // layout=portable บังคับให้อ่าน config ในโฟลเดอร์นี้ ไม่ใช่ /etc/phpcp ของเครื่องที่รันเทสต์
+        file_put_contents(
+            $root . '/etc/config.php',
+            "<?php\nreturn " . var_export([
+                'layout' => 'portable',
+                'sites' => ['pointer_roots' => $roots],
+            ], true) . ";\n",
+        );
+
+        // PHPCP_CONFIG ชนะทุกอย่างใน Config::locate() — จำเป็นเพราะ /etc/phpcp/config.php
+        // ของเครื่องที่รันเทสต์มาก่อนเสมอ เทสต์จะอ่านคอนฟิกจริงแทนของที่เพิ่งเขียน
+        $previous = getenv('PHPCP_CONFIG');
+        putenv('PHPCP_CONFIG=' . $root . '/etc/config.php');
+
+        try {
+            return Phpcp\Kernel\Config::load($root)->docrootRoots();
+        } finally {
+            $previous === false ? putenv('PHPCP_CONFIG') : putenv('PHPCP_CONFIG=' . $previous);
+        }
+    };
+
+    assertSame([], $load([]), 'ไม่ได้ตั้งค่า = ปิดฟีเจอร์ ไม่ใช่เปิดให้ sites.dir');
+    assertSame(['/mnt/Server/htdocs'], $load(['/mnt/Server/htdocs']), 'ต้องได้เฉพาะที่ระบุ ไม่มีรายการแถม');
+
+    // ตัวติดตั้งต้องไม่เติมให้เองด้วย
+    $installer = (string) file_get_contents(PHPCP_ROOT . '/install.sh');
+    assertTrue(
+        !str_contains($installer, 'POINTER_ROOTS="$SITES_DIR"'),
+        'ตัวติดตั้งต้องไม่ตั้ง pointer_roots ให้เองเมื่อผู้ดูแลไม่ได้ระบุ',
+    );
+});
