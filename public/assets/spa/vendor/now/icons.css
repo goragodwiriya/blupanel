@@ -9,7 +9,7 @@
 @font-face {
   font-family: 'icomoon';
   src: url('fonts/icomoon.woff') format('woff'),
-       url('fonts/icomoon.ttf') format('truetype');
+    url('fonts/icomoon.ttf') format('truetype');
   font-weight: normal;
   font-style: normal;
   font-display: swap;
@@ -1005,4 +1005,7 @@
 }
 .icon-border_vertical:before {
   content: "\e961";
+}
+.icon-mention:before {
+  content: "@";
 }
