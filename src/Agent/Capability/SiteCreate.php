@@ -75,6 +75,21 @@ final class SiteCreate extends SiteCapability
             }
         }
 
+        /*
+         * `www.<โดเมน>` เป็นโดเมนสำรองให้อัตโนมัติ — ทุก control panel ทำแบบนี้
+         *
+         * **ไม่ใช่ความสะดวก แต่เป็นความสอดคล้อง**: ระบบสร้างเรกคอร์ด DNS ของ `www`
+         * ให้อยู่แล้วตอนสร้างเว็บ ({@see \Phpcp\Domain\DnsZoneDefaults}) ถ้าไม่เพิ่ม
+         * เป็น alias ด้วย ชื่อนั้นจะ resolve มาที่เครื่องนี้แล้วตกไปที่ vhost เริ่มต้น
+         * ของเว็บเซิร์ฟเวอร์ — ผู้เยี่ยมชมเห็นหน้าต้อนรับของ nginx แทนเว็บของลูกค้า
+         * (เจอบนเซิร์ฟเวอร์จริง 2026-08-14) · DNS สัญญาว่าใช้ได้ vhost ต้องรับคำสัญญานั้น
+         *
+         * ข้ามเมื่อโดเมนหลักเป็น `www.` อยู่แล้ว — `www.www.example.com` ไม่มีความหมาย
+         */
+        if (!str_starts_with($domain, 'www.')) {
+            $aliases[] = 'www.'.$domain;
+        }
+
         return [
             'domain' => $domain,
             'name' => $name,

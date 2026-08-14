@@ -212,3 +212,42 @@ test('zone ที่ใกล้ที่สุดต้องเป็นเจ
     assertSame('sub.example.com', $parent['domain'], 'ต้องเลือก zone ที่ใกล้ที่สุด');
     assertSame('a', $parent['label'], 'ชื่อในzone ต้องเป็น a');
 });
+
+test('www ต้องเป็นโดเมนสำรองอัตโนมัติ — DNS สัญญาไว้แล้ว vhost ต้องรับ', static function (): void {
+    /*
+     * **เจอบนเซิร์ฟเวอร์จริง (2026-08-14):** ระบบสร้างเรกคอร์ด DNS ของ `www` ให้ตอนสร้างเว็บ
+     * แต่ไม่ได้เพิ่มเป็น alias · ชื่อนั้นจึง resolve มาที่เครื่องถูกต้องแล้วตกไปที่ vhost
+     * เริ่มต้นของ nginx — ผู้เยี่ยมชม www.<โดเมน> เห็นหน้าต้อนรับของ nginx แทนเว็บลูกค้า
+     * และได้ HTTP 200 ซึ่งดูเหมือนทุกอย่างปกติ
+     */
+    $capability = new Phpcp\Agent\Capability\SiteCreate();
+
+    $clean = $capability->validate([
+        'domain' => 'example.com', 'php_version' => '8.4', 'owner_user_id' => 1,
+    ]);
+
+    assertTrue(
+        in_array('www.example.com', $clean['aliases'], true),
+        'www ต้องถูกเพิ่มเป็นโดเมนสำรองให้เอง · ได้: ' . implode(', ', $clean['aliases']),
+    );
+
+    // โดเมนย่อยก็ต้องได้ www ของตัวเอง — DnsZoneDefaults สร้าง www.srv ไว้ให้แล้ว
+    $sub = $capability->validate([
+        'domain' => 'srv.example.com', 'php_version' => '8.4', 'owner_user_id' => 1,
+    ]);
+    assertTrue(in_array('www.srv.example.com', $sub['aliases'], true), 'โดเมนย่อยต้องได้ www ด้วย');
+
+    // โดเมนที่เป็น www อยู่แล้วต้องไม่ได้ www.www
+    $www = $capability->validate([
+        'domain' => 'www.example.com', 'php_version' => '8.4', 'owner_user_id' => 1,
+    ]);
+    assertTrue(!in_array('www.www.example.com', $www['aliases'], true), 'ห้ามได้ www.www');
+
+    // ที่ผู้ใช้ระบุเองต้องไม่หาย
+    $custom = $capability->validate([
+        'domain' => 'example.com', 'php_version' => '8.4', 'owner_user_id' => 1,
+        'aliases' => ['shop.example.com'],
+    ]);
+    assertTrue(in_array('shop.example.com', $custom['aliases'], true), 'alias ที่ระบุเองต้องยังอยู่');
+    assertTrue(in_array('www.example.com', $custom['aliases'], true), 'และยังได้ www เพิ่มให้');
+});
