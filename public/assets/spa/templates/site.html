@@ -3,12 +3,12 @@
   <header data-component="topbar"></header>
   <div data-component="mode-banner"></div>
   <div data-component="rollback-bar"></div>
-  <!-- pageDetail เติม id จาก query string ลงใน {id} ของทุก data-endpoint/data-source/action -->
   <main class="content" data-script="pageDetail" data-fallback="/sites">
     <div class="card-groups" data-component="api" data-endpoint="/api/v2/sites/{id}" data-refresh-event="phpcp:reload">
       <header>
         <div>
           <h1 class="icon-website" data-text="domain">—</h1>
+          <p data-i18n>{LNG_Manage} {LNG_Website}</p>
         </div>
         <div class="header-actions">
           <a class="btn icon-arrow-left" href="/app/sites" data-route="/sites" data-i18n>Websites</a>
@@ -21,7 +21,6 @@
             <tbody>
               <tr>
                 <th data-i18n>Status</th>
-                <!-- สีของป้ายมาจาก API (`status_tone`) ไม่ใช่จากเงื่อนไขซ้อนกันในหน้าจอ -->
                 <td><span class="pill" data-class="pill-${status_tone}" data-text="status"></span></td>
               </tr>
               <tr>
@@ -47,7 +46,7 @@
           <div class="content-body">
             <h2 data-i18n>PHP version</h2>
             <form data-form="sitePhp" action="/api/v2/sites/{id}/php-version" method="post" data-method="PUT" data-ajax-submit="true">
-              <div class="form-group">
+              <div class="form-group bottom">
                 <div class="width90">
                   <label for="php_version">
                     <span data-i18n>PHP version</span> (<span data-i18n>current</span>: <strong data-text="php_version"></strong>) </label>
@@ -82,28 +81,12 @@
           </div>
         </div>
       </div>
-      <!--
-        จำกัดอัตราคำขอ (เฟส E5) — บังคับใช้ด้วย fail2ban ที่อ่าน access log ของเว็บนี้
-
-        โหลดค่าจาก endpoint ของตัวเองด้วย data-load-api ไม่ใช่จากข้อมูลของหน้า
-        เพราะ `status` ต้องมาจาก fail2ban จริง ๆ ไม่ใช่จากสิ่งที่ฐานข้อมูลของ panel จำไว้
-      -->
-      <!--
-        ไฟล์ตั้งค่าของเว็บไซต์ — ตารางเดียว เปิดทีละไฟล์ใน Modal
-
-        **แยกให้ชัดว่าไฟล์ไหนแก้ได้ ไฟล์ไหนดูได้อย่างเดียว** ด้วยป้ายที่มาจากเซิร์ฟเวอร์
-        ไม่ใช่การเดาของหน้าจอ · ไฟล์ที่ระบบสร้างเปิดดูได้เพราะผู้ดูแลต้องเห็นว่ามีอะไร
-        อยู่แล้วก่อนจะเขียนเพิ่ม แต่แก้ไม่ได้เพราะมันถูกเขียนทับทั้งไฟล์ทุกครั้งที่
-        เว็บไซต์เปลี่ยน
-
-        ทั้งการ์ดเป็นของผู้ดูแลเครื่อง — ถาม `can[...]` จากคำตอบของ endpoint นี้เอง
-        ไม่ใช่ `permissions[...]` ซึ่งมีให้ใช้เฉพาะหน้าที่โหลด /api/v2/session
-      -->
       <div class="content-body" data-if="can['edit_config']">
         <h2 class="icon-code" data-i18n>Configuration files</h2>
         <p class="muted" data-i18n>Open a file to view it. The editable one opens with comments explaining what belongs there and examples to start from.</p>
         <div class="tablebody">
-          <table class="table border fullwidth" data-table="configFiles" data-source="/api/v2/config-files?site_id={id}" data-row-actions='{
+          <table class="table border fullwidth" data-table="configFiles"
+                 data-source="/api/v2/config-files?site_id={id}" data-row-actions='{
                    "open": {
                      "title": "Open",
                      "className": "btn small icon-search",
@@ -115,8 +98,8 @@
             <thead>
               <tr>
                 <th data-field="path" data-cell-class="mono" data-i18n>{LNG_File}</th>
-                <th data-field="kind_label" class="center" data-cell-class="center" data-template="<span class=\'pill pill-${kind_tone}\'>${kind_label}</span>" data-i18n>
-                  {LNG_Access}</th>
+                <th data-field="kind_label" class="center" data-cell-class="center"
+                    data-template="<span class=\'pill pill-${kind_tone}\'>${kind_label}</span>" data-i18n>{LNG_Access}</th>
                 <th data-field="state" class="center" data-cell-class="center" data-i18n>{LNG_Status}</th>
                 <th data-field="size" class="center" data-cell-class="center right" data-format="bytes" data-i18n>{LNG_Size}</th>
               </tr>
@@ -127,10 +110,6 @@
       </div>
       <div class="content-body">
         <h2 class="icon-shield" data-i18n>Request rate limit</h2>
-        <!--
-          คำเตือนต้องอยู่**เหนือ**ฟอร์ม ไม่ใช่ใต้ปุ่มบันทึก — ผู้ดูแลต้องรู้ก่อนกด
-          ว่าการแบนมีผลทั้งเครื่อง ไม่ใช่รู้ตอนที่ IP ของตัวเองถูกแบนไปแล้ว
-        -->
         <div class="alert alert-warning" data-i18n>Bans apply to the whole server, not just this website — a banned IP cannot reach any other site hosted here either.</div>
         <form data-form="siteRateLimit" action="/api/v2/sites/{id}/rate-limit" method="post" data-method="PUT" data-ajax-submit="true"
               data-load-api="/api/v2/sites/{id}/rate-limit">
@@ -171,10 +150,6 @@
             <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
           </fieldset>
         </form>
-        <!--
-          สถานะจริงจาก fail2ban — ต่างจากค่าในฟอร์มที่เป็นสิ่งที่ "ตั้งไว้"
-          ส่วนตรงนี้คือสิ่งที่ "เป็นอยู่จริง" บนเครื่อง
-        -->
         <div data-component="api" data-endpoint="/api/v2/sites/{id}/rate-limit" data-if="enabled">
           <h3 data-i18n>Currently banned</h3>
           <div class="tablebody">
@@ -196,25 +171,9 @@
       <div class="content-body">
         <div class="flex middle fullwidth">
           <h2 data-i18n>Domains</h2>
-          <!--
-            ฟอร์มอยู่คนละเทมเพลตตาม FRAMEWORK_GUIDE Pattern 3 — ส่วนนี้มีแต่ตาราง
-            สองช่องกรอกถือว่าน้อย จึงเปิดใน Modal ที่เซิร์ฟเวอร์เป็นคนสั่ง
-          -->
-          <!--
-            ถาม `can[...]` จากคำตอบของ endpoint นี้ ไม่ใช่ `permissions[...]` ซึ่งมีให้ใช้
-            เฉพาะในคอมโพเนนต์ที่โหลด /api/v2/session มา (ดู sites.html) · หน้านี้โหลด
-            /api/v2/sites/{id} ปุ่มจึงหายไปทั้งปุ่มโดยไม่มี error ให้เห็น ·
-            SitesController::show ส่ง `can.manage_domains` มาให้อยู่แล้วตั้งแต่แรก
-          -->
           <button type="button" class="btn icon-plus" data-if="can['manage_domains']" data-action="click.prevent:requestApi" data-api-url="/api/v2/sites/{id}/domains/form"
                   data-api-method="get" data-i18n>Add domain</button>
         </div>
-        <!--
-          data-row-actions ใช้ {row_id} ไม่ใช่ {id} โดยตั้งใจ — URL ของหน้านี้เองมี ?id=
-          (id ของเว็บไซต์) RouterManager.render (js/ui.js) แทนค่า {id} ทุกจุดในหน้าด้วย
-          id ของหน้าก่อนที่ TableManager จะได้เห็นเทมเพลตด้วยซ้ำ ถ้าใช้ {id} ตรงนี้
-          ปุ่ม "DNS records" ทุกแถวจะพาไปที่โดเมนแถวแรกเหมือนกันหมด
-        -->
         <div class="tablebody">
           <table class="table border fullwidth" data-table="siteDomains" data-attr="data:domains" data-row-actions='{
                     "link": {
@@ -243,11 +202,6 @@
               <tr>
                 <th data-field="domain" data-cell-class="mono" data-i18n>{LNG_Domain}</th>
                 <th data-field="type" class="center" data-cell-class="center" data-i18n>{LNG_Type}</th>
-                <!--
-                  แต่ละโดเมนบอกเองว่าเปิดไปเจอไฟล์ที่ไหน — เว็บสองแห่งของบัญชีเดียวกัน
-                  อยู่คนละที่ได้ และโดเมนย่อยชี้ไปพาธย่อยได้อีก การแสดงรูปทรงรวมของบัญชี
-                  จึงตอบคำถามที่ผู้ดูแลถามจริงไม่ได้
-                -->
                 <th data-field="docroot" data-cell-class="mono" data-i18n>Serves from</th>
               </tr>
             </thead>
@@ -255,10 +209,6 @@
           </table>
         </div>
       </div>
-      <!--
-        ทรัพยากรของเว็บนี้ — ทุกตารางกรองที่ฝั่งเซิร์ฟเวอร์ด้วย `site_id` ไม่ใช่ดึงมา
-        ทั้งหมดแล้วกรองทิ้งบนหน้าจอ · ข้อมูลของลูกค้ารายอื่นจึงไม่ถูกส่งออกมาตั้งแต่แรก
-      -->
       <div class="content-body">
         <h2 class="icon-lock" data-i18n>SSL Certificates</h2>
         <div class="tablebody">
@@ -322,10 +272,6 @@
       <div class="content-body">
         <h2 class="icon-clock" data-i18n>Cron Jobs</h2>
         <div class="tablebody">
-          <!--
-            data-row-actions ใช้ {row_id} ไม่ใช่ {id} โดยตั้งใจ — ดูหมายเหตุเดียวกันที่
-            ตาราง siteDomains ด้านบน (URL ของหน้านี้เองมี ?id= เป็น id ของเว็บไซต์)
-          -->
           <table class="table border fullwidth" data-table="siteCronJobs" data-source="/api/v2/cron-jobs?site_id={id}" data-row-actions='{
                    "open": {
                      "title": "Manage",
