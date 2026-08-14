@@ -43,72 +43,43 @@
             </tbody>
           </table>
         </section>
-        <section class="block6">
-          <h2 data-i18n>PHP version</h2>
-          <form data-form="sitePhp" action="/api/v2/sites/{id}/php-version" method="post" data-method="PUT" data-ajax-submit="true">
-            <!--
-              ไม่ตั้งค่าเริ่มต้นให้ช่องนี้โดยตั้งใจ: คอมโพเนนต์ชั้นนอกตั้งค่าก่อนที่ชั้นใน
-              จะสร้าง option เสร็จ ค่าที่ตั้งไว้จึงหลุด แล้วเบราว์เซอร์เลือกตัวแรกให้แทน
-              ซึ่งแปลว่ากดบันทึกครั้งเดียวเว็บถูกลดเวอร์ชันโดยไม่ได้ตั้งใจ
-              บังคับให้เลือกเองเสมอ (required) และแสดงค่าปัจจุบันไว้ข้าง ๆ ให้เทียบได้
-            -->
-            <fieldset>
-              <div>
-                <label for="php_version">
-                  <span data-i18n>PHP version</span> (<span data-i18n>current</span>: <strong data-text="php_version"></strong>) </label>
-                <!--
-                  รายการเวอร์ชันมาจาก endpoint ของมันเอง — GET /api/v2/sites/{id} ไม่ได้
-                  ส่งตัวเลือกมาด้วย และไม่ควรต้องส่ง เพราะนั่นคือการผูก API เข้ากับฟอร์ม
-                  ตัวหนึ่ง · `data-for` วนสร้าง <option> จากคำตอบโดยตรง
-                -->
-                <span class="form-control icon-code" data-component="api" data-endpoint="/api/v2/php-versions">
-                  <select id="php_version" name="php_version" required data-for="php in data">
-                    <template>
-                      <option data-attr="value:php.version" data-text="php.version"></option>
-                    </template>
-                  </select>
-                </span>
+        <div class="block6">
+          <div class="content-body">
+            <h2 data-i18n>PHP version</h2>
+            <form data-form="sitePhp" action="/api/v2/sites/{id}/php-version" method="post" data-method="PUT" data-ajax-submit="true">
+              <div class="form-group">
+                <div class="width90">
+                  <label for="php_version">
+                    <span data-i18n>PHP version</span> (<span data-i18n>current</span>: <strong data-text="php_version"></strong>) </label>
+                  <span class="form-control icon-code" data-component="api" data-endpoint="/api/v2/php-versions">
+                    <select id="php_version" name="php_version" required data-for="php in data">
+                      <template>
+                        <option data-attr="value:php.version" data-text="php.version"></option>
+                      </template>
+                    </select>
+                  </span>
+                </div>
+                <div>
+                  <button type="submit" class="btn fullwidth btn-primary icon-save" data-i18n>Save</button>
+                </div>
               </div>
-            </fieldset>
-            <fieldset class="submit">
-              <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
-            </fieldset>
-          </form>
-        </section>
-      </div>
-      <!--
-        คำสั่งที่มีผลกับทั้งเว็บไซต์ — แยกออกมาจากหัวหน้าจอเพราะเป็นการกระทำที่
-        ย้อนกลับยาก · ทุกปุ่มยิงไปที่ทรัพยากรตรง ๆ แล้วให้ `actions` ในคำตอบ
-        สั่งหน้าจอต่อเอง (แจ้งผล · โหลดใหม่ · กลับหน้ารายการ)
-      -->
-      <div class="content-body">
-        <h2 data-i18n>Actions</h2>
-        <div class="header-actions">
-          <button type="button" class="btn icon-ban" data-if="can['suspend'] && status !== 'suspended'" data-action="click.prevent:apiRefresh"
-                  data-api-url="/api/v2/sites/{id}/suspension" data-api-method="put" data-param-suspended="true"
-                  data-confirm="Suspending stops the website from serving visitors immediately." data-i18n>Suspend</button>
-          <button type="button" class="btn icon-refresh" data-if="can['suspend'] && status === 'suspended'" data-action="click.prevent:apiRefresh"
-                  data-api-url="/api/v2/sites/{id}/suspension" data-api-method="put" data-param-suspended="false" data-confirm="Resume serving this website?"
-                  data-i18n>Resume</button>
-          <!--
-            ซ่อมเจ้าของไฟล์ — capability กับ endpoint มีมาตั้งแต่ต้น แต่ไม่เคยมีปุ่มเรียก
-            จึงไม่มีใครใช้ได้เลย
-
-            จำเป็นจริงเพราะเจ้าของไฟล์เพี้ยนได้จากหลายทางที่ panel ควบคุมไม่ได้ทั้งหมด:
-            ผู้ดูแลแตะไฟล์ผ่าน ssh ในนาม root · กู้ไฟล์จากสำเนาสำรอง · แตกไฟล์ที่ลูกค้า
-            อัปโหลดมาพร้อมเจ้าของเดิม · อาการที่ได้คือเว็บตอบ 403 ทั้งเว็บโดยไม่มีอะไร
-            ชี้ว่าเป็นเรื่องสิทธิ์ไฟล์
-          -->
-          <button type="button" class="btn icon-user" data-if="can['edit']" data-action="click.prevent:apiRefresh" data-api-url="/api/v2/sites/{id}/owner-reset"
-                  data-api-method="post" data-param-fix_permissions="true"
-                  data-confirm="Set every file and folder of this website back to the owner and permissions the panel expects?" data-i18n>Reset file owner</button>
-          <!--
-            ลบเว็บไซต์ย้อนกลับไม่ได้ · API บังคับให้ส่งชื่อโดเมนมายืนยันอยู่แล้ว
-            `data-attr` เติมชื่อโดเมนจริงลง `data-param-confirm_domain` ให้ตอนเรนเดอร์
-          -->
-          <button type="button" class="btn btn-danger icon-delete" data-if="can['delete']" data-action="click.prevent:apiRefresh" data-api-url="/api/v2/sites/{id}" data-go="/sites"
-                  data-api-method="delete" data-attr="data-param-confirm_domain:domain"
-                  data-confirm="Deleting a website removes its files, databases and certificates. This cannot be undone." data-i18n>Delete website</button>
+            </form>
+            <h2 data-i18n>Actions</h2>
+            <div class="header-actions">
+              <button type="button" class="btn icon-ban" data-if="can['suspend'] && status !== 'suspended'" data-action="click.prevent:apiRefresh"
+                      data-api-url="/api/v2/sites/{id}/suspension" data-api-method="put" data-param-suspended="true"
+                      data-confirm="Suspending stops the website from serving visitors immediately." data-i18n>Suspend</button>
+              <button type="button" class="btn icon-refresh" data-if="can['suspend'] && status === 'suspended'" data-action="click.prevent:apiRefresh"
+                      data-api-url="/api/v2/sites/{id}/suspension" data-api-method="put" data-param-suspended="false" data-confirm="Resume serving this website?"
+                      data-i18n>Resume</button>
+              <button type="button" class="btn icon-user" data-if="can['edit']" data-action="click.prevent:apiRefresh" data-api-url="/api/v2/sites/{id}/owner-reset"
+                      data-api-method="post" data-param-fix_permissions="true"
+                      data-confirm="Set every file and folder of this website back to the owner and permissions the panel expects?" data-i18n>Reset file owner</button>
+              <button type="button" class="btn btn-danger icon-delete" data-if="can['delete']" data-action="click.prevent:apiRefresh" data-api-url="/api/v2/sites/{id}"
+                      data-go="/sites" data-api-method="delete" data-attr="data-param-confirm_domain:domain"
+                      data-confirm="Deleting a website removes its files, databases and certificates. This cannot be undone." data-i18n>Delete website</button>
+            </div>
+          </div>
         </div>
       </div>
       <!--
@@ -132,8 +103,7 @@
         <h2 class="icon-code" data-i18n>Configuration files</h2>
         <p class="muted" data-i18n>Open a file to view it. The editable one opens with comments explaining what belongs there and examples to start from.</p>
         <div class="tablebody">
-          <table class="table border fullwidth" data-table="configFiles"
-                 data-source="/api/v2/config-files?site_id={id}" data-row-actions='{
+          <table class="table border fullwidth" data-table="configFiles" data-source="/api/v2/config-files?site_id={id}" data-row-actions='{
                    "open": {
                      "title": "Open",
                      "className": "btn small icon-search",
@@ -145,8 +115,8 @@
             <thead>
               <tr>
                 <th data-field="path" data-cell-class="mono" data-i18n>{LNG_File}</th>
-                <th data-field="kind_label" class="center" data-cell-class="center"
-                    data-template="<span class=\'pill pill-${kind_tone}\'>${kind_label}</span>" data-i18n>{LNG_Access}</th>
+                <th data-field="kind_label" class="center" data-cell-class="center" data-template="<span class=\'pill pill-${kind_tone}\'>${kind_label}</span>" data-i18n>
+                  {LNG_Access}</th>
                 <th data-field="state" class="center" data-cell-class="center" data-i18n>{LNG_Status}</th>
                 <th data-field="size" class="center" data-cell-class="center right" data-format="bytes" data-i18n>{LNG_Size}</th>
               </tr>
