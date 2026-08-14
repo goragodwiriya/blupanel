@@ -349,3 +349,43 @@ test('capability ชุดอ่านของตัวจัดการไฟ
         assertSame(false, $capability->isMutating(), "{$name} ต้องไม่ใช่คำสั่งที่เปลี่ยนแปลงระบบ");
     }
 });
+
+test('บันทึกไฟล์ต้องไม่เปลี่ยนเจ้าของ — ไม่งั้นเว็บของลูกค้าตอบ 403 ทันที', static function (): void {
+    /*
+     * **เจอบนเซิร์ฟเวอร์จริง (2026-08-14):** ผู้ดูแลแก้ `index.php` ของลูกค้าผ่านตัวจัดการ
+     * ไฟล์ แล้วทั้งเว็บตอบ 403 ทันที
+     *
+     * ขอบเขต "เว็บไซต์ทั้งหมด" ของผู้ดูแลทำงานด้วยสิทธิ์ของ agent (root) เพราะไฟล์ระดับ
+     * เซิร์ฟเวอร์ไม่ได้เป็นของผู้ใช้คนใดคนหนึ่ง · ไฟล์ที่เขียนออกมาจึงกลายเป็น root:phpcp
+     * แล้ว FPM pool ที่รันเป็นตัวลูกค้าอ่านไม่ได้อีกเลย — Apache รายงานว่า
+     * "Unable to open primary script (Permission denied)" ซึ่งไม่มีอะไรโยงกลับมาที่
+     * การกดบันทึกเมื่อครู่
+     *
+     * ตรวจซอร์สเพราะพฤติกรรมนี้ต้องใช้ root จริงถึงจะทดสอบได้ — ตัดคอมเมนต์ออกก่อน
+     */
+    $source = (string) file_get_contents(PHPCP_ROOT . '/src/Agent/Capability/FileWrite.php');
+    $code = implode("\n", array_filter(
+        explode("\n", $source),
+        static fn (string $l): bool => !str_starts_with(ltrim($l), '*')
+            && !str_starts_with(ltrim($l), '//')
+            && !str_starts_with(ltrim($l), '/*'),
+    ));
+
+    assertTrue(str_contains($code, 'restoreOwner'), 'ต้องคืนเจ้าของไฟล์หลังเขียน');
+    assertTrue(str_contains($code, '/usr/bin/chown'), 'ต้องใช้ chown จริง ไม่ใช่หวังว่า umask จะช่วย');
+
+    // ต้องคืนเจ้าของ **ก่อน** rename — ไม่งั้นมีจังหวะที่ไฟล์จริงเป็นของ root
+    $ownerAt = strpos($code, 'self::restoreOwner(');
+    $renameAt = strpos($code, '$executor->rename(');
+
+    assertTrue(
+        $ownerAt !== false && $renameAt !== false && $ownerAt < $renameAt,
+        'ต้องคืนเจ้าของก่อนสลับไฟล์เข้าที่',
+    );
+
+    // ไฟล์ใหม่ไม่มีเจ้าของเดิม ต้องเอาจากโฟลเดอร์แม่
+    assertTrue(
+        str_contains($code, 'stat(dirname($target))'),
+        'ไฟล์ใหม่ต้องรับเจ้าของจากโฟลเดอร์แม่',
+    );
+});
