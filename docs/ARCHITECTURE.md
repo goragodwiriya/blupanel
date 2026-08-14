@@ -1,8 +1,9 @@
-# PHP Server Control Panel — สถาปัตยกรรมระบบ
+# BluPanel — สถาปัตยกรรมระบบ
 
 > เอกสารออกแบบระดับ Production
-> Stack: PHP 8.4 vanilla ไร้ dependency · เป้าหมาย: ปลอดภัย เร็ว เบา แจกจ่ายติดตั้งได้หลายเซิร์ฟเวอร์
-> ชื่อโค้ดเนม: **phpcp**
+> Stack: PHP vanilla ไร้ dependency — ต้องการ **PHP 8.2 ขึ้นไป** (ใช้ `readonly class`)
+> ตัวติดตั้งลง PHP 8.4 ให้ · เป้าหมาย: ปลอดภัย เร็ว เบา แจกจ่ายติดตั้งได้หลายเซิร์ฟเวอร์
+> ชื่อโค้ดเนมภายใน (บัญชีระบบ ไบนารี เส้นทางไฟล์): **phpcp**
 
 ---
 
@@ -14,16 +15,16 @@
 | D2 | **Agent daemon เป็น PHP CLI** สื่อสารผ่าน unix socket | ไม่เพิ่มภาษา/runtime ใหม่ ใช้ `pcntl`+`posix` ที่มีอยู่แล้ว |
 | D3 | **capability แบบ typed เท่านั้น** ห้ามส่ง shell string | ตัด command injection ที่ต้นทางเชิงโครงสร้าง ไม่ใช่ด้วยการ escape |
 | D4 | **SQLite (WAL) เก็บ state ของ panel** | panel เป็นคนคุม MariaDB จึงห้ามพึ่งพา MariaDB — MariaDB ล่มแล้ว panel ต้องยังเข้าได้เพื่อกดสั่ง start |
-| D5 | **1 เว็บไซต์ = 1 system user = 1 PHP-FPM pool** | เว็บโดนแฮ็ก 1 ตัว ต้องอ่านไฟล์เว็บอื่นไม่ได้ |
+| D5 | **1 บัญชีโฮสติ้ง = 1 system user = 1 บ้าน = 1 PHP-FPM pool ต่อเวอร์ชัน PHP** · **แก้ 2026-08-06 (migration 0006):** เดิมเป็น "1 เว็บไซต์ = 1 uid" | ลูกค้าโดนแฮ็ก 1 ราย ต้องอ่านไฟล์ของลูกค้ารายอื่นไม่ได้ · หน่วยที่ขายจริงคือบัญชี ไม่ใช่เว็บ โควตาและ SFTP จึงต้องผูกกับบัญชี → [§11](#11-การแยกเว็บไซต์ออกจากกัน-multi-tenant-isolation) |
 | D6 | **ไม่มี build step, ไม่มี CDN, ไม่มี npm** — ไลบรารีฝั่งหน้าเว็บ commit เข้า repo พร้อม SHA256SUMS | ติดตั้งบนเซิร์ฟเวอร์ปิด/ไม่มีเน็ตได้ + CSP เข้มได้ + supply chain ตรวจสอบได้ · **แก้ 2026-08-05:** ยังไม่มี build step เหมือนเดิม แต่ตั้งแต่ PLAN-V2 เฟส C จะมีไลบรารีภายนอกหนึ่งตัว (Now.js) ที่ commit ไฟล์ dist เข้า repo — ไม่ใช่ "เขียนเองทั้งหมด" อีกต่อไป ดู [PLAN-V2 §2 N8](PLAN-V2.md#2-การตัดสินใจเชิงสถาปัตยกรรม-ตัดสินแล้ว) |
-| D7 | **Server-rendered HTML + JS ปรับปรุงทีหลัง** | TTFB ต่ำ ทำงานได้แม้ JS พัง เบากว่า SPA มาก |
+| D7 | ~~Server-rendered HTML + JS ปรับปรุงทีหลัง~~ → **SPA บน Now.js คุยกับ `/api/v2/*` ที่เป็น JSON ล้วน** · **แก้ 2026-08-08 (PLAN-V2 เฟส C/D)** | เหตุผลเดิม (TTFB ต่ำ เบากว่า) ยังจริง แต่แลกกับ Controller 17 ตัวที่ผสมการคำนวณกับการเรนเดอร์ HTML ไว้ในฟังก์ชันเดียว · ตอนนี้ฝั่ง PHP ไม่ echo HTML ที่ไหนเลยนอกจาก `ErrorPage` → [§9](#9-frontend--เบาจริง-ไม่มี-build-step) |
 | D8 | **SSE สำหรับ metrics สด** ไม่ใช้ WebSocket | ทางเดียวพอ ไม่ต้องมี server เพิ่ม ผ่าน reverse proxy ง่าย |
 | D9 | **Driver layer สำหรับ web server** | v1 ส่ง Apache, v1.1 เพิ่ม Nginx โดยไม่ต้องรื้อ |
 | D10 | **ตรวจ config ก่อน reload ทุกครั้ง** | เขียน vhost ผิดแล้ว reload = เว็บทั้งเครื่องดับ |
 | D11 | **panel มี web/PHP stack ของตัวเองแยกจากที่บริหาร** | สั่งหยุด Apache ของระบบแล้ว panel ต้องยังเข้าได้เพื่อสั่ง start กลับ → [§5](#5-การแยก-service-ของ-control-panel-ออกจาก-service-ที่บริหาร) |
 | D12 | **3 โหมด: production / sandbox / dryrun** | ทดสอบเต็มรูปแบบบนเครื่องนักพัฒนาได้โดยไม่แตะระบบจริง → [§6](#6-โหมดการทำงาน--ใช้จริง--ทดสอบ--จำลอง) |
 | D13 | **Multi-PHP & Web/DNS Core Infrastructure** | รองรับ PHP 7.4 & 8.4 สวมคู่กับ Apache2 + Nginx Proxy, BIND9 DNS, MariaDB, OpenSSH, UFW, Fail2ban |
-| D14 | **การบริการจัดการ Mail Server ในอนาคต (Planned)** | การติดตั้ง Postfix, Dovecot, Rspamd, DKIM/SPF integration เพื่อให้บริการ Mail Hosting |
+| D14 | **Mail hosting — ✅ ทำแล้ว** (Postfix + Dovecot + rspamd, DKIM/SPF/DMARC/MX สร้างอัตโนมัติ) | กล่องจดหมายจริงบนเครื่อง อ่านผ่าน IMAP ได้ · ขอบเขตที่ตกลงไว้และสิ่งที่ยัง**ไม่**ทำ (เว็บเมล, CalDAV, Sieve, ClamAV) อยู่ใน [PLAN-MAIL.md](PLAN-MAIL.md) |
 
 ---
 
@@ -31,11 +32,11 @@
 
 ```mermaid
 flowchart TB
-    B["เบราว์เซอร์<br/>HTTPS พอร์ต 8443"]
+    B["เบราว์เซอร์<br/>SPA บน Now.js · HTTPS พอร์ต 8443"]
 
-    subgraph T1["ชั้นที่ 1 — Web UI · user: phpcp-web · ไม่มี sudo ไม่มี shell"]
+    subgraph T1["ชั้นที่ 1 — Web API · user: phpcp-web · ไม่มี sudo ไม่มี shell"]
         R["Router + Middleware<br/>Auth · CSRF · RBAC · RateLimit"]
-        V["View (PHP templates)"]
+        V["Controller /api/v2/*<br/>ตอบ JSON ล้วน ไม่มี HTML"]
         DB[("SQLite WAL<br/>/var/lib/phpcp/panel.db")]
     end
 
@@ -44,7 +45,7 @@ flowchart TB
     subgraph T2["ชั้นที่ 2 — Agent daemon · user: root · phpcp-agentd"]
         VAL["Capability Registry<br/>ตรวจชนิดข้อมูลทุก argument"]
         EXE["Executor: proc_open(argv[])<br/>ไม่ผ่าน shell · env ล้าง · path เต็ม"]
-        DROP["Privilege dropper<br/>fork + setuid เป็น web_&lt;id&gt;"]
+        DROP["Privilege dropper<br/>fork + setuid เป็นเจ้าของเว็บ"]
         JOB["Job runner<br/>งานยาว: backup / SSL / ติดตั้ง PHP"]
     end
 
@@ -55,7 +56,7 @@ flowchart TB
         MDB["MariaDB"]
         FW["ufw / nftables"]
         CB["certbot"]
-        FS["ไฟล์ของเว็บไซต์<br/>/srv/phpcp/sites/*"]
+        FS["ไฟล์ของลูกค้า<br/>/home/&lt;ผู้ใช้&gt;/*"]
     end
 
     B -->|"1 request"| R
@@ -133,7 +134,7 @@ HTML" แทนที่จะเห็นว่าไม่ได้ล็อ�
 
 Router เป็น array คงที่ ทำให้ opcache แคชได้ทั้งไฟล์ ไม่มีการ scan directory ตอน runtime
 
-### 3.3 หน้าจอทั้งหมด (ตาม PROMPT.md — UI ภาษาไทยทั้งระบบ)
+### 3.3 หน้าจอทั้งหมด (ตาม [PROMPT.md](history/PROMPT.md) — UI ภาษาไทยทั้งระบบ)
 
 **ทุกหน้าอยู่ใน SPA** ที่ `/app/*` · ฝั่ง PHP มีเส้นทางหน้าเว็บอยู่ห้าเส้นเท่านั้น:
 `/` (เด้งไป `/app/`) กับ `/app`, `/app/`, `/app/{page}`, `/app/{page}/` ซึ่งส่งไฟล์ shell
@@ -143,24 +144,30 @@ Router เป็น array คงที่ ทำให้ opcache แคชไ�
 | กลุ่ม | หน้า | route | permission |
 |---|---|---|---|
 | — | แดชบอร์ด | `/app/` | `dashboard.view` |
-| **HOSTING** | เว็บไซต์ | `/app/sites` | `site.view` |
-| | รายละเอียดเว็บไซต์ (8 แท็บ) | `/app/site?id={id}` | `site.view` |
-| | โดเมน | `/app/domains` | `domain.view` |
-| | DNS records | `/app/domain?id={id}` | `domain.view` |
+| **HOSTING** | เว็บไซต์ | `/app/sites` · `/app/site?id={id}` · `/app/site-create` | `site.view` |
+| | โดเมนและ DNS | `/app/domains` · `/app/domain?id={id}` | `domain.view` |
 | | SSL Certificates | `/app/certificates` | `ssl.view` |
 | | PHP | `/app/php-versions` | `php.view` |
 | | ฐานข้อมูล | `/app/databases` | `db.view` |
-| | ตัวจัดการไฟล์ | `/app/files` · `/app/file` | `file.view` |
-| | งานอัตโนมัติ | `/app/cron-jobs` · `/app/cron-job` | `cron.view` |
-| | สำรองข้อมูล | `/app/backups` | `backup.view` |
+| | ตัวจัดการไฟล์ | `/app/filemanager` (เปิดแท็บใหม่) | `file.view` |
+| | งานอัตโนมัติ | `/app/cron-jobs` · `/app/cron-job?id={id}` | `cron.view` |
+| | กล่องจดหมาย | `/app/mailboxes` | `mail.view` |
+| | คิวเมลขาออก | `/app/mail-queue` | `settings.manage` |
+| | สำรองข้อมูล | `/app/backups` · `/app/backup-destination` | `backup.view` |
 | **SERVER** | ภาพรวมเซิร์ฟเวอร์ | `/app/server` | `server.view` |
 | | Services | `/app/services` | `service.view` |
 | | ความปลอดภัย | `/app/security` | `security.view` |
 | | Firewall | `/app/firewall` | `firewall.view` |
 | | SSH | `/app/ssh` | `ssh.view` |
 | | Logs | `/app/logs` | `log.view` |
-| | ผู้ใช้งานระบบ | `/app/users` · `/app/user?id={id}` | `user.view` |
+| | ผู้ใช้งานระบบ | `/app/users` · `/app/user?id={id}` · `/app/user-create` | `user.view` |
 | | การตั้งค่าเซิร์ฟเวอร์ | `/app/settings` | `settings.view` |
+| — | ล็อกอิน · 2FA · เปลี่ยนรหัสผ่าน · 403 | `/app/login` · `/app/login-2fa` · `/app/change-password` · `/app/forbidden` | — |
+
+**role `webadmin` ไม่มี `cron.*` และ `backup.*`** ตั้งแต่ 2026-08-15 — งานตามเวลาของลูกค้า
+ไปจบที่ crontab ของ*ระบบ* ซึ่งเป็นทรัพยากรของทั้งเครื่อง และเป็นทางที่ตรงที่สุดจากบัญชี
+โฮสติ้งไปสู่การรันโค้ดซ้ำ ๆ โดยไม่มีใครดู · ลูกค้ายังเข้าถึงไฟล์สำรอง**ของตัวเอง**ได้
+ตามปกติ เพราะไฟล์อยู่ที่ `<บ้าน>/backup` ซึ่งเปิดผ่านตัวจัดการไฟล์และ SFTP ได้
 
 เมนูฝั่งเบราว์เซอร์ซ่อนรายการที่ผู้ใช้ไม่มีสิทธิ์ แต่นั่นเป็นเรื่อง UX ล้วน ๆ —
 เทสต์ `RbacMatrix` ตรึงว่าทุกเมนูใช้สิทธิ์เดียวกับหน้าที่มันชี้ไป และทุกหน้าเรียก
@@ -170,7 +177,7 @@ API ที่บังคับสิทธิ์เต็มรูปแบบ�
 
 ### 3.4 กฎ UX ที่บังคับในโค้ด
 
-ตาม PROMPT.md ข้อ "Important UX Rule" — หน้าเว็บไซต์แสดง `PHP Version: 8.4` เป็นข้อมูล แต่ปุ่มควบคุมโปรเซส PHP-FPM มีเฉพาะหน้า Services เท่านั้น
+ตาม [PROMPT.md](history/PROMPT.md) ข้อ "Important UX Rule" — หน้าเว็บไซต์แสดง `PHP Version: 8.4` เป็นข้อมูล แต่ปุ่มควบคุมโปรเซส PHP-FPM มีเฉพาะหน้า Services เท่านั้น
 บังคับด้วย: capability `service.restart` ไม่ผูกกับ permission ใด ๆ ที่ role `ผู้ดูแลเว็บไซต์` มี ต่อให้หน้าเว็บไซต์เผลอเรนเดอร์ปุ่มออกมา คำสั่งก็ถูกปฏิเสธที่ชั้น 2
 
 หน้า Services แสดงความสัมพันธ์ย้อนกลับ (จาก query SQLite ล้วน ไม่ต้องถาม OS):
@@ -256,7 +263,15 @@ final class ServiceRestart implements Capability
 | system | `system.metrics` `.uptime` `.users` `.logs_tail` | อ่านอย่างเดียว |
 | job | `job.enqueue` `.status` `.cancel` | งานยาว |
 
-รวมประมาณ 60 capability — **ทุกตัวต้องมีไฟล์ validate ของตัวเอง ไม่มี capability แบบ generic ที่รับคำสั่งอิสระ**
+ตารางข้างบนเป็น**ตัวอย่างต่อหมวด ไม่ใช่รายการครบ** — ปัจจุบันมี **109 capability** กระจายใน
+28 หมวด (หมวดที่ใหญ่ที่สุดคือ `mail` 15 · `site` 14 · `file` 14 · `backup` 9) และรายชื่อ
+เปลี่ยนบ่อยกว่าที่เอกสารจะตามทัน · **รายการที่เชื่อถือได้คือคำสั่งนี้ ซึ่งอ่านจาก registry จริง:**
+
+```bash
+phpcp capabilities
+```
+
+**ทุกตัวต้องมีไฟล์ validate ของตัวเอง ไม่มี capability แบบ generic ที่รับคำสั่งอิสระ**
 
 ### 4.4 การลดสิทธิ์สำหรับงานไฟล์
 
@@ -270,7 +285,7 @@ if ($pid === 0) {
     posix_initgroups($site->user, $site->gid);
     posix_setuid($site->uid);          // ลดแล้วยกกลับไม่ได้
     chdir($site->root);
-    // ทุกอย่างหลังจุดนี้คือสิทธิ์ระดับ web_17 เท่านั้น
+    // ทุกอย่างหลังจุดนี้คือสิทธิ์ระดับเจ้าของเว็บ (เช่น somchai) เท่านั้น
     $real = realpath($requestedPath);
     if ($real === false || !str_starts_with($real . '/', $site->root . '/')) {
         exit(self::EXIT_TRAVERSAL);    // กัน ../ และ symlink ชี้ออกนอกบ้าน
@@ -303,9 +318,9 @@ Control panel จำนวนมากตายด้วยกับดักเ
 | HTTP | `phpcp-web.service` — instance แยกของ apache2 ใช้ config tree `/etc/phpcp/httpd/` พอร์ต **8443** | `apache2.service` พอร์ต 80/443 |
 | PHP | `phpcp-fpm.service` — FPM master แยก มี pool เดียวคือ `panel` | `php7.4-fpm` `php8.3-fpm` `php8.4-fpm` `php8.5-fpm` |
 | ฐานข้อมูล | SQLite `/var/lib/phpcp/panel.db` (ไม่มี server) | `mariadb.service` |
-| สิทธิ์ | user `phpcp-web`, group `phpcp` | `www-data`, `web_<id>` ของแต่ละเว็บ |
+| สิทธิ์ | user `phpcp-web`, group `phpcp` | `www-data` และบัญชี Linux ของลูกค้าแต่ละราย |
 | Config | `/etc/phpcp/` | `/etc/apache2/` `/etc/php/*/` `/etc/mysql/` |
-| Log | `/var/log/phpcp/` | `/var/log/apache2/` `/srv/phpcp/sites/*/logs/` |
+| Log | `/var/log/phpcp/` | `/var/log/apache2/` `/home/<ผู้ใช้>/logs/` |
 | งานตามเวลา | `phpcp-scheduler.timer` — ยิงทุกนาที รันด้วยสิทธิ์ `phpcp-web` แล้วสั่งงานผ่าน agent | `cron.service` |
 
 ใช้ **binary ตัวเดียวกัน** (`/usr/sbin/apache2`, `/usr/sbin/php-fpm8.4`) แต่คนละ instance คนละ config tree คนละ pid คนละพอร์ต — จึงไม่เปลืองพื้นที่เพิ่ม แต่แยกชะตากรรมออกจากกันสมบูรณ์
@@ -412,8 +427,8 @@ final class DryRunExecutor  implements Executor { /* บันทึกอย่
 | `systemctl restart apache2` | อัปเดตสถานะใน `sandbox/services.json` + หน่วงเวลาเสมือน คืน exit code เหมือนจริง |
 | `/etc/apache2/sites-available/` | `sandbox/etc/apache2/sites-available/` |
 | `/etc/php/8.4/fpm/pool.d/` | `sandbox/etc/php/8.4/fpm/pool.d/` |
-| `/srv/phpcp/sites/` | `sandbox/srv/sites/` (ไฟล์จริง แตะได้ ทดสอบ file manager ได้เต็มที่) |
-| `useradd web_17` | บันทึกใน `sandbox/passwd.json` ไม่แตะ `/etc/passwd` |
+| `/home/<ผู้ใช้>/` | `sandbox/home/<ผู้ใช้>/` (ไฟล์จริง แตะได้ ทดสอบ file manager ได้เต็มที่) |
+| `useradd somchai` | บันทึกใน `sandbox/passwd.json` ไม่แตะ `/etc/passwd` |
 | MariaDB พอร์ต 3306 | instance ทดสอบพอร์ต 3307 หรือ mock (เลือกได้ใน config) |
 | `certbot certonly ...` | ออก self-signed cert อายุ 90 วันเข้า `sandbox/letsencrypt/` |
 | `ufw allow 443` | เขียนกฎลง `sandbox/firewall.json` |
@@ -436,14 +451,14 @@ final class DryRunExecutor  implements Executor { /* บันทึกอย่
 
 ```
 phpcp sandbox:init            สร้าง prefix + โครงสร้างไดเรกทอรี
-phpcp sandbox:seed            ใส่ข้อมูลตัวอย่างภาษาไทยตาม PROMPT.md
+phpcp sandbox:seed            ใส่ข้อมูลตัวอย่างภาษาไทยตาม [PROMPT.md](history/PROMPT.md)
 phpcp sandbox:reset           ล้างกลับเป็นค่าเริ่มต้น
 phpcp mode:show / mode:set    ดู/เปลี่ยนโหมด (production ต้องยืนยัน 2 ชั้น)
 ```
 
 `sandbox:seed` สร้าง: 6 เว็บไซต์ (`example.com` PHP 8.4, `legacy.example.com` PHP 7.4, `shop.com`, `demo.com` …), โดเมนย่อยและ alias, DNS records ครบ 6 ชนิด, 5 ฐานข้อมูล, cron jobs, ประวัติ backup, SSL ที่ใกล้หมดอายุ 1 ใบ (ไว้ทดสอบการเตือน), log ย้อนหลัง 7 วัน, และเหตุการณ์ความปลอดภัยตัวอย่าง
 
-**จุดสำคัญ:** ข้อมูลนี้ไหลผ่าน code path เดียวกับ production ทั้งหมด — ไม่ใช่ mock ที่ hard-code ใน HTML แบบ prototype เดิม ดังนั้นสิ่งที่ PROMPT.md ต้องการ (prototype ไทยที่ interactive ครบ) กับสิ่งที่คุณต้องการ (ระบบใช้จริงได้) **ได้ทั้งคู่จากโค้ดชุดเดียว** ต่างกันแค่ค่า `mode`
+**จุดสำคัญ:** ข้อมูลนี้ไหลผ่าน code path เดียวกับ production ทั้งหมด — ไม่ใช่ mock ที่ hard-code ใน HTML แบบ prototype เดิม ดังนั้นสิ่งที่ [PROMPT.md](history/PROMPT.md) ต้องการ (prototype ไทยที่ interactive ครบ) กับสิ่งที่คุณต้องการ (ระบบใช้จริงได้) **ได้ทั้งคู่จากโค้ดชุดเดียว** ต่างกันแค่ค่า `mode`
 
 ---
 
@@ -451,57 +466,75 @@ phpcp mode:show / mode:set    ดู/เปลี่ยนโหมด (producti
 
 `/var/lib/phpcp/panel.db` — โหมด WAL, `0600 phpcp-web:phpcp`, `busy_timeout=5000`
 
+> **นี่คือรูปย่อ ไม่ใช่สคีมาตัวจริง** — แหล่งความจริงคือ `db/migrations/*.sql` ตามลำดับ
+> คอลัมน์ที่เกี่ยวกับการขาย (โควตา วันหมดอายุ เลย์เอาต์) ตัดออกจากที่นี่เพื่อไม่ให้ยาวเกิน
+> ดู [CUSTOMERS.md](CUSTOMERS.md) §2 แทน
+
 ```sql
--- ผู้ใช้ panel (คนละเรื่องกับ system user ของ Linux)
+-- ผู้ใช้ panel — ตั้งแต่ migration 0005 ตารางนี้เก็บ**ทั้ง**ผู้ดูแลและลูกค้าโฮสติ้ง
+-- (ลูกค้าคือแถวที่ role = 'webadmin') · ตาราง `customers` เดิมถูกยุบเข้ามาที่นี่
 CREATE TABLE users (
   id INTEGER PRIMARY KEY,
-  username TEXT NOT NULL UNIQUE,
+  username TEXT NOT NULL UNIQUE,            -- เป็นชื่อบัญชี Linux ของเขาด้วยถ้ามีเว็บ
   password_hash TEXT NOT NULL,              -- Argon2id
   role TEXT NOT NULL CHECK(role IN ('superadmin','sysadmin','webadmin')),
   totp_secret TEXT,                         -- เข้ารหัสด้วย sodium secretbox
   totp_enabled INTEGER NOT NULL DEFAULT 0,
-  status TEXT NOT NULL DEFAULT 'active',
+  status TEXT NOT NULL DEFAULT 'active',    -- สิทธิ์ล็อกอิน
+  service_status TEXT NOT NULL DEFAULT 'active',  -- สถานะบริการโฮสติ้ง — คนละแกนกับ status
+  system_user TEXT, uid INTEGER, gid INTEGER,     -- ว่างจนกว่าจะสร้างเว็บแรก (lazy)
   failed_attempts INTEGER NOT NULL DEFAULT 0,
   locked_until INTEGER,
   last_login_at INTEGER, last_login_ip TEXT,
   created_at INTEGER NOT NULL
+  -- + คอลัมน์โควตา/หมดอายุ/เลย์เอาต์/สวิตช์สำรอง — ดู CUSTOMERS.md §2
 );
 
 CREATE TABLE sessions (
-  id TEXT PRIMARY KEY,                      -- 32 byte random, hash เก็บ ไม่เก็บตัวจริง
+  id_hash TEXT PRIMARY KEY,                 -- id จริง 32 byte ไม่เคยถูกเก็บ เก็บแต่ hash
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  ip TEXT NOT NULL, ua_hash TEXT NOT NULL,  -- ผูก session กับ IP + UA
-  created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
-  rotated_at INTEGER NOT NULL
+  ip TEXT NOT NULL,                         -- ผูก session กับ IP (คำขอจาก IP อื่นถูกปฏิเสธ)
+  ua_hash TEXT NOT NULL,                    -- **บันทึกไว้เฉย ๆ ไม่ได้ใช้ตัดสินใจ** — SECURITY §2.2
+  pending_2fa INTEGER NOT NULL DEFAULT 0,
+  prev_id_hash TEXT, prev_until INTEGER,    -- ช่วงผ่อนผันตอนหมุน id (migration 0008)
+  created_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL,
+  rotated_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
 );
 
+-- ไม่มี `name` (ลบใน 0021 — ไม่มีใครใช้), ไม่มี `system_user`/`uid`/`gid`
+-- (ลบใน 0006 — ย้ายไปอยู่บน users เพราะ uid ผูกกับ**ผู้ใช้** ไม่ใช่กับเว็บ)
+-- และไม่มี `disk_quota_mb` (โควตาดิสก์นับรายบัญชี ไม่ใช่รายเว็บ)
 CREATE TABLE sites (
   id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL,                       -- ชื่อที่แสดงใน UI (ไทยได้)
   primary_domain TEXT NOT NULL UNIQUE,
-  system_user TEXT NOT NULL UNIQUE,         -- web_17
-  uid INTEGER NOT NULL, gid INTEGER NOT NULL,
-  docroot TEXT NOT NULL,                    -- /srv/phpcp/sites/<domain>/public
+  docroot TEXT NOT NULL,                    -- /home/<ผู้ใช้>/public_html (เลย์เอาต์ cpanel)
+  docroot_override TEXT,                    -- Domain Pointer — ชี้ไปโฟลเดอร์ที่มีอยู่ก่อน
   php_version TEXT NOT NULL,                -- 8.4
   ssl_mode TEXT NOT NULL DEFAULT 'off',     -- off | on | forced
   status TEXT NOT NULL DEFAULT 'active',    -- active | suspended
-  disk_quota_mb INTEGER, disk_used_mb INTEGER DEFAULT 0,
+  disk_used_mb INTEGER DEFAULT 0,
   owner_user_id INTEGER REFERENCES users(id),
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL, updated_at INTEGER
 );
 
 CREATE TABLE domains (
   id INTEGER PRIMARY KEY,
   site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
   domain TEXT NOT NULL UNIQUE,
-  type TEXT NOT NULL CHECK(type IN ('primary','subdomain','alias','redirect')),
-  redirect_target TEXT, redirect_code INTEGER
+  type TEXT NOT NULL CHECK(type IN ('primary','subdomain','alias','redirect','wildcard')),
+  redirect_target TEXT, redirect_code INTEGER,
+  zone_serial INTEGER,                      -- serial ล่าสุดที่เขียนลง BIND (0012)
+  mail_enabled INTEGER NOT NULL DEFAULT 0,  -- โดเมนนี้รับเมลไหม (0018)
+  created_at INTEGER
 );
 
+-- migration 0019 ถอด CHECK ของ `type` ออกโดยตั้งใจ — เก็บเรกคอร์ดได้ทุกชนิด
+-- แล้วให้ `named-checkzone` เป็นคนตัดสินว่าใช้ได้จริงไหม ซึ่งรู้เรื่อง DNS มากกว่า
+-- รายการหกชนิดที่ hard-code ไว้เดิม (SRV และ NS ของ subdomain ใส่ไม่ได้เลย)
 CREATE TABLE dns_records (
   id INTEGER PRIMARY KEY,
   domain_id INTEGER NOT NULL REFERENCES domains(id) ON DELETE CASCADE,
-  type TEXT NOT NULL CHECK(type IN ('A','AAAA','CNAME','MX','TXT','CAA')),
+  type TEXT NOT NULL,
   name TEXT NOT NULL, value TEXT NOT NULL,
   ttl INTEGER NOT NULL DEFAULT 3600, priority INTEGER
 );
@@ -587,7 +620,7 @@ CREATE INDEX idx_sessions_exp ON sessions(expires_at);
 
 ---
 
-## 8. RBAC — บทบาทผู้ใช้ (ตาม PROMPT.md)
+## 8. RBAC — บทบาทผู้ใช้ (ตาม [PROMPT.md](history/PROMPT.md))
 
 | role | ชื่อใน UI | ขอบเขต |
 |---|---|---|
@@ -611,7 +644,7 @@ CREATE INDEX idx_sessions_exp ON sessions(expires_at);
 | `unpkg.com/lucide@latest` | `@latest` = โค้ดเปลี่ยนใต้เท้าเราได้ทุกเมื่อ (supply chain) | SVG sprite รวมเฉพาะไอคอนที่ใช้ ~6 KB |
 | Google Fonts | ส่ง IP ผู้ดูแลระบบออกนอก, ช้าตอนเน็ตปิด | Noto Sans Thai woff2 subset (thai+latin) ~40 KB โฮสต์เอง |
 | `ui-avatars.com` | ยิง request ออกนอกทุกครั้งที่โหลดหน้า | สร้างอักษรย่อด้วย CSS |
-| `<div class="page-content">` ทุกหน้าในไฟล์เดียว | ส่ง HTML ของ 17 หน้าไปพร้อมกันทุกครั้ง | server-rendered ทีละหน้า |
+| `<div class="page-content">` ทุกหน้าในไฟล์เดียว | ส่ง HTML ของ 17 หน้าไปพร้อมกันทุกครั้ง | shell หน้าเดียว + เทมเพลตรายหน้าที่ SPA ดึงมาเมื่อต้องใช้ |
 | `onclick="navigate(...)"` inline | ขัดกับ CSP `unsafe-inline` ต้องเปิด = เสี่ยง XSS | `<a href>` จริง + event delegation |
 
 ### 9.2 งบประมาณน้ำหนัก
@@ -645,19 +678,27 @@ CREATE INDEX idx_sessions_exp ON sessions(expires_at);
 
 ### 9.3 JavaScript
 
-ES module ล้วน ไม่มี framework แบ่งเป็น:
+> **แก้ 2026-08-08 (PLAN-V2 เฟส C/D):** ของเดิมคือ JS 7 ไฟล์ที่เขียนเองทั้งหมด
+> (`core · toast · modal · table · metrics · fileman · logview`) คู่กับ HTML ที่เรนเดอร์
+> จากเซิร์ฟเวอร์ · ตอนนี้ทั้งชุดถูกแทนด้วย Now.js + โค้ดเชื่อมของเราเจ็ดไฟล์ที่บางกว่ามาก
+> เหตุผลที่ยอมเพิ่มไลบรารีภายนอกตัวแรกของโปรเจกต์อยู่ที่ [PLAN-V2 §2 N9](PLAN-V2.md)
+
+ES module ล้วน ไม่มี build step อยู่ที่ `public/assets/spa/js/`:
+
 ```
-assets/js/
-  core.js       ฟังก์ชันช่วย: qs, on, fetchJson (แนบ CSRF อัตโนมัติ)
-  toast.js      Toast notification (ข้อความไทย)
-  modal.js      Modal + Confirm dialog (มีระดับ danger สำหรับงานอันตราย)
-  table.js      ค้นหา/กรอง/เรียง/เลือกหลายรายการ ฝั่ง client
-  metrics.js    รับ SSE แล้ววาดกราฟลง <canvas> เอง ไม่ใช้ chart library
-  fileman.js    drag-and-drop upload แบบ chunk + progress
-  logview.js    log viewer หน้าตา terminal + tail สด + ไฮไลต์ระดับ log
+main.js         จุดเริ่ม — ลำดับการบูตมีเหตุผลกำกับทุกขั้น อย่าสลับ
+api.js          ตัวเชื่อม /api/v2/* เข้ากับ Now.js (แนบ CSRF, แปลงซองข้อความ, จัดการ 401)
+auth.js         เซสชันและสิทธิ์ฝั่งหน้าเว็บ — **ไม่ใช้ AuthManager ของ Now.js โดยตั้งใจ**
+                เพราะมันเก็บผู้ใช้ลง localStorage ซึ่งขัดกับคุกกี้ __Host- + HttpOnly
+ui.js           เปลือกจอ: เมนูข้าง แถบบน แถบเตือนโหมด แถบ rollback
+pages.js        สคริปต์ประจำหน้า — กฎคือห้ามมีอะไรที่ data-attribute ทำแทนได้
+formatters.js   ไปป์จัดรูปแบบค่าที่เทมเพลตเรียกตรง ๆ (`data-text="mem.used | bytes"`)
+filemanager.js  หน้าเดียวที่เป็น JS จริง ไม่ใช่การประกาศด้วยแอตทริบิวต์ — เพราะมันไม่ใช่
+                "ตาราง + ฟอร์ม" เหมือนหน้าที่เหลือ
 ```
 
-กราฟวาดเองด้วย canvas API — sparkline กับ area chart ที่ใช้จริงในหน้า dashboard เขียนได้ในโค้ดไม่ถึง 120 บรรทัด เบากว่าดึง Chart.js (~200 KB) มาก
+กราฟยังวาดเองด้วย canvas API ไม่ดึง chart library — sparkline กับ area chart ที่ใช้จริง
+ในหน้าแดชบอร์ดเขียนได้สั้นกว่าราคาที่ต้องจ่ายให้ Chart.js (~200 KB) มาก
 
 ### 9.4 Metrics สด ผ่าน SSE
 
@@ -708,15 +749,25 @@ v1 ส่ง `ApacheDriver` (เครื่องเป้าหมายมี
 
 ## 11. การแยกเว็บไซต์ออกจากกัน (multi-tenant isolation)
 
-สร้างเว็บไซต์ 1 ตัว = agent ทำ 6 อย่างเป็นทรานแซกชัน (ล้มกลางทางต้อง rollback ครบ):
+**หน่วยของการแยกสิทธิ์คือ*ผู้ใช้* ไม่ใช่เว็บ** ตั้งแต่ migration 0006
+
+เดิมหนึ่งเว็บได้หนึ่ง uid หนึ่งบ้าน หนึ่ง pool · ลูกค้าที่มี 5 เว็บจึงได้บัญชี Linux 5 บัญชี
+ที่ไม่เกี่ยวข้องกันเลยทั้งที่เป็นคนเดียวกัน — SFTP ต้องมี 5 บัญชี, โควตาดิสก์นับแยกรายเว็บ
+ทั้งที่ขายเป็นรายบัญชี, และ 5 pool กินหน่วยความจำโดยไม่ได้แยกอะไรที่ควรแยก
+
+สร้างเว็บไซต์ 1 ตัว = agent ทำเป็นทรานแซกชัน (ล้มกลางทางต้อง rollback ครบ):
 
 ```
-1. useradd -r -M -s /usr/sbin/nologin -d /srv/phpcp/sites/<domain> web_<id>
-2. mkdir -p .../{public,logs,tmp} + <บ้าน>/backup  → chown <ผู้ใช้>:<กลุ่มเว็บ>, chmod 750
-3. เขียน PHP-FPM pool: /etc/php/<ver>/fpm/pool.d/<domain>.conf
-      user/group = web_<id>
-      listen = /run/php/<domain>-<ver>.sock  (listen.owner = www-data)
-      open_basedir = <docroot>:<tmp>
+1. ถ้าเจ้าของยังไม่มีบัญชีระบบ:  useradd -m -d /home/<ผู้ใช้> -s /usr/sbin/nologin <ผู้ใช้>
+   (สร้างแบบ lazy — ผู้ใช้ที่ยังไม่มีเว็บจะไม่มีบัญชีระบบ)   /home ตั้ง 0711
+2. mkdir ตามเลย์เอาต์ของบัญชี (ดู SiteLayout) → chown <ผู้ใช้>:<กลุ่มเว็บ>
+      cpanel: <บ้าน>/public_html · <บ้าน>/logs/<domain> · <บ้าน>/.phpcp/<domain>
+      phpcp:  <บ้าน>/domains/<domain>/{public,logs}
+      ทั้งสองแบบ: <บ้าน>/tmp และ <บ้าน>/backup อยู่ระดับบัญชี
+3. เขียน PHP-FPM pool ของ (ผู้ใช้ × เวอร์ชัน PHP) ถ้ายังไม่มี:
+      user/group = <ผู้ใช้>
+      listen = socket ของ pool นั้น  (listen.owner = www-data, mode 0660)
+      open_basedir = <บ้าน>:<tmp>
       disable_functions = exec,passthru,shell_exec,system,proc_open,popen,...
 4. เขียน vhost ผ่าน driver → configtest → reload
 5. systemctl reload php<ver>-fpm
@@ -724,12 +775,15 @@ v1 ส่ง `ApacheDriver` (เครื่องเป้าหมายมี
 ```
 
 ผลลัพธ์:
-- เว็บ A อ่านไฟล์เว็บ B ไม่ได้ (permission 750 + คนละ uid)
+- **ลูกค้า A อ่านไฟล์ของลูกค้า B ไม่ได้** (คนละ uid + `open_basedir` คนละชุด + `/home` เป็น 0711
+  จึงไล่ดูรายชื่อกันไม่ได้ด้วย)
+- เว็บของ**เจ้าของคนเดียวกัน**อ่านไฟล์กันได้และแชร์คิว process กัน — **ตั้งใจ** เพราะเป็น
+  ทรัพย์สินของคนเดียวกัน และเป็นโมเดลเดียวกับ cPanel/Plesk/DirectAdmin
 - `open_basedir` กันแม้ในกรณี PHP มีบั๊ก
 - เว็บโดนแฮ็กแล้วยกระดับเป็น root ไม่ได้ เพราะ shell function ถูกปิด
-- เปลี่ยน PHP version = แค่ชี้ socket ใหม่ใน vhost + สร้าง pool ใหม่ ไม่กระทบเว็บอื่น
+- เปลี่ยน PHP version = ชี้ socket ใหม่ใน vhost + สร้าง pool ของเวอร์ชันนั้นให้เจ้าของ ไม่กระทบใครอื่น
 
-การเปลี่ยน PHP version ต่อเว็บไซต์ (ตาม PROMPT.md `example.com → PHP 8.4`, `legacy.example.com → PHP 7.4`) จึงทำได้จริงและปลอดภัย
+การเปลี่ยน PHP version ต่อเว็บไซต์ (ตาม [PROMPT.md](history/PROMPT.md) `example.com → PHP 8.4`, `legacy.example.com → PHP 7.4`) จึงทำได้จริงและปลอดภัย
 
 ---
 
@@ -762,7 +816,10 @@ UI          → GET /api/jobs/{id}/stream (SSE) → progress bar + log สด
 /var/log/phpcp/{panel,agent,audit}.log
 /run/phpcp/agent.sock        unix socket ของ agent (0660 root:phpcp)
 /run/phpcp/panel-fpm.sock    socket ของ FPM ที่รัน panel
-/srv/phpcp/sites/<domain>/   บ้านของแต่ละเว็บไซต์
+/home/<ผู้ใช้>/               บ้านของลูกค้าโฮสติ้งแต่ละราย — ไฟล์เว็บ, log, tmp, backup (§11)
+                             ย้ายที่ได้ด้วย --users-dir= หรือคีย์ sites.users_dir
+/srv/phpcp/mail/             Maildir ของทุกกล่องจดหมาย (เจ้าของคือ vmail)
+/srv/phpcp/sites/            เลย์เอาต์เดิมก่อน migration 0006 — อ่านของเก่าที่ยังไม่ย้ายเท่านั้น
 /opt/phpcp-sandbox/          prefix ของโหมด sandbox (มีเฉพาะเครื่องทดสอบ)
 /usr/local/bin/phpcp         CLI
 ```
@@ -858,18 +915,34 @@ phpcp sandbox:init|seed|reset   จัดการสภาพแวดล้อ
 
 ---
 
-## 15. สิ่งที่ **ไม่** ทำใน v1 (ระบุไว้ชัดเพื่อไม่ให้ขอบเขตบาน)
+## 15. สิ่งที่ **ไม่** ทำ (ระบุไว้ชัดเพื่อไม่ให้ขอบเขตบาน)
 
-- ไม่ทำ DNS server จริง — หน้า DNS records เป็นตัวจัดการ zone file สำหรับกรณีที่รัน bind/PowerDNS เอง หรือส่งออกเป็นไฟล์ให้ไปใส่ที่ผู้ให้บริการ DNS ภายนอก
-- ไม่ทำ mail server (เรื่องใหญ่พอ ๆ กับ panel ทั้งตัว)
-- ไม่ทำ reseller / billing
+> **สองข้อแรกถูกกลับคำแล้ว** — เก็บข้อความเดิมไว้ให้เห็นว่าขอบเขตขยายตรงไหนและทำไม
+
+- ~~ไม่ทำ DNS server จริง — หน้า DNS records เป็นตัวจัดการ zone file สำหรับกรณีที่รัน
+  bind/PowerDNS เอง หรือส่งออกเป็นไฟล์ให้ไปใส่ที่ผู้ให้บริการ DNS ภายนอก~~
+  → **✅ ทำแล้ว (PLAN-V2 เฟส E3, 2026-08-10)** panel เขียน zone เข้า BIND9 จริง ตรวจด้วย
+  `named-checkzone` ก่อน `rndc reload` ทุกครั้ง · พิสูจน์แล้วว่า `dig` ได้คำตอบแบบ authoritative
+  · ยังปิดไว้เป็นค่าเริ่มต้น (`dns.enabled = false`) เพราะการเปิดแปลว่า panel เขียนทับ
+  `named.conf.local` ทั้งไฟล์
+- ~~ไม่ทำ mail server (เรื่องใหญ่พอ ๆ กับ panel ทั้งตัว)~~
+  → **✅ ทำแล้ว (PLAN-MAIL M1–M3)** Postfix + Dovecot + rspamd · ขอบเขตที่ตกลงและสิ่งที่ยัง
+  ไม่ทำ (เว็บเมล, CalDAV/CardDAV, Sieve, ClamAV, IMAP migration) อยู่ใน [PLAN-MAIL.md](PLAN-MAIL.md) §1
+- ไม่ทำ reseller / billing — ดู [CUSTOMERS.md](CUSTOMERS.md) §6
 - ไม่ทำ container / Docker orchestration
-- ไม่รองรับ RHEL/Alma/Rocky ใน v1 (โครง driver รองรับ แต่ยังไม่ทดสอบ)
+- ไม่รองรับ RHEL/Alma/Rocky (โครง driver รองรับ แต่ยังไม่ทดสอบ)
 - ไม่มี multi-server management จากที่เดียว (1 ติดตั้ง = 1 เซิร์ฟเวอร์)
+- ไม่มี WAF (ModSecurity) — มีแต่ rate limit รายเว็บผ่าน fail2ban (PLAN-V2 เฟส E5)
+- ไม่บังคับโควตาดิสก์ที่ระดับ filesystem — บังคับที่ระดับแอปเท่านั้น ไฟล์ที่โค้ด PHP
+  ของลูกค้าเขียนเองไม่ผ่านด่าน (PLAN-V2 เฟส E2)
 
 ---
 
 ## 16. เอกสารที่เกี่ยวข้อง
 
 - [SECURITY.md](SECURITY.md) — threat model, การควบคุมความปลอดภัย, security score
-- [ROADMAP.md](ROADMAP.md) — โครงสร้างไฟล์, แผนการทำเป็นเฟส, เกณฑ์รับงาน
+- [PLAN-V2.md](PLAN-V2.md) — แผนงานหลัก โครงสร้างไฟล์ปัจจุบัน และสถานะรายเฟส
+- [PLAN-MAIL.md](PLAN-MAIL.md) · [PLAN-BACKUP-V2.md](PLAN-BACKUP-V2.md) — แผนงานย่อยที่กลับคำตัดสินบางข้อของ PLAN-V2
+- [openapi.yaml](openapi.yaml) — สเปก REST API v2 ทั้งหมด
+- [CUSTOMERS.md](CUSTOMERS.md) — บัญชีโฮสติ้ง โควตา และการหมดอายุ
+- [history/](history/) — เอกสารที่เลิกใช้แล้ว (ROADMAP ฉบับแรก, รายงานตรวจ 2026-08-05) เก็บไว้เป็นบันทึกประวัติ **อย่าใช้อ้างอิงสถานะปัจจุบัน**

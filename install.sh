@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# PHP Server Control Panel installer - ARCHITECTURE §13
+# BluPanel installer - ARCHITECTURE §13
 #
 #   sudo ./install.sh                          install for production use
 #   sudo ./install.sh --mode=sandbox           install for testing, never touches the real system

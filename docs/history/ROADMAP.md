@@ -1,6 +1,23 @@
 # PHP Server Control Panel — โครงสร้างไฟล์และแผนการทำงาน
 
-> เอกสารคู่กับ [ARCHITECTURE.md](ARCHITECTURE.md) และ [SECURITY.md](SECURITY.md)
+> # ⚠️ เอกสารประวัติ — อย่าใช้อ้างอิงสถานะปัจจุบัน
+> #
+> # นี่คือแผนงานฉบับแรก (เฟส 0–6) ซึ่งทำเสร็จไปแล้วทั้งหมด และถูกแทนที่ด้วย
+> # [PLAN-V2.md](../PLAN-V2.md) ตั้งแต่ 2026-08-05 · เก็บไว้เป็นบันทึกว่าระบบ
+> # เดินมาทางไหน ไม่ใช่เพื่อบอกว่าตอนนี้เป็นอย่างไร
+> #
+> # **สิ่งที่ล้าสมัยชัดเจน:**
+> #
+> # * §1 โครงสร้างไฟล์บรรยาย `views/`, `index.html` prototype, `src/Kernel/View.php`
+> #   และ `public/assets/js/{core,toast,modal,table,metrics,fileman,logview}.js`
+> #   — **ถูกลบทั้งหมด**ในเฟส D · UI ปัจจุบันเป็น SPA ที่ `public/assets/spa/`
+> # * ตัวเลขเทสต์ 201/201 ล้าสมัยแล้ว
+> #
+> # โครงสร้างไฟล์ปัจจุบันอ่านที่ [PLAN-V2.md §3.2](../PLAN-V2.md)
+
+---
+
+> เอกสารคู่กับ [ARCHITECTURE.md](../ARCHITECTURE.md) และ [SECURITY.md](../SECURITY.md)
 
 ---
 
@@ -312,7 +329,7 @@ webServer/
 - `NginxDriver`
 - `phpcp self-update` + การเซ็นลายเซ็น release
 - ทดสอบติดตั้งสะอาดบน Ubuntu 22.04 / 24.04 / Debian 12
-- ปรับแต่งประสิทธิภาพให้เข้าเป้าใน [ARCHITECTURE §14](ARCHITECTURE.md#14-ประสิทธิภาพ)
+- ปรับแต่งประสิทธิภาพให้เข้าเป้าใน [ARCHITECTURE §14](../ARCHITECTURE.md#14-ประสิทธิภาพ)
 - เอกสารติดตั้งและคู่มือผู้ใช้ภาษาไทย
 
 **เกณฑ์รับงาน:** ติดตั้งบน VM เปล่าเสร็จใน 1 คำสั่ง แล้วสร้างเว็บไซต์ที่เปิดใช้งานได้จริงพร้อม SSL
@@ -331,7 +348,7 @@ webServer/
 >
 > ที่ทำเสร็จ: `NginxDriver` + เทมเพลต 4 ไฟล์ (ตรวจด้วย `nginx -t` ตัวจริง),
 > `Updater` + `tools/sign-release.php` (ลายเซ็น Ed25519), `phpcp self-update`,
-> คีย์ `webserver` ใน config, [INSTALL.md](INSTALL.md), [USER-GUIDE.md](USER-GUIDE.md)
+> คีย์ `webserver` ใน config, [INSTALL.md](../INSTALL.md), [USER-GUIDE.md](../USER-GUIDE.md)
 >
 > บั๊กร้ายแรงที่เจอและแก้แล้ว:
 > - **ตัวติดตั้งรับ PHP 8.1 ทั้งที่โค้ดต้องการ 8.2** — โค้ดใช้ `readonly class` ซึ่งมีตั้งแต่ 8.2
@@ -403,7 +420,7 @@ webServer/
 
 prototype เดิมมีประโยชน์เป็นข้อมูลอ้างอิงด้าน UI: โครงเมนู ชื่อหน้าไทย breadcrumb และสไตล์ terminal ของ log viewer นำมาใช้ได้เลย
 
-แต่**ใช้เป็นฐานโค้ดต่อไม่ได้** ด้วยเหตุผลใน [ARCHITECTURE §9.1](ARCHITECTURE.md#91-สิ่งที่ตัดออกจาก-prototype-เดิม-และเหตุผล) — สรุปสั้น ๆ: Tailwind CDN เป็น build สำหรับ dev เท่านั้น, `onclick=` inline ทำให้เปิด CSP เข้มไม่ได้, และการยัด 17 หน้าไว้ในไฟล์เดียวขัดกับ server-rendered
+แต่**ใช้เป็นฐานโค้ดต่อไม่ได้** ด้วยเหตุผลใน [ARCHITECTURE §9.1](../ARCHITECTURE.md#91-สิ่งที่ตัดออกจาก-prototype-เดิม-และเหตุผล) — สรุปสั้น ๆ: Tailwind CDN เป็น build สำหรับ dev เท่านั้น, `onclick=` inline ทำให้เปิด CSP เข้มไม่ได้, และการยัด 17 หน้าไว้ในไฟล์เดียวขัดกับ server-rendered
 
 แผน: ย้ายไป `_reference/index.html` แล้วดึงเฉพาะ 4 อย่างมาใช้ — โครงสร้างเมนูและคำแปลไทย, ลำดับชั้น breadcrumb, ชุดสี slate/indigo (แปลงเป็น CSS custom property), และสไตล์ terminal ของ log viewer
 

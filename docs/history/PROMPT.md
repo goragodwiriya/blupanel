@@ -1,5 +1,20 @@
 # PHP Server Control Panel UI Design Prompt
 
+> # ⚠️ เอกสารประวัติ — นี่คือ**โจทย์ตั้งต้น** ไม่ใช่สเปกปัจจุบัน
+> #
+> # ไฟล์นี้คือข้อกำหนด UI ที่ใช้เริ่มโปรเจกต์ ก่อนจะมีโค้ดสักบรรทัด · เอกสารออกแบบ
+> # อ้างถึงมันในฐานะ "ที่มาของข้อกำหนด" (เช่น กฎ UX ที่แยกปุ่มระดับเว็บออกจากปุ่ม
+> # ระดับเครื่อง หรือกฎว่า UI ต้องเป็นภาษาไทยทั้งหมด) ซึ่งกฎเหล่านั้น**ยังบังคับใช้อยู่จริง**
+> #
+> # แต่**รูปร่างของ UI ที่บรรยายไว้ที่นี่ไม่ตรงกับของจริงแล้ว** — หน้าจอปัจจุบันเป็น SPA
+> # บน Now.js ที่ `/app/*` และมีหน้าที่ไม่ได้อยู่ในโจทย์นี้เลย (กล่องจดหมาย คิวเมล
+> # ไฟล์ตั้งค่า ปลายทางสำรองข้อมูล)
+> #
+> # **สิ่งที่ระบบทำได้จริงตอนนี้อ่านที่ [README](../../README.md) · หน้าจอทั้งหมดอยู่ที่
+> # [ARCHITECTURE §3.3](../ARCHITECTURE.md#33-หน้าจอทั้งหมด-ตาม-promptmd--ui-ภาษาไทยทั้งระบบ)**
+
+---
+
 Design and build a modern, clean, secure, and professional **PHP Server Control Panel** similar in concept to Plesk, but with a simpler and more developer-friendly user experience.
 
 The interface must be designed for managing a Linux server primarily used for PHP web hosting.

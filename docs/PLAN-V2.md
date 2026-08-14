@@ -1,8 +1,8 @@
 # แผนงาน v2 — phpcp: Web Hosting Control Panel ฉบับสมบูรณ์
 
 > **สถานะเอกสาร:** แผนงานหลักฉบับใหม่ · เขียนเมื่อ 2026-08-05
-> **เอกสารนี้แทนที่:** ส่วน "แผนการทำเป็นเฟส" ใน [ROADMAP.md](ROADMAP.md) (เฟส 0–6 เสร็จแล้ว ให้ถือเป็นบันทึกประวัติ)
-> **เอกสารประกอบ:** [AUDIT-REPORT.md](AUDIT-REPORT.md) (ผลตรวจสอบสถานะจริง) · [ARCHITECTURE.md](ARCHITECTURE.md) · [SECURITY.md](SECURITY.md)
+> **เอกสารนี้แทนที่:** ส่วน "แผนการทำเป็นเฟส" ใน [ROADMAP.md](history/ROADMAP.md) (เฟส 0–6 เสร็จแล้ว ย้ายไป `docs/history/` เป็นบันทึกประวัติแล้ว)
+> **เอกสารประกอบ:** [AUDIT-REPORT.md](history/AUDIT-REPORT.md) (ผลตรวจ ณ 2026-08-05 — เป็นบันทึกประวัติแล้ว) · [ARCHITECTURE.md](ARCHITECTURE.md) · [SECURITY.md](SECURITY.md)
 >
 > **เป้าหมาย:** ระบบ Control Panel สำหรับ PHP Web Hosting ที่ **ติดตั้งได้ด้วยคำสั่งเดียว บริหารเซิร์ฟเวอร์ได้ครบทุกด้าน ปลอดภัยระดับใช้งานจริงกับลูกค้าที่จ่ายเงิน และโค้ดอ่านง่ายดูแลต่อได้**
 
@@ -27,31 +27,37 @@
 
 ### 0.1 ระบบนี้คืออะไร
 
-`phpcp` คือ Control Panel บริหาร Web Hosting บน Linux เขียนด้วย PHP 8.4 ล้วน **ไม่มี framework ไม่มี Composer** สถาปัตยกรรมแยกสิทธิ์ 3 ชั้นอย่างเข้มงวด:
+`phpcp` (ชื่อผลิตภัณฑ์: **BluPanel**) คือ Control Panel บริหาร Web Hosting บน Linux
+เขียนด้วย PHP ล้วน ต้องการ 8.2 ขึ้นไป **ไม่มี framework ไม่มี Composer**
+สถาปัตยกรรมแยกสิทธิ์ 3 ชั้นอย่างเข้มงวด:
 
 ```
-ชั้น 1  Web UI (user: phpcp-web)  — ไม่มีสิทธิ์ root, ปิด exec/proc_open ที่ตัวเอง
+ชั้น 1  Web API (user: phpcp-web) — ไม่มีสิทธิ์ root, ปิด exec/proc_open ที่ตัวเอง
+   │    ตอบ JSON ล้วนที่ /api/v2/* · หน้าจอเป็น SPA ที่เบราว์เซอร์
    │    unix socket 0660 (JSON 1 บรรทัด/request)
-ชั้น 2  phpcp-agentd (root)       — จุดเดียวที่มีสิทธิ์สูง, capability แบบ typed 63 ตัว
+ชั้น 2  phpcp-agentd (root)       — จุดเดียวที่มีสิทธิ์สูง, capability แบบ typed
    │                                ไม่มีที่ไหนรับ shell string, proc_open(argv[]) เท่านั้น
-ชั้น 3  OS: systemd/Apache/Nginx/PHP-FPM/MariaDB/ufw/certbot/postfix/BIND9
+ชั้น 3  OS: systemd/Apache/Nginx/PHP-FPM/MariaDB/ufw/certbot/postfix/dovecot/BIND9
 ```
 
-### 0.2 สถานะจริงที่ยืนยันแล้ว (ตรวจจากโค้ด ไม่ใช่จากเอกสาร)
+### 0.2 สถานะตอนเริ่มแผนนี้ เทียบกับตอนนี้
 
-| รายการ | ค่า | หมายเหตุ |
-|---|---|---|
-| ไฟล์ PHP ใน `src/` | 239 | |
-| HTTP routes | 99 | `src/Kernel/Routes.php` |
-| Agent capability | 63 ตัวใช้งานจริง (71 ไฟล์) | 8 ไฟล์เป็นคลาสฐาน · +2 จากเฟส A1 (disk.usage, cert.sync) |
-| ผลทดสอบ | **303 ผ่าน / 0 ไม่ผ่าน / 2,272 assertion** | รันจริง: `php tests/run.php` (209 เคสเดิม + 13 scheduler + 8 ลูกค้า + 71 contract ของ REST API + 2 fuzz) |
-| ไฟล์ view | 28 ไฟล์ ~5,291 บรรทัด | จะถูกปลดระวางในแผนนี้ |
+> **คอลัมน์ "ตอนเริ่มแผน" คือภาพนิ่ง ณ 2026-08-05** เก็บไว้ให้เห็นว่าแผนนี้เริ่มจากจุดไหน
+> · ตัวเลขที่เป็นปัจจุบันอยู่คอลัมน์ขวา และนับใหม่ได้ตลอดด้วยคำสั่งในคอลัมน์สุดท้าย
+
+| รายการ | ตอนเริ่มแผน (2026-08-05) | ตอนนี้ | นับเองได้ด้วย |
+|---|---|---|---|
+| ไฟล์ PHP ใน `src/` | 239 | 309 | `find src -name '*.php' \| wc -l` |
+| HTTP routes | 99 (ส่วนใหญ่ตอบ HTML) | 157 · ในนั้นเป็น `/api/v2/*` 152 | `src/Kernel/Routes.php` |
+| Agent capability | 63 | 109 | `phpcp capabilities` |
+| ผลทดสอบ | 303 ผ่าน / 2,272 assertion | **816 ผ่าน / 0 ไม่ผ่าน / 4,498 assertion** | `php tests/run.php` |
+| ไฟล์ view (PHP template) | 28 ไฟล์ ~5,291 บรรทัด | **0 — ปลดระวางครบแล้วในเฟส D** | — |
 
 **จุดแข็งที่ต้องรักษาไว้:** งานความปลอดภัยเป็นของจริงทั้งหมด ตรวจสอบยืนยันได้จากโค้ด — Argon2id (64MB/4/2), TOTP เขียนเองตาม RFC 6238, audit log แบบ hash-chain ที่มี `verifyChain()` จริง, CSRF ผูก session, PathGuard สองชั้น (lexical + post-privilege-drop realpath), SelfProtection, RBAC ตรวจสองชั้น (middleware + agent) **ชั้น Agent/Capability คือทรัพย์สินที่มีค่าที่สุดของโปรเจกต์ แผนนี้ไม่แตะมันเลย**
 
 ### 0.3 ทำไมต้องมีแผนใหม่
 
-จาก [AUDIT-REPORT.md](AUDIT-REPORT.md) พบ 2 กลุ่มปัญหา:
+จาก [AUDIT-REPORT.md](history/AUDIT-REPORT.md) พบ 2 กลุ่มปัญหา:
 
 1. **โค้ดฝั่งเว็บปนกันจนดูแลยาก** — Controller 17 จาก 22 ตัวผสม "คำนวณผล" กับ "เรนเดอร์ HTML" ไว้ในฟังก์ชันเดียว, ส่งผลลัพธ์ผ่าน query string (`?ok=...&pw=...`), ไม่มี schema กลางของทรัพยากร, JS เขียนเองอีก 7 ไฟล์ที่ต้องดูแลเอง
 2. **ช่องว่างเชิงฟีเจอร์ที่กันไม่ให้ใช้งานจริงกับลูกค้าที่จ่ายเงินได้** — ไม่มี scheduler เลย, backup ไม่มี offsite, disk quota ไม่บังคับจริง, DNS ไม่ได้เชื่อม BIND9, ไม่มี FTP, ไม่มี WAF
@@ -348,8 +354,8 @@ GET /api/v2/sites?page=1&per_page=50&q=example&sort=-created_at&status=active
 | **SSH** | `GET/PATCH /ssh-config` | `/server/ssh` ×2 |
 | **Rollbacks** | `GET /rollbacks` · `POST /rollbacks/{id}/confirmation` · `POST /rollbacks/{id}/execution` | `/ssh|firewall/{id}/confirm|rollback` ×4 |
 | **Logs** | `GET /logs/sources` · `GET /logs` | `/server/logs`, `/api/logs` |
-| **Users** | `GET/POST /users` · `PATCH/DELETE /users/{id}` · `POST /users/{id}/password-reset` · `DELETE /users/{id}/two-factor` | `/server/users*` ×6 |
-| **Customers** | `GET/POST /customers` · `GET/PATCH/DELETE /customers/{id}` · `PUT /customers/{id}/quota` · `POST /customers/{id}/password-reset` · `POST/DELETE /customers/{id}/sites` | `/customers*` ×9 |
+| **Users** | `GET/POST /users` · `GET/PATCH/DELETE /users/{id}` · `PUT /users/{id}/quota` · `PUT /users/{id}/layout` · `POST /users/{id}/password-reset` · `POST/DELETE /users/{id}/sites[/{site_id}]` · `PUT/DELETE /users/{id}/sftp` · `GET /users/{id}/sftp/form` · `DELETE /users/{id}/two-factor` | `/server/users*` ×6 |
+| ~~**Customers**~~ | **ยุบเข้า `/users` ทั้งหมดในเฟส M** — ไม่มี `/customers/*` ในระบบ · ลูกค้าคือผู้ใช้ที่ `role = webadmin` ดู [CUSTOMERS.md](CUSTOMERS.md) | `/customers*` ×9 |
 | **Settings** | `GET/PATCH /settings` · `POST /settings/notification-test` · `POST /settings/mail-config` · `POST /settings/mail-test` | `/server/settings*` ×4 |
 | **Security** | `GET /security/scan` | `/server/security` |
 | **Metrics** | `GET /metrics` · `GET /metrics/stream` (SSE) · `GET /metrics/history` ★ | `/api/metrics`, `/api/stream/metrics` |
@@ -759,7 +765,11 @@ GET /api/v2/sites?page=1&per_page=50&q=example&sort=-created_at&status=active
 - `db/migrations/0006_per_user_hosting_layout.sql` — สร้างตาราง `sites` ใหม่โดยไม่มี
   `system_user`/`uid`/`gid` (ย้ายไปอยู่กับผู้ใช้) และ `owner_user_id` เป็น `NOT NULL` จริง
 - `/srv/phpcp/users/<username>/domains/<domain>/{public,logs,tmp,backups}` แทน `/srv/phpcp/sites/<domain>/`
-- ชั้นบน `/srv/phpcp/users/` เป็น `0711` — เดินผ่านได้แต่ `ls` ไม่ได้ ลูกค้าจึงไม่รู้ว่ามีใครอยู่บ้าง ·
+  > **แก้ทีหลัง:** บ้านย้ายไป `/home/<username>` (ค่าเริ่มต้นของ `Paths::DEFAULT_USERS_DIR`)
+  > และรูปทรงเริ่มต้นเปลี่ยนเป็นเลย์เอาต์ `cpanel` (`<บ้าน>/public_html`) — ทั้งสองอย่าง
+  > เพื่อให้ตรงกับที่ผู้ดูแลยูนิกซ์และลูกค้าที่ย้ายมาคาดหวัง · ดู `SiteLayout` และ
+  > [ARCHITECTURE §11](ARCHITECTURE.md#11-การแยกเว็บไซต์ออกจากกัน-multi-tenant-isolation)
+- ชั้นบนของบ้านทั้งหมดเป็น `0711` — เดินผ่านได้แต่ `ls` ไม่ได้ ลูกค้าจึงไม่รู้ว่ามีใครอยู่บ้าง ·
   `tmp` และ `.ssh` เป็น `0700` เพราะ session ของ PHP อยู่ใน tmp (อ่านได้ = สวมสิทธิ์ได้)
 - uid = ชื่อผู้ใช้ · กฎชื่อเข้มขึ้นสามชั้น: `^[a-z][a-z0-9_-]{2,31}$` + `RESERVED_USERNAMES` +
   **`getent passwd` ที่ฝั่ง agent ซึ่งเป็นด่านที่เชื่อถือได้จริง** — ตัดสินจาก home directory
@@ -1057,7 +1067,7 @@ unix_socket ได้เต็มที่อยู่แล้ว การเ�
 2. `public/app/index.html` — shell หน้าเดียว, โหลด core + table + graph, `Now.init({allowEval:false, ...})`
 3. `js/api.js` — ห่อ `HttpClient`: `baseURL='/api/v2'`, จัดการ error → toast, จัดการ 401 → เด้งหน้า login, 419 → ขอ token ใหม่แล้วลองใหม่ 1 ครั้ง
 4. `js/auth.js` — bootstrap จาก `GET /session`, ตั้ง `AuthGuard` ตาม `permissions`
-5. Router + layout (sidebar 2 กลุ่ม HOSTING/SERVER ตาม PROMPT.md) + แถบเตือนโหมด sandbox/dryrun ที่ปิดไม่ได้
+5. Router + layout (sidebar 2 กลุ่ม HOSTING/SERVER ตาม [PROMPT.md](history/PROMPT.md)) + แถบเตือนโหมด sandbox/dryrun ที่ปิดไม่ได้
 6. `lang/th.json` + `lang/en.json` — **ย้ายข้อความไทยทั้งหมดออกจากโค้ด PHP มาไว้ที่นี่**
 
 #### C2–C3. หน้าจอทั้งหมด (17 หน้า)
@@ -1720,7 +1730,7 @@ SPF/DKIM ของทุกโดเมน ไม่ใช่แค่ ACME · �
 
 ### 7.1 กฎที่ห้ามละเมิดตลอดทั้งแผน
 
-1. **`tests/run.php` ต้องผ่าน 100% ทุกครั้งก่อน commit** — ปัจจุบัน 580/580 ห้ามลดลง
+1. **`tests/run.php` ต้องผ่าน 100% ทุกครั้งก่อน commit** — จำนวนข้อห้ามลดลง (ปัจจุบัน 816)
 2. **ห้ามลดชั้นความปลอดภัยใด ๆ ที่มีอยู่** — RBAC ต้องตรวจ 2 ชั้นเหมือนเดิม, PathGuard, SelfProtection, audit hash-chain ต้องอยู่ครบ
    · ตั้งแต่เฟส M เพิ่มอีกข้อ: **`user.manage` คือด่านเดียวที่กัน sysadmin ไม่ให้แตะบัญชีผู้ดูแล**
    หลังยุบ users/customers เป็นตารางเดียว — ห้ามลดหรือข้าม `UsersController::assertMayManage()`
@@ -1769,14 +1779,16 @@ SPF/DKIM ของทุกโดเมน ไม่ใช่แค่ ACME · �
 ### 9.1 อ่านอะไรก่อน
 
 1. **เอกสารนี้** (`docs/PLAN-V2.md`) — แผนและสเปก
-2. `docs/AUDIT-REPORT.md` — สถานะจริงของระบบ ณ 2026-08-05 พร้อม API catalog ครบทุกตัว
+2. `docs/openapi.yaml` — API catalog ครบทุกตัวและเป็นตัวที่ตรงกับโค้ดจริง
+   (เดิมข้อนี้ชี้ไป `docs/AUDIT-REPORT.md` ซึ่งตอนนี้อยู่ที่ `docs/history/` และบรรยาย
+   API ชุดที่ถูกลบไปแล้วในเฟส D — อย่าใช้อ้างอิง)
 3. `docs/ARCHITECTURE.md` §4–§6 — ชั้น Agent, การแยก service ของ panel, โหมดการทำงาน
 4. `docs/SECURITY.md` — threat model (สำคัญมากก่อนแตะอะไรที่เกี่ยวกับสิทธิ์)
 
 ### 9.2 คำสั่งที่ใช้บ่อย
 
 ```bash
-php tests/run.php                  # ทดสอบทั้งหมด — ต้องผ่าน 580/580 เสมอ
+php tests/run.php                  # ทดสอบทั้งหมด — ต้องผ่านครบทุกข้อเสมอ (ปัจจุบัน 816 ข้อ)
 php bin/phpcp status               # ตรวจสุขภาพระบบ
 php bin/phpcp doctor               # ตรวจ permission/config ผิดพลาด (รวมชีพจรของ scheduler)
 php bin/phpcp-scheduler --list     # ดูงานตามเวลาและผลรอบล่าสุด
@@ -1789,7 +1801,11 @@ docker/acceptance.sh               # เกณฑ์รับงาน 17 ข้
 
 - **ห้ามแตะ `src/Agent/`** เว้นแต่กำลังเพิ่ม capability ใหม่ตามแผน — ชั้นนี้คือขอบเขตความปลอดภัยจริงของทั้งระบบ
 - **capability ห้ามเรียก `$context->audit`** — `Dispatcher` เป็นเจ้าของการเขียน audit log แต่ผู้เดียว (`Context` ไม่มี `audit`/`request` ให้ใช้)
-- **`owner_user_id` กับ `customer_id` เป็นคนละ ID space** — ใช้ `QuotaChecker::checkOwnerCanCreate()` อย่าเทียบตรง ๆ
+- **`owner_user_id` ชี้ไปที่ `users.id` ตรง ๆ** ตั้งแต่ migration 0005 ที่ยุบตาราง `customers`
+  เข้ากับ `users` (เฟส M) — ID space เดียวทั้งระบบแล้ว · ยังใช้
+  `QuotaChecker::checkOwnerCanCreate()` เพราะมันตรวจโควตา**และ**สถานะบริการให้ด้วย
+  ไม่ใช่เพราะต้องแปลง ID · สองแกนที่ยังแยกกันคือ `users.status` (สิทธิ์ล็อกอิน) กับ
+  `users.service_status` (สถานะบริการโฮสติ้ง)
 - โหมด sandbox: ทุกเส้นทางต้องผ่าน `Executor::path()` มิฉะนั้นจะไปแตะระบบจริงของเครื่องนักพัฒนา (เคยเกิดมาแล้ว 3 ครั้งกับ MariaDB, ufw, และ `/etc/mysql/debian.cnf`)
 - เครื่องนี้ไม่มีสิทธิ์รัน `sudo` แบบไม่ถามรหัสผ่าน — ถ้าต้องใช้ ให้ส่งคำสั่งให้ผู้ใช้รันเอง
 
@@ -1847,7 +1863,7 @@ docker/acceptance.sh               # เกณฑ์รับงาน 17 ข้
 
 | เครื่องมือ | มุมมอง | ใช้เมื่อ |
 |---|---|---|
-| `php tests/run.php` | ในโปรเซส | ทุกครั้งก่อน commit — ต้อง 580/580 |
+| `php tests/run.php` | ในโปรเซส | ทุกครั้งก่อน commit — ต้องผ่านครบทุกข้อ |
 | `bin/phpcp-smoke --url=... --user=... --password-file=...` | HTTP + ล็อกอินแล้ว | หลังแตะ API, middleware, routing |
 
 **สิ่งที่เฟส B ส่งมอบให้เฟส C ใช้ได้ทันที:**
@@ -1909,7 +1925,7 @@ docker/acceptance.sh               # เกณฑ์รับงาน 17 ข้
 ### 10.3 สถานะ ณ สิ้นรอบ
 
 ```
-[x] ชุดทดสอบ                      580/580
+[x] ชุดทดสอบ                      ผ่านครบทุกข้อ (816 ณ 2026-08-15)
 [x] ติดตั้งบนเครื่องเปล่า           27/27 (ubuntu 24.04 · ค่าเริ่มต้น nginx-proxy)
 [x] เกณฑ์รับงานโหมด nginx-proxy    19/19
 [x] เกณฑ์รับงานโหมด apache         22/22

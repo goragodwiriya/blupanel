@@ -1,452 +1,192 @@
-# Customer Management — ระบบลูกค้าสำหรับขาย web hosting
+# บัญชีโฮสติ้ง — ระบบลูกค้าสำหรับขาย web hosting
 
-> เอกสารอธิบายระบบลูกค้าที่ซื้อบริการ web hosting ผ่าน panel
-
----
-
-## 1. โครงสร้าง
-
-ระบบลูกค้าแยกจากผู้ใช้ panel (users) โดยสิ้นเชิง:
-
-| ประเภท | คำอธิบาย | ตัวอย่าง |
-|--------|----------|---------|
-| **ผู้ใช้ panel** | คนที่ล็อกอินเข้า panel ได้ | superadmin, sysadmin, webadmin |
-| **ลูกค้า** | ผู้ที่ซื้อบริการ web hosting | customer_a, customer_b, customer_c |
-
-### ตารางฐานข้อมูล
-
-#### `customers`
-| คอลัมน์ | ประเภท | คำอธิบาย |
-|---------|--------|----------|
-| id | INTEGER | รหัสลูกค้า |
-| username | TEXT | ชื่อผู้ใช้สำหรับ login (a-z, 0-9, . _ -) |
-| password_hash | TEXT | รหัสผ่าน (Argon2id hash) |
-| display_name | TEXT | ชื่อที่แสดง (เช่น ชื่อบริษัท) |
-| email | TEXT | อีเมลติดต่อ |
-| status | TEXT | สถานะ: active, suspended, expired |
-| quota_domains | INTEGER | โควตาโดเมน (default: 10) |
-| quota_subdomains | INTEGER | โควตา subdomain (default: 20) |
-| quota_aliases | INTEGER | โควตา alias (default: 50) |
-| quota_emails | INTEGER | โควตา email (default: 100) |
-| quota_databases | INTEGER | โควตา database (default: 10) |
-| quota_ftp_users | INTEGER | โควตา FTP users (default: 5) |
-| expiry_at | INTEGER | วันหมดอายุ (unix timestamp, null = ไม่มี) |
-| created_at | INTEGER | วันที่สร้าง |
-| updated_at | INTEGER | วันที่แก้ไขล่าสุด |
-
-#### `customer_sites`
-| คอลัมน์ | ประเภท | คำอธิบาย |
-|---------|--------|----------|
-| customer_id | INTEGER | ลูกค้าที่เชื่อม |
-| site_id | INTEGER | เว็บไซต์ที่เชื่อม |
-| (primary key) | | customer_id + site_id |
-
-#### `expiry_notifications`
-| คอลัมน์ | ประเภท | คำอธิบาย |
-|---------|--------|----------|
-| id | INTEGER | รหัสการแจ้งเตือน |
-| customer_id | INTEGER | ลูกค้า |
-| days_before | INTEGER | แจ้งเตือนล่วงหน้ากี่วัน |
-| notified_at | INTEGER | เคยแจ้งเมื่อไรแล้ว |
-| created_at | INTEGER | วันที่สร้าง |
+> ผู้ใช้ที่ซื้อบริการโฮสติ้ง โควตา วันหมดอายุ และการระงับบริการ
+> เอกสารคู่กับ [ARCHITECTURE.md](ARCHITECTURE.md) §7 (โมเดลข้อมูล) และ §8 (RBAC)
 
 ---
 
-## 2. โควตา (Quota)
+## 1. หนึ่งตาราง ไม่ใช่สองระบบ
 
-แต่ละลูกค้ามีโควตาสำหรับทรัพยากรต่างๆ:
+**ลูกค้าคือผู้ใช้ที่มี role `webadmin`** — ไม่มีตาราง `customers` แยกต่างหาก
 
-- **Domains** - จำนวนโดเมนหลักที่สร้างได้
-- **Subdomains** - จำนวน subdomain ที่สร้างได้
-- **Aliases** - จำนวน alias ที่สร้างได้
-- **Emails** - จำนวน email account (ยังไม่ implement)
-- **Databases** - จำนวน database ที่สร้างได้
-- **FTP Users** - จำนวน FTP user (ยังไม่ implement)
+เดิมระบบมีตาราง `customers` ของตัวเองแยกจาก `users` ผลคือมีสองระบบล็อกอิน สอง ID space
+และโค้ดทุกจุดที่ถามว่า "ใครเป็นเจ้าของเว็บนี้" ต้องรู้ว่ากำลังถามถึงตารางไหน · migration
+`0005_merge_customers_into_users.sql` ยุบทั้งสองเข้าด้วยกัน ตั้งแต่นั้น `sites.owner_user_id`
+ชี้ไปที่ `users.id` ตรง ๆ
 
-### การตรวจสอบโควตา
+| role | คือใคร | มีบ้านบนดิสก์ไหม |
+|---|---|---|
+| `superadmin` | ผู้ดูแลระบบ — ทำได้ทุกอย่าง | เฉพาะกรณีที่บังเอิญถือเว็บอยู่ |
+| `sysadmin` | ผู้ดูแลเซิร์ฟเวอร์ — จัดการเครื่อง แต่แก้เว็บของลูกค้าไม่ได้ | เฉพาะกรณีที่บังเอิญถือเว็บอยู่ |
+| `webadmin` | **ลูกค้าโฮสติ้ง** — เห็นเฉพาะเว็บของตัวเอง | มี — สร้างตอนสร้างเว็บแรก |
 
-เวลาสร้างทรัพยากร (site, domain, database) ระบบจะ:
+`UserRepository::hostingAccounts()` คือรายชื่อลูกค้า ซึ่งก็คือ `WHERE role = 'webadmin'`
 
-1. ตรวจสอบว่าลูกค้ายังใช้งานได้ (status = active + expiry_at > now)
-2. นับจำนวนทรัพยากรที่ลูกค้าใช้อยู่
-3. ตรวจสอบว่าใช้ร่วมกับโควตาเกินหรือไม่
-4. ถ้าเกิน = ปฏิเสธพร้อมข้อความภาษาไทย
+### หนึ่งบัญชี = หนึ่ง uid = หนึ่งบ้าน
 
-### ตัวอย่างข้อผิดพลาด
+ตั้งแต่ migration `0006_per_user_hosting_layout.sql` หน่วยของการแยกสิทธิ์คือ**ผู้ใช้**
+ไม่ใช่เว็บ — บัญชีหนึ่งได้บัญชี Linux หนึ่งบัญชี (ชื่อเดียวกับ `username`) บ้านหนึ่งหลัง
+FPM pool หนึ่งชุด และโควตาดิสก์ก้อนเดียว ต่อให้มี 20 เว็บ
 
-```
-โควตาโดเมนเต็ม (ใช้ 10/10)
-โควตา subdomain เต็ม (ใช้ 20/20)
-โควตาฐานข้อมูลเต็ม (ใช้ 10/10)
-```
+เว็บของ**ลูกค้าคนเดียวกัน**อ่านไฟล์กันได้และแชร์คิว process กัน ซึ่งรับได้เพราะเป็นทรัพย์สิน
+ของคนเดียวกัน และเป็นโมเดลเดียวกับ cPanel/Plesk/DirectAdmin · **การแยกระหว่างลูกค้าต่างราย
+ยังแน่นเท่าเดิมทุกประการ** (คนละ uid, `open_basedir`, บ้าน `0711`)
 
----
-
-## 3. วันหมดอายุ (Expiry)
-
-ลูกค้าแต่ละคนสามารถมีวันหมดอายุได้:
-
-- **ไม่มีวันหมดอายุ** - `expiry_at = NULL` (ไม่จำกัดเวลา)
-- **มีวันหมดอายุ** - `expiry_at = timestamp` (ต้องตั้งวันที่ในอนาคต)
-
-### การตรวจสอบวันหมดอายุ
-
-ระบบตรวจสอบทุกครั้งที่:
-
-- ลูกค้าพยายามเข้าสู่ระบบ
-- ลูกค้าพยายามสร้างทรัพยากรใหม่
-- Cron job `expiry.check` ทำงาน
-
-### การแจ้งเตือน
-
-ก่อนวันหมดอายุ 3 ช่วงเวลา ระบบจะแจ้งเตือน:
-
-| วันก่อนหมดอายุ | การกระทำ |
-|----------------|----------|
-| 30 วัน | ส่งอีเมลแจ้งเตือนครั้งแรก |
-| 7 วัน | ส่งอีเมลแจ้งเตือนครั้งที่ 2 |
-| 1 วัน | ส่งอีเมลแจ้งเตือนสุดท้าย |
-
-เมื่อวันหมดอายุผ่านไปแล้ว:
-
-- เปลี่ยน status เป็น 'expired'
-- ไม่สามารถสร้างทรัพยากรใหม่ได้
-- ไม่สามารถเข้าสู่ระบบได้
+รายละเอียดรูปทรงไฟล์ใต้บ้านอยู่ที่ [ARCHITECTURE.md §11](ARCHITECTURE.md#11-การแยกเว็บไซต์ออกจากกัน-multi-tenant-isolation)
 
 ---
 
-## 4. การจัดการลูกค้า
+## 2. คอลัมน์ที่เกี่ยวกับการขาย
 
-### 4.1 สร้างลูกค้าใหม่ (Admin)
+ทั้งหมดอยู่บนตาราง `users`
 
-```
-POST /customers
-```
+| คอลัมน์ | ค่าเริ่มต้น | ความหมาย |
+|---|---|---|
+| `service_status` | `active` | สถานะ**บริการ**: `active` · `suspended` · `expired` |
+| `expiry_at` | `NULL` | วันหมดอายุ (unix timestamp) · `NULL` = ไม่มีกำหนด |
+| `quota_domains` | 10 | จำนวนโดเมนหลัก |
+| `quota_subdomains` | 20 | จำนวนโดเมนย่อย |
+| `quota_aliases` | 50 | จำนวนโดเมนสำรอง (wildcard นับรวมที่นี่) |
+| `quota_emails` | 100 | จำนวนกล่องจดหมาย |
+| `quota_databases` | 10 | จำนวนฐานข้อมูล |
+| `quota_ftp_users` | 5 | **สวิตช์ ไม่ใช่จำนวน** — `0` = แพ็กเกจไม่รวม SFTP · ค่าอื่น = เปิดได้หนึ่งบัญชี |
+| `disk_quota_mb` | `NULL` | โควตาดิสก์ · `NULL` = ไม่จำกัด |
+| `disk_used_mb` | 0 | ขนาดที่วัดได้**รอบล่าสุด** ไม่ใช่ค่าสด |
+| `site_layout` | `''` | `''` = ตามค่าเริ่มต้นของเครื่อง · `cpanel` · `phpcp` |
+| `main_domain` | `''` | โดเมนที่ได้ `public_html` ในเลย์เอาต์ cpanel |
+| `backup_files` / `backup_database` | 0 | สวิตช์สำรองอัตโนมัติของบัญชีนี้ |
+| `system_user` · `uid` · `gid` | | บัญชี Linux ที่ผูกกับผู้ใช้คนนี้ — ว่างจนกว่าจะสร้างเว็บแรก |
 
-**Parameters:**
-- `username` - ชื่อผู้ใช้ (3-32 ตัว อักษรตัวแรก)
-- `display_name` - ชื่อที่แสดง
-- `email` - อีเมล
-- `quota_domains` - โควตาโดเมน (default: 10)
-- `quota_subdomains` - โควตา subdomain (default: 20)
-- `quota_aliases` - โควตา alias (default: 50)
-- `quota_emails` - โควตา email (default: 100)
-- `quota_databases` - โควตา database (default: 10)
-- `quota_ftp_users` - โควตา FTP (default: 5)
-- `expiry_at` - วันหมดอายุ (YYYY-MM-DD, ว่าง = ไม่มี)
+### สองแกนที่ต้องไม่สับสน
 
-**Response:**
-```json
-{
-  "id": 1,
-  "username": "customer_a",
-  "display_name": "บริษัท ABC จำกัด",
-  "email": "contact@abc.co.th",
-  "quota_domains": 10,
-  "quota_subdomains": 20,
-  ...
-  "message": "สร้างลูกค้า customer_a แล้ว"
-}
-```
+| แกน | คอลัมน์ | คุมอะไร |
+|---|---|---|
+| สิทธิ์ล็อกอิน | `status` | เข้า panel ได้ไหม |
+| สถานะบริการ | `service_status` | เว็บยังให้บริการอยู่ไหม สร้างของใหม่ได้ไหม |
 
-### 4.2 อัปเดตโควตา (Admin)
-
-```
-POST /customers/{id}/quota
-```
-
-**Parameters:**
-- `quota_domains` - (optional)
-- `quota_subdomains` - (optional)
-- `quota_aliases` - (optional)
-- `quota_emails` - (optional)
-- `quota_databases` - (optional)
-- `quota_ftp_users` - (optional)
-
-**Response:**
-```json
-{
-  "id": 1,
-  "username": "customer_a",
-  "changes": {
-    "quota_domains": {"from": 10, "to": 20},
-    "quota_databases": {"from": 10, "to": 20}
-  },
-  "message": "อัปเดตโควตาของ customer_a แล้ว"
-}
-```
-
-### 4.3 อัปเดตวันหมดอายุ (Admin)
-
-```
-POST /customers/{id}/expiry
-```
-
-**Parameters:**
-- `expiry_at` - วันหมดอายุ (YYYY-MM-DD) หรือทิ้งว่างไว้
-
-**Response:**
-```json
-{
-  "id": 1,
-  "message": "ตั้งวันหมดอายุของ customer_a เป็น 2026-12-31 แล้ว"
-}
-```
-
-### 4.4 เปลี่ยนสถานะ (Admin)
-
-```
-POST /customers/{id}/status
-```
-
-**Parameters:**
-- `status` - active, suspended, expired
-
-### 4.5 ล้างรหัสผ่าน (Admin)
-
-```
-POST /customers/{id}/password
-```
-
-**Response:**
-```json
-{
-  "message": "รหัสผ่านถูกตั้งใหม่แล้ว"
-}
-```
-
-### 4.6 เชื่อมเว็บไซต์ให้ลูกค้า (Admin)
-
-```
-POST /customers/{id}/site-attach
-```
-
-**Parameters:**
-- `site_ids` - array ของ site_id
-
-**Response:**
-```json
-{
-  "customer_id": 1,
-  "attached_count": 2,
-  "results": [
-    {"site_id": 5, "status": "attached", "message": "..."},
-    {"site_id": 6, "status": "attached", "message": "..."}
-  ]
-}
-```
+แยกกันเพราะเป็นคนละเรื่อง: ลูกค้าที่ค้างชำระควรถูกระงับ**บริการ** แต่ยัง**ล็อกอิน**เข้ามา
+ดูข้อมูลและดาวน์โหลดไฟล์สำรองของตัวเองได้
 
 ---
 
-## 5. CustomerRepository
+## 3. โควตา
 
-คลาสหลักในการจัดการลูกค้า:
+### ค่าตัวเลขสามความหมาย
+
+| ค่า | ความหมาย |
+|---|---|
+| `-1` | ไม่จำกัด (`Quota::UNLIMITED`) |
+| `0` | ปิดการใช้งานทรัพยากรชนิดนี้ (`Quota::DISABLED`) |
+| `> 0` | เพดานจำนวน |
+
+`quota_domains` ตั้งเป็น `0` ไม่ได้ — บัญชีโฮสติ้งที่สร้างเว็บไม่ได้เลยคือบัญชีที่ไม่มีประโยชน์
+ถ้าต้องการปิดบริการให้ใช้ `service_status = suspended` ซึ่งสื่อความหมายตรงกว่า
+
+**แหล่งความจริงเดียวของกฎเหล่านี้คือ [`src/Domain/Quota.php`](../src/Domain/Quota.php)**
+ทั้งชื่อชนิด คอลัมน์ ป้ายภาษาไทย และข้อห้าม — หน้าจอ ฟอร์ม และตัวตรวจค่าอ่านจากที่เดียวกัน
+
+### การตรวจก่อนสร้างทรัพยากร
+
+capability ทุกตัวที่สร้างของให้ลูกค้าเรียก **`QuotaChecker::checkOwnerCanCreate()`** ด่านเดียว
+ซึ่งตรวจให้ทั้งสองอย่างในการเรียกครั้งเดียว:
+
+1. `service_status` ยัง `active` และ `expiry_at` ยังไม่ผ่านหรือไม่
+2. จำนวนที่ใช้ไปแล้ว + ที่กำลังจะสร้าง เกินเพดานไหม
 
 ```php
-use Phpcp\Domain\CustomerRepository;
-
-$customers = new CustomerRepository($db);
-
-// ค้นหา
-$customer = $customers->find($id);
-$customer = $customers->findByUsername($username);
-$all = $customers->all();
-
-// สร้าง
-$id = $customers->create(
-    $username, $password, $displayName, $email,
-    $quotaDomains, $quotaSubdomains, $quotaAliases,
-    $quotaEmails, $quotaDatabases, $quotaFtpUsers,
-    $expiryAt
-);
-
-// อัปเดต
-$customers->setPassword($id, $plainPassword);
-$customers->updateQuota($id, $quotaDomains, $quotaSubdomains, ...);
-$customers->updateExpiry($id, $expiryAt);
-$customers->setStatus($id, $status);
-
-// เชื่อมเว็บไซต์
-$customers->attachSite($customerId, $siteId);
-$customers->detachSite($customerId, $siteId);
-$siteIds = $customers->getSiteIds($customerId);
-$sites = $customers->getSites($customerId);
-
-// ตรวจสอบสถานะ
-$status = $customers->checkStatus($id); // ['ok' => bool, 'message' => string]
-
-// นับจำนวน
-$count = $customers->countByStatus($status);
-$expiring = $customers->countExpiring(30); // ใกล้หมดอายุ 30 วัน
-```
-
----
-
-## 6. QuotaChecker
-
-ตัวตรวจสอบโควตา:
-
-```php
-use Phpcp\Domain\CustomerRepository;
-use Phpcp\Domain\QuotaChecker;
-
-$customers = new CustomerRepository($db);
-$quota = new QuotaChecker($customers);
-
-// ดึงข้อมูล
-$usage = $quota->getUsage($customerId);
-$quotaData = $quota->getQuota($customerId);
-
-// ตรวจสอบ
-$result = $quota->canCreate($customerId, 'domain', 1);
-// ['ok' => bool, 'message' => string, 'used' => int, 'limit' => int]
-
-// ตรวจสอบหลายทรัพยากร
-$results = $quota->canCreateMultiple($customerId, [
-    'domain' => 1,
-    'database' => 1,
-]);
-
-// สถานะลูกค้า
-$status = $quota->checkCustomerStatus($customerId);
-// ['ok' => bool, 'message' => string, 'status' => string|null, 'expiry_at' => int|null]
-```
-
----
-
-## 7. Capabilities
-
-### CustomerCreate
-```
-POST /api/customers/create
-permission: customer.manage
-summary: สร้างลูกค้าใหม่พร้อมโควตา
-```
-
-### CustomerQuotaUpdate
-```
-POST /api/customers/quota_update
-permission: customer.manage
-summary: อัปเดตโควตาของลูกค้า
-```
-
-### CustomerSiteAttach
-```
-POST /api/customers/site_attach
-permission: customer.manage
-summary: เชื่อมเว็บไซต์ให้ลูกค้าเป็นเจ้าของ
-```
-
-### ExpiryCheck
-```
-POST /api/expiry/check
-permission: customer.view
-summary: ตรวจสอบวันหมดอายุและส่งการแจ้งเตือน
-```
-
----
-
-## 8. สิทธิ์ (Permissions)
-
-| Permission | คำอธิบาย |
-|------------|----------|
-| `customer.view` | ดูข้อมูลลูกค้าได้ |
-| `customer.manage` | สร้าง/แก้ไข/ลบลูกค้าได้ |
-
----
-
-## 9. ตัวอย่างการใช้งาน
-
-### สร้างลูกค้ารายใหม่
-
-```php
-$customers = new CustomerRepository($db);
-
-$id = $customers->create(
-    'customer_new',
-    'S3cureP@ssw0rd!',
-    'บริษัท XYZ จำกัด',
-    'contact@xyz.co.th',
-    10,  // quota_domains
-    20,  // quota_subdomains
-    50,  // quota_aliases
-    100, // quota_emails
-    10,  // quota_databases
-    5,   // quota_ftp_users
-    strtotime('2026-12-31') // expiry_at
-);
-```
-
-### ตรวจสอบก่อนสร้างเว็บไซต์
-
-```php
-$quota = new QuotaChecker($customers);
-
-$customer = $customers->find(1);
-if ($customer === null) {
-    throw new Exception('ไม่พบลูกค้า');
+$check = $quotas->checkOwnerCanCreate($site->ownerUserId, 'domain');
+if (!$check['ok']) {
+    throw new ValidationError($check['message']);   // "โควตาโดเมนเต็ม (ใช้ 10 จาก 10)"
 }
-
-$status = $quota->checkCustomerStatus(1);
-if (!$status['ok']) {
-    throw new Exception($status['message']);
-}
-
-$result = $quota->canCreate(1, 'domain');
-if (!$result['ok']) {
-    throw new Exception($result['message']);
-}
-
-// สร้างเว็บไซต์ต่อ...
 ```
 
-### Cron job สำหรับตรวจสอบหมดอายุ
+รับชื่อชนิดได้ทั้งเอกพจน์และพหูพจน์ (`domain` / `domains`) โดยตั้งใจ — ความไม่ตรงกันตรงนี้
+เคยทำให้ระบบโควตาปฏิเสธทุกคำขอ ลูกค้าที่มีโควตา 10 โดเมนสร้างเว็บไม่ได้แม้แต่เว็บเดียว
+
+### โควตาดิสก์เป็นคนละคำถาม
+
+`QuotaChecker` ตอบว่า "สร้างของอีกชิ้นได้ไหม" ส่วน [`DiskQuota`](../src/Domain/DiskQuota.php)
+ตอบว่า "เขียนข้อมูลอีก N ไบต์ได้ไหม" — ใช้ตัวเลขชุดเดียวกันแต่คนละคำถาม
+
+**ขอบเขตที่รับประกันจริง:** เป็นการบังคับใช้ระดับ**แอปพลิเคชัน** กันเฉพาะการเขียนที่เดินผ่าน
+panel (อัปโหลด แตกไฟล์ สร้างไฟล์สำรอง) · **ไฟล์ที่โค้ด PHP ของลูกค้าเขียนเองไม่ผ่านด่านนี้เลย**
+การกันจุดนั้นต้องใช้ project quota ของ filesystem ซึ่งยังไม่ได้ทำ (PLAN-V2 เฟส E2)
+
+---
+
+## 4. วันหมดอายุและการระงับ
+
+งานตามเวลา `expiry.check` เดินทุกวันแล้วเปลี่ยน `service_status` ของบัญชีที่เลยกำหนด
+เป็น `expired` · ดูงานทั้งหมดและผลรอบล่าสุดด้วย:
 
 ```bash
-# /etc/cron.d/phpcp-expiry
-0 3 * * * root /usr/local/bin/phpcp capability:run expiry.check
+phpcp-scheduler --list
 ```
+
+งานที่เกี่ยวข้องกับบัญชีโฮสติ้ง:
+
+| งาน | ทำอะไร |
+|---|---|
+| `expiry.check` | ปิดบริการบัญชีที่หมดอายุ |
+| `quota.disk_check` | วัดขนาดบ้านแต่ละบัญชีแล้วอัปเดต `disk_used_mb` |
+| `disk.usage` | ตรวจพื้นที่ว่างของเครื่องทั้งเครื่อง |
+
+**บัญชีที่ถูกระงับหรือหมดอายุ** สร้างทรัพยากรใหม่ไม่ได้ (ด่าน `checkOwnerCanCreate`)
+แต่ยังล็อกอินได้ถ้า `status` ยัง `active` — ดูเหตุผลใน §2
 
 ---
 
-## 10. การอัปเดตข้อมูล
+## 5. จัดการจากไหนได้บ้าง
 
-### อัปเดตโควตา
+### หน้าเว็บ
 
-```php
-$customers->updateQuota($customerId, $quotaDomains, $quotaSubdomains, ...);
+`/app/users` — สร้างบัญชี ตั้งโควตา ตั้งวันหมดอายุ เปลี่ยนสถานะบริการ เปิด SFTP
+`/app/user?id={id}` — รายละเอียดรายบัญชี
+
+### REST API
+
+| endpoint | ทำอะไร |
+|---|---|
+| `GET · POST /api/v2/users` | รายชื่อ · สร้างบัญชี |
+| `GET · PATCH · DELETE /api/v2/users/{id}` | อ่าน · แก้ไข · ลบ |
+| `PUT /api/v2/users/{id}/quota` | ตั้งโควตา |
+| `PUT /api/v2/users/{id}/layout` | เลือกเลย์เอาต์ไฟล์ (cpanel / phpcp) |
+| `POST /api/v2/users/{id}/password-reset` | สุ่มรหัสผ่านใหม่ |
+| `POST · DELETE /api/v2/users/{id}/sites[/{site_id}]` | ผูก/ถอนเว็บออกจากบัญชี |
+| `PUT · DELETE /api/v2/users/{id}/sftp` | เปิด/ปิด SFTP |
+| `DELETE /api/v2/users/{id}/two-factor` | ปิด 2FA (กรณีอุปกรณ์หาย) |
+
+สเปกเต็มพร้อม schema ของ request/response อยู่ที่ [openapi.yaml](openapi.yaml)
+
+### บรรทัดคำสั่ง
+
+ใช้ได้แม้ตอนที่เข้าหน้าเว็บไม่ได้แล้ว
+
+```bash
+# รายชื่อบัญชีโฮสติ้งพร้อมโควตาที่ใช้ไป
+phpcp customer:list
+
+# สร้างบัญชีใหม่ — ไม่ใส่แฟล็กไหนก็ถามทีละข้อ
+phpcp customer:create --user=somchai --email=somchai@example.com \
+                      --quota-domains=5 --quota-databases=3 --expiry=2027-01-31
+
+# คำสั่งที่เหลือรับชื่อผู้ใช้เป็นอาร์กิวเมนต์แรก
+phpcp customer:passwd somchai
+phpcp customer:quota  somchai --domains=10 --subdomains=20 --aliases=50 \
+                              --emails=100 --databases=10 --ftp=1
+phpcp customer:expiry somchai --expiry=2027-01-31
+phpcp customer:status somchai suspended     # active | suspended | expired
 ```
 
-ถ้าต้องการอัปเดตเฉพาะบางฟิลด์ ให้ส่ง `null` สำหรับฟิลด์ที่ไม่ต้องการเปลี่ยน
-
-### อัปเดตวันหมดอายุ
-
-```php
-// ตั้งวันหมดอายุ
-$customers->updateExpiry($customerId, strtotime('2026-12-31'));
-
-// ยกเลิกวันหมดอายุ
-$customers->updateExpiry($customerId, null);
-```
-
-### เปลี่ยนสถานะ
-
-```php
-$customers->setStatus($customerId, 'active');    // เปิดใช้งาน
-$customers->setStatus($customerId, 'suspended'); // ระงับชั่วคราว
-$customers->setStatus($customerId, 'expired');   // หมดอายุ
-```
+> คำสั่งยังขึ้นต้นด้วย `customer:` เพื่อไม่ให้สคริปต์ของผู้ดูแลที่เขียนไว้ก่อนพัง
+> แต่ข้างในทำงานกับตาราง `users` ทั้งหมดแล้ว — ไม่มีคลาส `CustomerRepository` ในระบบอีกต่อไป
 
 ---
 
-## 11. ความแตกต่างจาก Users
+## 6. สิ่งที่ยังไม่มี
 
-| ลักษณะ | Users | Customers |
-|---------|-------|-----------|
-| ตาราง | `users` | `customers` |
-| บทบาท | superadmin, sysadmin, webadmin | (ไม่มีบทบาท) |
-| การเข้า panel | ล็อกอินได้ | ไม่สามารถล็อกอิน panel ได้ |
-| ใช้งาน | จัดการ panel | ซื้อบริการ web hosting |
-| เว็บไซต์ | อาจมีหรือไม่มี | มีเว็บไซต์ของตัวเอง |
-| โควตา | ไม่มี | มีโควตาทรัพยากร |
-| วันหมดอายุ | ไม่มี | มีได้ |
+- **Billing** — ไม่มีใบแจ้งหนี้ ไม่มีการรับชำระเงิน ไม่มีการต่ออายุอัตโนมัติ ·
+  `expiry_at` เป็นเพียงวันที่ที่ผู้ดูแลตั้งเอง
+- **Reseller** — ลูกค้าสร้างลูกค้าต่อไม่ได้ · โครงสร้างเป็นสองชั้นเท่านั้น
+- **แพ็กเกจสำเร็จรูป** — ตั้งโควตาทีละบัญชี ยังไม่มีเทมเพลตแพ็กเกจให้เลือก
+- **project quota ของ filesystem** — ดู §3

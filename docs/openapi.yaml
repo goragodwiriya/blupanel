@@ -1301,6 +1301,41 @@ paths:
   /users/{id}:
     parameters:
       - { $ref: "#/components/parameters/UserId" }
+    get:
+      tags: [users]
+      summary: อ่านผู้ใช้รายเดียว พร้อมตัวเลือกที่ฟอร์มต้องใช้
+      description: |
+        **`id = 0` คือ "ของใหม่" ไม่ใช่ 404** — เหตุผลเดียวกับ `GET /cron-jobs/{id}`
+        คือฟอร์มสร้างกับฟอร์มแก้ไขใช้เทมเพลตเดียวกัน
+
+        `options` มีรายการเวอร์ชัน PHP ให้ฟอร์มเลือก · **ตอบ 200 เสมอแม้ agent ล่ม**
+        โดยส่ง `options.php_version` เป็นอาร์เรย์ว่าง — หน้านี้เป็นค่าเริ่มต้นของฟอร์ม
+        ไม่ใช่คำสั่งที่ต้องพึ่ง agent จริง ๆ ถ้าล้มทั้งหน้าเพราะ agent ไม่ตอบ ผู้ดูแลจะ
+        แก้อะไรไม่ได้เลยตอนที่ต้องการมากที่สุด
+
+        สำหรับบัญชีโฮสติ้ง `data` มี `sites` (เว็บที่ถือครอง) และสรุปโควตามาให้ด้วย
+      responses:
+        "200":
+          description: ผู้ใช้และตัวเลือกของฟอร์ม หรือโครงเปล่าเมื่อ `id=0`
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/User" }
+                  options:
+                    type: object
+                    properties:
+                      php_version:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            value: { type: string }
+                            text: { type: string }
+        "404": { $ref: "#/components/responses/Error" }
+
     patch:
       tags: [users]
       summary: เปลี่ยนบทบาทหรือสถานะ
@@ -3572,6 +3607,30 @@ paths:
         in: path
         required: true
         schema: { type: integer }
+    get:
+      tags: [cron]
+      summary: อ่านงานอัตโนมัติรายการเดียว — ใช้เติมฟอร์มแก้ไข
+      description: |
+        **`id = 0` คือ "ของใหม่" ไม่ใช่ 404** — ฟอร์มสร้างกับฟอร์มแก้ไขเป็นเทมเพลตเดียวกัน
+        ทั้งสองทางจึงถามข้อมูลจากที่นี่เหมือนกัน ต่างกันแค่ได้โครงว่างหรือได้ค่าเดิม
+        ถ้าที่นี่ตอบ 404 ให้ `id=0` ฝั่งหน้าเว็บจะต้องมีเส้นทางพิเศษสำหรับ "สร้างใหม่"
+        ซึ่งแปลว่ามีสองเส้นทางที่ต้องดูแลให้เหมือนกันตลอดไป
+
+        การขอโครงเปล่า (`id=0`) ต้องมีสิทธิ์ `cron.manage` — ไม่งั้นคนที่ดูได้อย่างเดียว
+        จะเปิดฟอร์มขึ้นมากรอกจนเสร็จแล้วค่อยโดนปฏิเสธตอนกดบันทึก
+      responses:
+        "200":
+          description: งานอัตโนมัติ หรือโครงเปล่าเมื่อ `id=0`
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { $ref: "#/components/schemas/CronJob" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
     patch:
       tags: [cron]
       summary: แก้ไขงานอัตโนมัติ

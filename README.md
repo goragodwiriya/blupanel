@@ -101,7 +101,9 @@ docker run --rm phpcp:it bash /usr/local/src/phpcp/docker/acceptance.sh
 ตามชนิดผู้โจมตี และ **รายการตรวจก่อนขึ้น production** ที่ต้องทำให้ครบ (2FA, เปลี่ยนใบรับรองจาก
 self-signed, ปิด SSH root login, ตั้ง audit log แบบ append-only ฯลฯ)
 
-พบช่องโหว่กรุณาแจ้งเป็นการส่วนตัวก่อนเปิดเผยสาธารณะ
+**พบช่องโหว่ อย่าเปิด issue สาธารณะ** — ใช้แท็บ **Security → Report a vulnerability**
+ของ repository นี้ · รายละเอียดและขอบเขตที่นับว่าเป็นช่องโหว่อยู่ใน
+[นโยบายความปลอดภัย](.github/SECURITY.md)
 
 ---
 
@@ -110,11 +112,15 @@ self-signed, ปิด SSH root login, ตั้ง audit log แบบ append-o
 | ไฟล์ | เนื้อหา |
 |---|---|
 | [docs/INSTALL.md](docs/INSTALL.md) | ติดตั้ง อัปเดต ถอนการติดตั้ง แก้ปัญหาที่พบบ่อย |
+| [docs/INSTALL-LIGHTSAIL.md](docs/INSTALL-LIGHTSAIL.md) | ข้อจำกัดเฉพาะของ AWS Lightsail ที่ต้องจัดการก่อน |
 | [docs/USER-GUIDE.md](docs/USER-GUIDE.md) | คู่มือใช้งานหน้าจอ |
+| [docs/CUSTOMERS.md](docs/CUSTOMERS.md) | บัญชีโฮสติ้ง โควตา และการหมดอายุ |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | โครงสร้างภายใน ชั้น agent โหมดการทำงาน |
 | [docs/SECURITY.md](docs/SECURITY.md) | threat model และรายการตรวจก่อน production |
 | [docs/openapi.yaml](docs/openapi.yaml) | สเปก REST API v2 |
-| [docs/PLAN-V2.md](docs/PLAN-V2.md) | แผนงานและสถานะของแต่ละเฟส |
+| [docs/PLAN-V2.md](docs/PLAN-V2.md) | แผนงานหลักและสถานะของแต่ละเฟส |
+| [docs/PLAN-MAIL.md](docs/PLAN-MAIL.md) · [docs/PLAN-BACKUP-V2.md](docs/PLAN-BACKUP-V2.md) | แผนงานย่อยที่กลับคำตัดสินบางข้อของ PLAN-V2 |
+| [docs/history/](docs/history/) | เอกสารที่เลิกใช้แล้ว เก็บไว้เป็นบันทึกประวัติ — **อย่าใช้อ้างอิงสถานะปัจจุบัน** |
 
 ## สัญญาอนุญาต
 
