@@ -80,6 +80,8 @@ final class MailBoxUpdate extends MailCapability
             'address' => $address,
             // แสดงครั้งเดียวเท่านั้น เหมือนตอนสร้างกล่อง
             'password' => $plain,
+            // โชว์เฉพาะรหัสที่ระบบสุ่มให้ — เหตุผลเดียวกับตอนสร้างกล่อง
+            'password_generated' => $plain !== '' && $args['password'] === '',
             'message' => $plain !== ''
                 ? sprintf('ตั้งรหัสผ่านใหม่ให้ %s แล้ว', $address)
                 : sprintf('บันทึกกล่อง %s แล้ว', $address),

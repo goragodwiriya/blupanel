@@ -116,12 +116,9 @@ final class MailboxesController extends ApiController
             'password' => $request->payloadString('password'),
         ], $this->ctx->actor($request));
 
-        return $this->done(
-            (string) ($result['message'] ?? 'Mailbox created'),
-            $this->passwordActions($result, 'Mailbox created'),
-            $result,
-            201,
-        );
+        $message = (string) ($result['message'] ?? 'Mailbox created');
+
+        return $this->done($message, $this->passwordActions($result, 'Mailbox created', $message), $result, 201);
     }
 
     public function update(Request $request): Response
@@ -138,11 +135,9 @@ final class MailboxesController extends ApiController
             'password' => $request->payloadString('password'),
         ], $this->ctx->actor($request));
 
-        return $this->done(
-            (string) ($result['message'] ?? 'Mailbox saved'),
-            $this->passwordActions($result, 'New password'),
-            $result,
-        );
+        $message = (string) ($result['message'] ?? 'Mailbox saved');
+
+        return $this->done($message, $this->passwordActions($result, 'New password', $message), $result);
     }
 
     public function destroy(Request $request): Response
@@ -241,14 +236,27 @@ final class MailboxesController extends ApiController
      * @param array<string,mixed> $result
      * @return list<array<string,mixed>>
      */
-    private function passwordActions(array $result, string $title): array
+    private function passwordActions(array $result, string $title, string $message = ''): array
     {
         $password = (string) ($result['password'] ?? '');
 
         // ปิดฟอร์มก่อนเสมอ — แล้วค่อยเปิดหน้าต่างรหัสผ่านทับ ถ้ามีรหัสให้แสดง
         $actions = [['type' => 'modal', 'action' => 'close']];
 
-        if ($password !== '') {
+        /*
+         * แถบแจ้งผล — เดิมขาดไปทั้งที่ปิด Modal และโหลดตารางใหม่ครบแล้ว
+         *
+         * ผลคือกดบันทึกแล้ว Modal หายไปเฉย ๆ แถวใหม่โผล่ในตารางโดยไม่มีอะไรยืนยันว่า
+         * "สำเร็จ" — ผู้ดูแลที่ไม่ได้จ้องตารางอยู่จึงไม่รู้ว่าคำสั่งผ่านหรือเงียบหายไป
+         * และมักกดซ้ำ · หน้าอื่นในระบบใช้ `saved()` ซึ่งมีแถบนี้ให้อยู่แล้ว
+         *
+         * ต้องมาก่อนหน้าต่างรหัสผ่าน เพื่อไม่ให้ถูกบังตอนที่มีรหัสให้แสดง
+         */
+        if ($message !== '') {
+            $actions[] = ['type' => 'notification', 'level' => 'success', 'message' => $message];
+        }
+
+        if ($password !== '' && ($result['password_generated'] ?? false)) {
             $actions[] = [
                 'type' => 'modal',
                 'action' => 'show',
