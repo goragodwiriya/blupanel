@@ -33,7 +33,7 @@ final class ServiceRelations
     public function forUnits(array $units): array
     {
         $sites = $this->db->all(
-            'SELECT id, name, primary_domain, php_version, status FROM sites ORDER BY primary_domain'
+            'SELECT id, primary_domain, php_version, status FROM sites ORDER BY primary_domain'
         );
         $databases = $this->db->all(
             'SELECT d.id, d.db_name, d.size_bytes, s.primary_domain

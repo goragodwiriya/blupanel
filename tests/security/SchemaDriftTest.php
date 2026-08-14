@@ -68,6 +68,40 @@ function sqlLiterals(string $source): array
     return $matches[2];
 }
 
+/**
+ * ชื่อคอลัมน์เปล่า ๆ ใน SELECT list และ ORDER BY ของก้อนนี้
+ *
+ * เอาเฉพาะที่เป็นชื่อคอลัมน์แท้ ๆ — `*`, `count(*)`, นิพจน์, ค่าคงที่ และชื่อที่มี
+ * ชื่อย่อนำหน้าแล้ว ล้วนตรวจไม่ได้หรือถูกตรวจไปแล้วอีกทาง
+ *
+ * @return list<string>
+ */
+function selectedColumns(string $sql): array
+{
+    if (!preg_match('~\bSELECT\b(.*?)\bFROM\b~is', $sql, $found)) {
+        return [];
+    }
+
+    $names = explode(',', $found[1]);
+
+    if (preg_match('~\bORDER\s+BY\b(.*)$~is', $sql, $order)) {
+        $names = array_merge($names, explode(',', $order[1]));
+    }
+
+    $columns = [];
+
+    foreach ($names as $name) {
+        // `name AS alias` / `name DESC` — ตรวจชื่อจริง ไม่ใช่ชื่อที่ตั้งให้
+        $name = trim((string) preg_replace('~\s+(?:AS\s+\w+|ASC|DESC)\s*$~i', '', trim($name)));
+
+        if (preg_match('~^[A-Za-z_]\w*$~', $name) && !in_array(strtoupper($name), ['DISTINCT', 'NULL'], true)) {
+            $columns[] = $name;
+        }
+    }
+
+    return array_values(array_unique($columns));
+}
+
 test('ทุกคอลัมน์ที่ SQL อ้างถึงต้องมีอยู่จริงในสคีมาหลัง migration', static function (): void {
     $columns = schemaColumns();
     $problems = [];
@@ -134,6 +168,33 @@ test('ทุกคอลัมน์ที่ SQL อ้างถึงต้อ
 
                 $problems[] = str_replace(PHPCP_ROOT . '/', '', $file->getPathname())
                     . ' อ้าง ' . $reference . ' (ตาราง ' . implode('/', $aliases[$alias]) . ')';
+            }
+
+            /*
+             * **คอลัมน์ที่ไม่มีชื่อย่อนำหน้า** — ช่องโหว่ที่ปล่อยของจริงหลุดไปแล้วหนึ่งครั้ง
+             *
+             * `SELECT id, name, primary_domain FROM sites` เขียนแบบนี้ได้เพราะมีตาราง
+             * เดียว · รอบแรกเทสต์นี้ดูแต่ `ชื่อย่อ.คอลัมน์` จึงมองไม่เห็น แล้ว
+             * `/api/v2/services` ก็พังบนเครื่องจริงทั้งที่เทสต์เขียวครบ
+             *
+             * ตรวจได้เฉพาะตอนที่ก้อนนี้อ้างถึงตารางเดียว — มีมากกว่านั้นเมื่อไหร่
+             * ชื่อเปล่า ๆ เป็นของตารางไหนก็ได้ เดาแล้วจะฟ้องผิด
+             */
+            $only = array_unique(array_merge(...array_values($aliases)));
+
+            if (count($only) !== 1) {
+                continue;
+            }
+
+            $table = $only[array_key_first($only)];
+
+            foreach (selectedColumns($sql) as $column) {
+                if (in_array($column, $columns[$table], true)) {
+                    continue;
+                }
+
+                $problems[] = str_replace(PHPCP_ROOT . '/', '', $file->getPathname())
+                    . ' อ้าง ' . $column . ' (ตาราง ' . $table . ')';
             }
         }
     }

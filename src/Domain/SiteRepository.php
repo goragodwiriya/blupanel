@@ -318,15 +318,6 @@ final class SiteRepository
         return $out;
     }
 
-    /** @return list<array<string,mixed>> */
-    public function usingPhpVersion(string $version): array
-    {
-        return $this->db->all(
-            'SELECT id, name, primary_domain, status FROM sites WHERE php_version = :v ORDER BY primary_domain',
-            ['v' => $version],
-        );
-    }
-
     /**
      * @param int $siteId
      * @param int $userId
