@@ -161,3 +161,41 @@ test('ใบรับรองต้องเตือนก่อนที่ c
     assertSame('critical', AlertRules::levelForCertDays(AlertRules::CERT_CRITICAL_DAYS), 'ที่วิกฤตพอดี');
     assertSame('critical', AlertRules::levelForCertDays(-3), 'หมดอายุไปแล้วต้องวิกฤต ไม่ใช่ปกติ');
 });
+
+test('เกณฑ์ที่เลิกตรวจแล้วต้องหายจากรายการ ไม่ค้างตลอดกาล', static function (): void {
+    /*
+     * รายการในตารางนี้หายก็ต่อเมื่อมีการประเมินคีย์นั้นแล้วพบว่ากลับมาปกติ · คีย์ที่
+     * เลิกถูกประเมินจึงค้างตลอดไป — เจอจริงกับ `service:<ชื่อ>` ของบริการที่เคยหยุด
+     * ทำงานแล้วถูกถอนออกจากเครื่องภายหลัง: `AlertCheck` ข้ามบริการที่ not_installed
+     * ไปเลย จึงไม่มีอะไรมาบอกว่ามันหายดีแล้ว
+     *
+     * ผู้ดูแลเห็น "มีปัญหาค้างอยู่" ที่กดยังไงก็ไม่หาย แล้วเลิกเชื่อส่วนนี้ทั้งส่วน —
+     * อันตรายกว่าไม่มีมันเลย เพราะวันที่มีปัญหาจริงก็จะถูกมองข้ามไปด้วย
+     */
+    $rules = new AlertRules(alertDb());
+
+    $rules->evaluate('disk', 'critical', 95.0);
+    $rules->evaluate('service:nginx', 'critical', 0.0);
+    $rules->evaluate('service:named', 'warning', 0.0);
+
+    assertSame(3, count($rules->active()), 'ตั้งต้นต้องมีสามรายการ');
+
+    // รอบถัดมา nginx ถูกถอนออกจากเครื่อง จึงไม่อยู่ในรายการที่ตรวจอีกต่อไป
+    $forgotten = $rules->forgetOthers(['disk', 'service:named']);
+
+    assertSame(1, $forgotten, 'ต้องลบเฉพาะคีย์ที่ไม่ได้ตรวจแล้ว');
+
+    $keys = array_column($rules->active(), 'alert_key');
+    sort($keys);
+
+    assertSame(['disk', 'service:named'], $keys, 'ที่ยังตรวจอยู่ต้องไม่ถูกแตะ');
+});
+
+test('ตรวจไม่ได้เลยต้องไม่ล้างทั้งตาราง — นั่นคือการกลบปัญหาจริง', static function (): void {
+    // ตัวตรวจล้มเอง (agent ตายกลางทาง, อ่านค่าไม่ได้) ต้องไม่ถูกตีความว่าทุกอย่างหายดี
+    $rules = new AlertRules(alertDb());
+    $rules->evaluate('disk', 'critical', 99.0);
+
+    assertSame(0, $rules->forgetOthers([]), 'รายการว่างต้องไม่ลบอะไรเลย');
+    assertSame(1, count($rules->active()), 'ปัญหาที่ค้างอยู่ต้องยังอยู่');
+});

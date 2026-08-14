@@ -465,6 +465,37 @@ final class UsersController extends ApiController
      * รหัสผ่านมาจากผู้ดูแลเท่านั้น ไม่สุ่มให้ — ต่างจากรหัสผ่านบัญชี panel ตรงที่ผู้ใช้
      * เอาไปกรอกในโปรแกรม FTP client ของตัวเอง ไม่ได้เปลี่ยนตอนล็อกอินครั้งแรกได้
      */
+    /**
+     * ฟอร์มตั้งรหัสผ่าน SFTP — เปิดใน Modal
+     *
+     * ช่องกรอกช่องเดียวไม่ควรกินที่อยู่ในหน้าตลอดเวลา · ฟอร์มเดียวใช้ทั้งเปิดครั้งแรก
+     * และเปลี่ยนรหัสผ่าน เพราะเป็นการกระทำเดียวกันในทางเทคนิค (PUT ตั้งค่าทั้งชุด) —
+     * ที่ต่างกันคือหัวเรื่องซึ่งเซิร์ฟเวอร์เป็นคนเลือกจากสถานะจริง ไม่ใช่หน้าจอเดาเอง
+     */
+    public function sftpForm(Request $request): Response
+    {
+        $id = $request->paramInt('id');
+        $user = (new UserRepository($this->app->db()))->find($id);
+
+        if ($user === null) {
+            return $this->problem(ApiProblem::NotFound, 'ไม่พบผู้ใช้');
+        }
+
+        $enabled = (bool) ($user['sftp_enabled'] ?? false);
+
+        return $this->ok(
+            ['form_action' => '/api/v2/users/' . $id . '/sftp'],
+            [],
+            [[
+                'type' => 'modal',
+                'action' => 'show',
+                'template' => 'sftp-password-form.html',
+                'title' => $enabled ? '{LNG_Change password}' : '{LNG_Enable SFTP}',
+                'titleClass' => 'icon-lock',
+            ]],
+        );
+    }
+
     public function enableSftp(Request $request): Response
     {
         $result = $this->agent()->data('sftp.enable', [
@@ -472,7 +503,9 @@ final class UsersController extends ApiController
             'password' => $request->payloadString('password'),
         ], $this->ctx->actor($request));
 
-        return $this->completed(
+        // saved() ไม่ใช่ completed() — ฟอร์มนี้เปิดใน Modal จึงต้องสั่งปิดเมื่อสำเร็จ
+        // ไม่งั้น Modal ค้างอยู่พร้อมช่องรหัสผ่านที่กรอกไว้ ดูเหมือนบันทึกไม่ผ่าน
+        return $this->saved(
             (string) ($result['message'] ?? 'SFTP enabled'),
             '',
             is_array($result) ? $result : [],

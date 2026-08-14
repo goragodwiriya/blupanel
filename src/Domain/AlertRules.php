@@ -164,6 +164,42 @@ final class AlertRules
         );
     }
 
+    /**
+     * ลบสถานะของเกณฑ์ที่รอบนี้ไม่ได้ตรวจแล้ว — กันรายการค้างที่ไม่มีวันหายไปเอง
+     *
+     * **รายการในตารางนี้จะหายก็ต่อเมื่อมีการประเมินคีย์นั้นแล้วพบว่ากลับมาปกติ** ·
+     * คีย์ที่เลิกถูกประเมินจึงค้างอยู่ตลอดไป — เจอจริงกับ `service:<ชื่อ>` ของบริการที่
+     * เคยหยุดทำงานแล้วถูกถอนออกจากเครื่องภายหลัง: `AlertCheck` ข้ามบริการที่
+     * `not_installed` ไปเลย จึงไม่มีอะไรมาบอกว่ามันหายดีแล้ว
+     *
+     * ผลคือหน้าจอแสดงว่ามีปัญหาค้างอยู่ตลอดกาล ผู้ดูแลกดอะไรก็ไม่หาย และเลิกเชื่อ
+     * ส่วนนี้ไปทั้งส่วน — ซึ่งอันตรายกว่าไม่มีมันเลย เพราะวันที่มีปัญหาจริงก็จะถูกมองข้าม
+     *
+     * @param list<string> $keys คีย์ทั้งหมดที่รอบนี้ตรวจแล้ว
+     */
+    public function forgetOthers(array $keys): int
+    {
+        if ($keys === []) {
+            // ไม่ได้ตรวจอะไรเลย = ผิดปกติของตัวตรวจเอง ไม่ใช่สัญญาณว่าทุกอย่างหายดี
+            // การลบทั้งตารางตรงนี้จะกลบปัญหาจริงที่ค้างอยู่
+            return 0;
+        }
+
+        $stale = array_column(
+            array_filter(
+                $this->db->all('SELECT alert_key FROM alert_state'),
+                static fn (array $row): bool => !in_array((string) $row['alert_key'], $keys, true),
+            ),
+            'alert_key',
+        );
+
+        foreach ($stale as $key) {
+            $this->db->run('DELETE FROM alert_state WHERE alert_key = :k', ['k' => $key]);
+        }
+
+        return count($stale);
+    }
+
     private function remember(string $key, string $level, float $value, int $firstAt, int $now): void
     {
         $this->db->run(

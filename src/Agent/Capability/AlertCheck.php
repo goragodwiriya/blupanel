@@ -88,9 +88,20 @@ final class AlertCheck implements Capability
             ) ? 1 : 0;
         }
 
+        /*
+         * เกณฑ์ที่รอบนี้ไม่ได้ตรวจแล้ว ต้องหายไปจากรายการด้วย
+         *
+         * `collect()` ข้ามบริการที่ไม่ได้ติดตั้งบนเครื่องนี้ (ถูกต้อง — ไม่ใช่ความผิดปกติ)
+         * แต่ถ้าบริการนั้นเคยหยุดทำงานตอนที่ยังลงอยู่ แถวของมันจะค้างในตารางตลอดไป
+         * เพราะไม่มีใครประเมินคีย์นั้นอีกเลย · ผู้ดูแลเห็น "มีปัญหาค้างอยู่" ที่กดยังไง
+         * ก็ไม่หาย แล้วเลิกเชื่อส่วนนี้ทั้งส่วน — อันตรายกว่าไม่มีมันเลย
+         */
+        $forgotten = $rules->forgetOthers(array_column($checked, 'key'));
+
         return [
             'checked' => count($checked),
             'notified' => $sent,
+            'forgotten' => $forgotten,
             'alerts' => $checked,
             'channels' => $notifier->activeChannels(),
             'message' => sprintf('ตรวจเกณฑ์เตือน %d รายการ · ส่งแจ้งเตือน %d ครั้ง', count($checked), $sent),

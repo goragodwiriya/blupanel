@@ -1490,6 +1490,28 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
 
+  /users/{id}/sftp/form:
+    get:
+      tags: [users]
+      summary: ฟอร์มตั้งรหัสผ่าน SFTP (เปิดใน Modal)
+      description: |
+        คืนคำสั่งให้หน้าจอเปิด Modal พร้อมเทมเพลต `sftp-password-form.html`
+        · หัวเรื่องเปลี่ยนตามสถานะจริง (เปิดครั้งแรก / เปลี่ยนรหัสผ่าน) ซึ่งเซิร์ฟเวอร์
+        เป็นคนตัดสิน ไม่ใช่หน้าจอเดาเอง
+      parameters:
+        - { $ref: "#/components/parameters/UserId" }
+      responses:
+        "200":
+          description: form_action พร้อมคำสั่งเปิด Modal
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "404": { $ref: "#/components/responses/Error" }
+
   /users/{id}/sftp:
     parameters:
       - { $ref: "#/components/parameters/UserId" }

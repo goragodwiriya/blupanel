@@ -171,6 +171,8 @@ final class Routes
         $router->add(new Route('DELETE', '/api/v2/users/{id}/sites/{site_id}', UsersController::class, 'detachSite', 'customer.manage', 'api.v2.users.sites.detach'));
         $router->add(new Route('DELETE', '/api/v2/users/{id}/two-factor', UsersController::class, 'disableTwoFactor', 'customer.manage', 'api.v2.users.2fa'));
         // sub-resource ตาม §4.1 — "การเข้าถึงผ่าน SFTP" ของบัญชีนี้ · PUT = ตั้งค่าทั้งชุด (เปิด+รหัสผ่าน)
+        // ฟอร์มตั้งรหัสผ่านเปิดใน Modal — ช่องเดียวไม่ควรกินที่ในหน้าตลอดเวลา
+        $router->add(new Route('GET', '/api/v2/users/{id}/sftp/form', UsersController::class, 'sftpForm', 'customer.manage', 'api.v2.users.sftp.form'));
         $router->add(new Route('PUT', '/api/v2/users/{id}/sftp', UsersController::class, 'enableSftp', 'customer.manage', 'api.v2.users.sftp.enable'));
         $router->add(new Route('DELETE', '/api/v2/users/{id}/sftp', UsersController::class, 'disableSftp', 'customer.manage', 'api.v2.users.sftp.disable'));
 

@@ -225,6 +225,7 @@
     "Email settings saved": "บันทึกค่าอีเมลแล้ว",
     "Empty the queue": "ล้างคิวทั้งหมด",
     "Enable": "เปิดใช้งาน",
+    "Enable SFTP": "เปิด SFTP",
     "Enable Telegram notifications": "เปิดการแจ้งเตือนผ่าน Telegram",
     "Enable email notifications": "เปิดการแจ้งเตือนทางอีเมล",
     "Enable firewall": "เปิดไฟร์วอลล",
@@ -519,6 +520,7 @@
     "SSL Certificates": "ใบรับรอง SSL",
     "Save": "บันทึก",
     "Save and test": "บันทึกแล้วตรวจ",
+    "Save password": "บันทึกรหัสผ่าน",
     "Saved successfully": "บันทึกเรียบร้อยแล้ว",
     "Saving moves the directories of every site in this account and rewrites their web server config. The sites go offline for a moment, and any full path written into the customer's own scripts or cron jobs will stop working.": "การกดบันทึกจะย้ายไดเรกทอรีของทุกเว็บในบัญชีนี้แล้วเขียนค่าตั้งเว็บเซิร์ฟเวอร์ใหม่ · เว็บจะหยุดให้บริการชั่วขณะ และเส้นทางเต็มที่ลูกค้าเขียนไว้ในสคริปต์หรือ cron ของตัวเองจะใช้ไม่ได้",
     "Saving replaces every record at once — records you delete from the text are deleted for real. Check the whole list before saving, not just the lines you changed.": "การบันทึกคือการแทนที่เรกคอร์ดทั้งชุดพร้อมกัน — รายการที่ลบออกจากข้อความคือลบจริง · ตรวจทั้งรายการก่อนบันทึก ไม่ใช่แค่บรรทัดที่แก้",
@@ -745,5 +747,6 @@
     "{count} selected": "เลือกไว้ {count} รายการ",
     "{days} days": "{days} วัน",
     "{type} record added": "เพิ่มเรกคอร์ด {type} แล้ว",
-    "{type} record removed": "ลบเรกคอร์ด {type} แล้ว"
+    "{type} record removed": "ลบเรกคอร์ด {type} แล้ว",
+    "ไม่พบผู้ใช้": "ไม่พบผู้ใช้"
 }
