@@ -125,11 +125,8 @@ final class UsersController extends ApiController
                 return $this->problem(ApiProblem::NotFound, 'User not found');
             }
 
+            // present() ใส่ `sites` ให้เองแล้วสำหรับบัญชีโฮสติ้ง
             $body = $this->present($user, $users, new QuotaChecker($users));
-
-            if ($user['role'] === Permissions::WEBADMIN) {
-                $body['sites'] = SiteResource::collection($users->sites((int) $user['id']));
-            }
         }
 
         return $this->ok($body);
@@ -384,9 +381,23 @@ final class UsersController extends ApiController
 
         $this->audit($request, 'user.update', (string) $user['username'], $changes + ['sessions_revoked' => $revoked]);
 
-        $result = ['user_id' => $id, 'sessions_revoked' => $revoked] + $changes;
+        /*
+         * ตอบด้วย**ตัวบัญชีทั้งก้อนหลังแก้** ไม่ใช่แค่รายการที่เปลี่ยน
+         *
+         * หน้าจอผูกข้อมูลของทั้งหน้าไว้กับ endpoint นี้ · คำตอบของการบันทึกจึงไปทับ
+         * ข้อมูลที่ผูกอยู่ · เดิมตอบแค่ `{user_id, sessions_revoked, ...ที่เปลี่ยน}`
+         * ซึ่งไม่มี `sftp_enabled` เลย — พอผู้ดูแลกดบันทึกชื่อหรืออีเมล **ส่วน SFTP
+         * หายไปทั้งส่วนทันที** แล้วกลับมาเมื่อโหลดหน้าใหม่ ดูเหมือนระบบไม่เสถียร
+         * (เจอบนเซิร์ฟเวอร์จริง 2026-08-14)
+         *
+         * แก้ที่คำตอบไม่ใช่ที่เทมเพลต เพราะสัญญาของ PATCH คือ "นี่คือทรัพยากรหลังแก้"
+         * — ผู้เรียกอื่น (curl, สคริปต์) ก็ควรได้ของครบเหมือนกัน ไม่ใช่ต้องเรียกซ้ำอีกรอบ
+         */
+        $fresh = $users->find($id);
+        $result = ($fresh === null ? [] : $this->present($fresh, $users, new QuotaChecker($users)))
+            + ['sessions_revoked' => $revoked, 'changed' => $changes];
 
-        return $this->completed('Account saved', 'users', is_array($result) ? $result : []);
+        return $this->completed('Account saved', 'users', $result);
     }
 
     /**
@@ -828,6 +839,17 @@ final class UsersController extends ApiController
         $presented = ($row['role'] ?? '') !== Permissions::WEBADMIN
             ? UserResource::one($row)
             : UserResource::withHosting($row, $quota->summary($id) ?? [], count($users->siteIds($id)));
+
+        /*
+         * เว็บไซต์ของบัญชีอยู่ในรูปร่างเดียวกันเสมอ — เดิม `show()` เติมทีหลังเองที่เดียว
+         *
+         * หน้าจอใช้ `sites` เป็นเงื่อนไขแสดงส่วนที่มีเฉพาะบัญชีโฮสติ้ง (SFTP, เว็บที่ผูกอยู่)
+         * · คำตอบของ `PATCH` ที่ไม่มีคีย์นี้จึงทำให้ส่วนเหล่านั้นหายไปหลังกดบันทึก
+         * ทั้งที่ไม่มีอะไรเปลี่ยนจริง — รูปร่างของทรัพยากรต้องไม่ขึ้นกับว่าเรียกด้วยวิธีไหน
+         */
+        if (($row['role'] ?? '') === Permissions::WEBADMIN) {
+            $presented['sites'] = SiteResource::collection($users->sites($id));
+        }
 
         // แถวรู้เองว่าเป็นบัญชีของผู้เรียกหรือไม่ — หน้าจอเขียนเงื่อนไขซ่อนปุ่มลบ
         // และปุ่มรีเซ็ตรหัสผ่านของตัวเองได้โดยไม่ต้องมีตรรกะฝั่ง JS

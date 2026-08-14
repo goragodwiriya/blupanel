@@ -445,3 +445,47 @@ test('บัญชีที่ไม่มีอีเมลต้องแก�
         'อีเมลที่ผิดรูปแบบยังต้องถูกปฏิเสธเหมือนเดิม',
     );
 });
+
+test('บันทึกบัญชีแล้วต้องได้ทรัพยากรครบเหมือนตอน GET — ไม่ใช่แค่ที่เปลี่ยน', static function (): void {
+    /*
+     * **เจอบนเซิร์ฟเวอร์จริง (2026-08-14):** ส่วน SFTP ในหน้าผู้ใช้ "บางทีแสดง บางทีไม่แสดง"
+     *
+     * หน้าจอผูกข้อมูลทั้งหน้าไว้กับ endpoint นี้ คำตอบของการบันทึกจึงไปทับข้อมูลที่ผูกอยู่ ·
+     * เดิม PATCH ตอบแค่ `{user_id, sessions_revoked, ...ที่เปลี่ยน}` ซึ่งไม่มี `sftp_enabled`
+     * และไม่มี `sites` — สองคีย์ที่ส่วนนั้นใช้เป็นเงื่อนไขแสดง · กดบันทึกชื่อหรืออีเมล
+     * แล้วส่วน SFTP หายทั้งส่วนทันที กลับมาเมื่อโหลดหน้าใหม่ ดูเหมือนระบบไม่เสถียร
+     *
+     * แก้ที่คำตอบไม่ใช่ที่เทมเพลต เพราะสัญญาของ PATCH คือ "นี่คือทรัพยากรหลังแก้" —
+     * ผู้เรียกอื่น (curl, สคริปต์) ก็ควรได้ของครบเหมือนกัน ไม่ใช่ต้องเรียกซ้ำอีกรอบ
+     */
+    $harness = accountsLogin('acctadmin', 'Accounts-Admin-Pass-11');
+
+    // สร้างตรงในฐานข้อมูล — `customer.create` เดินผ่าน agent ซึ่งไม่มีในชุดทดสอบ API
+    // และเรื่องที่กำลังตรวจคือ**รูปร่างของคำตอบ** ไม่ใช่เส้นทางการสร้าง
+    $id = $harness->app->db()->insert('users', [
+        'username' => 'shapecheck', 'display_name' => 'Shape Check',
+        'password_hash' => password_hash('x', PASSWORD_DEFAULT), 'role' => Permissions::WEBADMIN,
+        'totp_enabled' => 0, 'must_change_password' => 0, 'status' => 'active', 'failed_attempts' => 0,
+        'email' => '', 'service_status' => 'active', 'uid' => 0, 'gid' => 0,
+        'quota_domains' => -1, 'quota_subdomains' => -1, 'quota_aliases' => -1, 'quota_emails' => -1,
+        'quota_databases' => -1, 'quota_ftp_users' => -1, 'disk_quota_mb' => -1, 'disk_used_mb' => 0,
+        'created_at' => time(), 'updated_at' => time(),
+    ]);
+
+    $get = $harness->request('GET', '/api/v2/users/' . $id);
+    assertSame(200, $get->status, 'อ่านบัญชีต้องสำเร็จ');
+
+    $patch = $harness->request('PATCH', '/api/v2/users/' . $id, ['display_name' => 'เปลี่ยนชื่อแล้ว']);
+    assertSame(200, $patch->status, 'บันทึกต้องสำเร็จ');
+
+    // คีย์ที่หน้าจอใช้เป็นเงื่อนไขแสดงผล ต้องมีครบทั้งสองทาง
+    foreach (['sftp_enabled', 'sftp_available', 'sites', 'quota'] as $key) {
+        assertTrue($get->data($key) !== null, "GET ต้องส่ง {$key}");
+        assertTrue(
+            $patch->data($key) !== null,
+            "PATCH ต้องส่ง {$key} ด้วย ไม่งั้นหน้าจอที่ผูกข้อมูลไว้จะเสียส่วนนั้นไปหลังกดบันทึก",
+        );
+    }
+
+    assertSame('เปลี่ยนชื่อแล้ว', $patch->data('display_name'), 'และต้องเป็นค่าหลังแก้จริง');
+});
