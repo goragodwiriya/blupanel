@@ -142,9 +142,77 @@ test('ข้อความเมื่อ host key ยังไม่ถูก�
 
     $message = (string) $explain->invoke($destination, 'Host key verification failed.');
 
-    assertTrue(str_contains($message, 'ssh-keyscan'), 'ต้องบอกคำสั่งที่ต้องรัน');
-    assertTrue(str_contains($message, 'known_hosts'), 'ต้องบอกว่าเอาผลไปวางที่ช่องไหน');
-    assertTrue(str_contains($message, '18.142.27.80'), 'ต้องมีชื่อโฮสต์จริงในคำสั่งที่แนะนำ');
+    assertTrue(str_contains($message, 'known_hosts'), 'ต้องบอกว่าค่าไปอยู่ช่องไหน');
+    assertTrue(
+        str_contains($message, 'อ่านจากเครื่องปลายทาง'),
+        'ต้องชี้ไปที่ปุ่มที่ทำให้เลย ไม่ใช่ให้ไปรันคำสั่งเองแล้ว copy กลับมา',
+    );
+});
+
+test('"Permission denied" ต้องแยกให้ออกว่าเป็นกุญแจหรือสิทธิ์ของโฟลเดอร์', static function (): void {
+    /*
+     * **เจอจากการใช้งานจริง (2026-08-14):** ตั้ง path เป็น `/backup` ซึ่งอยู่ติดราก
+     * ของ filesystem · ยืนยันตัวตนผ่านแล้ว แต่ `mkdir` ล้มเพราะผู้ใช้ธรรมดาสร้าง
+     * ไดเรกทอรีที่รากไม่ได้ · ข้อความเดิมจับคำว่า "Permission denied" คำเดียวแล้วบอก
+     * ให้ไปแก้ authorized_keys ทุกครั้ง — พาไปนั่งไล่กุญแจที่ไม่เคยมีปัญหา
+     */
+    $destination = new SftpDestination(
+        host: '18.142.27.80',
+        port: 22,
+        user: 'ubuntu',
+        path: '/backup',
+        privateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nx\n-----END OPENSSH PRIVATE KEY-----",
+    );
+
+    $explain = new ReflectionMethod($destination, 'explain');
+
+    // สิ่งที่ผู้ใช้เจอจริง — สิทธิ์ของโฟลเดอร์ ไม่ใช่การยืนยันตัวตน
+    $folder = (string) $explain->invoke(
+        $destination,
+        "remote mkdir \"/backup\": Permission denied\ndest open \"/backup/.phpcp-probe-bceccaa6\": No such file or directory",
+    );
+
+    assertTrue(
+        !str_contains($folder, 'authorized_keys'),
+        'สิทธิ์ของโฟลเดอร์ต้องไม่ถูกอธิบายว่าเป็นปัญหาของกุญแจ',
+    );
+    assertTrue(str_contains($folder, '/backup'), 'ต้องบอกว่าเส้นทางไหนที่เขียนไม่ได้');
+    assertTrue(str_contains($folder, 'ubuntu'), 'ต้องบอกว่าผู้ใช้คนไหนที่ไม่มีสิทธิ์');
+    assertTrue(str_contains($folder, '/home/ubuntu'), 'ต้องเสนอเส้นทางที่ใช้ได้จริงให้ด้วย');
+
+    // การยืนยันตัวตนล้มจริง ๆ ยังต้องได้คำแนะนำเดิม
+    $auth = (string) $explain->invoke($destination, 'ubuntu@18.142.27.80: Permission denied (publickey).');
+
+    assertTrue(str_contains($auth, 'authorized_keys'), 'กุญแจไม่ผ่านต้องยังชี้ไปที่ authorized_keys');
+});
+
+test('sftp ต้องสร้างไดเรกทอรีปลายทางทีละชั้น ไม่ใช่ชั้นเดียว', static function (): void {
+    /*
+     * `sftp` ไม่มี `mkdir -p` · ตั้ง path ซ้อนหลายชั้นแล้วชั้นกลางยังไม่มี จะล้มทั้งที่
+     * ผู้ใช้มีสิทธิ์เขียนทุกชั้น — อาการที่หน้าตาเหมือน "สิทธิ์ไม่พอ" แต่เป็นแค่ลำดับ
+     * การสร้าง · rsync ไม่มีปัญหานี้เพราะมันสั่ง `mkdir -p` ผ่าน ssh อยู่แล้ว
+     */
+    $destination = new SftpDestination(
+        host: 'example.com',
+        port: 22,
+        user: 'backup',
+        path: '/home/backup/archives/phpcp',
+        privateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nx\n-----END OPENSSH PRIVATE KEY-----",
+    );
+
+    $method = new ReflectionMethod($destination, 'makeDirectoryScript');
+    $script = (string) $method->invoke($destination);
+
+    assertSame(
+        [
+            '-mkdir "/home"',
+            '-mkdir "/home/backup"',
+            '-mkdir "/home/backup/archives"',
+            '-mkdir "/home/backup/archives/phpcp"',
+        ],
+        array_values(array_filter(explode("\n", $script), static fn (string $l): bool => $l !== '')),
+        'ต้องสั่งสร้างทุกชั้นจากบนลงล่าง และใช้ `-` เพื่อข้ามชั้นที่มีอยู่แล้ว',
+    );
 });
 
 /**

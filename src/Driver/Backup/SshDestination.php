@@ -167,15 +167,73 @@ abstract class SshDestination implements Destination
 
         if (str_contains($text, 'Host key verification failed')) {
             return $text . "\n\nเครื่องปลายทางยังไม่อยู่ในรายการที่เชื่อถือ — "
-                . "รัน `ssh-keyscan -p {$this->port} {$this->host}` แล้วใส่ผลลัพธ์ในช่อง known_hosts";
+                . "กดปุ่ม \"อ่านจากเครื่องปลายทาง\" ข้างช่อง known_hosts เพื่อดึงกุญแจมาให้อัตโนมัติ";
         }
 
-        if (str_contains($text, 'Permission denied')) {
+        /*
+         * **"Permission denied" มีสองความหมายที่คนละเรื่องกันสิ้นเชิง**
+         *
+         * เดิมจับคำนี้คำเดียวแล้วบอกให้ไปแก้ `authorized_keys` ทุกครั้ง · แต่ตอนที่
+         * ยืนยันตัวตนผ่านแล้วและติดที่ **สิทธิ์ของไดเรกทอรีปลายทาง** (เช่นตั้ง path
+         * เป็น `/backup` ซึ่งอยู่ที่รากของ filesystem ที่ผู้ใช้ธรรมดาสร้างอะไรไม่ได้)
+         * คำแนะนำนั้นพาไปผิดทางทั้งหมด — ผู้ดูแลไปนั่งไล่กุญแจที่ไม่เคยมีปัญหา
+         *
+         * แยกด้วยบริบทที่ ssh/sftp พิมพ์มาเอง: การยืนยันตัวตนล้มจะมี `(publickey`
+         * หรือ `Authentication failed` ส่วนสิทธิ์ของไฟล์จะมาพร้อมชื่อคำสั่งที่ล้ม
+         * (`remote mkdir` / `dest open` / `scp:`)
+         */
+        $authFailed = str_contains($text, '(publickey')
+            || str_contains($text, 'Authentication failed')
+            || str_contains($text, 'Too many authentication failures');
+
+        if ($authFailed) {
             return $text . "\n\nยืนยันตัวตนไม่ผ่าน — ตรวจว่ากุญแจสาธารณะถูกใส่ไว้ใน "
                 . "~{$this->user}/.ssh/authorized_keys ของเครื่องปลายทางแล้ว";
         }
 
+        if (str_contains($text, 'Permission denied')) {
+            return $text . "\n\nยืนยันตัวตนผ่านแล้ว แต่ผู้ใช้ {$this->user} "
+                . "สร้างหรือเขียนไฟล์ใน {$this->path} บนเครื่องปลายทางไม่ได้"
+                . "\n\nเส้นทางที่อยู่ติดรากของ filesystem (เช่น /backup) ผู้ใช้ธรรมดาสร้างไม่ได้ — "
+                . "ใช้เส้นทางใต้บ้านของผู้ใช้นั้นแทน เช่น /home/{$this->user}/backups "
+                . "หรือให้ผู้ดูแลเครื่องปลายทางสร้างโฟลเดอร์แล้ว chown ให้ {$this->user} ก่อน";
+        }
+
+        if (str_contains($text, 'No such file or directory')) {
+            return $text . "\n\nไม่พบไดเรกทอรี {$this->path} ที่เครื่องปลายทาง และสร้างให้ไม่ได้ — "
+                . "ตรวจว่าเส้นทางถูกต้องและผู้ใช้ {$this->user} มีสิทธิ์เขียนในชั้นบนของมัน";
+        }
+
         return $text === '' ? 'คำสั่งล้มเหลวโดยไม่มีข้อความอธิบาย' : $text;
+    }
+
+    /**
+     * คำสั่ง `-mkdir` ของทุกชั้นในเส้นทางปลายทาง — เรียงจากบนลงล่าง
+     *
+     * `sftp` สร้างได้ทีละชั้นเท่านั้น ต่างจาก `mkdir -p` ที่ rsync ใช้ได้ · ตั้ง path
+     * เป็น `/home/ubuntu/backups/phpcp` แล้วชั้นกลางยังไม่มี จะล้มทั้งที่ผู้ใช้มีสิทธิ์
+     * เขียนทุกชั้น — อาการที่ดูเหมือน "สิทธิ์ไม่พอ" ทั้งที่เป็นแค่ลำดับการสร้าง
+     *
+     * `-` นำหน้าแปลว่า "ล้มก็ไม่เป็นไร" ชั้นที่มีอยู่แล้วจึงไม่ทำให้ทั้งชุดล้ม
+     */
+    protected function makeDirectoryScript(): string
+    {
+        $parts = array_values(array_filter(explode('/', trim($this->path, '/')), static fn (string $p): bool => $p !== ''));
+        $script = '';
+        $walked = '';
+
+        foreach ($parts as $part) {
+            $walked .= '/' . $part;
+            $script .= '-mkdir ' . $this->quotePath($walked) . "\n";
+        }
+
+        return $script;
+    }
+
+    /** ใส่เครื่องหมายคำพูดแบบที่ sftp เข้าใจ — เส้นทางของเราไม่มี " อยู่แล้ว แต่กันไว้ */
+    protected function quotePath(string $value): string
+    {
+        return '"' . str_replace('"', '', $value) . '"';
     }
 
     /** @param array<string,mixed> $result */

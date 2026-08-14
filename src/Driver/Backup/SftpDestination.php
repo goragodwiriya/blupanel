@@ -35,9 +35,12 @@ final class SftpDestination extends SshDestination
 
         return $this->withKey($executor, function (string $keyFile) use ($executor, $localPath, $remotePath): string {
             // -b - อ่านชุดคำสั่งจาก stdin · ชื่อไฟล์จึงไม่ถูกแปลผ่านเชลล์เลย
+            //
+            // สร้างไดเรกทอรีทีละชั้นจากบนลงล่าง — sftp ไม่มี `mkdir -p` ให้ใช้
+            // (ดู makeDirectoryScript) · ชั้นที่มีอยู่แล้วถูกข้ามไปเองเพราะ `-` นำหน้า
             $script = sprintf(
-                "-mkdir %s\nput %s %s\nbye\n",
-                $this->quote(dirname($remotePath)),
+                "%sput %s %s\nbye\n",
+                $this->makeDirectoryScript(),
                 $this->quote($executor->path($localPath)),
                 $this->quote($remotePath),
             );
