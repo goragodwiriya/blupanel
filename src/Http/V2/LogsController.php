@@ -22,7 +22,7 @@ use Phpcp\Kernel\Response;
  */
 final class LogsController extends ApiController
 {
-    private const DEFAULT_LINES = 200;
+    private const DEFAULT_LINES = 50;
     private const MIN_LINES = 50;
     private const MAX_LINES = 2000;
 
