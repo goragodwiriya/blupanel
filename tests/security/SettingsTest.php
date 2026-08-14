@@ -429,3 +429,43 @@ test('เปิดสวิตช์ DNS โดยยังไม่มี names
         'ยังไม่ควรแตะบริการจนกว่าจะมีข้อมูลครบ',
     );
 });
+
+test('agent ต้องเห็นค่าที่ตั้งจากหน้าจอ ไม่ใช่แค่ค่าใน config.php', static function (): void {
+    /*
+     * **เจอบนเซิร์ฟเวอร์จริง (2026-08-14) — บั๊กที่ทำให้ "ตั้งค่าอะไรก็ไม่มีผล":**
+     *
+     * `Config::useStoredSettings()` ถูกเรียกจาก `App::db()` ที่เดียว ซึ่งเป็นเส้นทางของ
+     * ชั้นเว็บ · ตัว agent ไม่ได้ผ่าน `App` — มันสร้าง `Db` เองในโปรเซสลูก จึงไม่เคย
+     * เห็นตาราง `settings` เลย และทุก capability อ่านได้แต่ค่าใน config.php
+     *
+     * ผลจริง: เปิดสวิตช์ DNS จากหน้าจอ ค่าถูกบันทึกและหน้าจอตอบว่าสำเร็จ แต่
+     * `BindZoneManager` ในตัว agent เห็น `dnsEnabled() === false` แล้วคืน no-op เงียบ ๆ
+     * — ไม่มี zone file เกิดขึ้นเลยและไม่มีข้อความผิดพลาดใดบอกว่าเพราะอะไร
+     *
+     * ตรวจที่ตัว Server ว่าโหลดค่าก่อน dispatch จริง ไม่ใช่ตรวจว่า Config ทำงานถูก
+     * (อันนั้นถูกอยู่แล้ว — ที่ผิดคือไม่มีใครเรียกมันในเส้นทางของ agent)
+     */
+    $source = (string) file_get_contents(PHPCP_ROOT . '/src/Agent/Server.php');
+
+    // ตัดคอมเมนต์ออกก่อน — ไฟล์นี้อธิบายเหตุผลไว้ยาว การ grep ทั้งไฟล์จะจับคำในคอมเมนต์
+    $code = implode("\n", array_filter(
+        explode("\n", $source),
+        static fn (string $line): bool => !str_starts_with(ltrim($line), '*')
+            && !str_starts_with(ltrim($line), '//')
+            && !str_starts_with(ltrim($line), '/*'),
+    ));
+
+    assertTrue(
+        str_contains($code, 'Config::useStoredSettings'),
+        'agent ต้องโหลดค่าจากตาราง settings ก่อนส่งงานให้ capability',
+    );
+
+    // ต้องมาก่อน dispatch ไม่ใช่หลัง — หลังแปลว่า capability ตัวนั้นยังเห็นค่าเก่า
+    $loadAt = strpos($code, 'Config::useStoredSettings');
+    $dispatchAt = strpos($code, '->dispatch(');
+
+    assertTrue(
+        $loadAt !== false && $dispatchAt !== false && $loadAt < $dispatchAt,
+        'ต้องโหลดค่าก่อนเรียก dispatch()',
+    );
+});

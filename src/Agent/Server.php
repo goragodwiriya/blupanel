@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Phpcp\Agent;
 
+use Phpcp\Domain\SettingsRepository;
 use Phpcp\Kernel\Config;
 use Phpcp\Kernel\Db;
 use Phpcp\Kernel\Logger;
@@ -282,6 +283,35 @@ final class Server
 
             // สร้างการเชื่อมต่อ DB ในลูกเท่านั้น — PDO handle ใช้ข้าม fork ไม่ได้
             $db = new Db($this->config->paths->database());
+
+            /*
+             * **ค่าที่ผู้ดูแลตั้งจากหน้าจอต้องมาถึง capability ด้วย**
+             *
+             * `Config::useStoredSettings()` เดิมถูกเรียกจาก `App::db()` ที่เดียว ซึ่งเป็น
+             * เส้นทางของ **ชั้นเว็บ** เท่านั้น · agent ไม่ได้ผ่าน `App` มันสร้าง `Db` เอง
+             * ตรงนี้เพื่อให้ handle อยู่ในโปรเซสลูก ผลคือ **agent ไม่เคยเห็นตาราง
+             * `settings` เลย** ทุก capability จึงอ่านได้แต่ค่าใน `config.php`
+             *
+             * อาการที่เกิดจริง (เจอบนเซิร์ฟเวอร์ 2026-08-14): ผู้ดูแลเปิดสวิตช์ DNS
+             * ในหน้าตั้งค่า ค่า `dns.enabled = 1` ถูกบันทึกลงฐานข้อมูลเรียบร้อย หน้าจอ
+             * ตอบว่าสำเร็จ แต่ `BindZoneManager` ที่รันในตัว agent อ่าน `dnsEnabled()`
+             * ได้ `false` จาก config.php แล้ว **คืน no-op อย่างเงียบ ๆ** ทุกครั้ง
+             * — เรกคอร์ดถูกบันทึกลงฐานข้อมูลแต่ไม่มี zone file เกิดขึ้นเลยแม้แต่ไฟล์เดียว
+             * และไม่มีข้อความผิดพลาดใดบอกว่าเพราะอะไร
+             *
+             * กระทบทุกค่าที่ถูกอ่านผ่าน `Config` ภายใน capability ไม่ใช่แค่ DNS —
+             * `sites.layout` ก็เดินทางมาทางเดียวกัน
+             *
+             * โหลดใหม่ทุกคำขอโดยตั้งใจ ไม่แคชข้ามคำขอ: agent เป็นโปรเซสที่รันยาว
+             * การแคชแปลว่าเปลี่ยนค่าจากหน้าเว็บแล้วต้องรีสตาร์ต agent ถึงจะมีผล
+             * ซึ่งเป็นกับดักเดียวกันในรูปแบบใหม่ · คิวรีเดียวต่อคำขอถูกกว่านั้นมาก
+             */
+            try {
+                Config::useStoredSettings((new SettingsRepository($db))->all());
+            } catch (\Throwable) {
+                // ยังไม่มีตาราง settings — ปกติสำหรับเครื่องที่เพิ่งติดตั้ง ใช้ค่าจากไฟล์ต่อไป
+            }
+
             $audit = new AuditLog($db, $this->config->paths->logFile('audit'));
             $dispatcher = new Dispatcher($this->registry, $this->config, $db, $audit);
 
