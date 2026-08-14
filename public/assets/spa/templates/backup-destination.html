@@ -129,6 +129,23 @@
                 <textarea id="nd_secret" name="secret" rows="4" class="mono" autocomplete="off" placeholder="{LNG_Needed for sftp, rsync and s3 (secret access key). Stored encrypted and never shown again. Leave blank to keep the current one. Password authentication is not supported for sftp/rsync}"></textarea>
               </span>
             </div>
+            <div>
+              <!--
+                Host key ของเครื่องปลายทาง (sftp/rsync) — เนื้อหา ไม่ใช่เส้นทางไฟล์
+
+                StrictHostKeyChecking เปิดไว้เสมอโดยตั้งใจ (ดู SshDestination) การส่งไฟล์
+                สำรองครั้งแรกจึงล้มด้วย "Host key verification failed" จนกว่าจะใส่ค่านี้ ·
+                เก็บเป็นเนื้อหาไม่ใช่เส้นทาง เพราะผู้ดูแลวางไฟล์บนเครื่อง panel เองไม่ได้
+                (systemd hardening) · เป็นกุญแจสาธารณะ ไม่ใช่ความลับ จึงไม่เข้ารหัส
+              -->
+              <label for="nd_known_hosts" data-i18n>Known host key</label>
+              <span class="form-control">
+                <textarea id="nd_known_hosts" name="known_hosts" rows="3" class="mono" autocomplete="off"
+                          data-attr="value:config.known_hosts"
+                          placeholder="{LNG_sftp/rsync only. Run ssh-keyscan -p <port> <host> on any machine and paste the output here}"></textarea>
+              </span>
+              <div class="comment" data-i18n>Leave blank for local and s3</div>
+            </div>
             <div class="form-group">
               <div class="width50">
                 <label for="nd_days" data-i18n>Keep for (days)</label>

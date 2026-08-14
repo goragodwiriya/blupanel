@@ -39,6 +39,16 @@ abstract class SshDestination implements Destination
         '-o', 'ServerAliveInterval=15',
     ];
 
+    /**
+     * เส้นทางไฟล์ known_hosts ชั่วคราวระหว่างที่คำสั่งกำลังทำงาน
+     *
+     * `$knownHosts` เก็บ **เนื้อหา** (ผลของ `ssh-keyscan`) ไม่ใช่เส้นทางไฟล์ — เพราะ
+     * ผู้ดูแลวางไฟล์บนเครื่อง panel เองไม่ได้ (systemd hardening จำกัดที่เขียนได้) และ
+     * ไม่มีช่องในหน้าเว็บให้กรอกเส้นทาง · เนื้อหาถูกเขียนลงไฟล์ชั่วคราวตอนใช้แบบเดียว
+     * กับ private key แล้วลบทิ้งทุกกรณี · ค่านี้ถูกตั้งใน withKey() และล้างใน finally
+     */
+    private ?string $knownHostsFile = null;
+
     public function __construct(
         protected readonly string $host,
         protected readonly int $port,
@@ -83,14 +93,29 @@ abstract class SshDestination implements Destination
     protected function withKey(Executor $executor, callable $work): mixed
     {
         $keyFile = sys_get_temp_dir() . '/phpcp-key-' . bin2hex(random_bytes(8));
+        $hostsFile = null;
 
         try {
             $executor->writeFile($executor->path($keyFile), rtrim($this->privateKey, "\n") . "\n", 0600);
 
+            // host key ที่ผู้ดูแลวางไว้ → ไฟล์ชั่วคราวที่ UserKnownHostsFile ชี้ไป
+            if (trim($this->knownHosts) !== '') {
+                $hostsFile = sys_get_temp_dir() . '/phpcp-known-' . bin2hex(random_bytes(8));
+                $executor->writeFile($executor->path($hostsFile), rtrim($this->knownHosts, "\n") . "\n", 0600);
+                $this->knownHostsFile = $hostsFile;
+            }
+
             return $work($keyFile);
         } finally {
+            // ล้างสถานะก่อนเสมอ ไม่งั้นครั้งถัดไปอ้างเส้นทางไฟล์ที่ลบไปแล้ว
+            $this->knownHostsFile = null;
+
             if ($executor->exists($executor->path($keyFile))) {
                 $executor->removePath($executor->path($keyFile));
+            }
+
+            if ($hostsFile !== null && $executor->exists($executor->path($hostsFile))) {
+                $executor->removePath($executor->path($hostsFile));
             }
         }
     }
@@ -100,9 +125,9 @@ abstract class SshDestination implements Destination
     {
         $options = self::SSH_OPTIONS;
 
-        if ($this->knownHosts !== '') {
+        if ($this->knownHostsFile !== null) {
             $options[] = '-o';
-            $options[] = 'UserKnownHostsFile=' . $this->knownHosts;
+            $options[] = 'UserKnownHostsFile=' . $this->knownHostsFile;
         }
 
         // IdentitiesOnly กัน ssh ไปหยิบกุญแจอื่นของ root มาลองแทน ซึ่งจะทำให้

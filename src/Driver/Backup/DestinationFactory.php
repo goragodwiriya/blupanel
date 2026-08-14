@@ -40,7 +40,7 @@ final class DestinationFactory
                 user: (string) ($config['user'] ?? ''),
                 path: (string) ($config['path'] ?? ''),
                 privateKey: $this->destinations->secretFor($id),
-                knownHosts: (string) ($config['known_hosts_file'] ?? ''),
+                knownHosts: (string) ($config['known_hosts'] ?? ''),
             ),
 
             'rsync' => new RsyncDestination(
@@ -49,7 +49,7 @@ final class DestinationFactory
                 user: (string) ($config['user'] ?? ''),
                 path: (string) ($config['path'] ?? ''),
                 privateKey: $this->destinations->secretFor($id),
-                knownHosts: (string) ($config['known_hosts_file'] ?? ''),
+                knownHosts: (string) ($config['known_hosts'] ?? ''),
             ),
 
             's3' => new S3Destination(

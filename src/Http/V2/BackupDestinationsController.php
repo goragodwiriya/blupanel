@@ -313,7 +313,9 @@ final class BackupDestinationsController extends ApiController
     {
         $config = [];
 
-        foreach (['host', 'user', 'path', 'known_hosts_file', 'bucket', 'region', 'endpoint', 'access_key'] as $key) {
+        // `known_hosts` เก็บ **เนื้อหา** ของ ssh-keyscan ไม่ใช่เส้นทางไฟล์ — เป็นข้อมูล
+        // สาธารณะ (กุญแจสาธารณะของโฮสต์) จึงอยู่ใน config ไม่ใช่ช่องความลับที่เข้ารหัส
+        foreach (['host', 'user', 'path', 'known_hosts', 'bucket', 'region', 'endpoint', 'access_key'] as $key) {
             $value = trim($request->payloadString($key));
 
             if ($value !== '') {

@@ -4096,7 +4096,7 @@ paths:
                 port: { type: integer, default: 22 }
                 user: { type: string }
                 path: { type: string, description: "เส้นทางเต็มที่ปลายทาง (local/sftp/rsync) หรือ key prefix ภายใน bucket (s3, ไม่บังคับ)" }
-                known_hosts_file: { type: string, description: "ไฟล์ known_hosts ที่ใช้ตรวจ host key" }
+                known_hosts: { type: string, description: "เนื้อหา host key (ผลของ ssh-keyscan) สำหรับ sftp/rsync — เก็บเป็นเนื้อหา ไม่ใช่เส้นทางไฟล์" }
                 bucket: { type: string, description: "s3 เท่านั้น" }
                 region: { type: string, description: "s3 เท่านั้น เช่น us-east-1" }
                 access_key: { type: string, description: "s3 เท่านั้น — ไม่ใช่ความลับ เก็บเป็นค่าตั้งธรรมดา" }
@@ -4160,7 +4160,7 @@ paths:
                 port: { type: integer }
                 user: { type: string }
                 path: { type: string }
-                known_hosts_file: { type: string }
+                known_hosts: { type: string }
                 secret: { type: string }
                 retention_days: { type: integer }
                 retention_count: { type: integer }
