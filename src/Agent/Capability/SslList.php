@@ -74,7 +74,6 @@ final class SslList extends SslCapability implements Capability
 
             $sites[] = [
                 'site_id' => $site->id,
-                'name' => $site->name,
                 'domain' => $site->domain,
                 'aliases' => $site->aliases,
                 'ssl_mode' => $site->sslMode,

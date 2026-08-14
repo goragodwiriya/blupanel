@@ -70,7 +70,7 @@ final class DbList extends DbCapability
         $params = $isAdmin ? [] : ['user' => $context->actor->userId];
 
         $rows = $context->db->all(
-            'SELECT d.*, s.primary_domain, s.name AS site_name
+            'SELECT d.*, s.primary_domain
              FROM databases_ d LEFT JOIN sites s ON s.id = d.site_id' . $where . '
              ORDER BY d.db_name',
             $params,

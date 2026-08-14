@@ -25,7 +25,7 @@ use Phpcp\Security\Permissions;
 final class SitesController extends HostingController
 {
     /** ฟิลด์ที่ยอมให้เรียงได้ — ค่านี้ต่อท้าย ORDER BY จึงต้องเป็น allowlist เท่านั้น */
-    private const SORTABLE = ['primary_domain', 'name', 'created_at', 'disk_used', 'php_version', 'status'];
+    private const SORTABLE = ['primary_domain', 'created_at', 'disk_used', 'php_version', 'status'];
 
     /**
      * ชื่อฟิลด์ที่ API ใช้ → ชื่อคอลัมน์ในฐานข้อมูล
@@ -50,8 +50,7 @@ final class SitesController extends HostingController
             $needle = mb_strtolower($query);
             $rows = array_values(array_filter(
                 $rows,
-                static fn(array $row): bool => str_contains(mb_strtolower((string) $row['primary_domain']), $needle)
-                || str_contains(mb_strtolower((string) $row['name']), $needle),
+                static fn(array $row): bool => str_contains(mb_strtolower((string) $row['primary_domain']), $needle),
             ));
         }
 
@@ -96,7 +95,6 @@ final class SitesController extends HostingController
 
         $result = $this->agent()->data('site.create', [
             'domain' => trim($request->payloadString('domain')),
-            'name' => trim($request->payloadString('name')),
             'php_version' => $request->payloadString('php_version'),
             'aliases' => is_array($aliases) ? array_values($aliases) : [],
             'docroot' => trim($request->payloadString('docroot')),

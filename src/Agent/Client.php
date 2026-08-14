@@ -114,6 +114,8 @@ final class Client
             'permission_denied' => new PermissionDenied($message),
             'unknown_capability' => new UnknownCapability($message),
             'execution_failed' => new ExecutionFailed($message),
+            // agent รับคำสั่งแล้วโค้ดข้างในพัง — คนละเรื่องกับ "ติดต่อ agent ไม่ได้"
+            'internal_error' => new InternalError($message),
             default => new TransportError($message),
         };
     }

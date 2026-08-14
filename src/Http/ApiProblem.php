@@ -6,6 +6,7 @@ namespace Phpcp\Http;
 
 use Phpcp\Agent\AgentException;
 use Phpcp\Agent\ExecutionFailed;
+use Phpcp\Agent\InternalError;
 use Phpcp\Agent\PermissionDenied;
 use Phpcp\Agent\ProtectedResource;
 use Phpcp\Agent\TransportError;
@@ -104,6 +105,8 @@ enum ApiProblem: string
             $e instanceof PermissionDenied => self::Forbidden,
             $e instanceof ProtectedResource => self::ProtectedResource,
             $e instanceof TransportError => self::AgentUnavailable,
+            // 500 ไม่ใช่ 503 — "ลองใหม่" ไม่ช่วยอะไรเมื่อโค้ดใน agent เป็นฝ่ายพัง
+            $e instanceof InternalError => self::InternalError,
             $e instanceof ExecutionFailed => self::ExecutionFailed,
             default => self::InternalError,
         };
