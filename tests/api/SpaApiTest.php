@@ -163,7 +163,25 @@ test('ไฟล์ของ Now.js ตรงกับ SHA256SUMS ที่ commi
         $file = $dir . '/' . $name;
 
         assertTrue(is_file($file), "ไม่มีไฟล์ {$name} ที่ SHA256SUMS อ้างถึง");
-        assertSame($expected, hash_file('sha256', $file), "checksum ของ {$name} ไม่ตรง");
+
+        /*
+         * บอกวิธีแก้มาด้วย — **บนเครื่องนักพัฒนาเท่านั้น**
+         *
+         * `icons.css` เป็นไฟล์ที่โปรเจกต์นี้แก้เองได้ (คัดมาจากต้นน้ำแล้วตัด @import
+         * ของ Google Fonts ออก) การเพิ่มไอคอนจึงเป็นงานปกติที่จบด้วยการอัปเดตบรรทัด
+         * ของมันในไฟล์นี้ · ถ้าไม่บอกไว้ คนที่เจอเทสต์แดงจะไม่รู้ว่าต้องพิมพ์อะไร
+         *
+         * ข้อความนี้อยู่ในเทสต์ ไม่ใช่ใน `phpcp doctor` โดยตั้งใจ — บนเครื่องที่
+         * ติดตั้งแล้ว checksum ไม่ตรงแปลว่า **มีคนแก้ไฟล์บนดิสก์** ซึ่งคำแนะนำที่ถูก
+         * คือไปหาว่าใครแก้ ไม่ใช่เขียนทับ hash ให้ตรงกับของที่ถูกแก้ไปแล้ว
+         */
+        assertSame(
+            $expected,
+            hash_file('sha256', $file),
+            "checksum ของ {$name} ไม่ตรง — ถ้าตั้งใจแก้ไฟล์นี้ ให้อัปเดต SHA256SUMS ด้วย:\n"
+            . "  cd public/assets/spa/vendor/now && awk '{print \$2}' SHA256SUMS"
+            . " | xargs -d '\\n' sha256sum > SHA256SUMS.new && mv SHA256SUMS.new SHA256SUMS",
+        );
     }
 });
 
