@@ -724,6 +724,7 @@
     "local = another path on this machine, such as a mounted NAS": "local = อีกเส้นทางบนเครื่องนี้ เช่นจุดเมานต์ของ NAS",
     "local = another path on this machine, such as a mounted NAS. s3 = AWS S3 or a compatible service (MinIO, Backblaze B2, DigitalOcean Spaces, Cloudflare R2)": "local = อีกที่หนึ่งบนเครื่องนี้ เช่นดิสก์ NAS ที่ mount ไว้ · s3 = AWS S3 หรือบริการที่เข้ากันได้ (MinIO, Backblaze B2, DigitalOcean Spaces, Cloudflare R2)",
     "min": "นาที",
+    "minutes": "นาที",
     "nginx + Apache (.htaccess works · recommended)": "nginx + Apache (.htaccess ใช้ได้ · แนะนำ)",
     "nginx only (no .htaccess)": "nginx อย่างเดียว (ใช้ .htaccess ไม่ได้)",
     "none": "ยังไม่มี",

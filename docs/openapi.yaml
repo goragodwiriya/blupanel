@@ -2506,7 +2506,7 @@ paths:
           description: ช่วงเวลาย้อนหลัง — ค่าปริยาย `24h`
           schema:
             type: string
-            enum: ["1h", "6h", "24h", "7d", "30d", "1y"]
+            enum: ["20m", "1h", "6h", "24h", "7d", "30d", "1y"]
             default: "24h"
       responses:
         "200":
@@ -2519,25 +2519,32 @@ paths:
                   ok: { type: boolean, const: true }
                   data:
                     type: array
+                    description: |
+                      ชุดข้อมูลหลายเส้นพร้อมป้ายกำกับ — รูปทั่วไปของ "กราฟหลายเส้น"
+                      ที่ `GraphComponent` อ่านได้ตรง ๆ โดยหน้าจอไม่ต้องแปลงอะไร
                     items:
                       type: object
                       properties:
-                        at: { type: integer, description: "unix timestamp ของจุดเริ่มช่วง" }
-                        cpu: { type: number, description: "ค่าเฉลี่ย % ของช่วง" }
-                        cpu_peak: { type: number, description: "ค่าสูงสุด % ในช่วง" }
-                        memory: { type: number }
-                        disk: { type: number }
-                        load1: { type: number }
-                        memory_used: { type: integer, description: ไบต์ }
-                        disk_used: { type: integer, description: ไบต์ }
-                        samples: { type: integer, description: "จำนวนตัวอย่างที่รวมกันเป็นจุดนี้" }
+                        name: { type: string, description: "ชื่อเส้น เช่น CPU · Memory · ดิสก์" }
+                        data:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              label: { type: string, description: "ป้ายบนแกนเวลา รูปแบบตาม range" }
+                              value: { type: number, description: "ค่าเฉลี่ยถ่วงน้ำหนักของช่วงนั้น (%)" }
                   meta:
                     type: object
                     properties:
                       range: { type: string }
                       bucket: { type: string, enum: [minute, hour, day] }
                       since: { type: integer }
-                      points: { type: integer }
+                      step:
+                        type: integer
+                        description: |
+                          หนึ่งจุดในกราฟกว้างกี่วินาที · `20m` ได้ 60 ซึ่งเป็นค่าดิบ
+                          ที่ไม่ผ่านการเฉลี่ยเลย ส่วนช่วงอื่นเป็นค่าเฉลี่ยถ่วงน้ำหนัก
+                      points: { type: integer, description: "จำนวนจุดต่อเส้น — 12 ถึง 30 จุด" }
                       collecting:
                         type: boolean
                         description: |

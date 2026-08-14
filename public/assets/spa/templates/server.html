@@ -71,6 +71,11 @@
           -->
           <span class="comment" data-metrics-updated hidden></span>
           <div class="btn-group" data-metrics-ranges>
+            <!--
+              20 นาทีคือช่วงเดียวที่ได้ค่าดิบรายนาที ไม่ผ่านการเฉลี่ย — ใช้ตอนอยากเห็น
+              ว่าเมื่อครู่นี้เกิดอะไรขึ้น ซึ่งค่าเฉลี่ยรายชั่วโมงกลบจนหายไปหมด
+            -->
+            <button type="button" class="btn small" data-range="20m" data-i18n>20 {LNG_minutes}</button>
             <button type="button" class="btn small is-active" data-range="24h" data-i18n>24 {LNG_hours}</button>
             <button type="button" class="btn small" data-range="7d" data-i18n>7 {LNG_days}</button>
             <button type="button" class="btn small" data-range="30d" data-i18n>30 {LNG_days}</button>
