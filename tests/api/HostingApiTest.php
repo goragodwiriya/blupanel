@@ -280,7 +280,15 @@ test('ลบ cron แล้ว sync ล้ม ต้องได้งานค�
     );
 });
 
-test('ลูกค้าแตะงาน cron ของเว็บคนอื่นไม่ได้', static function (): void {
+test('ลูกค้าแตะงาน cron ไม่ได้เลย — ทั้งของตัวเองและของคนอื่น', static function (): void {
+    /*
+     * งานอัตโนมัติของลูกค้าไปจบที่ crontab ของ**ระบบ** ซึ่งเป็นทรัพยากรของทั้งเครื่อง
+     * ไม่ใช่ของเว็บใดเว็บหนึ่ง · คำสั่งที่รันตามเวลาโดยไม่มีใครดูอยู่คือทางที่ตรงที่สุด
+     * จากบัญชีโฮสติ้งไปสู่การรันโค้ดบนเครื่องซ้ำ ๆ จึงเป็นเรื่องที่ผู้ดูแลตั้งให้
+     *
+     * ตัดที่ชั้น middleware ทั้งหมด — ไม่ใช่แค่ซ่อนเมนู · เมนูของ SPA อ่านจาก
+     * permission ชุดเดียวกันนี้ รายการ Cron Jobs จึงหายไปจากสายตาลูกค้าเองโดยอัตโนมัติ
+     */
     $harness = hostingHarness();
     $db = $harness->app->db();
 
@@ -295,13 +303,18 @@ test('ลูกค้าแตะงาน cron ของเว็บคนอ�
 
     $harness = hostingLogin('hostowner', 'Hosting-Owner-Pass-22');
 
-    $list = $harness->request('GET', '/api/v2/cron-jobs');
-    assertSame(1, $list->json['meta']['total'] ?? 0, 'ต้องเห็นเฉพาะงานของเว็บตัวเอง');
+    $requests = [
+        ['GET', '/api/v2/cron-jobs', []],
+        ['POST', '/api/v2/cron-jobs', ['site_id' => 1, 'name' => 'ของฉัน', 'schedule' => '* * * * *', 'command' => 'echo hi']],
+        ['PATCH', '/api/v2/cron-jobs/' . $strangerJob, ['name' => 'แก้ของคนอื่น']],
+        ['DELETE', '/api/v2/cron-jobs/' . $strangerJob, []],
+    ];
 
-    foreach ([['PATCH', ['name' => 'แก้ของคนอื่น']], ['DELETE', []]] as [$method, $body]) {
-        $response = $harness->request($method, '/api/v2/cron-jobs/' . $strangerJob, $body);
+    foreach ($requests as [$method, $path, $body]) {
+        $response = $harness->request($method, $path, $body);
 
-        assertSame(404, $response->status, "{$method} งานของคนอื่นต้องได้ 404");
+        assertSame(403, $response->status, "{$method} {$path} ต้องได้ 403");
+        assertSame(ApiProblem::Forbidden->value, $response->errorCode(), 'ต้องเป็นรหัส FORBIDDEN');
     }
 
     assertSame(
@@ -322,7 +335,8 @@ test('รายการไฟล์สำรองต้องอ่านจ�
      * ทางหน้าจอเลย · ตอนที่ agent ไม่ตอบ คำตอบต้องเป็น 503 ตรง ๆ ไม่ใช่รายการจากตาราง
      * ซึ่งเป็นคำตอบที่ผิดแบบที่ดูเหมือนคำตอบที่ถูก
      */
-    $harness = hostingLogin('hostowner', 'Hosting-Owner-Pass-22');
+    // ผู้ดูแล ไม่ใช่ลูกค้า — หน้าไฟล์สำรองเป็นเครื่องมือของผู้ดูแลแล้ว (ดูเทสต์ถัดไป)
+    $harness = hostingLogin('hostadmin', 'Hosting-Admin-Pass-11');
 
     assertTrue(
         (int) $harness->app->db()->value('SELECT count(*) FROM backups', [], 0) > 0,
@@ -334,6 +348,32 @@ test('รายการไฟล์สำรองต้องอ่านจ�
     assertSame(503, $list->status, 'รายการต้องมาจาก agent ที่อ่านโฟลเดอร์จริง');
     assertSame(ApiProblem::AgentUnavailable->value, $list->errorCode(), 'ต้องเป็นรหัส AGENT_UNAVAILABLE');
     assertTrue(!isset($list->json['data'][0]), 'ต้องไม่มีแถวจากตารางเก่าหลุดออกมา');
+});
+
+test('ลูกค้าเข้าหน้าไฟล์สำรองไม่ได้ — แต่ยังหยิบไฟล์ของตัวเองได้ทางตัวจัดการไฟล์', static function (): void {
+    /*
+     * **ไม่ได้แปลว่าลูกค้าเสียการเข้าถึงสำเนาของตัวเอง** ซึ่งเป็นข้อตกลงหลักของ
+     * PLAN-BACKUP-V2 · ไฟล์อยู่ที่ `<บ้าน>/backup` ของเขาเอง (ข้อ B1) เปิด ดาวน์โหลด
+     * และลบทิ้งได้ผ่านตัวจัดการไฟล์กับ SFTP — ข้อ B4 บอกว่า "ตัวไฟล์คือความจริง
+     * เพราะลูกค้าลบมันเองได้" ซึ่งยังจริงอยู่ทุกตัวอักษร
+     *
+     * เทสต์นี้จึงยืนยันทั้งสองด้านพร้อมกัน ไม่ใช่แค่ด้านที่ปิด — ปิดหน้าจอโดยที่
+     * ลูกค้าหยิบไฟล์ของตัวเองไม่ได้เลย จะเป็นการถอยหลังกลับไปก่อนแผนนั้นทั้งแผน
+     */
+    $harness = hostingLogin('hostowner', 'Hosting-Owner-Pass-22');
+
+    foreach (['/api/v2/backups', '/api/v2/backups/storage'] as $path) {
+        $response = $harness->request('GET', $path);
+
+        assertSame(403, $response->status, "{$path} ต้องได้ 403 สำหรับลูกค้า");
+        assertSame(ApiProblem::Forbidden->value, $response->errorCode(), 'ต้องเป็นรหัส FORBIDDEN');
+    }
+
+    assertTrue(
+        Permissions::roleHas(Permissions::WEBADMIN, 'file.view')
+        && Permissions::roleHas(Permissions::WEBADMIN, 'file.manage'),
+        'ลูกค้าต้องยังมีสิทธิ์ไฟล์ ไม่งั้นเขาหยิบสำเนาของตัวเองไม่ได้เลย',
+    );
 });
 
 test('ลูกค้ากู้คืนไม่ได้เลย — เป็นสิทธิ์แยกที่ webadmin ไม่มี', static function (): void {
