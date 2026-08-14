@@ -21,7 +21,6 @@ final class SiteResource extends Resource
 
         return [
             'id' => (int) $row['id'],
-            'name' => self::string($row['name'] ?? ''),
             'domain' => self::string($row['primary_domain'] ?? ''),
             'php_version' => self::string($row['php_version'] ?? ''),
             'ssl_mode' => self::string($row['ssl_mode'] ?? 'off'),

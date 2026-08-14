@@ -52,7 +52,6 @@ final class UserRepository
         string $username,
         string $plainPassword,
         string $role,
-        string $displayName = '',
         bool $mustChangePassword = false,
     ): int {
         if (!Permissions::isValidRole($role)) {
@@ -63,7 +62,6 @@ final class UserRepository
 
         return $this->db->insert('users', [
             'username' => $username,
-            'display_name' => $displayName !== '' ? $displayName : $username,
             'password_hash' => Password::hash($plainPassword),
             'role' => $role,
             'must_change_password' => $mustChangePassword ? 1 : 0,
@@ -282,7 +280,6 @@ final class UserRepository
     public function createHostingAccount(
         string $username,
         string $plainPassword,
-        string $displayName,
         string $email,
         array $quotas = [],
         ?int $expiryAt = null,
@@ -305,7 +302,6 @@ final class UserRepository
         $now = time();
         $row = [
             'username' => $username,
-            'display_name' => $displayName !== '' ? $displayName : $username,
             'password_hash' => Password::hash($plainPassword),
             'role' => Permissions::WEBADMIN,
             'email' => $email,
@@ -368,19 +364,13 @@ final class UserRepository
      * ค่าว่างด้วย ผลคือบัญชีที่ไม่มีอีเมล **แก้ชื่อที่แสดงไม่ได้เลย** เพราะ
      * `UsersController::update()` ส่งอีเมลเดิม (ที่ว่าง) กลับเข้ามาเป็นค่าตั้งต้น
      */
-    public function updateProfile(int $userId, string $displayName, string $email): void
+    public function updateProfile(int $userId, string $email): void
     {
         if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             throw new \InvalidArgumentException('อีเมลไม่ถูกต้อง');
         }
 
-        $data = ['email' => $email, 'updated_at' => time()];
-
-        if ($displayName !== '') {
-            $data['display_name'] = $displayName;
-        }
-
-        $this->db->update('users', $data, ['id' => $userId]);
+        $this->db->update('users', ['email' => $email, 'updated_at' => time()], ['id' => $userId]);
     }
 
     /**

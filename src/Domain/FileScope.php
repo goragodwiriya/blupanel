@@ -85,7 +85,7 @@ final readonly class FileScope
     {
         return new self(
             key: 'site-'.$site['id'],
-            label: $site['name'].' — '.$site['primary_domain'],
+            label: (string) $site['primary_domain'],
             root: self::siteRoot($site),
             kind: self::KIND_SITE,
             group: 'เว็บไซต์',
@@ -122,7 +122,7 @@ final readonly class FileScope
 
         return new self(
             key: 'site-'.$site['id'].'-docroot',
-            label: $site['name'].' — '.$site['primary_domain'].' (ไฟล์เว็บ)',
+            label: $site['primary_domain'].' (ไฟล์เว็บ)',
             root: $docroot,
             kind: self::KIND_SITE,
             group: 'เว็บไซต์',

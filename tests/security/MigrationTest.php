@@ -53,7 +53,7 @@ test('อัปเกรดตาราง dns_records ต้องไม่ท�
     $db = $fixture['db'];
 
     $userId = $db->insert('users', [
-        'username' => 'migowner', 'display_name' => 'migowner', 'password_hash' => 'x',
+        'username' => 'migowner', 'password_hash' => 'x',
         'role' => 'superadmin', 'totp_enabled' => 0, 'must_change_password' => 0,
         'status' => 'active', 'failed_attempts' => 0, 'email' => '', 'service_status' => 'active',
         'uid' => 0, 'gid' => 0, 'quota_domains' => -1, 'quota_subdomains' => -1,
@@ -62,8 +62,10 @@ test('อัปเกรดตาราง dns_records ต้องไม่ท�
         'created_at' => time(), 'updated_at' => time(),
     ]);
 
+    // สคีมาก่อน 0021 ยังมีคอลัมน์ `name` แบบ NOT NULL — เทสต์นี้จำลองสภาพตอนนั้น
+    // จึงต้องใส่ค่ามาด้วย ต่างจากเทสต์อื่นที่ทำงานบนสคีมาปัจจุบัน
     $siteId = $db->insert('sites', [
-        'name' => 'เว็บเดิม', 'primary_domain' => 'legacy.test', 'docroot' => '/srv/phpcp/legacy',
+        'name' => 'เว็บเก่า', 'primary_domain' => 'legacy.test', 'docroot' => '/srv/phpcp/legacy',
         'php_version' => '8.4', 'ssl_mode' => 'off', 'status' => 'active', 'disk_used_mb' => 0,
         'owner_user_id' => $userId, 'docroot_override' => '', 'created_at' => time(), 'updated_at' => time(),
     ]);

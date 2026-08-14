@@ -221,7 +221,6 @@ function wildcardSite(string $domain, array $aliases): Site
 {
     return Site::fromRow([
         'id' => 1,
-        'name' => $domain,
         'primary_domain' => $domain,
         'php_version' => '8.4',
         'ssl_mode' => 'off',

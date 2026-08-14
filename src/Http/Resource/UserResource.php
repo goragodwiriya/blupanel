@@ -22,7 +22,6 @@ final class UserResource extends Resource
         return [
             'id' => (int) ($row['id'] ?? 0),
             'username' => self::string($row['username'] ?? ''),
-            'display_name' => self::string($row['display_name'] ?? '') ?: self::string($row['username'] ?? ''),
             'role' => $role,
             // ชื่อบทบาทภาษาไทยยังส่งไปด้วยเพื่อไม่ให้ SPA ต้องรู้จักตารางแปลงของฝั่ง PHP
             // เมื่อ i18n ของเฟส C เสร็จ ฝั่งหน้าเว็บจะแปลจาก `role` เองแล้วเลิกใช้ค่านี้

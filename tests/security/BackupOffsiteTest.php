@@ -58,7 +58,6 @@ function offsiteFixture(): array
     $db->insert('users', [
         'id' => 1,
         'username' => 'tester',
-        'display_name' => 'ผู้ทดสอบ',
         'password_hash' => password_hash('x', PASSWORD_DEFAULT),
         'role' => Permissions::SUPERADMIN,
         'totp_enabled' => 0,
@@ -83,7 +82,6 @@ function offsiteFixture(): array
     foreach ([1, 42, 43, 44, 45, 46] as $siteId) {
         $db->insert('sites', [
             'id' => $siteId,
-            'name' => 'เว็บทดสอบ ' . $siteId,
             'primary_domain' => 'test' . $siteId . '.example.com',
             'docroot' => '/srv/phpcp/sites/test' . $siteId,
             'php_version' => '8.4',

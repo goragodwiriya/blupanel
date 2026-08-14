@@ -126,7 +126,7 @@ final class DiskQuotaCheck implements Capability
                     sprintf('โควตาดิสก์ของ %s ถึง %d%%', $row['username'], $threshold),
                     sprintf(
                         "บัญชี: %s (%s)\nใช้ไป: %d MB จาก %d MB (%d%%)\n\n%s",
-                        (string) ($row['display_name'] ?: $row['username']),
+                        (string) $row['username'],
                         $row['username'],
                         $usedMb,
                         $quotaMb,

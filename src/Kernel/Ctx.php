@@ -56,7 +56,7 @@ final class Ctx
 
     public function displayName(): string
     {
-        $name = (string) ($this->session['display_name'] ?? '');
+        $name = (string) ($this->session['username'] ?? '');
 
         return $name !== '' ? $name : $this->username();
     }

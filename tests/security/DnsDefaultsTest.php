@@ -30,7 +30,7 @@ function dnsDefaultsFixture(): array
     $db->migrate(PHPCP_ROOT . '/db/migrations');
 
     $userId = $db->insert('users', [
-        'username' => 'dnsfx', 'display_name' => 'dnsfx',
+        'username' => 'dnsfx',
         'password_hash' => password_hash('x', PASSWORD_DEFAULT), 'role' => Phpcp\Security\Permissions::WEBADMIN,
         'totp_enabled' => 0, 'must_change_password' => 0, 'status' => 'active', 'failed_attempts' => 0,
         'email' => '', 'service_status' => 'active', 'uid' => 0, 'gid' => 0,
@@ -42,7 +42,7 @@ function dnsDefaultsFixture(): array
     return [
         'db' => $db,
         'site' => static fn (string $domain): int => $db->insert('sites', [
-            'name' => $domain, 'primary_domain' => $domain, 'docroot' => '/tmp/x',
+            'primary_domain' => $domain, 'docroot' => '/tmp/x',
             'php_version' => '8.4', 'ssl_mode' => 'off', 'status' => 'active', 'disk_used_mb' => 0,
             'owner_user_id' => $userId, 'docroot_override' => '', 'created_at' => time(), 'updated_at' => time(),
         ]),
@@ -124,7 +124,7 @@ test('เรียกซ้ำต้องไม่สร้างเรกค�
     $db->migrate(PHPCP_ROOT . '/db/migrations');
 
     $userId = $db->insert('users', [
-        'username' => 'dnsdef', 'display_name' => 'dnsdef',
+        'username' => 'dnsdef',
         'password_hash' => password_hash('x', PASSWORD_DEFAULT), 'role' => Phpcp\Security\Permissions::WEBADMIN,
         'totp_enabled' => 0, 'must_change_password' => 0, 'status' => 'active', 'failed_attempts' => 0,
         'email' => '', 'service_status' => 'active', 'uid' => 0, 'gid' => 0,
@@ -133,7 +133,7 @@ test('เรียกซ้ำต้องไม่สร้างเรกค�
         'created_at' => time(), 'updated_at' => time(),
     ]);
     $siteId = $db->insert('sites', [
-        'name' => 'x', 'primary_domain' => 'example.com', 'docroot' => '/tmp/x',
+        'primary_domain' => 'example.com', 'docroot' => '/tmp/x',
         'php_version' => '8.4', 'ssl_mode' => 'off', 'status' => 'active', 'disk_used_mb' => 0,
         'owner_user_id' => $userId, 'docroot_override' => '', 'created_at' => time(), 'updated_at' => time(),
     ]);

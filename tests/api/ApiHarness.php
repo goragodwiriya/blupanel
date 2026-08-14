@@ -95,7 +95,7 @@ final class ApiHarness
     ): int {
         $users = new \Phpcp\Domain\UserRepository($this->app->db());
 
-        return $users->create($username, $password, $role, $username, $mustChangePassword);
+        return $users->create($username, $password, $role, $mustChangePassword);
     }
 
     /**

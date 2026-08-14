@@ -29,7 +29,7 @@ function quotaFixture(): array
     $userId = $users->createHostingAccount(
         'quotacust',
         'Quota-Customer-Password-11',
-        'ลูกค้าทดสอบโควตา',
+        
         'quota@example.com',
         [
             'domains' => 3,
@@ -44,7 +44,6 @@ function quotaFixture(): array
     $now = time();
 
     $siteId = $db->insert('sites', [
-        'name' => 'เว็บของลูกค้า',
         'primary_domain' => 'quota.example.com',
         'docroot' => '/srv/phpcp/sites/quota.example.com/public',
         'php_version' => '8.4',
@@ -142,7 +141,7 @@ test('ผู้ใช้ทุกคนมีโควตาเสมอ — ช
     [$db, $users, $userId] = quotaFixture();
     $quota = new QuotaChecker($users);
 
-    $plainId = $users->create('plainweb', 'Plain-Webadmin-Pass-22', Permissions::WEBADMIN, 'สร้างแบบไม่ผ่านโควตา');
+    $plainId = $users->create('plainweb', 'Plain-Webadmin-Pass-22', Permissions::WEBADMIN);
 
     $result = $quota->checkOwnerCanCreate($plainId, 'domain', 9999);
 

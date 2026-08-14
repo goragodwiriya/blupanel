@@ -47,10 +47,9 @@ final class Seeder
             ];
 
             $userIds = [];
-            foreach ($accounts as $index => [$username, $displayName, $email, $status, $service, $expiryAt]) {
+            foreach ($accounts as $index => [$username, , $email, $status, $service, $expiryAt]) {
                 $userIds[$username] = $db->insert('users', [
                     'username' => $username,
-                    'display_name' => $displayName,
                     'password_hash' => password_hash('TempPass'.$index.'!', PASSWORD_DEFAULT),
                     'role' => 'webadmin',
                     'email' => $email,
@@ -91,9 +90,8 @@ final class Seeder
             ];
 
             $siteIds = [];
-            foreach ($sites as $index => [$name, $domain, $php, $ssl, $status, $diskMb, $age]) {
+            foreach ($sites as $index => [, $domain, $php, $ssl, $status, $diskMb, $age]) {
                 $siteIds[$domain] = $db->insert('sites', [
-                    'name' => $name,
                     'primary_domain' => $domain,
                     'docroot' => '/srv/phpcp/users/'.($siteOwners[$domain] ?? 'admin').'/domains/'.$domain.'/public',
                     'php_version' => $php,

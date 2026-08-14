@@ -37,7 +37,7 @@ final class DomainResource extends Resource
         ];
 
         // มาจาก JOIN ตอนดึงรายการโดเมนทั้งระบบ — ไม่มีตอนดึงเฉพาะของเว็บเดียว
-        foreach (['site_name' => 'site_name', 'primary_domain' => 'site_domain', 'site_status' => 'site_status'] as $column => $key) {
+        foreach ([ 'primary_domain' => 'site_domain', 'site_status' => 'site_status'] as $column => $key) {
             if (array_key_exists($column, $row)) {
                 $domain[$key] = self::string($row[$column]);
             }

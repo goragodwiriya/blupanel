@@ -129,7 +129,7 @@ function seedSftpAccount(
     string $role = Permissions::WEBADMIN,
 ): array {
     $id = $fixture['db']->insert('users', [
-        'username' => $username, 'display_name' => $username,
+        'username' => $username,
         'password_hash' => password_hash('x', PASSWORD_DEFAULT), 'role' => $role,
         'totp_enabled' => 0, 'must_change_password' => 0, 'status' => 'active', 'failed_attempts' => 0,
         'email' => '', 'service_status' => 'active', 'system_user' => $systemUser,

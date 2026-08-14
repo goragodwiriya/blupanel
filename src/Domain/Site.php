@@ -21,7 +21,6 @@ final readonly class Site
     /** @param list<string> $aliases */
     public function __construct(
         public int $id,
-        public string $name,
         public string $domain,
         /** เจ้าของเว็บ — เส้นทางและ uid ทั้งหมดของเว็บนี้อนุมานจากบัญชีของเขา */
         public UserAccount $owner,
@@ -51,7 +50,6 @@ final readonly class Site
     ): self {
         return new self(
             id: (int) $row['id'],
-            name: (string) $row['name'],
             domain: Validator::domain((string) $row['primary_domain']),
             owner: $owner ?? UserAccount::fromRow([
                 'id' => $row['owner_user_id'] ?? 0,
@@ -251,7 +249,6 @@ final readonly class Site
     {
         return new self(
             id: $this->id,
-            name: $this->name,
             domain: $this->domain,
             owner: $this->owner,
             phpVersion: Validator::phpVersion($phpVersion),
@@ -273,7 +270,6 @@ final readonly class Site
     {
         return new self(
             id: $this->id,
-            name: $this->name,
             domain: $this->domain,
             owner: $this->owner,
             phpVersion: $this->phpVersion,
@@ -313,7 +309,6 @@ final readonly class Site
     {
         return new self(
             id: $this->id,
-            name: $this->name,
             domain: $this->domain,
             owner: $this->owner,
             phpVersion: $this->phpVersion,

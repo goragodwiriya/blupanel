@@ -222,7 +222,7 @@ final class SitesController extends HostingController
         return array_map(
             static fn(array $user): array=> [
                 'value' => (int) $user['id'],
-                'text' => sprintf('%s (%s)', $user['display_name'], $user['username'])
+                'text' => (string) $user['username']
             ],
             (new UserRepository($this->app->db()))->hostingAccounts(),
         );

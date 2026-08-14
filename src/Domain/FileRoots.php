@@ -135,7 +135,7 @@ final class FileRoots
         // — ไม่ต้องแสดงในตัวจัดการไฟล์เพราะโฟลเดอร์ยังไม่มีอยู่จริง
         // เลย์เอาต์กับโดเมนหลักต้องมาด้วย — FileScope ประกอบเส้นทางจากแถวนี้โดยตรง
         // ขาดไปแปลว่าเจ้าของที่ใช้ cpanel จะถูกมองเป็น phpcp แล้วเปิดไปที่โฟลเดอร์ที่ไม่มีอยู่
-        $select = "SELECT s.id, s.name, s.primary_domain, s.docroot_override, s.owner_user_id,
+        $select = "SELECT s.id, s.primary_domain, s.docroot_override, s.owner_user_id,
                           u.system_user, u.site_layout, u.main_domain
                    FROM sites s JOIN users u ON u.id = s.owner_user_id
                    WHERE u.system_user IS NOT NULL";

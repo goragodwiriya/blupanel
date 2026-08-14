@@ -116,7 +116,6 @@ test('สร้างลูกค้าผ่าน capability ได้บั�
         'username' => 'somchai',
         'password' => 'temporary-password',
         'email' => 'somchai@example.com',
-        'display_name' => 'สมชาย',
         'must_change_password' => true,
     ]);
 
@@ -167,7 +166,6 @@ test('เชื่อมเว็บไซต์ต้องนับโคว�
     // เว็บที่ยังไม่ได้ขาย = ผู้ดูแลถือไว้ · เว็บไร้เจ้าของเกิดขึ้นไม่ได้อีกแล้ว
     // (owner_user_id มี FK ไป users และมี trigger ห้ามเป็น NULL)
     $siteId = $db->insert('sites', [
-        'name' => 'เว็บที่มีโดเมนเยอะ',
         'primary_domain' => 'many.example.com',
         'docroot' => '/srv/phpcp/sites/many.example.com/public',
         'php_version' => '8.4',
@@ -224,7 +222,6 @@ test('เชื่อมเว็บไซต์ที่อยู่ในโ�
     $now = time();
 
     $siteId = $db->insert('sites', [
-        'name' => 'เว็บเดี่ยว',
         'primary_domain' => 'single.example.com',
         'docroot' => '/srv/phpcp/sites/single.example.com/public',
         'php_version' => '8.4',

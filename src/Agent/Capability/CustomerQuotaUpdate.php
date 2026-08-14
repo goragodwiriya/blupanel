@@ -147,7 +147,6 @@ final class CustomerQuotaUpdate extends CustomerCapability implements Capability
         return [
             'id' => $updated['id'],
             'username' => $updated['username'],
-            'display_name' => $updated['display_name'],
             'quota_domains' => (int) $updated['quota_domains'],
             'quota_subdomains' => (int) $updated['quota_subdomains'],
             'quota_aliases' => (int) $updated['quota_aliases'],

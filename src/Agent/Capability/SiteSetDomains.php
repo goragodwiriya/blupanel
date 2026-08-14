@@ -111,7 +111,6 @@ final class SiteSetDomains extends SiteCapability
 
         $updated = new \Phpcp\Domain\Site(
             id: $site->id,
-            name: $site->name,
             domain: $site->domain,
             owner: $site->owner,
             phpVersion: $site->phpVersion,

@@ -27,7 +27,7 @@ function siteLayoutUser(?SiteLayout $layout, string $mainDomain = 'main.test'): 
 
 function siteLayoutSite(UserAccount $owner, string $domain): Site
 {
-    return new Site(1, 'ทดสอบ', $domain, $owner, '8.4', 'off', 'active');
+    return new Site(1, $domain, $owner, '8.4', 'off', 'active');
 }
 
 // --- 1. เลย์เอาต์เดิมต้องไม่ขยับแม้แต่ตัวอักษรเดียว -------------------------
@@ -121,7 +121,7 @@ test('ค่าเลย์เอาต์ที่ไม่รู้จัก�
 
 test('docroot_override ต้องชนะเลย์เอาต์ — เป็นคำสั่งที่ชัดเจนกว่า', static function (): void {
     $site = new Site(
-        1, 'ทดสอบ', 'main.test', siteLayoutUser(SiteLayout::Cpanel), '8.4', 'off', 'active',
+        1, 'main.test', siteLayoutUser(SiteLayout::Cpanel), '8.4', 'off', 'active',
         docrootOverride: '/mnt/legacy/site',
     );
 
@@ -148,7 +148,7 @@ test('SiteRepository::load ต้องคืนเลย์เอาต์ข�
     $db->migrate(PHPCP_ROOT . '/db/migrations');
 
     $userId = $db->insert('users', [
-        'username' => 'cpuser', 'display_name' => 'cpuser',
+        'username' => 'cpuser',
         'password_hash' => password_hash('x', PASSWORD_DEFAULT), 'role' => Phpcp\Security\Permissions::WEBADMIN,
         'totp_enabled' => 0, 'must_change_password' => 0, 'status' => 'active', 'failed_attempts' => 0,
         'email' => '', 'service_status' => 'active', 'uid' => 0, 'gid' => 0,
@@ -159,7 +159,7 @@ test('SiteRepository::load ต้องคืนเลย์เอาต์ข�
     ]);
 
     $siteId = $db->insert('sites', [
-        'name' => 'ร้านค้า', 'primary_domain' => 'shop.test', 'docroot' => '/tmp/x',
+        'primary_domain' => 'shop.test', 'docroot' => '/tmp/x',
         'php_version' => '8.4', 'ssl_mode' => 'off', 'status' => 'active', 'disk_used_mb' => 0,
         'owner_user_id' => $userId, 'docroot_override' => '', 'created_at' => time(), 'updated_at' => time(),
     ]);

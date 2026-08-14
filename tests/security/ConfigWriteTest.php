@@ -31,7 +31,6 @@ function testSite(array $overrides = []): Site
 {
     return new Site(
         id: $overrides['id'] ?? 42,
-        name: $overrides['name'] ?? 'เว็บทดสอบ',
         domain: $overrides['domain'] ?? 'example.test',
         owner: new UserAccount(7, $overrides['systemUser'] ?? 'sitefiles'),
         phpVersion: $overrides['phpVersion'] ?? '8.4',

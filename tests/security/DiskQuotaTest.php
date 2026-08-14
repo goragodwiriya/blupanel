@@ -80,7 +80,6 @@ function seedHostingAccount(
 ): array {
     $id = $fixture['db']->insert('users', [
         'username' => $username,
-        'display_name' => $username,
         'password_hash' => password_hash('x', PASSWORD_DEFAULT),
         'role' => Permissions::WEBADMIN,
         'totp_enabled' => 0,
@@ -168,7 +167,7 @@ test('ผู้ดูแลระบบไม่ถูกบล็อกด้�
     // กฎเดียวกับโควตานับจำนวน — ตัดสินจากบทบาท ไม่ใช่ตัวเลขที่ค้างอยู่ (M-live bug เดิม)
     $fixture = diskQuotaFixture();
     $adminId = $fixture['db']->insert('users', [
-        'username' => 'diskadmin', 'display_name' => 'admin',
+        'username' => 'diskadmin',
         'password_hash' => password_hash('x', PASSWORD_DEFAULT), 'role' => Permissions::SYSADMIN,
         'totp_enabled' => 0, 'must_change_password' => 0, 'status' => 'active', 'failed_attempts' => 0,
         'email' => '', 'service_status' => 'active', 'uid' => 0, 'gid' => 0,

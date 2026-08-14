@@ -59,7 +59,6 @@ final class SiteCreate extends SiteCapability
     public function validate(array $args): array
     {
         $domain = Validator::domain(Validator::requireString($args, 'domain', 253));
-        $name = Validator::optionalString($args, 'name', $domain, 100);
         $phpVersion = self::assertPhpVersion(Validator::requireString($args, 'php_version', 8));
 
         $aliases = [];
@@ -92,7 +91,6 @@ final class SiteCreate extends SiteCapability
 
         return [
             'domain' => $domain,
-            'name' => $name,
             'php_version' => $phpVersion,
             'aliases' => array_values(array_unique($aliases)),
             // ว่าง = ใช้ <บ้าน>/public · ชื่อย่อยหรือ path เต็มถูกประกอบ/ตรวจใน run()
@@ -227,7 +225,6 @@ final class SiteCreate extends SiteCapability
         $this->assertQuota($context, $owner->userId);
 
         $siteId = $repository->reserve(
-            $args['name'],
             $args['domain'],
             $args['php_version'],
             $owner->userId,
@@ -236,7 +233,6 @@ final class SiteCreate extends SiteCapability
 
         $site = new Site(
             id: $siteId,
-            name: $args['name'],
             domain: $args['domain'],
             owner: $owner,
             phpVersion: $args['php_version'],
@@ -297,7 +293,6 @@ final class SiteCreate extends SiteCapability
         return [
             'site_id' => $siteId,
             'domain' => $site->domain,
-            'name' => $site->name,
             'php_version' => $site->phpVersion,
             'system_user' => $site->systemUser(),
             'docroot' => $site->docroot(),

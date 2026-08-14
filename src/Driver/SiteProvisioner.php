@@ -338,7 +338,6 @@ final class SiteProvisioner
     private function welcomePage(Site $site): string
     {
         $domain = htmlspecialchars($site->domain, ENT_QUOTES, 'UTF-8');
-        $name = htmlspecialchars($site->name, ENT_QUOTES, 'UTF-8');
 
         return <<<HTML
             <!doctype html>
@@ -347,8 +346,7 @@ final class SiteProvisioner
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <title>{$domain}</title>
             <body style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;max-width:640px;margin:4rem auto;padding:0 1.5rem;line-height:1.7;color:#0f172a">
-              <h1 style="font-size:1.4rem;margin-bottom:.25rem">{$name}</h1>
-              <p style="color:#64748b;margin-top:0">{$domain}</p>
+              <h1 style="font-size:1.4rem;margin-bottom:.25rem">{$domain}</h1>
               <hr style="border:none;border-top:1px solid #e2e8f0;margin:1.5rem 0">
               <p>เว็บไซต์นี้ถูกสร้างเรียบร้อยแล้ว และกำลังทำงานด้วย PHP <?= PHP_VERSION ?></p>
               <p style="color:#64748b;font-size:.9rem">

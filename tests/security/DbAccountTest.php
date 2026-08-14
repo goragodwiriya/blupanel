@@ -68,7 +68,7 @@ test('รหัสผ่านในฐานข้อมูลต้องเ�
     $userId = (new Phpcp\Domain\UserRepository($db))->createHostingAccount(
         'dbowner',
         'Db-Owner-Password-11',
-        'เจ้าของฐานข้อมูล',
+        
         'dbowner@example.com',
     );
 
@@ -120,11 +120,10 @@ test('ฐานข้อมูลของลูกค้าต้องได�
     $users = new Phpcp\Domain\UserRepository($db);
     $now = time();
 
-    $ownerId = $users->createHostingAccount('shopowner', 'Shop-Owner-Password-11', 'ร้านค้า', 'shop@example.com');
+    $ownerId = $users->createHostingAccount('shopowner', 'Shop-Owner-Password-11',  'shop@example.com');
     $db->update('users', ['system_user' => 'shopowner'], ['id' => $ownerId]);
 
     $siteId = $db->insert('sites', [
-        'name' => 'ร้านค้า',
         'primary_domain' => 'shop.example.com',
         'docroot' => '/home/shopowner/public_html',
         'php_version' => '8.4',

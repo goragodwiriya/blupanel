@@ -168,7 +168,6 @@ function pointerSite(string $docrootOverride = ''): Site
 {
     return new Site(
         id: 42,
-        name: 'เว็บทดสอบ',
         domain: 'example.test',
         owner: new UserAccount(7, 'sitefiles'),
         phpVersion: '8.4',
@@ -271,9 +270,9 @@ test('เว็บทุกแห่งของเจ้าของคนเ�
     // ที่ไม่เกี่ยวข้องกันเลยทั้งที่เป็นคนเดียวกัน
     $owner = new UserAccount(7, 'sitefiles');
 
-    $shop = new Site(id: 1, name: 'ร้าน', domain: 'shop.test', owner: $owner, phpVersion: '8.4');
-    $blog = new Site(id: 2, name: 'บล็อก', domain: 'blog.test', owner: $owner, phpVersion: '8.4');
-    $legacy = new Site(id: 3, name: 'ของเก่า', domain: 'old.test', owner: $owner, phpVersion: '7.4');
+    $shop = new Site(id: 1, domain: 'shop.test', owner: $owner, phpVersion: '8.4');
+    $blog = new Site(id: 2, domain: 'blog.test', owner: $owner, phpVersion: '8.4');
+    $legacy = new Site(id: 3, domain: 'old.test', owner: $owner, phpVersion: '7.4');
 
     assertSame($shop->systemUser(), $blog->systemUser(), 'เว็บของเจ้าของคนเดียวกันใช้ uid เดียวกัน');
     assertSame($shop->fpmSocket(), $blog->fpmSocket(), 'เว็บที่ใช้ PHP เวอร์ชันเดียวกันใช้ socket เดียวกัน');
@@ -289,7 +288,7 @@ test('เว็บทุกแห่งของเจ้าของคนเ�
     assertTrue($shop->root() !== $blog->root(), 'แต่ละเว็บยังมีโฟลเดอร์ของตัวเอง');
 
     // และลูกค้าคนละรายต้องแยกขาดจากกันทุกอย่าง
-    $other = new Site(id: 4, name: 'คนอื่น', domain: 'other.test', owner: new UserAccount(8, 'otheruser'), phpVersion: '8.4');
+    $other = new Site(id: 4, domain: 'other.test', owner: new UserAccount(8, 'otheruser'), phpVersion: '8.4');
     assertTrue($shop->systemUser() !== $other->systemUser(), 'ลูกค้าคนละรายต้องคนละ uid');
     assertTrue($shop->fpmSocket() !== $other->fpmSocket(), 'ลูกค้าคนละรายต้องคนละ pool');
 });

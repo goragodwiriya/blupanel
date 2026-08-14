@@ -41,7 +41,6 @@ function sitesHarness(): ApiHarness
     // เว็บของ siteowner และเว็บของลูกค้าอีกราย — ใช้ตรวจการแบ่งขอบเขต
     // ตั้งแต่ migration 0005 เว็บทุกแห่งต้องมีเจ้าของ จึงไม่มี "เว็บไร้เจ้าของ" ให้ทดสอบอีก
     $owned = $db->insert('sites', [
-        'name' => 'เว็บของลูกค้า',
         'primary_domain' => 'owned.example.com',
         'docroot' => '/srv/phpcp/sites/owned.example.com/public',
         'php_version' => '8.4',
@@ -54,7 +53,6 @@ function sitesHarness(): ApiHarness
     ]);
 
     $other = $db->insert('sites', [
-        'name' => 'เว็บของคนอื่น',
         'primary_domain' => 'other.example.com',
         'docroot' => '/srv/phpcp/sites/other.example.com/public',
         'php_version' => '8.3',

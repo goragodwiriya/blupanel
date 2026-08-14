@@ -191,7 +191,6 @@ test('ใบที่เซ็นเองต้องครอบคลุม�
     $executor = mailCertSandbox('selfsign');
     $site = new Phpcp\Domain\Site(
         id: 1,
-        name: 'เว็บทดสอบ',
         domain: 'bbl.test',
         owner: new Phpcp\Domain\UserAccount(1, 'tester'),
         phpVersion: '8.4',

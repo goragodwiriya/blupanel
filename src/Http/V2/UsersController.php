@@ -72,7 +72,6 @@ final class UsersController extends ApiController
         if ($query !== '') {
             $needle = mb_strtolower($query);
             $rows = array_filter($rows, static fn(array $u): bool => str_contains(mb_strtolower((string) $u['username']), $needle)
-                || str_contains(mb_strtolower((string) $u['display_name']), $needle)
                 || str_contains(mb_strtolower((string) $u['email']), $needle));
         }
 
@@ -148,7 +147,6 @@ final class UsersController extends ApiController
 
         $username = trim($request->payloadString('username'));
         $role = $request->payloadString('role') ?: Permissions::WEBADMIN;
-        $displayName = trim($request->payloadString('display_name'));
 
         if (!Permissions::isValidRole($role)) {
             return $this->problem(ApiProblem::ValidationError, 'Invalid role', [
@@ -184,7 +182,6 @@ final class UsersController extends ApiController
             $result = $this->agent()->data('customer.create', [
                 'username' => $username,
                 'password' => $password,
-                'display_name' => $displayName,
                 'email' => trim($request->payloadString('email')),
                 'quota_domains' => (int) $request->payload('quota_domains', 10),
                 'quota_subdomains' => (int) $request->payload('quota_subdomains', 20),
@@ -218,7 +215,6 @@ final class UsersController extends ApiController
                 try {
                     $site = $this->agent()->data('site.create', [
                         'domain' => $domain,
-                        'name' => $displayName !== '' ? $displayName : $domain,
                         // ไม่ระบุมา = ใช้ตัวใหม่ที่สุดที่ระบบรองรับ · `site.create` ตรวจซ้ำอีกชั้น
                         'php_version' => $request->payloadString('php_version') ?: ServiceCatalog::PHP_VERSIONS[0],
                         'owner_user_id' => $id
@@ -235,7 +231,7 @@ final class UsersController extends ApiController
                 }
             }
         } else {
-            $id = $users->create($username, $password, $role, $displayName, mustChangePassword: $wasRandom);
+            $id = $users->create($username, $password, $role, mustChangePassword: $wasRandom);
 
             $this->audit($request, 'user.create', $username, ['user_id' => $id, 'role' => $role]);
         }
@@ -279,12 +275,10 @@ final class UsersController extends ApiController
         $role = $request->payloadString('role');
         $status = $request->payloadString('status');
         $service = $request->payloadString('service_status');
-        $displayName = $request->payloadString('display_name');
         $email = $request->payloadString('email');
         $hasExpiry = $request->payload('expiry_at') !== null || $request->get('expiry_at') !== '';
 
-        if ($role === '' && $status === '' && $service === ''
-            && $displayName === '' && $email === '' && !$hasExpiry) {
+        if ($role === '' && $status === '' && $service === '' && $email === '' && !$hasExpiry) {
             return $this->problem(ApiProblem::ValidationError, 'Send at least one value to change');
         }
 
@@ -345,13 +339,9 @@ final class UsersController extends ApiController
             $changes['service_status'] = ['from' => $user['service_status'], 'to' => $service];
         }
 
-        if ($displayName !== '' || $email !== '') {
+        if ($email !== '') {
             try {
-                $users->updateProfile(
-                    $id,
-                    $displayName !== '' ? $displayName : (string) $user['display_name'],
-                    $email !== '' ? $email : (string) $user['email'],
-                );
+                $users->updateProfile($id, $email);
             } catch (\InvalidArgumentException $e) {
                 return $this->problem(ApiProblem::ValidationError, $e->getMessage(), ['email' => $e->getMessage()]);
             }

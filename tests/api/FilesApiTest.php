@@ -39,7 +39,6 @@ function filesHarness(): ApiHarness
 
     $now = time();
     $harness->app->db()->insert('sites', [
-        'name' => 'เว็บของลูกค้า',
         'primary_domain' => 'files.example.com',
         'docroot' => '/srv/phpcp/sites/files.example.com/public',
         'php_version' => '8.4',

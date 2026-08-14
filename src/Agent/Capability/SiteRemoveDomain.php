@@ -76,7 +76,6 @@ final class SiteRemoveDomain extends SiteCapability
 
         $updated = new Site(
             id: $site->id,
-            name: $site->name,
             domain: $site->domain,
             owner: $site->owner,
             phpVersion: $site->phpVersion,

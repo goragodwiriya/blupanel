@@ -37,7 +37,6 @@ function hostingHarness(): ApiHarness
     $now = time();
 
     $siteId = $db->insert('sites', [
-        'name' => 'เว็บของลูกค้า',
         'primary_domain' => 'host.example.com',
         'docroot' => '/srv/phpcp/sites/host.example.com/public',
         'php_version' => '8.4',
@@ -48,7 +47,6 @@ function hostingHarness(): ApiHarness
     ]);
 
     $otherId = $db->insert('sites', [
-        'name' => 'เว็บของคนอื่น',
         'primary_domain' => 'stranger.example.com',
         'docroot' => '/srv/phpcp/sites/stranger.example.com/public',
         'php_version' => '8.4',

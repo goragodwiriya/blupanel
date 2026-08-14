@@ -424,7 +424,7 @@ final class Application
         $username = $this->argValue($args, '--user') ?: 'admin';
         $password = Password::random(20);
 
-        $id = $users->create($username, $password, Permissions::SUPERADMIN, 'Administrator', mustChangePassword: true);
+        $id = $users->create($username, $password, Permissions::SUPERADMIN, mustChangePassword: true);
 
         $app->audit()->write($app->systemActor('cli.setup'), 'system.setup', $username, 'ok', [
             'user_id' => $id,
@@ -1146,7 +1146,6 @@ final class Application
         $app = App::boot();
 
         $username = $this->argValue($args, '--user') ?: $this->out->ask('Username');
-        $displayName = $this->argValue($args, '--display-name') ?: $username;
         $email = $this->argValue($args, '--email') ?: $this->out->ask('Email');
         $rawDomains = $this->argValue($args, '--quota-domains');
         $rawSubdomains = $this->argValue($args, '--quota-subdomains');
@@ -1171,7 +1170,6 @@ final class Application
             $result = $app->agent()->data('customer.create', [
                 'username' => $username,
                 'password' => $password,
-                'display_name' => $displayName,
                 'email' => $email,
                 'quota_domains' => $rawDomains !== '' ? (int) $rawDomains : 10,
                 'quota_subdomains' => $rawSubdomains !== '' ? (int) $rawSubdomains : 20,
@@ -1414,7 +1412,7 @@ final class Application
         }
 
         $password = Password::random(20);
-        $users->create($username, $password, $role, $username, mustChangePassword: true);
+        $users->create($username, $password, $role, mustChangePassword: true);
 
         $app->audit()->write($app->systemActor('cli.user_create'), 'user.create', $username, 'ok', ['role' => $role]);
 

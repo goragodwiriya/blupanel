@@ -31,7 +31,7 @@ function ngxExecutor(): SandboxExecutor
 
 function ngxSite(string $mode = 'off', array $aliases = [], string $status = 'active'): Site
 {
-    return new Site(1, 'ทดสอบ', 'example.test', new UserAccount(7, 'sitefiles'), '8.4', $mode, $status, $aliases);
+    return new Site(1, 'example.test', new UserAccount(7, 'sitefiles'), '8.4', $mode, $status, $aliases);
 }
 
 test('vhost แบบไม่มี SSL ต้องไม่มีบล็อก 443', static function (): void {

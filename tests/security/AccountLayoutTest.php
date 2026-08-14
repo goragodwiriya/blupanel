@@ -167,7 +167,6 @@ function layoutSite(string $owner, string $domain, string $php = '8.4'): Site
 {
     return new Site(
         id: crc32($domain) % 1000,
-        name: $domain,
         domain: $domain,
         owner: new UserAccount(crc32($owner) % 100, $owner),
         phpVersion: $php,
@@ -301,7 +300,7 @@ test('ชื่อผู้ใช้ที่ถูกสงวนไว้ต�
     foreach (['root', 'www-data', 'mysql', 'phpcp', 'nobody'] as $reserved) {
         assertRejects(
             InvalidArgumentException::class,
-            static fn () => $users->createHostingAccount($reserved, 'Reserved-Name-Pass-11', '', 'a@example.com'),
+            static fn () => $users->createHostingAccount($reserved, 'Reserved-Name-Pass-11', 'a@example.com'),
             "ชื่อ {$reserved} ต้องถูกสงวนไว้",
         );
     }
@@ -310,12 +309,12 @@ test('ชื่อผู้ใช้ที่ถูกสงวนไว้ต�
     foreach (['Alice', 'has.dot', 'ab', 'has space', '1abc'] as $bad) {
         assertRejects(
             InvalidArgumentException::class,
-            static fn () => $users->createHostingAccount($bad, 'Bad-Name-Password-11', '', 'a@example.com'),
+            static fn () => $users->createHostingAccount($bad, 'Bad-Name-Password-11', 'a@example.com'),
             "ชื่อ {$bad} ต้องถูกปฏิเสธ",
         );
     }
 
-    $id = $users->createHostingAccount('somchai_a', 'Good-Name-Password-11', 'สมชาย', 'somchai@example.com');
+    $id = $users->createHostingAccount('somchai_a', 'Good-Name-Password-11', 'somchai@example.com');
     assertTrue($id > 0, 'ชื่อที่ถูกกฎต้องสร้างได้');
     assertSame(Permissions::WEBADMIN, $users->find($id)['role'], 'บัญชีโฮสติ้งต้องเป็น webadmin');
 });

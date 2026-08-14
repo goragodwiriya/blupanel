@@ -90,7 +90,7 @@ final class SessionStore
         }
 
         $row = $this->db->first(
-            'SELECT s.*, u.username, u.display_name, u.role, u.status AS user_status,
+            'SELECT s.*, u.username, u.role, u.status AS user_status,
                     u.totp_enabled, u.must_change_password
              FROM sessions s
              JOIN users u ON u.id = s.user_id

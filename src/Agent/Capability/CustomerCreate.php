@@ -63,7 +63,6 @@ final class CustomerCreate extends CustomerCapability implements Capability
         }
 
         // ตรวจสอบ display name (optional)
-        $displayName = Validator::optionalString($args, 'display_name', '', 128);
 
         // ตรวจสอบ quota (optional, มีค่า default ใน database)
         $quotaDomains = Validator::optionalInt($args, 'quota_domains', 10);
@@ -102,7 +101,6 @@ final class CustomerCreate extends CustomerCapability implements Capability
         return [
             'username' => $username,
             'password' => $password,
-            'display_name' => $displayName,
             'email' => $email,
             'quota_domains' => $quotaDomains,
             'quota_subdomains' => $quotaSubdomains,
@@ -133,7 +131,6 @@ final class CustomerCreate extends CustomerCapability implements Capability
             $userId = $users->createHostingAccount(
                 $args['username'],
                 $args['password'],
-                $args['display_name'],
                 $args['email'],
                 [
                     'domains' => $args['quota_domains'],
@@ -156,7 +153,6 @@ final class CustomerCreate extends CustomerCapability implements Capability
         return [
             'id' => $userId,
             'username' => $args['username'],
-            'display_name' => $args['display_name'],
             'email' => $args['email'],
             'quota_domains' => $args['quota_domains'],
             'quota_subdomains' => $args['quota_subdomains'],

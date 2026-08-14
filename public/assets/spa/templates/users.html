@@ -20,7 +20,7 @@
                  data-table="users"
                  data-source="/api/v2/users"
                  data-default-sort="username asc"
-                 data-search-columns="username,display_name"
+                 data-search-columns="username"
                  data-page-size="25"
                  data-row-actions='{
                    "manage": {
@@ -49,7 +49,6 @@
             <thead>
               <tr>
                 <th data-field="username" data-sort="username" data-cell-class="mono" data-i18n>{LNG_Username}</th>
-                <th data-field="display_name" data-sort="display_name" data-i18n>{LNG_Name}</th>
                 <th data-field="role_label" class="center" data-cell-class="center" data-i18n>{LNG_Role}</th>
                 <!-- สถานะบริการเป็นป้ายสี — `data-template` แทนตัวจัดรูปฝั่ง JS -->
                 <th data-field="service_status" class="center" data-cell-class="center"

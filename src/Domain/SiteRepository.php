@@ -163,7 +163,6 @@ final class SiteRepository
      * ถ้างานฝั่งระบบล้ม ผู้เรียกมีหน้าที่ลบแถวนี้ทิ้ง
      */
     public function reserve(
-        string $name,
         string $domain,
         string $phpVersion,
         int $ownerId,
@@ -172,7 +171,6 @@ final class SiteRepository
         $now = time();
 
         return $this->db->insert('sites', [
-            'name' => $name,
             'primary_domain' => $domain,
             'docroot' => '',
             'docroot_override' => $docrootOverride,

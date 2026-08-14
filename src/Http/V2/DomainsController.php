@@ -32,7 +32,7 @@ final class DomainsController extends HostingController
         $params = $owner === null ? [] : ['owner' => $owner];
 
         $rows = $this->app->db()->all(
-            'SELECT d.*, s.name AS site_name, s.primary_domain, s.status AS site_status
+            'SELECT d.*, s.primary_domain, s.status AS site_status
              FROM domains d JOIN sites s ON s.id = d.site_id' . $where . '
              ORDER BY s.primary_domain, d.type, d.domain',
             $params,

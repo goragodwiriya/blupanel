@@ -67,7 +67,6 @@ test('สร้างผู้ใช้ได้รหัสผ่านสุ�
     $response = $harness->request('POST', '/api/v2/users', [
         'username' => 'acctnew',
         'role' => Permissions::SYSADMIN,
-        'display_name' => 'ผู้ดูแลคนใหม่',
     ]);
 
     assertSame(201, $response->status, 'สร้างสำเร็จต้องเป็น 201');
@@ -122,8 +121,8 @@ test('ต้องเหลือผู้ดูแลระบบที่ใ�
     $db = migratedDb();
     $users = new \Phpcp\Domain\UserRepository($db);
 
-    $onlyAdmin = $users->create('solo', 'Only-Admin-Password-99', Permissions::SUPERADMIN, 'คนเดียว');
-    $helper = $users->create('helper', 'Helper-Password-88', Permissions::SYSADMIN, 'ผู้ช่วย');
+    $onlyAdmin = $users->create('solo', 'Only-Admin-Password-99', Permissions::SUPERADMIN);
+    $helper = $users->create('helper', 'Helper-Password-88', Permissions::SYSADMIN);
 
     assertTrue($users->wouldRemoveLastSuperadmin($onlyAdmin), 'ลดบทบาทผู้ดูแลคนสุดท้ายต้องถูกจับได้');
     assertTrue(!$users->wouldRemoveLastSuperadmin($helper), 'บัญชีที่ไม่ใช่ผู้ดูแลระบบต้องไม่ติดกฎนี้');
@@ -242,7 +241,6 @@ test('ลบผู้ใช้ที่ยังเป็นเจ้าขอ�
     $userId = $harness->createHostingUser('acctcust', 'Accounts-Cust-Pass-55', Permissions::WEBADMIN);
 
     $siteId = $db->insert('sites', [
-        'name' => 'เว็บของลูกค้าทดสอบ',
         'primary_domain' => 'acct.example.com',
         'docroot' => '/srv/phpcp/sites/acct.example.com/public',
         'php_version' => '8.4',
@@ -423,11 +421,11 @@ test('ทุกเส้นทางของ B3.5 ตอบ JSON และม�
     }
 });
 
-test('บัญชีที่ไม่มีอีเมลต้องแก้ชื่อที่แสดงได้', static function (): void {
-    // เดิม `UserRepository::updateProfile()` ตรวจรูปแบบอีเมลกับค่าว่างด้วย และ
-    // `UsersController::update()` ส่งอีเมลเดิมกลับเข้ามาเป็นค่าตั้งต้นเมื่อผู้เรียกไม่ได้ส่งมา
-    // ผลคือบัญชีที่ไม่มีอีเมล (เช่นที่สร้างจาก `phpcp user:create`) แก้ชื่อไม่ได้เลย
-    // ตอบ 422 "อีเมลไม่ถูกต้อง" ทั้งที่ผู้ใช้ไม่ได้แตะช่องอีเมลเลย
+test('บัญชีที่ไม่มีอีเมลต้องตั้งอีเมลได้ — ค่าว่างไม่ใช่ค่าที่ผิด', static function (): void {
+    // เดิม `updateProfile()` ตรวจรูปแบบอีเมลกับค่าว่างด้วย และ `update()` ส่งอีเมลเดิม
+    // กลับเข้ามาเป็นค่าตั้งต้นเมื่อผู้เรียกไม่ได้ส่งมา · บัญชีที่ไม่มีอีเมล (เช่นที่สร้าง
+    // จาก `phpcp user:create`) จึงแก้อะไรไม่ได้เลย ตอบ 422 "อีเมลไม่ถูกต้อง"
+    // ทั้งที่ผู้ใช้ไม่ได้แตะช่องอีเมล
     $harness = accountsHarness();
     $users = new Phpcp\Domain\UserRepository($harness->app->db());
 
@@ -435,15 +433,9 @@ test('บัญชีที่ไม่มีอีเมลต้องแก�
 
     assertSame('', (string) ($users->find($id)['email'] ?? 'x'), 'บัญชีทดสอบต้องไม่มีอีเมล');
 
-    $users->updateProfile($id, 'ชื่อใหม่', '');
+    $users->updateProfile($id, 'set@example.com');
 
-    assertSame('ชื่อใหม่', (string) $users->find($id)['display_name'], 'ต้องแก้ชื่อได้แม้ไม่มีอีเมล');
-
-    assertRejects(
-        InvalidArgumentException::class,
-        static fn () => $users->updateProfile($id, 'x', 'ไม่ใช่อีเมล'),
-        'อีเมลที่ผิดรูปแบบยังต้องถูกปฏิเสธเหมือนเดิม',
-    );
+    assertSame('set@example.com', (string) $users->find($id)['email'], 'ต้องตั้งอีเมลได้');
 });
 
 test('บันทึกบัญชีแล้วต้องได้ทรัพยากรครบเหมือนตอน GET — ไม่ใช่แค่ที่เปลี่ยน', static function (): void {
@@ -463,7 +455,7 @@ test('บันทึกบัญชีแล้วต้องได้ทร�
     // สร้างตรงในฐานข้อมูล — `customer.create` เดินผ่าน agent ซึ่งไม่มีในชุดทดสอบ API
     // และเรื่องที่กำลังตรวจคือ**รูปร่างของคำตอบ** ไม่ใช่เส้นทางการสร้าง
     $id = $harness->app->db()->insert('users', [
-        'username' => 'shapecheck', 'display_name' => 'Shape Check',
+        'username' => 'shapecheck',
         'password_hash' => password_hash('x', PASSWORD_DEFAULT), 'role' => Permissions::WEBADMIN,
         'totp_enabled' => 0, 'must_change_password' => 0, 'status' => 'active', 'failed_attempts' => 0,
         'email' => '', 'service_status' => 'active', 'uid' => 0, 'gid' => 0,
@@ -475,7 +467,7 @@ test('บันทึกบัญชีแล้วต้องได้ทร�
     $get = $harness->request('GET', '/api/v2/users/' . $id);
     assertSame(200, $get->status, 'อ่านบัญชีต้องสำเร็จ');
 
-    $patch = $harness->request('PATCH', '/api/v2/users/' . $id, ['display_name' => 'เปลี่ยนชื่อแล้ว']);
+    $patch = $harness->request('PATCH', '/api/v2/users/' . $id, ['email' => 'changed@example.com']);
     assertSame(200, $patch->status, 'บันทึกต้องสำเร็จ');
 
     // คีย์ที่หน้าจอใช้เป็นเงื่อนไขแสดงผล ต้องมีครบทั้งสองทาง
@@ -487,5 +479,5 @@ test('บันทึกบัญชีแล้วต้องได้ทร�
         );
     }
 
-    assertSame('เปลี่ยนชื่อแล้ว', $patch->data('display_name'), 'และต้องเป็นค่าหลังแก้จริง');
+    assertSame('changed@example.com', $patch->data('email'), 'และต้องเป็นค่าหลังแก้จริง');
 });

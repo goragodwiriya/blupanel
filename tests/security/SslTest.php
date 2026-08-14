@@ -27,7 +27,6 @@ function sslSite(string $mode = 'off', array $aliases = []): Site
 {
     return new Site(
         id: 1,
-        name: 'ทดสอบ',
         domain: 'example.test',
         owner: new UserAccount(7, 'sitefiles'),
         phpVersion: '8.4',
