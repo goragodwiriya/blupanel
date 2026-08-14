@@ -262,3 +262,61 @@ final class HostKeyExecutor implements Executor
         return [];
     }
 }
+
+// --- ชื่อเครื่องที่กลายเป็นอาร์กิวเมนต์ของคำสั่ง -------------------------------
+
+test('ชื่อเครื่องที่ขึ้นต้นด้วย - ต้องถูกปฏิเสธ ไม่ใช่กลายเป็นตัวเลือกของ ssh-keyscan', static function (): void {
+    /*
+     * `Executor::exec()` รับ argv เป็น array จึงไม่มีเชลล์มาตีความ — แต่ `ssh-keyscan`
+     * เองอ่านค่าที่ขึ้นต้นด้วย `-` เป็นตัวเลือกของมัน · ค่าอย่าง `-f/etc/passwd`
+     * จะกลายเป็น "อ่านรายชื่อโฮสต์จากไฟล์นี้" แทนที่จะเป็นชื่อเครื่อง
+     */
+    $capability = new Phpcp\Agent\Capability\BackupHostKeyScan();
+
+    $bad = [
+        'ตัวเลือกของคำสั่ง' => '-f/etc/passwd',
+        'ขึ้นต้นด้วยขีด' => '-v',
+        'เว้นวรรค' => 'host name',
+        'ขึ้นบรรทัดใหม่' => "host\n-f/etc/passwd",
+        'ว่าง' => '',
+        'อัฒภาค' => 'host;id',
+    ];
+
+    foreach ($bad as $label => $host) {
+        assertRejects(
+            Phpcp\Agent\ValidationError::class,
+            static fn () => $capability->validate(['host' => $host, 'port' => 22]),
+            "ต้องปฏิเสธ: {$label}",
+        );
+    }
+
+    // ค่าที่ใช้งานจริงต้องผ่าน — IPv4, ชื่อโดเมน และ IPv6 ในวงเล็บเหลี่ยม
+    foreach (['18.142.27.80', 'srv.bluprint.in.th', '[2001:db8::1]'] as $good) {
+        $clean = $capability->validate(['host' => $good, 'port' => 22]);
+
+        assertSame($good, $clean['host'], "ต้องรับ: {$good}");
+    }
+});
+
+test('พอร์ตนอกช่วงต้องถูกปฏิเสธ', static function (): void {
+    $capability = new Phpcp\Agent\Capability\BackupHostKeyScan();
+
+    foreach ([0, -1, 65536, 99999] as $port) {
+        assertRejects(
+            Phpcp\Agent\ValidationError::class,
+            static fn () => $capability->validate(['host' => 'example.com', 'port' => $port]),
+            "ต้องปฏิเสธพอร์ต {$port}",
+        );
+    }
+
+    assertSame(22, $capability->validate(['host' => 'example.com'])['port'], 'ไม่ระบุพอร์ตต้องได้ 22');
+});
+
+test('อ่าน host key ต้องไม่ถูกนับเป็นคำสั่งที่เปลี่ยนแปลงระบบ', static function (): void {
+    // ไม่แตะอะไรทั้งบนเครื่องนี้และเครื่องปลายทาง · ผลพลอยได้คือได้ Executor จริง
+    // ในโหมด dryrun ซึ่งเป็นตอนที่ผู้ดูแลกำลังลองตั้งค่าอยู่พอดี
+    assertTrue(
+        !(new Phpcp\Agent\Capability\BackupHostKeyScan())->isMutating(),
+        'ssh-keyscan อ่านอย่างเดียว',
+    );
+});

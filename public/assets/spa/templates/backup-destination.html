@@ -138,12 +138,31 @@
                 เก็บเป็นเนื้อหาไม่ใช่เส้นทาง เพราะผู้ดูแลวางไฟล์บนเครื่อง panel เองไม่ได้
                 (systemd hardening) · เป็นกุญแจสาธารณะ ไม่ใช่ความลับ จึงไม่เข้ารหัส
               -->
-              <label for="nd_known_hosts" data-i18n>Known host key</label>
+              <div class="flex middle fullwidth">
+                <label for="nd_known_hosts" data-i18n>Known host key</label>
+                <!--
+                  อ่าน host key จาก **เครื่องนี้** ซึ่งเป็นเครื่องที่จะส่งไฟล์สำรองจริง
+                  ไม่ใช่จากเครื่องที่ผู้ดูแลนั่งอยู่ ซึ่งอาจมองเห็นคนละ IP (NAT / DNS แยกวง)
+
+                  ใช้ `readHostKey` ที่เขียนไว้ใน js/ui.js ไม่ใช่ `requestApi` — ค่าที่ส่ง
+                  มาจากช่องที่ผู้ใช้เพิ่งพิมพ์ และผลต้องไปลงอีกช่องหนึ่ง ซึ่งประกาศด้วย
+                  แอตทริบิวต์ไม่ได้ (`requestApi` ทิ้งคำสั่งจากเซิร์ฟเวอร์ทั้งหมด)
+                -->
+                <button type="button" class="btn small icon-download" data-action="click.prevent:readHostKey"
+                        data-i18n>Read from the destination</button>
+              </div>
               <span class="form-control">
                 <textarea id="nd_known_hosts" name="known_hosts" rows="3" class="mono" autocomplete="off"
                           data-attr="value:config.known_hosts"
-                          placeholder="{LNG_sftp/rsync only. Run ssh-keyscan -p <port> <host> on any machine and paste the output here}"></textarea>
+                          placeholder="{LNG_sftp/rsync only. Fill in host and port above, then press Read from the destination}"></textarea>
               </span>
+              <!--
+                ลายนิ้วมือของกุญแจที่เพิ่งอ่านมา — ต้องค้างอยู่ให้เทียบได้ ไม่ใช่แถบที่หายเอง
+                ปุ่มด้านบนยืนยันตัวตนของเครื่องปลายทางแทนไม่ได้ (ssh-keyscan เชื่อสิ่งที่
+                ปลายสายตอบมา) การเทียบด้วยตาคือสิ่งเดียวที่ผู้ดูแลทำได้จริง
+              -->
+              <pre class="mono selectable" data-host-key-fingerprint hidden></pre>
+              <div class="comment" data-i18n>Compare the fingerprint with ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub on the destination machine</div>
               <div class="comment" data-i18n>Leave blank for local and s3</div>
             </div>
             <div class="form-group">

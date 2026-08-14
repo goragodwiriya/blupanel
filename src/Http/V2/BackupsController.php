@@ -73,6 +73,48 @@ final class BackupsController extends HostingController
     }
 
     /**
+     * ที่เก็บไฟล์สำรองบนเครื่องนี้ — **ผู้ดูแลต้องรู้ว่าของอยู่ที่ไหนจริง ๆ**
+     *
+     * หน้าจอไม่เคยบอกเลยว่าไฟล์ไปอยู่ที่ไหน ผู้ดูแลจึงตรวจเองไม่ได้ว่ามีของอยู่จริงไหม
+     * ขนาดเท่าไร หรือดิสก์ใกล้เต็มหรือยัง — ทำได้แค่เชื่อสิ่งที่ตารางบอก ซึ่งเป็นท่า
+     * ที่แย่ที่สุดสำหรับระบบที่ทั้งระบบมีไว้ใช้ "ตอนที่อย่างอื่นพังไปหมดแล้ว"
+     *
+     * **แยกเป็น endpoint ของตัวเอง ไม่ใช่ `meta` ของรายการ** — `meta.*` ผูกกับ
+     * `data-text`/`data-if` ของ Now.js ไม่ได้ (คอมโพเนนต์เห็นเฉพาะชั้น `data`)
+     * ป้ายที่ผูกกับ meta จึงไม่เคยขึ้นเลย · เรื่องนี้เสียเวลาไปแล้วหนึ่งรอบในหน้า Mailboxes
+     *
+     * พื้นที่ว่างมาจาก filesystem ตรง ๆ ไม่ผ่าน agent — เป็นการอ่านค่าที่โปรเซสเว็บ
+     * ทำได้อยู่แล้วเพราะไดเรกทอรีนี้เป็นของมันเอง · ค่า 0 แปลว่าอ่านไม่ได้ ไม่ใช่เต็ม
+     */
+    public function storage(Request $request): Response
+    {
+        $path = $this->app->config->paths->backups();
+        $owner = $this->scopeOwner();
+
+        $where = $owner === null ? '' : ' WHERE s.owner_user_id = :owner';
+        $params = $owner === null ? [] : ['owner' => $owner];
+
+        $row = $this->app->db()->first(
+            'SELECT COUNT(*) AS files, COALESCE(SUM(b.size_bytes), 0) AS bytes
+             FROM backups b LEFT JOIN sites s ON s.id = b.site_id' . $where,
+            $params,
+        ) ?? [];
+
+        $free = @disk_free_space($path);
+        $total = @disk_total_space($path);
+
+        return $this->ok([
+            'path' => $path,
+            // คีย์ขอบเขตของตัวจัดการไฟล์ (ดู FileRoots) — หน้าจอลิงก์ไปเปิดดูได้เลย
+            'scope' => 'backups',
+            'files' => (int) ($row['files'] ?? 0),
+            'bytes' => (int) ($row['bytes'] ?? 0),
+            'free_bytes' => $free === false ? 0 : (int) $free,
+            'total_bytes' => $total === false ? 0 : (int) $total,
+        ]);
+    }
+
+    /**
      * โครงเปล่าของฟอร์มสร้างไฟล์สำรอง พร้อมคำสั่งเปิด modal
      *
      * ไฟล์สำรองแก้ไม่ได้ (สร้าง · กู้คืน · ลบ) จึงมีแต่ฟอร์มของใหม่

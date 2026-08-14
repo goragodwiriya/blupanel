@@ -3996,6 +3996,39 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
 
+  /backups/storage:
+    get:
+      tags: [backups]
+      summary: ที่เก็บไฟล์สำรองบนเครื่องนี้
+      description: |
+        ตอบว่าไฟล์สำรองไปอยู่ที่ไหนจริง ๆ พร้อมพื้นที่ว่างของ filesystem นั้น
+
+        **แยกเป็นเส้นทางของตัวเอง ไม่ใช่ `meta` ของ `/backups`** เพราะ `meta.*` ผูกกับ
+        `data-text`/`data-if` ของ Now.js ไม่ได้ — คอมโพเนนต์เห็นเฉพาะชั้น `data`
+
+        `scope` คือคีย์ขอบเขตของตัวจัดการไฟล์ ใช้ต่อเป็น `/app/filemanager?root=<scope>`
+        ได้ทันที · ไดเรกทอรีนี้อยู่ใต้ `/var/lib/phpcp` ที่ปกติถูกกันไว้ทั้งก้อน จึงมี
+        ข้อยกเว้นเฉพาะทางให้ (ดู `SelfProtection::allowAlso`)
+      responses:
+        "200":
+          description: ที่เก็บและพื้นที่ว่าง
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      path: { type: string }
+                      scope: { type: string, description: คีย์ขอบเขตของตัวจัดการไฟล์ }
+                      files: { type: integer, description: จำนวนไฟล์สำรองที่ผู้เรียกเห็นได้ }
+                      bytes: { type: integer, description: ขนาดรวมของไฟล์เหล่านั้น }
+                      free_bytes: { type: integer, description: "พื้นที่ว่างของ filesystem · 0 = อ่านไม่ได้" }
+                      total_bytes: { type: integer }
+        "403": { $ref: "#/components/responses/Error" }
+
   /backups/imports:
     post:
       tags: [backups]
@@ -4334,6 +4367,51 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/CommandResponse" }
         "404": { $ref: "#/components/responses/Error" }
+
+  /backup-destinations/host-key:
+    post:
+      tags: [backups]
+      summary: อ่าน host key ของเครื่องปลายทาง
+      description: |
+        `StrictHostKeyChecking=yes` เปิดไว้เสมอ การตั้งปลายทาง sftp/rsync จึงล้มครั้งแรก
+        ทุกครั้งจนกว่าจะมี host key · เส้นทางนี้รัน `ssh-keyscan` จาก **เครื่องที่จะส่ง
+        ไฟล์สำรองจริง** ผลที่ได้จึงเป็นกุญแจของเครื่องที่มันจะคุยด้วยจริง ๆ ไม่ใช่ของ
+        เครื่องที่ผู้ดูแลบังเอิญนั่งอยู่ (ซึ่งอาจมองเห็นคนละ IP เมื่อมี NAT)
+
+        **ไม่ผูกกับ `{id}`** เพราะต้องใช้ตอนกรอกฟอร์มปลายทางใหม่ที่ยังไม่มี id
+
+        **ไม่ได้ยืนยันว่ากุญแจเป็นของจริง** — `ssh-keyscan` เชื่อสิ่งที่ปลายสายตอบมา
+        เหมือนการต่อครั้งแรกทุกประการ · คำตอบจึงแนบ `fingerprints` มาให้เทียบกับที่อ่าน
+        จากคอนโซลของเครื่องปลายทาง สิ่งที่เส้นทางนี้แก้คือการพิมพ์ผิดและการหยิบผิดเครื่อง
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host]
+              properties:
+                host: { type: string, description: ชื่อโฮสต์หรือ IP ของเครื่องปลายทาง }
+                port: { type: integer, default: 22 }
+      responses:
+        "200":
+          description: อ่านกุญแจมาได้
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  message: { type: string }
+                  known_hosts: { type: string, description: เนื้อหาที่นำไปใส่ในช่อง known_hosts ได้ตรง ๆ }
+                  lines: { type: integer, description: จำนวนกุญแจที่อ่านมาได้ }
+                  fingerprints:
+                    type: array
+                    items: { type: string }
+                    description: ลายนิ้วมือของแต่ละกุญแจ ไว้เทียบกับเครื่องปลายทางด้วยตา
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
 
   /backup-destinations/{id}/verification:
     post:

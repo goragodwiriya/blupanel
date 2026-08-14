@@ -45,8 +45,49 @@ final class SelfProtection
         'www-data',
     ];
 
+    /**
+     * เส้นทางที่อยู่**ใต้**ไดเรกทอรีที่กันไว้ แต่เปิดให้เข้าถึงได้โดยเจตนา
+     *
+     * `/var/lib/phpcp` ถูกกันทั้งก้อนเพราะ `panel.db` อยู่ในนั้น (hash รหัสผ่านและ
+     * session) · แต่ `backups/` ที่อยู่ข้างในไม่ใช่ข้อมูลของ panel — มันคือ**ไฟล์ของ
+     * ผู้ใช้** ที่ผู้ดูแลต้องเข้าถึงได้จริง: ตรวจว่าไฟล์สำรองมีอยู่ไหม ขนาดเท่าไร
+     * คัดลอกออกไปเอง หรือวางไฟล์ที่ได้จากเครื่องอื่นเข้ามาเพื่อนำเข้า
+     *
+     * ไม่มีรายการนี้ ตัวจัดการไฟล์จะเปิดไปที่นั่นไม่ได้เลย และผู้ดูแลไม่มีทางรู้ว่า
+     * ไฟล์สำรองของตัวเองอยู่ที่ไหนหรือมีอยู่จริงหรือเปล่า นอกจากเชื่อหน้าจอ
+     *
+     * **แคบไว้เสมอ** — เปิดเฉพาะไดเรกทอรีที่ระบุ ไม่ใช่ทั้งชั้นบน · เพิ่มรายการที่นี่
+     * เท่ากับประกาศว่า "สิ่งนี้ไม่ใช่ของ panel" ซึ่งต้องจริงเท่านั้น
+     *
+     * @var list<string>
+     */
+    private static array $exceptions = [];
+
     /** @var list<string> path เพิ่มเติมที่ตั้งค่าตอน bootstrap (เช่น layout แบบ portable) */
     private static array $extraPaths = [];
+
+    /**
+     * ประกาศว่าเส้นทางนี้ไม่ใช่ของ panel แม้จะอยู่ใต้ไดเรกทอรีที่กันไว้
+     *
+     * เรียกตอน bootstrap เหมือน `protectAlso()` — เส้นทางของไฟล์สำรองต่างกันตาม
+     * layout (system/portable) จึงตรึงเป็นค่าคงที่ไม่ได้
+     */
+    public static function allowAlso(string ...$paths): void
+    {
+        foreach ($paths as $path) {
+            $normalized = rtrim($path, '/');
+
+            if ($normalized !== '' && !in_array($normalized, self::$exceptions, true)) {
+                self::$exceptions[] = $normalized;
+            }
+        }
+    }
+
+    /** @return list<string> */
+    public static function allowedPaths(): array
+    {
+        return self::$exceptions;
+    }
 
     /** ลงทะเบียน path ของ panel เพิ่ม ใช้ตอน layout เป็น portable ซึ่ง path ไม่ได้อยู่ที่ /etc */
     public static function protectAlso(string ...$paths): void
@@ -99,6 +140,29 @@ final class SelfProtection
 
         foreach ($candidates as $candidate) {
             $candidate = rtrim($candidate, '/');
+
+            /*
+             * ข้อยกเว้นชนะการกัน — แต่**ห้ามมี `..` เด็ดขาด**
+             *
+             * `/var/lib/phpcp/backups/../panel.db` ขึ้นต้นด้วยเส้นทางของข้อยกเว้นทุก
+             * ตัวอักษร แต่ชี้ไปที่ฐานข้อมูลของ panel · ถ้าเทียบด้วยคำนำหน้าเฉย ๆ
+             * ข้อยกเว้นที่ตั้งใจเปิดแค่โฟลเดอร์เดียวจะกลายเป็นทางเข้าถึงทุกอย่างที่
+             * กันไว้ (เทสต์จับได้ตอนเพิ่มข้อยกเว้นครั้งแรก)
+             *
+             * `realpath()` ช่วยได้เฉพาะไฟล์ที่มีอยู่จริง — เส้นทางที่ยังไม่มีไฟล์
+             * (กำลังจะสร้าง) คืน false แล้วเหลือแต่สตริงดิบให้ตรวจ จึงพึ่งมันอย่างเดียวไม่ได้
+             *
+             * ตรวจข้อยกเว้นกับ candidate ตัวเดียวกับที่กำลังวนอยู่เท่านั้น — symlink ที่
+             * ชี้ออกจากโฟลเดอร์ข้อยกเว้นไปหาของที่กันไว้ จึงยังถูกจับที่ candidate ที่ resolve แล้ว
+             */
+            if (!in_array('..', explode('/', $candidate), true)) {
+                foreach (self::$exceptions as $allowed) {
+                    if ($candidate === $allowed || str_starts_with($candidate . '/', $allowed . '/')) {
+                        continue 2;
+                    }
+                }
+            }
+
             foreach (self::protectedPaths() as $protected) {
                 if ($candidate === $protected || str_starts_with($candidate . '/', $protected . '/')) {
                     return true;

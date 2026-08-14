@@ -563,6 +563,67 @@
     }
   });
 
+  /**
+   * อ่าน host key ของเครื่องปลายทางมาเติมในฟอร์ม
+   *
+   * **ต้องเป็นโค้ดจริง ไม่ใช่ `requestApi` ที่ประกาศด้วยแอตทริบิวต์**
+   *
+   * `requestApi` ไม่เรียก `ResponseHandler.process()` เลย — มันดูแค่ว่าคำตอบมี action
+   * ชนิด `notification` ไหมเพื่อตัดสินใจว่าจะขึ้นข้อความเอง แล้วจบ · คำสั่ง `update`
+   * ที่จะเติมค่าลงช่องจึงถูกทิ้งเงียบ ๆ (ยืนยันจากซอร์สของเฟรมเวิร์ก)
+   *
+   * เหตุผลเดียวกับ `pushOffsite` ข้างบน: ค่าที่ต้องส่ง (host/port) มาจากช่องที่ผู้ใช้
+   * เพิ่งพิมพ์ และผลที่ได้ต้องไปลงอีกช่องหนึ่ง — สองอย่างนี้ประกาศด้วยแอตทริบิวต์ไม่ได้
+   */
+  events.registerAction('readHostKey', async (event, element) => {
+    const form = element.closest('form');
+    const field = form ? form.querySelector('[name="known_hosts"]') : null;
+    const host = form ? (form.querySelector('[name="host"]') || {}).value : '';
+    const port = form ? (form.querySelector('[name="port"]') || {}).value : '';
+
+    if (!host || !String(host).trim()) {
+      window.NotificationManager.error(window.Now.translate('Fill in the host first'));
+
+      return;
+    }
+
+    const label = element.textContent;
+    element.disabled = true;
+    element.textContent = window.Now.translate('Reading...');
+
+    try {
+      const result = await window.PhpcpApi.post('/backup-destinations/host-key', {
+        host: String(host).trim(),
+        port: Number(port) || 22,
+      });
+
+      if (field) {
+        field.value = result.known_hosts || '';
+      }
+
+      /*
+       * ลายนิ้วมือต้องค้างอยู่ให้อ่านเทียบได้ ไม่ใช่แถบที่หายไปเอง
+       *
+       * ปุ่มนี้ยืนยันตัวตนของเครื่องปลายทางแทนไม่ได้ — `ssh-keyscan` เชื่อสิ่งที่
+       * ปลายสายตอบมาเหมือนการต่อครั้งแรกทุกประการ · สิ่งเดียวที่ผู้ดูแลทำได้คือ
+       * เทียบลายนิ้วมือกับที่อ่านจากคอนโซลของเครื่องนั้น ซึ่งต้องสลับหน้าจอไปดู
+       */
+      window.NotificationManager.success(result.message);
+
+      const marks = document.querySelector('[data-host-key-fingerprint]');
+
+      if (marks) {
+        marks.hidden = false;
+        marks.textContent = (result.fingerprints || []).join('\n');
+      }
+    } catch (error) {
+      window.NotificationManager.error(error.message);
+    } finally {
+      element.disabled = false;
+      element.textContent = label;
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // เติมค่าจาก query string ลงในเทมเพลตก่อนเรนเดอร์ — `{id}` ในเส้นทางของ API
   //

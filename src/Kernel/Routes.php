@@ -333,6 +333,8 @@ final class Routes
         $router->add(new Route('GET', '/api/v2/backups', BackupsController::class, 'index', 'backup.view', 'api.v2.backups.index'));
         // ต้องมาก่อน {id} — ไม่งั้น "form" ถูกอ่านเป็นรหัสไฟล์สำรอง
         $router->add(new Route('GET', '/api/v2/backups/form', BackupsController::class, 'form', 'backup.manage', 'api.v2.backups.form'));
+        // ที่เก็บไฟล์สำรองบนเครื่องนี้ — เหตุผลเดียวกับ /form ที่ต้องมาก่อน {id}
+        $router->add(new Route('GET', '/api/v2/backups/storage', BackupsController::class, 'storage', 'backup.view', 'api.v2.backups.storage'));
         $router->add(new Route('POST', '/api/v2/backups', BackupsController::class, 'store', 'backup.manage', 'api.v2.backups.store'));
         $router->add(new Route('DELETE', '/api/v2/backups/{id}', BackupsController::class, 'destroy', 'backup.manage', 'api.v2.backups.destroy'));
         // กู้คืนใช้สิทธิ์แยกจากการสร้าง/ลบ — เป็นคำสั่งที่เขียนทับข้อมูลปัจจุบันทั้งหมด
@@ -350,6 +352,10 @@ final class Routes
         $router->add(new Route('GET', '/api/v2/backup-destinations/{id}', BackupDestinationsController::class, 'show', 'backup.offsite', 'api.v2.backup_destinations.show'));
         $router->add(new Route('PATCH', '/api/v2/backup-destinations/{id}', BackupDestinationsController::class, 'update', 'backup.offsite', 'api.v2.backup_destinations.update'));
         $router->add(new Route('DELETE', '/api/v2/backup-destinations/{id}', BackupDestinationsController::class, 'destroy', 'backup.offsite', 'api.v2.backup_destinations.destroy'));
+        // host key ของเครื่องปลายทาง — อ่านจาก **เครื่องนี้** ซึ่งเป็นเครื่องที่จะส่งไฟล์จริง
+        // ไม่ผูกกับ {id} เพราะต้องใช้ตอนกรอกฟอร์มปลายทางใหม่ที่ยังไม่มี id
+        $router->add(new Route('POST', '/api/v2/backup-destinations/host-key', BackupDestinationsController::class, 'hostKey', 'backup.offsite', 'api.v2.backup_destinations.host_key'));
+
         $router->add(new Route('POST', '/api/v2/backup-destinations/{id}/verification', BackupDestinationsController::class, 'verify', 'backup.offsite', 'api.v2.backup_destinations.verify'));
 
         // --- ตารางเวลาสำรองอัตโนมัติ — แตะได้เฉพาะงานที่ทรัพยากรนี้สร้างเอง ---

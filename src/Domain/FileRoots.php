@@ -47,6 +47,15 @@ final class FileRoots
         if (self::isServerAdmin($actor)) {
             $scopes['sites'] = FileScope::forServer('sites', 'เว็บไซต์ทั้งหมด', Paths::usersDir());
             $scopes['server'] = FileScope::forServer('server', 'ทั้งเซิร์ฟเวอร์', '/');
+            /*
+             * ที่เก็บไฟล์สำรอง — ทางเดียวที่ผู้ดูแลจะ**เห็นของจริง** ไม่ใช่เชื่อหน้าจอ
+             *
+             * อยู่ใต้ `/var/lib/phpcp` ที่ SelfProtection กันไว้ จึงต้องมี
+             * `SelfProtection::allowAlso()` ตอน boot คู่กัน (ดู App::boot) ·
+             * ขอบเขต `server` ที่เป็น `/` ครอบเส้นทางนี้อยู่แล้วในทางทฤษฎี แต่ผู้ดูแล
+             * ต้องรู้เส้นทางเองถึงจะเดินไปถึง — รายการนี้ทำให้มันเป็นคลิกเดียว
+             */
+            $scopes['backups'] = FileScope::forServer('backups', 'ไฟล์สำรอง', Paths::backupsDir());
             $scopes['etc'] = FileScope::forServer('etc', 'ค่าตั้งระบบ', '/etc');
             $scopes['varlog'] = FileScope::forServer('varlog', 'Log ระบบ', '/var/log');
             $scopes['varwww'] = FileScope::forServer('varwww', 'เว็บรูทของระบบ', '/var/www');

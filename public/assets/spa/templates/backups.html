@@ -164,6 +164,30 @@
     </div>
     <div class="content-body">
       <!--
+        ไฟล์สำรองเก็บไว้ที่ไหนบนเครื่องนี้ — ต้องบอก ไม่ใช่ให้เดา
+
+        ระบบสำรองข้อมูลมีไว้ใช้ตอนที่อย่างอื่นพังไปหมดแล้ว · ผู้ดูแลที่ไม่รู้ว่าไฟล์
+        อยู่ที่ไหน ตรวจเองไม่ได้เลยว่ามีของอยู่จริงไหม ขนาดเท่าไร ดิสก์จะเต็มเมื่อไร
+        ทำได้แค่เชื่อสิ่งที่ตารางบอก ซึ่งเป็นท่าที่แย่ที่สุดสำหรับเรื่องนี้
+
+        **คอมโพเนนต์ของตัวเอง ไม่ใช่ `meta` ของตาราง** — `meta.*` ผูกกับ `data-text`
+        ไม่ได้ (คอมโพเนนต์เห็นเฉพาะชั้น `data`) ป้ายที่ผูกกับ meta จะไม่ขึ้นเลย
+        เส้นทางต่างกันตาม layout ของการติดตั้ง จึงประกอบในเทมเพลตเองไม่ได้ด้วย
+      -->
+      <div class="flex middle fullwidth" data-component="api" data-endpoint="/api/v2/backups/storage"
+           data-refresh-event="phpcp:reload">
+        <p class="comment">
+          <span data-i18n>Stored on this machine at</span>
+          <code class="mono" data-text="path"></code>
+          —
+          <span data-text="files | number"></span> <span data-i18n>files</span>,
+          <span data-text="bytes | bytes"></span>
+          <span data-show="free_bytes > 0">(<span data-i18n>free</span> <span data-text="free_bytes | bytes"></span>)</span>
+        </p>
+        <a class="btn small icon-folder" data-attr="href:'/app/filemanager?root=' + scope"
+           target="_blank" rel="noopener" data-i18n>Open in File Manager</a>
+      </div>
+      <!--
           เลือกปลายทางครั้งเดียวตรงนี้ แล้วปุ่ม "ส่งออก" ของทุกแถวใช้ค่านี้ — ดีกว่ามี
           ตัวเลือกซ้ำในทุกแถว และดีกว่าเดาปลายทางให้เองเมื่อมีมากกว่าหนึ่งที่ · ตัวเลือกนี้
           อยู่นอกแถว ปุ่ม "ส่งออก" (formatBackupActions ใน js/formatters.js) จึงต้องเป็น

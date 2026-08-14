@@ -51,6 +51,7 @@ use Phpcp\Agent\Capability\SshConfigSet;
 use Phpcp\Agent\Capability\BackupDelete;
 use Phpcp\Agent\Capability\BackupDestinationTest;
 use Phpcp\Agent\Capability\BackupPrune;
+use Phpcp\Agent\Capability\BackupHostKeyScan;
 use Phpcp\Agent\Capability\BackupImport;
 use Phpcp\Agent\Capability\BackupPush;
 use Phpcp\Agent\Capability\BackupRestore;
@@ -217,6 +218,7 @@ final class CapabilityRegistry
             BackupDelete::class,
             BackupPush::class,
             BackupImport::class,
+            BackupHostKeyScan::class,
             BackupPrune::class,
             BackupDestinationTest::class,
 

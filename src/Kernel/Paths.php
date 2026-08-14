@@ -48,6 +48,11 @@ final class Paths
     /** บ้านของผู้ใช้ที่ใช้จริง — static ด้วยเหตุผลเดียวกับ $sitesDir */
     private static string $usersDir = self::DEFAULT_USERS_DIR;
 
+    /** ที่เก็บไฟล์สำรองของการติดตั้งแบบ system — เปลี่ยนตาม layout ผ่าน useBackupsDir() */
+    private const DEFAULT_BACKUPS_DIR = '/var/lib/phpcp/backups';
+
+    private static string $backupsDir = self::DEFAULT_BACKUPS_DIR;
+
     /**
      * รูปทรงของไฟล์ใต้บ้านผู้ใช้ที่ใช้เป็นค่าเริ่มต้น — ดู {@see \Phpcp\Domain\SiteLayout}
      *
@@ -121,6 +126,24 @@ final class Paths
     public static function usersDir(): string
     {
         return self::$usersDir;
+    }
+
+    /**
+     * ที่เก็บไฟล์สำรอง แบบ static — ให้ `FileRoots` เข้าถึงได้โดยไม่ต้องมี Config
+     *
+     * `backups()` ที่เป็น instance method ยังเป็นแหล่งความจริง · ค่านี้ถูกตั้งจาก
+     * ที่นั่นตอน boot เพราะ `FileRoots::forActor()` รับแค่ actor กับ db ตามสัญญาเดิม
+     * และการเพิ่ม Config เข้าไปแปลว่าต้องแก้ทุกผู้เรียกเพื่อค่าเดียว
+     */
+    public static function backupsDir(): string
+    {
+        return self::$backupsDir;
+    }
+
+    /** ตั้งจาก App::boot() จุดเดียว กฎเดียวกับ useUsersDir() */
+    public static function useBackupsDir(string $dir): void
+    {
+        self::$backupsDir = self::assertHostingDir($dir, 'backups.dir') ?? self::DEFAULT_BACKUPS_DIR;
     }
 
     /** เปลี่ยนบ้านของผู้ใช้ — เรียกจาก Config::load() จุดเดียว กฎเดียวกับ useSitesDir() */

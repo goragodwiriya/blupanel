@@ -302,6 +302,27 @@ final class BackupDestinationsController extends ApiController
     }
 
     /**
+     * อ่าน host key ของเครื่องปลายทางมาเติมให้ในฟอร์ม
+     *
+     * รันจากเครื่องนี้ ซึ่งเป็นเครื่องที่จะส่งไฟล์สำรองจริง — กุญแจที่ได้จึงเป็นของ
+     * เครื่องที่มันจะคุยด้วยจริง ๆ ไม่ใช่ของเครื่องที่ผู้ดูแลบังเอิญนั่งอยู่ (ซึ่งอาจ
+     * มองเห็นคนละ IP เมื่อมี NAT หรือ DNS แยกวงใน/วงนอก)
+     *
+     * **คืนข้อมูลล้วน ไม่มี `actions`** — ฝั่งหน้าจอใช้ `readHostKey` ใน `js/ui.js`
+     * ซึ่งเอาค่าไปเติมช่องเอง · ส่ง `actions` มาก็เปล่าประโยชน์เพราะเส้นทางนี้ไม่ได้
+     * ถูกเรียกผ่าน `ResponseHandler` (ดูคอมเมนต์ที่ `readHostKey`)
+     */
+    public function hostKey(Request $request): Response
+    {
+        $result = $this->agent()->data('backup.host_key_scan', [
+            'host' => trim($request->payloadString('host')),
+            'port' => (int) $request->payload('port', 22),
+        ], $this->ctx->actor($request));
+
+        return $this->done((string) ($result['message'] ?? 'Host key read'), [], is_array($result) ? $result : []);
+    }
+
+    /**
      * ค่าตั้งที่ไม่ใช่ความลับของแต่ละ driver
      *
      * รับเป็นฟิลด์แบน ๆ ระดับบนสุด ไม่ใช่ก้อน `config` ซ้อน — ฟอร์มฝั่งหน้าจอส่ง
