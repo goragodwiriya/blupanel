@@ -11,10 +11,6 @@
           <p data-i18n>Machine information and live resource usage</p>
         </div>
       </header>
-      <!--
-        ค่าก้อนแรกมาจาก GET /api/v2/metrics ผ่าน ApiComponent · หลังจากนั้น pageServer
-        เขียนทับช่องที่มี data-live-* ทุก 2 วินาทีจากสตรีม SSE ซึ่งประกาศแทนไม่ได้
-      -->
       <div class="ggrid" data-component="api" data-endpoint="/api/v2/metrics">
         <div class="block3 large6 stat-card">
           <div class="stat-header icon-meter"><span data-i18n>CPU</span></div>
@@ -36,65 +32,31 @@
           <div class="stat-value" data-text="uptime.seconds | duration">—</div>
           <div class="stat-sub" data-text="hostname"></div>
         </div>
-        <!--
-          Swap — ค่านี้ถูกเก็บมาตั้งแต่แรกใน system.metrics แต่ไม่เคยแสดงที่ไหนเลย
-
-          เป็นตัวเลขที่ตอบคำถาม "ต้องเพิ่มแรมไหม" ได้ตรงที่สุด: แรมที่ดูเต็มอาจเป็นแค่
-          แคชของดิสก์ซึ่งไม่ใช่ปัญหา แต่ swap ที่ถูกใช้จริงแปลว่าเครื่องเอาหน่วยความจำ
-          ไปวางบนดิสก์แล้ว — ช้ากว่ากันหลายร้อยเท่าและเป็นสัญญาณว่าแรมไม่พอจริง ๆ
-          · เครื่องที่เปิดเมล (rspamd ~200MB) มักเป็นเครื่องที่ชนเพดานก่อนเพื่อน
-        -->
         <div class="block3 large6 stat-card" data-show="memory.swap_total > 0">
           <div class="stat-header icon-stack"><span data-i18n>Swap</span></div>
           <div class="stat-value" data-text="memory.swap_used | bytes">—</div>
           <div class="meter"><span data-style="width: {{memory.swap_percent}}%"></span></div>
           <div class="stat-sub" data-text="memory.swap_total | bytes"></div>
         </div>
-        <!-- ไม่มี swap เลยก็เป็นข้อมูล ไม่ใช่ช่องว่าง — เครื่องที่ไม่มีจะโดน OOM kill ทันทีที่แรมหมด -->
         <div class="block3 large6 stat-card" data-show="memory.swap_total === 0">
           <div class="stat-header icon-stack"><span data-i18n>Swap</span></div>
           <div class="stat-value" data-i18n>Not configured</div>
           <div class="stat-sub" data-i18n>Processes are killed when memory runs out</div>
         </div>
       </div>
-      <!--
-        กราฟย้อนหลัง — PLAN-V2 เฟส E6
-        ข้อมูลมาจาก /api/v2/metrics/history ซึ่งเก็บโดยงานตามเวลา metrics.record ทุกนาที
-        ปุ่มเลือกช่วงเป็น radio ธรรมดา — pageServer อ่านค่าแล้วโหลดกราฟใหม่
-      -->
       <div class="content-body">
         <div class="flex justify-between middle">
           <h2 class="icon-meter" data-i18n>Resource history</h2>
-          <!--
-            เวลาที่โหลดข้อมูลรอบล่าสุด — กราฟที่ขยับเองต้องบอกได้ว่ามันยังทำงานอยู่
-            ไม่งั้น "ค่าไม่เปลี่ยนเพราะเครื่องนิ่ง" กับ "ค้างเพราะสตรีมหลุด" หน้าตาเหมือนกัน
-          -->
           <span class="comment" data-metrics-updated hidden></span>
           <div class="btn-group" data-metrics-ranges>
-            <!--
-              20 นาทีคือช่วงเดียวที่ได้ค่าดิบรายนาที ไม่ผ่านการเฉลี่ย — ใช้ตอนอยากเห็น
-              ว่าเมื่อครู่นี้เกิดอะไรขึ้น ซึ่งค่าเฉลี่ยรายชั่วโมงกลบจนหายไปหมด
-            -->
-            <button type="button" class="btn small" data-range="20m" data-i18n>20 {LNG_minutes}</button>
-            <button type="button" class="btn small is-active" data-range="24h" data-i18n>24 {LNG_hours}</button>
+            <button type="button" class="btn small is-active" data-range="20m" data-i18n>20 {LNG_minutes}</button>
+            <button type="button" class="btn small" data-range="24h" data-i18n>24 {LNG_hours}</button>
             <button type="button" class="btn small" data-range="7d" data-i18n>7 {LNG_days}</button>
             <button type="button" class="btn small" data-range="30d" data-i18n>30 {LNG_days}</button>
             <button type="button" class="btn small" data-range="1y" data-i18n>1 {LNG_year}</button>
           </div>
         </div>
         <p class="comment" data-metrics-empty hidden data-i18n>No data yet — the collector runs every minute, so the first points appear shortly after installation.</p>
-        <!--
-          กราฟดึงข้อมูลเองผ่าน data-url — API ตอบรูป [{name, data:[{label,value}]}] ที่
-          GraphComponent อ่านได้ตรง ๆ จึงไม่ต้องมี JS แปลงข้อมูล (แบบเดียวกับตัวอย่าง
-          api/v1/quarterly-sales ของ adminframework) · pageServer แค่สลับ data-url
-          ตอนกดปุ่มเลือกช่วง ซึ่งเป็นสิ่งเดียวที่ประกาศด้วยแอตทริบิวต์ไม่ได้
-
-          **data-max-data-points="0" ห้ามลบ** — ค่าเริ่มต้นของ GraphComponent คือ 20 และ
-          มันวาด `data.slice(0, 20)` ซึ่งเป็น **จุดแรก ๆ ของชุด ไม่ใช่จุดล่าสุด** ·
-          ทุกช่วงที่ส่งจุดมามากกว่า 20 จะถูกตัดท้ายทิ้งเงียบ ๆ เหลือแต่ต้นชุด
-          กราฟจึงค้างอยู่ที่เวลาเดิมตลอดทั้งที่ข้อมูลสดมาครบ · 0 = วาดทุกจุดที่ได้มา
-          ซึ่งใช้ได้เพราะฝั่งเซิร์ฟเวอร์สรุปให้เหลือ 12–30 จุดตามช่วงที่เลือกมาแล้ว
-        -->
         <div data-metrics-graph class="metrics-graph" data-component="graph" data-type="line"
              data-max-data-points="0" data-url="/api/v2/metrics/history?range=24h"></div>
       </div>
@@ -137,16 +99,6 @@
           </tbody>
         </table>
       </div>
-      <!--
-        ชื่อโฮสต์ — เดิมเปลี่ยนได้จากคอนโซลเท่านั้น ทั้งที่ Postfix แนะนำตัวด้วยชื่อนี้
-        และใบรับรองของหน้าจัดการอ้างชื่อนี้
-
-        ไม่เช็ค `permissions[...]` ที่นี่เพราะขอบเขตของบล็อกนี้คือคำตอบของ
-        /api/v2/system/info ซึ่งไม่มีคีย์นั้น — นิพจน์ที่ตีความไม่ได้ทำให้ Now.js
-        **แสดง**ธาตุนั้น ผลจึงตรงข้ามกับที่ตั้งใจ · ไม่จำเป็นอยู่แล้วด้วย เพราะทั้งหน้า
-        ต้องมี `server.view` ซึ่งผู้ดูแลเว็บไซต์ไม่มี และตัว endpoint บังคับ
-        `settings.manage` อีกชั้นตอนกดบันทึกจริง
-      -->
       <div class="content-body" data-component="api" data-endpoint="/api/v2/system/info">
         <h2 class="icon-host" data-i18n>Change hostname</h2>
         <form data-form="hostname" action="/api/v2/system/hostname" method="post" data-method="PUT" data-ajax-submit="true" data-emit-event="phpcp:reload">
