@@ -65,9 +65,34 @@ final class SshdStateExecutor implements Executor
     public function isSimulated(): bool { return true; }
     public function simulatedCommands(): array { return $this->inner->simulatedCommands(); }
     public function path(string $absolutePath): string { return $absolutePath; }
-    public function readFile(string $path): string { return $this->inner->readFile($path); }
+
+    /**
+     * ตอบจากค่าคงที่ ไม่อ่าน /etc ของเครื่องที่รันเทสต์
+     *
+     * เทสต์นี้เคยผ่านเพราะ**บังเอิญ**: เครื่องที่เคยติดตั้ง phpcp มี `phpcp-sftp.conf`
+     * ตรงกับที่ระบบจะเขียนพอดี `ensureConfig()` จึง early-return แล้วไหลไปถึง reload
+     * · พอ `sites.users_dir` เปลี่ยน (ซึ่งอยู่ในเนื้อไฟล์ผ่าน ChrootDirectory) ความบังเอิญ
+     * นั้นหายไป แล้วเทสต์ล้มทั้งที่โค้ดที่มันตรวจไม่ได้เปลี่ยนเลย
+     */
+    public function readFile(string $path): string
+    {
+        if ($path === SftpAccessManager::CONFIG_FILE) {
+            return "# ของเดิมที่ล้าสมัย\n";
+        }
+
+        if ($path === Phpcp\Driver\SshManager::CONFIG) {
+            return "Include /etc/ssh/sshd_config.d/*.conf\nPort 22\n";
+        }
+
+        return $this->inner->readFile($path);
+    }
+
     public function writeFile(string $path, string $content, int $mode = 0644): void { $this->inner->writeFile($path, $content, $mode); }
-    public function exists(string $path): bool { return $this->inner->exists($path); }
+    public function exists(string $path): bool
+    {
+        return in_array($path, [SftpAccessManager::CONFIG_FILE, Phpcp\Driver\SshManager::CONFIG], true)
+            || $this->inner->exists($path);
+    }
     public function makeDirectory(string $path, int $mode = 0755): void { $this->inner->makeDirectory($path, $mode); }
     public function diskSpace(string $path): array { return $this->inner->diskSpace($path); }
     public function realPath(string $path): ?string { return $this->inner->realPath($path); }

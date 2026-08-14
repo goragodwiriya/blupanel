@@ -239,25 +239,31 @@ test('เส้นทางของเว็บไซต์ทุกอย่�
     withUsersDir('/mnt/Server/htdocs', static function (): void {
         $site = pointerSite();
 
-        assertSame('/mnt/Server/htdocs/sitefiles/domains/example.test', $site->root(), 'บ้านของเว็บไซต์');
-        assertSame('/mnt/Server/htdocs/sitefiles/domains/example.test/public', $site->docroot(), 'docroot');
-        assertSame('/mnt/Server/htdocs/sitefiles/domains/example.test/logs/error.log', $site->errorLog(), 'error log');
-        assertSame('/mnt/Server/htdocs/sitefiles/domains/example.test/tmp', $site->tmpDir(), 'tmp');
+        assertSame('/mnt/Server/htdocs/sitefiles/.phpcp/example.test', $site->root(), 'ที่เก็บของประจำเว็บ');
+        assertSame('/mnt/Server/htdocs/sitefiles/public_html', $site->docroot(), 'docroot');
+        assertSame('/mnt/Server/htdocs/sitefiles/logs/example.test/error.log', $site->errorLog(), 'error log');
+        assertSame('/mnt/Server/htdocs/sitefiles/.phpcp/example.test/tmp', $site->tmpDir(), 'tmp');
 
         // log ของ PHP อยู่ระดับบัญชี ไม่ใช่ระดับเว็บ เพราะ pool เดียวรับหลายเว็บ
         assertSame('/mnt/Server/htdocs/sitefiles/logs/php-8.4-error.log', $site->phpErrorLog(), 'log ของ PHP');
     });
 
     assertSame(
-        Paths::DEFAULT_USERS_DIR . '/sitefiles/domains/example.test',
+        Paths::DEFAULT_USERS_DIR . '/sitefiles/.phpcp/example.test',
         pointerSite()->root(),
         'คืนค่าเดิมหลังจบ',
     );
 });
 
-test('ค่าเริ่มต้นต้องไม่เปลี่ยน — ติดตั้งที่ไม่ได้ตั้งค่าอะไรต้องได้เส้นทางเดิม', static function (): void {
-    assertSame('/srv/phpcp/users', Paths::DEFAULT_USERS_DIR, 'ค่าเริ่มต้นของบ้านผู้ใช้');
-    assertSame('/srv/phpcp/users/sitefiles/domains/example.test/public', pointerSite()->docroot(), 'docroot เริ่มต้น');
+test('ค่าเริ่มต้นคือ /home/<ผู้ใช้>/public_html — รูปที่ผู้ดูแลยูนิกซ์และลูกค้าคาดหวัง', static function (): void {
+    /*
+     * เดิมเป็น `/srv/phpcp/users/<ผู้ใช้>/domains/<โดเมน>/public` ซึ่งซ้อนลึกสามชั้นและ
+     * ไม่ตรงกับความคาดหวังของใครเลย — ผู้ดูแลที่ ssh เข้าเครื่องหาบ้านผู้ใช้ที่ /home
+     * และลูกค้าที่ย้ายมาจาก cPanel/DirectAdmin หา public_html · สคริปต์ deploy ของเขา
+     * เขียนเส้นทางเต็มไว้ทุกตัวและต้องแก้ทั้งหมดถ้าเส้นทางไม่ตรงกับมาตรฐาน
+     */
+    assertSame('/home', Paths::DEFAULT_USERS_DIR, 'บ้านผู้ใช้อยู่ที่เดียวกับทั้งระบบยูนิกซ์');
+    assertSame('/home/sitefiles/public_html', pointerSite()->docroot(), 'docroot เริ่มต้น');
 });
 
 test('เว็บทุกแห่งของเจ้าของคนเดียวกันใช้บัญชีระบบและ pool เดียวกัน', static function (): void {
@@ -294,9 +300,9 @@ test('Domain Pointer เปลี่ยนเฉพาะ docroot — log แล
     $site = pointerSite('/mnt/Server/htdocs/legacy-project');
 
     assertSame('/mnt/Server/htdocs/legacy-project', $site->docroot(), 'docroot ชี้ไปโฟลเดอร์เดิม');
-    assertSame('/srv/phpcp/users/sitefiles/domains/example.test', $site->root(), 'บ้านของเว็บไซต์ไม่เปลี่ยน');
-    assertSame('/srv/phpcp/users/sitefiles/domains/example.test/logs/error.log', $site->errorLog(), 'log ยังแยกตามเว็บ');
-    assertSame('/srv/phpcp/users/sitefiles/domains/example.test/tmp', $site->tmpDir(), 'tmp ยังแยกตามเว็บ');
+    assertSame('/home/sitefiles/.phpcp/example.test', $site->root(), 'ที่เก็บของประจำเว็บไม่เปลี่ยน');
+    assertSame('/home/sitefiles/logs/example.test/error.log', $site->errorLog(), 'log ยังแยกตามเว็บ');
+    assertSame('/home/sitefiles/.phpcp/example.test/tmp', $site->tmpDir(), 'tmp ยังแยกตามเว็บ');
 });
 
 test('เส้นทางที่ชี้ออกนอกขอบเขตต้องถูกปฏิเสธ — กันเสิร์ฟทั้งเครื่องผ่าน vhost', static function (): void {
@@ -422,7 +428,7 @@ test('vhost และ FPM pool ต้องใช้เส้นทางที�
     );
 
     assertTrue(
-        str_contains($pool, 'open_basedir] = /srv/phpcp/users/sitefiles:/mnt/Server/htdocs/legacy-project:'),
+        str_contains($pool, 'open_basedir] = /home/sitefiles:/mnt/Server/htdocs/legacy-project:'),
         'open_basedir ต้องมีทั้งบ้านของเจ้าของและโฟลเดอร์ที่ชี้ไป',
     );
     assertTrue(
@@ -430,7 +436,7 @@ test('vhost และ FPM pool ต้องใช้เส้นทางที�
         'open_basedir ต้องไม่กว้างจนเห็นโปรเจกต์อื่นในโฟลเดอร์แม่เดียวกัน',
     );
     assertTrue(
-        !str_contains($pool, '/srv/phpcp/users:'),
+        !str_contains($pool, '/home:'),
         'open_basedir ต้องไม่กว้างจนเห็นบ้านของลูกค้ารายอื่น',
     );
 });
@@ -472,7 +478,10 @@ test('ค่าเริ่มต้นต้อง chown เสมอ — ก�
     pointerProvisioner(sharedOwner: false)->setOwnership($executor, pointerSite());
 
     assertSame(
-        ['/usr/bin/chown -R sitefiles:www-data /srv/phpcp/users/sitefiles/domains/example.test'],
+        ['/usr/bin/chown -R sitefiles:www-data /home/sitefiles/.phpcp/example.test',
+         '/usr/bin/chown -R sitefiles:www-data /home/sitefiles/public_html',
+         '/usr/bin/chown -R sitefiles:www-data /home/sitefiles/logs/example.test',
+         '/usr/bin/chown -R sitefiles:www-data /home/sitefiles/backups/example.test'],
         $executor->commands,
         'โหมดปกติต้อง chown บ้านของเว็บไซต์',
     );
@@ -496,7 +505,10 @@ test('Domain Pointer ต้อง chown โฟลเดอร์ปลายท�
 
     assertSame(
         [
-            '/usr/bin/chown -R sitefiles:www-data /srv/phpcp/users/sitefiles/domains/example.test',
+            '/usr/bin/chown -R sitefiles:www-data /home/sitefiles/.phpcp/example.test',
+            '/usr/bin/chown -R sitefiles:www-data /home/sitefiles/public_html',
+            '/usr/bin/chown -R sitefiles:www-data /home/sitefiles/logs/example.test',
+            '/usr/bin/chown -R sitefiles:www-data /home/sitefiles/backups/example.test',
             '/usr/bin/chown -R sitefiles:www-data /mnt/Server/htdocs/legacy-project',
         ],
         $executor->commands,

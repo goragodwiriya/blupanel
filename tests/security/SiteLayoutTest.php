@@ -42,13 +42,13 @@ test('เลย์เอาต์ phpcp ต้องได้เส้นทา�
 });
 
 test('บัญชีที่ยังไม่เคยเลือกต้องตกไปที่ค่าเริ่มต้นของระบบ ไม่ใช่ล้ม', static function (): void {
-    // ค่าว่างกับ 'phpcp' เป็นคนละความหมาย: อันแรกขยับตามค่าเริ่มต้นของระบบ อันหลังไม่ขยับ
+    // ค่าว่างกับ 'cpanel' เป็นคนละความหมาย: อันแรกขยับตามค่าเริ่มต้นของระบบ อันหลังไม่ขยับ
     $site = siteLayoutSite(siteLayoutUser(null), 'main.test');
 
     assertSame(
-        Paths::usersDir() . '/lucy/domains/main.test/public',
+        Paths::usersDir() . '/lucy/public_html',
         $site->docroot(),
-        'ค่าเริ่มต้นของระบบคือ phpcp',
+        'ค่าเริ่มต้นของระบบคือ cpanel',
     );
 });
 

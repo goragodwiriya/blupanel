@@ -232,8 +232,8 @@ test('site.delete ต้องได้ชื่อโดเมนยืนย�
 test('เส้นทางของเว็บไซต์อนุมานจากเจ้าของและโดเมนอย่างสม่ำเสมอ', static function (): void {
     $site = testSite();
 
-    assertSame('/srv/phpcp/users/sitefiles/domains/example.test', $site->root(), 'บ้านของเว็บไซต์');
-    assertSame('/srv/phpcp/users/sitefiles/domains/example.test/public', $site->docroot(), 'docroot');
+    assertSame('/home/sitefiles/.phpcp/example.test', $site->root(), 'ที่เก็บของประจำเว็บ');
+    assertSame('/home/sitefiles/public_html', $site->docroot(), 'docroot');
 
     // socket และไฟล์ pool ผูกกับ (เจ้าของ × เวอร์ชัน) ไม่ใช่กับโดเมน — เว็บหลายแห่ง
     // ของเจ้าของคนเดียวกันจึงใช้ pool ร่วมกันได้

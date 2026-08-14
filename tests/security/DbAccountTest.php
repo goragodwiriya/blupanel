@@ -126,7 +126,7 @@ test('ฐานข้อมูลของลูกค้าต้องได�
     $siteId = $db->insert('sites', [
         'name' => 'ร้านค้า',
         'primary_domain' => 'shop.example.com',
-        'docroot' => '/srv/phpcp/users/shopowner/domains/shop.example.com/public',
+        'docroot' => '/home/shopowner/public_html',
         'php_version' => '8.4',
         'owner_user_id' => $ownerId,
         'created_at' => $now,

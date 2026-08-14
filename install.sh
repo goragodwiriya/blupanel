@@ -6,7 +6,7 @@
 #   sudo ./install.sh --mode=sandbox           install for testing, never touches the real system
 #   ./install.sh --mode=sandbox --portable     test inside the project folder, no root required
 #
-#   --users-dir=/mnt/Server/hosting    keep user home directories somewhere else than /srv/phpcp/users
+#   --users-dir=/mnt/Server/htdocs     keep user home directories somewhere else than /home
 #   --sites-dir=/mnt/Server/htdocs     where sites of the legacy layout live (before migration 0006)
 #   --pointer-root=/mnt/Server/htdocs  allow a DocumentRoot to point into this folder (repeatable)
 #   --shared-owner                     NTFS/exFAT/FAT only - skip ownership separation between sites
@@ -42,9 +42,9 @@ RUN_DIR="/run/phpcp"
 # The panel's tmp lives under DATA_DIR, not /tmp, because /tmp is wiped at boot and the service would fail to start
 TMP_DIR="$DATA_DIR/tmp"
 SITES_DIR="/srv/phpcp/sites"
-# Home directories of hosting users - site files live at <USERS_DIR>/<user>/domains/<domain>/
+# Home directories of hosting users - site files live at <USERS_DIR>/<user>/public_html
 # Since migration 0006 the uid and the disk quota belong to the user, not to the site
-USERS_DIR="/srv/phpcp/users"
+USERS_DIR="/home"
 SHARED_OWNER="no"
 POINTER_ROOTS=""  # empty = derive from sites_dir automatically
 SANDBOX_DIR="/opt/phpcp-sandbox"
@@ -408,7 +408,14 @@ mkdir -p "$INSTALL_DIR" "$CONF_DIR" "$DATA_DIR/backups" "$TMP_DIR" "$LOG_DIR" "$
 
 # 0711 = walk into your own home, but never `ls` the list of all homes,
 # so a customer cannot tell how many other customers are on this machine or what they are called
-chmod 0711 "$USERS_DIR"
+#
+# Ubuntu ships /home as 0755, which lets any account list every customer on the box. Tightening it
+# is the right default for a hosting machine and is what cPanel/DirectAdmin do - but it is a change
+# to a directory this installer did not create, so say it out loud instead of doing it silently.
+if [ "$(stat -c '%a' "$USERS_DIR" 2>/dev/null)" != "711" ]; then
+  chmod 0711 "$USERS_DIR"
+  say "Set $USERS_DIR to 0711 so customers cannot list each other (they still reach their own home)"
+fi
 
 # `views` left this list on 2026-08-08 - the HTML UI was deleted entirely.
 # Every page is now the SPA under `public/assets/spa/`, and the `templates` that remain are

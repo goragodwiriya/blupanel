@@ -40,7 +40,7 @@ final class AccountProvisioner
             '--no-create-home',
             '--home-dir', $account->home(),
             '--shell', '/usr/sbin/nologin',
-            '--comment', 'phpcp hosting account '.$account->username,
+            '--comment', self::comment($account->username),
             $account->username,
         ], timeout: 20);
 
@@ -67,8 +67,17 @@ final class AccountProvisioner
      * และถ้าปล่อยผ่าน เราจะ `chown -R` ไฟล์เว็บไปให้ uid ของคนอื่นที่มีอยู่ก่อนแล้ว
      * ซึ่งแปลว่าคนนั้นอ่านและแก้ไฟล์ของลูกค้าได้ทั้งหมด
      *
-     * ตัดสินจาก home directory ที่บันทึกไว้ใน /etc/passwd ไม่ใช่จากชื่อ เพราะเป็น
-     * หลักฐานเดียวที่บอกได้ว่าบัญชีนี้เป็นของ panel จริง
+     * ตัดสินจาก**ลายเซ็นที่ panel ประทับไว้ในช่อง comment** ตอน `useradd` ไม่ใช่จากชื่อ
+     * และไม่ใช่จากเส้นทางบ้าน
+     *
+     * เดิมเทียบ home directory ซึ่งใช้ได้ตอนบ้านอยู่ที่ `/srv/phpcp/users` — บัญชีของ
+     * ระบบไม่มีทางมีบ้านอยู่ในนั้น · **แต่ตั้งแต่บ้านย้ายมาที่ `/home` การเทียบแบบนั้น
+     * กลับด้านทันที**: ผู้ใช้ระบบชื่อ `deploy` ที่มีบ้าน `/home/deploy` อยู่ก่อนแล้ว
+     * จะ "ตรง" กับที่ panel คำนวณได้พอดี แล้ว panel จะถือว่าเป็นบัญชีของตัวเอง
+     * → `chown -R` ไฟล์ของคนนั้นไปเป็นของ www-data และเอาบ้านเขาไปเป็นที่เก็บเว็บ
+     *
+     * ช่อง comment เป็นหลักฐานที่ตรงกว่า เพราะ panel เขียนมันเองตอนสร้างและไม่มีเหตุ
+     * ให้บัญชีที่ผู้ดูแลสร้างเองมีข้อความนี้
      */
     private function assertNameAvailable(Executor $executor, UserAccount $account): void
     {
@@ -80,9 +89,10 @@ final class AccountProvisioner
 
         // รูปแบบ: name:x:uid:gid:comment:home:shell
         $fields = explode(':', trim($entry->output()));
+        $comment = $fields[4] ?? '';
         $home = $fields[5] ?? '';
 
-        if ($home === $account->home()) {
+        if ($comment === self::comment($account->username)) {
             return; // บัญชีของ panel เอง สร้างไว้รอบก่อน
         }
 
@@ -90,6 +100,17 @@ final class AccountProvisioner
             "ชื่อ {$account->username} ถูกใช้เป็นบัญชีของระบบอยู่แล้ว (บ้านอยู่ที่ {$home}) — "
             .'ต้องเปลี่ยนชื่อผู้ใช้ก่อนจึงจะสร้างเว็บได้',
         );
+    }
+
+    /**
+     * ลายเซ็นในช่อง comment ของ /etc/passwd — หลักฐานว่าบัญชีนี้ panel สร้างเอง
+     *
+     * ต้องคงที่ตลอดไป การเปลี่ยนข้อความนี้แปลว่าบัญชีที่สร้างไว้ก่อนหน้าจะถูกมองว่า
+     * เป็นของคนอื่นทันที แล้วเว็บที่สองของลูกค้าเดิมจะสร้างไม่ได้อีก
+     */
+    public static function comment(string $username): string
+    {
+        return 'phpcp hosting account '.$username;
     }
 
     /**

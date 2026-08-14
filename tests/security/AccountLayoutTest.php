@@ -241,7 +241,7 @@ test('Domain Pointer ของทุกเว็บในบัญชีต้�
         ['/mnt/legacy/project-b'],
     );
 
-    assertTrue(str_contains($pool, '/srv/phpcp/users/alice:'), 'ต้องมีบ้านของเจ้าของ');
+    assertTrue(str_contains($pool, '/home/alice:'), 'ต้องมีบ้านของเจ้าของ');
     assertTrue(str_contains($pool, ':/mnt/legacy/project-b:'), 'ต้องมีโฟลเดอร์ที่ Domain Pointer ชี้ไป');
 });
 
@@ -270,8 +270,11 @@ test('ชื่อบัญชีที่ชนกับผู้ใช้ร�
 });
 
 test('บัญชีที่ panel สร้างไว้เองต้องใช้ซ้ำได้ ไม่ใช่ถูกปฏิเสธว่าชื่อซ้ำ', static function (): void {
-    // เว็บที่สองของลูกค้าคนเดิมต้องสร้างได้ — ตัดสินจาก home directory ใน /etc/passwd
-    // ซึ่งเป็นหลักฐานเดียวที่บอกได้ว่าบัญชีนี้เป็นของ panel จริง
+    // เว็บที่สองของลูกค้าคนเดิมต้องสร้างได้ — ตัดสินจากลายเซ็นในช่อง comment ของ
+    // /etc/passwd ที่ panel ประทับไว้ตอนสร้าง ไม่ใช่จากเส้นทางบ้าน
+    //
+    // เทียบเส้นทางบ้านใช้ไม่ได้ตั้งแต่บ้านย้ายมาที่ /home: ผู้ใช้ระบบที่มีอยู่ก่อนแล้ว
+    // ก็มีบ้านอยู่ที่ /home/<ชื่อ> เหมือนกันเป๊ะ
     $provisioner = new AccountProvisioner(new ApacheDriver(new Template(PHPCP_ROOT.'/templates')));
     $account = new UserAccount(9, 'alice');
 
