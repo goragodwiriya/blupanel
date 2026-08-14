@@ -293,3 +293,63 @@ test('ตัวติดตั้งเขียน config.php ได้คร�
         assertTrue(str_contains($example, $key), "config.example.php ต้องมีคีย์ {$key}");
     }
 });
+
+test('บริการของ panel ต้องเข้าถึงบ้านลูกค้าได้ แต่ยังกัน /root', static function (): void {
+    /*
+     * **เจอบนเซิร์ฟเวอร์จริง (2026-08-14):** ทุก unit ตั้ง `ProtectHome=yes` ซึ่งทำให้
+     * /home, /root และ /run/user **ว่างเปล่า**ในมุมมองของบริการ · ตั้งแต่บ้านลูกค้าย้ายมา
+     * อยู่ที่ /home ตัว agent จึงสร้างบ้านใครไม่ได้เลย — `site.create` ล้มด้วย
+     * "สร้างไดเรกทอรีไม่สำเร็จ: /home/<ผู้ใช้>" ทุกครั้ง
+     *
+     * `ReadWritePaths=/home` ปลดล็อกไม่ได้ (ทดสอบบนเครื่องจริงแล้ว) เพราะ systemd ซ่อน
+     * /home ตั้งแต่ตอนสร้าง mount namespace ก่อนที่ ReadWritePaths จะมีผล
+     */
+    foreach ([
+        'phpcp-agentd.service.tpl',
+        'phpcp-web.service.tpl',
+        'phpcp-scheduler.service.tpl',
+        'phpcp-fpm.service.tpl',
+    ] as $unit) {
+        $tpl = (string) file_get_contents(PHPCP_ROOT . '/templates/panel/' . $unit);
+
+        // ตัดคอมเมนต์ก่อน — ไฟล์อธิบายเหตุผลไว้ยาวและมีคำว่า ProtectHome อยู่ในนั้น
+        $directives = implode("\n", array_filter(
+            explode("\n", $tpl),
+            static fn (string $l): bool => !str_starts_with(ltrim($l), '#'),
+        ));
+
+        assertTrue(
+            !str_contains($directives, 'ProtectHome=yes'),
+            "{$unit}: ProtectHome=yes ซ่อน /home ทำให้ panel ทำงานกับบ้านลูกค้าไม่ได้",
+        );
+        assertTrue(
+            str_contains($directives, 'InaccessiblePaths=/root'),
+            "{$unit}: ปิด ProtectHome แล้วต้องกัน /root ตรง ๆ แทน ไม่ใช่ปล่อยเปิดหมด",
+        );
+    }
+});
+
+test('ตัวเลือกแรกของ select ต้องเป็นค่าเริ่มต้นที่ถูก — คนที่กดบันทึกเฉย ๆ ต้องไม่เปลี่ยนอะไร', static function (): void {
+    /*
+     * **เจอบนเซิร์ฟเวอร์จริง (2026-08-14):** หน้าตั้งค่าผูกค่าไว้เป็น
+     * `values['sites.layout'] || 'phpcp'` และเรียง phpcp ไว้บนสุด · ผู้ดูแลเปิดหน้านั้น
+     * แล้วกดบันทึก (เพื่อแก้ค่าอื่น) จึงเขียน `phpcp` ทับค่าเริ่มต้นของระบบโดยไม่ได้ตั้งใจ
+     * แล้วเว็บที่สร้างหลังจากนั้นไปลงที่เลย์เอาต์เก่าทั้งหมด
+     */
+    $page = (string) file_get_contents(PHPCP_ROOT . '/public/assets/spa/templates/settings.html');
+
+    assertTrue(
+        !str_contains($page, "values['sites.layout'] || 'phpcp'"),
+        'ห้ามใส่ fallback เป็นค่าที่ไม่ใช่ค่าเริ่มต้นของระบบ',
+    );
+
+    // ตัวเลือกแรกคือสิ่งที่เบราว์เซอร์เลือกให้เมื่อค่าที่ผูกไว้ยังว่าง
+    $select = (string) (preg_match('/<select[^>]*name="sites\.layout".*?<\/select>/s', $page, $m) === 1 ? $m[0] : '');
+
+    assertTrue($select !== '', 'ต้องมีช่องเลือกเลย์เอาต์ในหน้าตั้งค่า');
+    assertTrue(
+        preg_match('/<option value="([^"]*)"/', $select, $first) === 1
+            && $first[1] === Phpcp\Domain\SiteLayout::DEFAULT->value,
+        'ตัวเลือกแรกต้องเป็น ' . Phpcp\Domain\SiteLayout::DEFAULT->value . ' ซึ่งเป็นค่าเริ่มต้นของระบบ',
+    );
+});

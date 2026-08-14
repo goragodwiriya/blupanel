@@ -302,10 +302,11 @@
               <div class="width50">
                 <label for="ul_layout" data-i18n>Layout</label>
                 <span class="form-control icon-folder">
+                  <!-- "ตามค่าเริ่มต้น" มาก่อน เพราะเป็นสิ่งที่ควรได้เมื่อไม่ได้ตั้งใจเลือกอะไร -->
                   <select id="ul_layout" name="layout" data-value="site_layout">
                     <option value="" data-i18n>Follow the system default</option>
-                    <option value="phpcp">phpcp — &lt;home&gt;/domains/&lt;domain&gt;/public</option>
                     <option value="cpanel">cPanel — &lt;home&gt;/public_html</option>
+                    <option value="phpcp">phpcp — &lt;home&gt;/domains/&lt;domain&gt;/public</option>
                   </select>
                 </span>
               </div>

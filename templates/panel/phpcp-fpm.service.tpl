@@ -21,7 +21,11 @@ RuntimeDirectoryPreserve=yes
 
 NoNewPrivileges=yes
 ProtectSystem=full
-ProtectHome=yes
+# ProtectHome=no + InaccessiblePaths=/root — ดูเหตุผลเต็มใน phpcp-agentd.service.tpl
+# โดยย่อ: บ้านลูกค้าอยู่ที่ /home ตั้งแต่เลย์เอาต์มาตรฐานเปลี่ยน การซ่อน /home คือการ
+# กันไม่ให้ panel ทำงานกับข้อมูลของตัวเอง · /root ยังกันไว้เพราะไม่มีเหตุต้องแตะ
+ProtectHome=no
+InaccessiblePaths=/root
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 RestrictNamespaces=yes

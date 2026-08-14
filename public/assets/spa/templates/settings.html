@@ -103,9 +103,15 @@
             <div>
               <label for="sites_layout" data-i18n>Where site files go</label>
               <span class="form-control icon-folder">
-                <select id="sites_layout" name="sites.layout" data-value="values['sites.layout'] || 'phpcp'">
-                  <option value="phpcp">phpcp — &lt;home&gt;/domains/&lt;domain&gt;/public</option>
+                <!--
+                  cpanel มาก่อนเพราะเป็นค่าเริ่มต้นของระบบ · **ห้ามใส่ `|| 'phpcp'` กลับมา** —
+                  ตัวเลือกแรกคือสิ่งที่เบราว์เซอร์เลือกให้เมื่อค่าที่ผูกไว้ยังว่าง การใส่ fallback
+                  เป็นค่าอื่นแปลว่าผู้ดูแลที่แค่เปิดหน้านี้แล้วกดบันทึก จะเขียนทับค่าเริ่มต้น
+                  ด้วยของที่ไม่ได้ตั้งใจเลือก (เกิดขึ้นจริงมาแล้ว 2026-08-14)
+                -->
+                <select id="sites_layout" name="sites.layout" data-value="values['sites.layout']">
                   <option value="cpanel">cPanel — &lt;home&gt;/public_html</option>
+                  <option value="phpcp">phpcp — &lt;home&gt;/domains/&lt;domain&gt;/public</option>
                 </select>
               </span>
             </div>

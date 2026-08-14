@@ -26,7 +26,19 @@ RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=yes
 
 NoNewPrivileges=yes
-ProtectHome=yes
+# ProtectHome=no + InaccessiblePaths=/root — ไม่ใช่การผ่อนความปลอดภัย แต่เป็นการเล็งให้ตรง
+#
+# `ProtectHome=yes` ทำให้ /home, /root และ /run/user **ว่างเปล่า**ในมุมมองของบริการนี้ ·
+# ตั้งแต่บ้านของลูกค้าย้ายมาอยู่ที่ /home ตัว agent จึงสร้างหรือแตะบ้านใครไม่ได้เลย
+# — `site.create` ล้มด้วย "สร้างไดเรกทอรีไม่สำเร็จ: /home/<ผู้ใช้>" ทุกครั้ง
+#
+# `ReadWritePaths=/home` **ปลดล็อกไม่ได้** — ทดสอบบนเครื่องจริงแล้ว (2026-08-14) systemd
+# ซ่อน /home ตั้งแต่ตอนสร้าง mount namespace ก่อนที่ ReadWritePaths จะมีผล
+#
+# จึงปิด ProtectHome แล้วกัน /root ตรง ๆ แทน ซึ่งเป็นสิ่งเดียวในสามอย่างนั้นที่ panel
+# ไม่มีเหตุต้องแตะเลย · /home เป็นเนื้องานของ panel โดยตรง การกันมันคือการกันไม่ให้ทำงาน
+ProtectHome=no
+InaccessiblePaths=/root
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 RestrictNamespaces=yes
