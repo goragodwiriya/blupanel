@@ -465,7 +465,19 @@ fi
   $s = file_get_contents($f);
   $s = preg_replace("/(\x27mode\x27\s*=>\s*)\x27[^\x27]*\x27/", "$1\x27".$argv[2]."\x27", $s, 1);
   $s = preg_replace("/(\x27layout\x27\s*=>\s*)\x27[^\x27]*\x27/", "$1\x27system\x27", $s, 1);
-  $s = preg_replace("/(\x27port\x27\s*=>\s*)\d+/", "$1".$argv[3], $s, 1);
+  /*
+   * ${1} not $1 - the replacement is followed by digits.
+   *
+   * "$1" . "8443" builds the replacement string `$18443`, and PCRE reads as many digits as it
+   * can for the group number: it takes `$18`, finds no group 18, substitutes nothing, and
+   * leaves the literal `443`. The `port` key itself is eaten and the array turns into
+   * `[443, ...]` - a positional element where a named one used to be.
+   *
+   * This silently corrupted config.php on every install since the flag existed. It stayed
+   * invisible because the port Apache listens on comes from the vhost template, not from this
+   * file at runtime, so the panel kept answering on the right port with a broken config.
+   */
+  $s = preg_replace("/(\x27port\x27\s*=>\s*)\d+/", "\${1}".$argv[3], $s, 1);
   $s = preg_replace("/(\x27cookie_secure\x27\s*=>\s*)(true|false)/", "$1true", $s, 1);
 
   // var_export every value that came from the command line - these are written into a PHP file that runs with the privileges of the panel
@@ -475,12 +487,36 @@ fi
     $s,
     1
   );
-  $s = preg_replace(
-    "/(\x27users_dir\x27\s*=>\s*)\x27[^\x27]*\x27/",
-    "$1".str_replace("$", "\\$", var_export($argv[7], true)),
-    $s,
-    1
-  );
+  /*
+   * users_dir has to be *added* when it is missing, not only replaced.
+   *
+   * preg_replace on an existing key is silent when the key is not there - and it is not there
+   * on any machine installed before this key existed, because section 5 never overwrites a
+   * config.php that already exists. Those machines therefore never received the setting no
+   * matter how many times the admin re-ran the installer with --users-dir, and the flag looked
+   * like it did nothing. Same for any setting added from here on.
+   *
+   * Insert after the sites `dir` key, which is the one entry guaranteed to be inside that block.
+   */
+  $setInSites = static function (string $s, string $key, string $literal): string {
+      if (preg_match("/\x27" . $key . "\x27\s*=>/", $s) === 1) {
+          return preg_replace(
+              "/(\x27" . $key . "\x27\s*=>\s*)(\x27[^\x27]*\x27|\[[^\]]*\]|array\s*\([^)]*\))/s",
+              "$1" . str_replace("$", "\\$", $literal),
+              $s,
+              1
+          );
+      }
+
+      return preg_replace(
+          "/(\x27dir\x27\s*=>\s*\x27[^\x27]*\x27,)/",
+          "$1\n        \x27" . $key . "\x27 => " . str_replace("$", "\\$", $literal) . ",",
+          $s,
+          1
+      );
+  };
+
+  $s = $setInSites($s, "users_dir", var_export($argv[7], true));
   $s = preg_replace(
     "/(\x27shared_owner\x27\s*=>\s*)(true|false)/",
     "$1".($argv[5] === "yes" ? "true" : "false"),
@@ -489,12 +525,7 @@ fi
   );
   $roots = $argv[6] === "" ? [] : explode(",", $argv[6]);
   $roots = array_values(array_filter(array_map(static fn ($r) => rtrim(trim($r), "/"), $roots)));
-  $s = preg_replace(
-    "/(\x27pointer_roots\x27\s*=>\s*)\[[^\]]*\]/",
-    "$1".str_replace("$", "\\$", var_export($roots, true)),
-    $s,
-    1
-  );
+  $s = $setInSites($s, "pointer_roots", var_export($roots, true));
   file_put_contents($f, $s);
 ' "$CONF_DIR/config.php" "$MODE" "$PORT" "$SITES_DIR" "$SHARED_OWNER" "$POINTER_ROOTS" "$USERS_DIR"
 
