@@ -87,11 +87,28 @@ final class BackupRestore implements Capability
 
         $manager = new BackupManager($context->config->paths->backups());
 
+        /*
+         * เจ้าของที่ไฟล์ต้องเป็นหลังกู้คืน — ชุดเดียวกับที่ `site.reset_owner` ใช้
+         *
+         * ไม่ส่งค่านี้ไปแปลว่าไฟล์ที่กู้มาจะเป็นของ root (ไดเรกทอรี) และของ uid ต้นทาง
+         * (ไฟล์ข้างใน) ซึ่งพังทันทีเมื่อกู้ข้ามเครื่อง · ดูเหตุผลเต็มใน restoreSite()
+         *
+         * shared_owner แปลว่า filesystem เก็บเจ้าของไฟล์ไม่ได้อยู่แล้ว — ส่งค่าว่าง
+         * เพื่อข้าม chown แทนที่จะให้มันล้มแล้วยกเลิกการกู้คืนทั้งครั้ง
+         */
+        $owner = '';
+
+        if (!$context->config->sharedOwner()) {
+            $group = SiteCapability::provisionerFor($context)->webserver()->runAsGroup();
+            $owner = $site->systemUser() . ':' . $group;
+        }
+
         $result = $manager->restoreSite(
             $executor,
             $site,
             (string) $backup['path'],
             (string) ($backup['checksum'] ?? ''),
+            $owner,
         );
 
         // บันทึกไฟล์สำรองอัตโนมัติที่เกิดขึ้นระหว่างกู้คืน ให้เห็นในรายการด้วย

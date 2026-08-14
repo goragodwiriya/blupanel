@@ -70,14 +70,25 @@ final class BackupManager
     }
 
     /**
-     * สร้างไฟล์สำรองของเว็บไซต์
+     * สร้างไฟล์สำรองของเว็บไซต์ — **ไฟล์ที่เว็บเสิร์ฟจริง ไม่ใช่กล่องสถานะ**
+     *
+     * เดิมสำรอง `root()` ซึ่งใช้ได้ตอนที่มีเลย์เอาต์เดียว: `phpcp` เก็บทุกอย่างไว้ใต้
+     * `<บ้าน>/domains/<โดเมน>/` โดยมี `public/` อยู่ข้างใน สำรองกล่องก็ได้ไฟล์เว็บติดมาด้วย
+     *
+     * **เลย์เอาต์ cpanel ไม่เป็นแบบนั้น** — `root()` คือ `<บ้าน>/.phpcp/<โดเมน>` ที่มีแต่
+     * `__suspended.html` ส่วนไฟล์เว็บอยู่คนละที่ที่ `<บ้าน>/public_html` · ตั้งแต่ cpanel
+     * เป็นเลย์เอาต์มาตรฐาน (migration 0020) ปุ่ม "สำรองข้อมูล" จึงสร้างไฟล์ที่**ไม่มี
+     * ไฟล์เว็บอยู่เลยสักไฟล์** และรายงานว่าสำเร็จทุกครั้ง — ความล้มเหลวแบบที่รู้ตัว
+     * ตอนกู้คืนแล้วเท่านั้น ซึ่งสายเกินไปตามนิยาม
+     *
+     * `docroot()` ยังตอบถูกเมื่อเว็บใช้ Domain Pointer (ชี้ออกไปนอกบ้าน) ด้วย
      *
      * @return array{path:string,bytes:int,checksum:string}
      */
     public function backupSite(Executor $executor, Site $site): array
     {
         $path = $this->pathFor('site-' . $site->domain, 'tar.gz');
-        $root = $executor->path($site->root());
+        $root = $executor->path($site->docroot());
 
         if (!$executor->exists($root)) {
             throw new ExecutionFailed("ไม่พบไดเรกทอรีของเว็บไซต์ {$site->domain}");
@@ -164,8 +175,13 @@ final class BackupManager
      *
      * @return array{restored:string,safety:string,entries:int}
      */
-    public function restoreSite(Executor $executor, Site $site, string $archive, string $checksum): array
-    {
+    public function restoreSite(
+        Executor $executor,
+        Site $site,
+        string $archive,
+        string $checksum,
+        string $owner = '',
+    ): array {
         $this->assertIntact($executor, $archive, $checksum);
 
         // ขั้นที่ 1 — สำรองของเดิมไว้ก่อน กู้ผิดตัวแล้วยังย้อนกลับได้
@@ -181,7 +197,7 @@ final class BackupManager
         // เราต้องรู้ก่อนเขียนทับของจริง ไม่ใช่รู้ตอนที่ข้อมูลหายไปแล้ว
         $this->assertIntact($executor, $archive, $checksum);
 
-        $root = $executor->path($site->root());
+        $root = $executor->path($site->docroot());
         $staging = $root . '.restore-' . bin2hex(random_bytes(4));
 
         $executor->makeDirectory($staging, 0750);
@@ -209,6 +225,36 @@ final class BackupManager
             throw new ExecutionFailed('ไฟล์สำรองไม่มีข้อมูล — ยกเลิกการกู้คืน');
         }
 
+        /*
+         * ตั้งเจ้าของ **ก่อน** สลับเข้าที่ ไม่ใช่หลัง — เว็บต้องไม่มีวินาทีไหนที่มีชีวิต
+         * อยู่ด้วยเจ้าของที่ผิด
+         *
+         * สองเหตุผลที่ขั้นนี้ขาดไม่ได้ ทั้งคู่ทำให้เว็บตายเงียบ ๆ หลังกู้คืน "สำเร็จ":
+         *
+         *   1. `$staging` ถูกสร้างโดย agent ซึ่งเป็น root · `--strip-components 1`
+         *      ตัดรายการไดเรกทอรีบนสุดของ archive ทิ้ง เจ้าของกับสิทธิ์ของมันจึง
+         *      **ไม่ถูกนำมาใช้กับ `$staging`** (ยืนยันด้วยการทดลองจริงแล้ว) ·
+         *      ผลคือรากเว็บกลายเป็น root:root ที่ FPM pool ของเจ้าของเดินผ่านไม่ได้
+         *
+         *   2. tar ที่รันด้วย root คืนค่าเจ้าของตามที่ฝังมาใน archive — ซึ่งเป็น
+         *      **เลข uid ของเครื่องต้นทาง** · กู้ไฟล์ข้ามเครื่อง (สองเครื่องที่ uid
+         *      ไม่ตรงกัน) จึงได้ไฟล์ที่เป็นของผู้ใช้คนอื่นหรือของ uid ที่ไม่มีอยู่จริง
+         *
+         * `-h` เปลี่ยนตัว symlink เอง ไม่ไล่ตามไปเปลี่ยนปลายทางนอกขอบเขต
+         * · ค่าว่างแปลว่าโหมด shared_owner ซึ่ง filesystem เก็บเจ้าของไม่ได้อยู่แล้ว
+         */
+        if ($owner !== '') {
+            $chown = $executor->exec(['/usr/bin/chown', '-Rh', $owner, $staging], timeout: 300);
+
+            if (!$chown->ok()) {
+                $executor->removePath($staging);
+
+                throw new ExecutionFailed(
+                    'ตั้งเจ้าของไฟล์ที่กู้คืนไม่สำเร็จ จึงยกเลิกก่อนแตะของเดิม: ' . trim($chown->stderr),
+                );
+            }
+        }
+
         // ขั้นที่ 3 — สลับเข้าที่ ย้ายของเดิมออกก่อนแล้วค่อยย้ายของใหม่เข้า
         $retired = $root . '.old-' . bin2hex(random_bytes(4));
 
@@ -227,7 +273,7 @@ final class BackupManager
         $executor->removePath($retired);
 
         return [
-            'restored' => $site->root(),
+            'restored' => $site->docroot(),
             'safety' => $safety['path'],
             'entries' => $entries,
         ];
