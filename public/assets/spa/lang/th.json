@@ -664,6 +664,7 @@
     "The wanted status is required": "ต้องระบุสถานะที่ต้องการ",
     "These keys cannot be changed": "มีคีย์ที่แก้ไขไม่ได้",
     "This account does not have two-factor enabled": "บัญชีนี้ไม่ได้เปิดใช้งาน 2FA",
+    "This account has no home folder yet — create its first website first": "บัญชีนี้ยังไม่มีบ้านบนเครื่อง — สร้างเว็บไซต์แรกให้บัญชีนี้ก่อน",
     "This affects these websites:": "คำสั่งนี้กระทบเว็บไซต์เหล่านี้:",
     "This domain has no zone file on the server yet. That is normal when the BIND9 link is switched off, or when no DNS record has been saved since it was switched on. What you see below is built from the records in the panel — it is what the file would contain.": "โดเมนนี้ยังไม่มีไฟล์ zone อยู่บนเครื่อง ซึ่งเป็นเรื่องปกติเมื่อยังไม่ได้เปิดการเชื่อม BIND9 หรือยังไม่มีการบันทึกเรกคอร์ดใดเลยหลังเปิด · ข้อความข้างล่างประกอบจากเรกคอร์ดในระบบ คือสิ่งที่ไฟล์จะมีเมื่อถูกเขียนจริง",
     "This file is too large to preview": "ไฟล์ใหญ่เกินกว่าจะแสดงตัวอย่างได้",

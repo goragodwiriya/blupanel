@@ -40,7 +40,14 @@ final class BackupDestinationsController extends ApiController
     }
 
     /**
-     * ปลายทางหนึ่งที่ — **id = 0 คือ "ของใหม่" ไม่ใช่ 404**
+     * ปลายทาง — **เครื่องนี้มีได้ชุดเดียว** จึงเป็น "ตัวนั้น" เสมอ
+     *
+     * `id = 0` แปลว่า "เอาปลายทางของเครื่องนี้มา" ไม่ใช่ "ฟอร์มเปล่าของใหม่":
+     * มีอยู่แล้ว → ได้ค่าเดิมมาแก้ · ยังไม่มี → ได้โครงว่างไปสร้าง
+     *
+     * **นี่คือเหตุผลที่ปุ่มบนหน้า Backups ชี้มาที่ `?id=0` ได้ตลอด** · ก่อนหน้านี้
+     * `id = 0` แปลว่า "ของใหม่" เสมอ ปุ่มเดียวนั้นจึงพาไปสร้างชุดที่สองทุกครั้ง
+     * แล้วชนกับกฎ "มีได้ชุดเดียว" ที่ `store()` บังคับไว้ — กดแล้วได้แต่ 409
      *
      * ฟอร์มเพิ่มกับฟอร์มแก้ไขเป็นไฟล์เดียวกัน (`backup-destination.html`) ทั้งสองทาง
      * จึงถามข้อมูลจากที่นี่เหมือนกัน ต่างกันแค่ได้โครงว่างหรือได้ค่าเดิม
@@ -54,7 +61,13 @@ final class BackupDestinationsController extends ApiController
         $id = $request->paramInt('id');
 
         if ($id === 0) {
-            return $this->ok($this->blank() + ['can_manage' => $this->ctx->can('backup.offsite')]);
+            $existing = $this->repository()->all();
+
+            return $this->ok(
+                $existing === []
+                    ? $this->blank() + ['can_manage' => $this->ctx->can('backup.offsite')]
+                    : $this->present($existing[0], $this->ctx->can('backup.offsite')),
+            );
         }
 
         $row = $this->repository()->find($id);

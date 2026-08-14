@@ -301,6 +301,113 @@ test('ตารางเวลาสำรองแตะงานของร�
     assertSame(1, (int) $after['enabled'], 'งานของระบบต้องยังเปิดใช้งานอยู่');
 });
 
+test('ปลายทางนอกเครื่องมีได้ชุดเดียว และปุ่มเดียวนั้นต้องพาไปแก้ของเดิม', static function (): void {
+    /*
+     * **ปุ่ม "ปลายทางนอกเครื่อง" บนหน้า Backups ชี้ไปที่ `?id=0` เสมอ** เพราะหน้าจอ
+     * ไม่รู้ล่วงหน้าว่ามีปลายทางอยู่แล้วหรือยัง · ถ้า `id = 0` แปลว่า "ของใหม่" ตลอด
+     * ปุ่มนั้นจะพาไปสร้างชุดที่สองทุกครั้ง แล้วชนกฎ "มีได้ชุดเดียว" — กดแล้วได้แต่ 409
+     *
+     * ที่ถูกคือ `id = 0` แปลว่า "ปลายทางของเครื่องนี้": มีอยู่แล้วได้ค่าเดิมมาแก้
+     * ยังไม่มีได้โครงเปล่าไปสร้าง
+     */
+    $harness = serverLogin('srvadmin', 'Server-Admin-Pass-11');
+
+    // เทสต์ก่อนหน้าในไฟล์นี้ใช้ฐานข้อมูลเดียวกันและอาจสร้างปลายทางไว้แล้ว —
+    // เริ่มจากศูนย์เพื่อให้ผลไม่ขึ้นกับลำดับการรัน
+    $harness->app->db()->run('DELETE FROM backup_destinations');
+
+    $blank = $harness->request('GET', '/api/v2/backup-destinations/0');
+
+    assertSame(200, $blank->status, 'ยังไม่มีปลายทางต้องได้โครงเปล่า ไม่ใช่ 404');
+    assertSame(0, $blank->data('id'), 'โครงเปล่าต้องมี id = 0');
+
+    $created = $harness->request('POST', '/api/v2/backup-destinations', [
+        'name' => 'ที่เก็บสำรอง',
+        'driver' => 'local',
+        'path' => sys_get_temp_dir() . '/phpcp-dest-' . getmypid(),
+    ]);
+
+    assertSame(201, $created->status, 'ปลายทางแรกต้องสร้างได้');
+
+    $again = $harness->request('GET', '/api/v2/backup-destinations/0');
+
+    assertSame((int) $created->data('destination_id'), $again->data('id'), 'id = 0 ต้องคืนปลายทางที่มีอยู่');
+    assertSame('ที่เก็บสำรอง', $again->data('name'), 'ต้องได้ค่าเดิมมาแก้ ไม่ใช่ฟอร์มเปล่า');
+
+    $second = $harness->request('POST', '/api/v2/backup-destinations', [
+        'name' => 'ชุดที่สอง',
+        'driver' => 'local',
+        'path' => sys_get_temp_dir() . '/phpcp-dest2-' . getmypid(),
+    ]);
+
+    assertSame(409, $second->status, 'เพิ่มชุดที่สองต้องถูกปฏิเสธ');
+    assertSame(
+        1,
+        (int) $harness->app->db()->value('SELECT count(*) FROM backup_destinations', [], 0),
+        'ต้องเหลือปลายทางชุดเดียวจริง ๆ',
+    );
+});
+
+test('ตารางบัญชีต้องแสดงบัญชีโฮสติ้งทุกบัญชี รวมที่ยังไม่พร้อม', static function (): void {
+    /*
+     * เคยกรองบัญชีที่ยังไม่มีบ้าน (`system_user IS NULL`) ออกไป · ผู้ดูแลที่เปิดหน้านี้
+     * มาหาลูกค้ารายนั้นจะไม่เจอชื่อเขาเลย แล้วสรุปว่าระบบพัง หรือแย่กว่านั้นคือเข้าใจ
+     * ว่าเปิดสำรองให้เขาไปแล้ว
+     *
+     * เห็นได้ แต่ติ๊กไม่ได้ และต้องบอกเหตุผลว่าทำไม
+     */
+    $harness = serverLogin('srvadmin', 'Server-Admin-Pass-11');
+
+    $db = $harness->app->db();
+    $now = time();
+    $base = [
+        'password_hash' => password_hash('x', PASSWORD_DEFAULT),
+        'role' => Phpcp\Security\Permissions::WEBADMIN,
+        'totp_enabled' => 0, 'must_change_password' => 0, 'status' => 'active', 'failed_attempts' => 0,
+        'email' => '', 'service_status' => 'active', 'uid' => 0, 'gid' => 0,
+        'quota_domains' => -1, 'quota_subdomains' => -1, 'quota_aliases' => -1, 'quota_emails' => -1,
+        'quota_databases' => -1, 'quota_ftp_users' => -1, 'disk_quota_mb' => -1, 'disk_used_mb' => 0,
+        'created_at' => $now, 'updated_at' => $now,
+    ];
+
+    $readyId = $db->insert('users', $base + ['username' => 'พร้อมแล้ว', 'system_user' => 'readycust']);
+    $newId = $db->insert('users', $base + ['username' => 'ยังไม่มีบ้าน']);
+
+    $rows = $harness->request('GET', '/api/v2/backup-targets')->json['data'] ?? [];
+    $byId = [];
+    foreach ($rows as $row) {
+        $byId[(int) $row['id']] = $row;
+    }
+
+    assertTrue(isset($byId[$readyId]), 'บัญชีที่มีบ้านต้องอยู่ในรายการ');
+    assertTrue(isset($byId[$newId]), 'บัญชีที่ยังไม่มีบ้านต้องอยู่ในรายการด้วย');
+
+    assertSame(true, $byId[$readyId]['ready'], 'บัญชีที่มีบ้านต้องพร้อมใช้งาน');
+    assertSame(false, $byId[$newId]['ready'], 'บัญชีที่ยังไม่มีบ้านต้องถูกทำเครื่องหมายว่ายังไม่พร้อม');
+    assertSame(false, $byId[$newId]['can_manage'], 'ติ๊กไม่ได้');
+    assertTrue($byId[$newId]['reason'] !== '', 'ต้องบอกเหตุผลว่าทำไมติ๊กไม่ได้');
+
+    // และการยัดค่าผ่าน API ตรง ๆ ต้องถูกปฏิเสธด้วย ไม่ใช่กันแค่ที่หน้าจอ
+    $rejected = $harness->request('PATCH', '/api/v2/backup-targets/' . $newId, ['backup_files' => true]);
+
+    assertSame(422, $rejected->status, 'เปิดสำรองให้บัญชีที่ยังไม่มีบ้านไม่ได้');
+    assertSame(
+        0,
+        (int) $db->value('SELECT backup_files FROM users WHERE id = :id', ['id' => $newId], 0),
+        'ค่าต้องไม่ถูกบันทึก',
+    );
+
+    // บัญชีที่พร้อมต้องติ๊กได้จริง ไม่ใช่ปฏิเสธทุกกรณีแล้วเทสต์ผ่าน
+    $saved = $harness->request('PATCH', '/api/v2/backup-targets/' . $readyId, ['backup_files' => true]);
+
+    assertSame(200, $saved->status, 'บัญชีที่พร้อมต้องเปิดสำรองได้');
+    assertSame(
+        1,
+        (int) $db->value('SELECT backup_files FROM users WHERE id = :id', ['id' => $readyId], 0),
+        'ค่าต้องถูกบันทึกจริง',
+    );
+});
+
 test('ตารางเวลาสำรองปฏิเสธรูปแบบเวลาที่ผิด', static function (): void {
     $harness = serverLogin('srvadmin', 'Server-Admin-Pass-11');
 

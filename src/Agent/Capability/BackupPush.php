@@ -58,7 +58,9 @@ final class BackupPush extends BackupCapability implements Capability
         return [
             'user_id' => Validator::requireInt($args, 'user_id', 1),
             'file' => BackupFiles::assertName(Validator::requireString($args, 'file', 255)),
-            'destination_id' => Validator::requireInt($args, 'destination_id', 1),
+            // 0 = ปลายทางเดียวที่เปิดใช้งานอยู่ · เครื่องหนึ่งมีปลายทางได้ชุดเดียว
+            // (§4.2) การบังคับให้ผู้เรียกระบุจึงเป็นการถามคำถามที่มีคำตอบเดียวอยู่แล้ว
+            'destination_id' => Validator::optionalInt($args, 'destination_id', 0, 0),
         ];
     }
 
@@ -74,15 +76,23 @@ final class BackupPush extends BackupCapability implements Capability
         $this->assertFileExists($executor, $path);
 
         $destinations = new BackupDestinationRepository($context->db, new Secret($context->config->secretKey()));
-        $row = $destinations->find($args['destination_id']);
+        $row = $args['destination_id'] > 0
+            ? $destinations->find($args['destination_id'])
+            : ($destinations->enabled()[0] ?? null);
 
         if ($row === null) {
-            throw new ValidationError('ไม่พบปลายทางที่ระบุ');
+            throw new ValidationError(
+                $args['destination_id'] > 0
+                    ? 'ไม่พบปลายทางที่ระบุ'
+                    : 'เครื่องนี้ยังไม่ได้ตั้งปลายทางนอกเครื่อง — ตั้งก่อนแล้วค่อยส่งไฟล์ออก',
+            );
         }
 
         if ((int) ($row['enabled'] ?? 0) !== 1) {
             throw new ValidationError('ปลายทางนี้ถูกปิดใช้งานอยู่');
         }
+
+        $destinationId = (int) $row['id'];
 
         $checksum = @hash_file('sha256', $executor->path($path));
 
@@ -99,19 +109,19 @@ final class BackupPush extends BackupCapability implements Capability
         try {
             $remotePath = $destination->push($executor, $path, $remoteName);
         } catch (\Throwable $e) {
-            $destinations->recordResult($args['destination_id'], false, $e->getMessage());
+            $destinations->recordResult($destinationId, false, $e->getMessage());
 
             throw $e instanceof ExecutionFailed ? $e : new ExecutionFailed($e->getMessage());
         }
 
-        $destinations->recordResult($args['destination_id'], true);
+        $destinations->recordResult($destinationId, true);
 
         $bytes = (int) ($executor->stat($executor->path($path))['size'] ?? 0);
 
         return [
             'user_id' => $owner->userId,
             'file' => $args['file'],
-            'destination_id' => $args['destination_id'],
+            'destination_id' => $destinationId,
             'destination' => $row['name'],
             'remote_path' => $remotePath,
             'bytes' => $bytes,

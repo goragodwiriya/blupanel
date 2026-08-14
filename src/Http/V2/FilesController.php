@@ -196,6 +196,10 @@ final class FilesController extends ApiController
      * ส่งเป็น octet-stream + nosniff เสมอ — ถ้าปล่อยให้เบราว์เซอร์เดาชนิดเอง
      * ไฟล์ .html ของผู้ใช้จะถูกเรนเดอร์ในโดเมนของ panel แล้วกลายเป็น stored XSS
      * ที่ขโมย session ของผู้ดูแลได้ทันที
+     *
+     * **ไม่มีเพดานขนาดแล้ว** — เดิมปฏิเสธไฟล์ที่ใหญ่กว่า 2.5 MB (ขนาดเฟรมของโปรโตคอล)
+     * พร้อมบอกให้ไปบีบอัดเป็น zip ก่อน ซึ่งเป็นคำแนะนำที่ใช้ไม่ได้กับไฟล์สำรองที่บีบ
+     * มาแล้วและใหญ่กว่านั้นเสมอ · ตอนนี้ขอจาก agent ทีละก้อนแล้วสตรีมต่อออกไปเลย
      */
     public function download(Request $request): Response
     {
@@ -205,20 +209,55 @@ final class FilesController extends ApiController
             return $this->deniedScope();
         }
 
-        $data = $this->agent()->data('file.download', [
+        $path = $request->get('path');
+        $actor = $this->ctx->actor($request);
+
+        // ก้อนแรกทำสองหน้าที่: บอกขนาดทั้งไฟล์ และตรวจสิทธิ์/ความมีอยู่จริงก่อนที่
+        // เราจะส่ง header ออกไป · ล้มตรงนี้ยังตอบเป็น JSON ที่มีรหัสข้อผิดพลาดได้อยู่
+        $first = $this->agent()->data('file.download', [
             'root' => $root,
-            'path' => $request->get('path')
-        ], $this->ctx->actor($request));
+            'path' => $path,
+            'offset' => 0,
+        ], $actor);
 
-        $content = base64_decode((string) ($data['content'] ?? ''), true);
-
-        if ($content === false) {
+        if (base64_decode((string) ($first['content'] ?? ''), true) === false) {
             return $this->problem(ApiProblem::InternalError, 'The file could not be decoded');
         }
 
-        return Response::text($content)
-            ->withHeader('Content-Type', FileCatalog::downloadType())
-            ->withHeader('Content-Disposition', self::disposition((string) ($data['name'] ?? 'download')))
+        $size = (int) ($first['size'] ?? 0);
+        $agent = $this->agent();
+
+        /*
+         * ทยอยขอทีละก้อนจนหมดไฟล์ แล้วส่งออกทันทีทีละก้อน
+         *
+         * **ห้ามประกอบทั้งไฟล์ก่อนส่ง** — ไฟล์สำรองของเว็บจริงมีขนาดระดับกิกะไบต์
+         * การถือไว้ทั้งไฟล์คือการทำให้ PHP ตายด้วย memory_limit ในงานที่ผู้ใช้ต้องการ
+         * มันที่สุด · ก้อนละ 2.5 MB ตามเพดานของเฟรมโปรโตคอล (ดู FileDownload)
+         *
+         * `Content-Length` ส่งได้เพราะรู้ขนาดตั้งแต่ก้อนแรก — เบราว์เซอร์จึงขึ้นแถบ
+         * ความคืบหน้าจริง ไม่ใช่ตัวเลขที่ไต่ขึ้นไปเรื่อย ๆ โดยไม่รู้ปลายทาง
+         */
+        $stream = static function (callable $emit) use ($first, $agent, $root, $path, $actor): void {
+            $chunk = $first;
+
+            while (true) {
+                $emit((string) base64_decode((string) ($chunk['content'] ?? ''), true));
+
+                if (($chunk['eof'] ?? true) === true || (int) ($chunk['bytes'] ?? 0) <= 0) {
+                    return;
+                }
+
+                $chunk = $agent->data('file.download', [
+                    'root' => $root,
+                    'path' => $path,
+                    'offset' => (int) $chunk['offset'] + (int) $chunk['bytes'],
+                ], $actor);
+            }
+        };
+
+        return Response::stream($stream, FileCatalog::downloadType())
+            ->withHeader('Content-Length', (string) $size)
+            ->withHeader('Content-Disposition', self::disposition((string) ($first['name'] ?? 'download')))
             ->withHeader('X-Content-Type-Options', 'nosniff')
             ->withHeader('Cache-Control', 'private, no-store');
     }

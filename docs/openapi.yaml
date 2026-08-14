@@ -2906,13 +2906,21 @@ paths:
         แล้วกลายเป็น stored XSS ที่ขโมย session ของผู้ดูแลได้ทันที
 
         **กรณีข้อผิดพลาดยังตอบ JSON ตามปกติ** — มีแต่เนื้อไฟล์เท่านั้นที่ไม่ใช่ JSON
+
+        **ไม่มีเพดานขนาดไฟล์** · เดิมปฏิเสธไฟล์ที่ใหญ่กว่า 2.5 MB (ขนาดเฟรมของโปรโตคอล
+        agent) พร้อมบอกให้ไปบีบอัดเป็น zip ก่อน ซึ่งเป็นคำแนะนำที่ใช้ไม่ได้กับไฟล์สำรอง
+        ที่บีบมาแล้วและใหญ่กว่านั้นเสมอ · ตอนนี้ panel ขอเนื้อไฟล์จาก agent ทีละก้อน
+        แล้วสตรีมต่อออกไป ทั้งสองฝั่งจึงไม่เคยถือทั้งไฟล์ไว้ในหน่วยความจำ
       parameters:
         - { $ref: "#/components/parameters/FileRootKey" }
         - { $ref: "#/components/parameters/FilePath" }
       responses:
         "200":
-          description: เนื้อไฟล์
+          description: เนื้อไฟล์ (สตรีมทีละก้อน)
           headers:
+            Content-Length:
+              schema: { type: integer }
+              description: "ขนาดจริงของไฟล์ — รู้ตั้งแต่ก้อนแรก เบราว์เซอร์จึงขึ้นแถบความคืบหน้าได้"
             Content-Disposition:
               schema: { type: string }
               description: "แนบชื่อไฟล์ทั้งแบบ ASCII และ UTF-8 ตาม RFC 5987"
@@ -3113,8 +3121,19 @@ paths:
   /files/extractions:
     post:
       tags: [files]
-      summary: แตกไฟล์บีบอัด
-      description: กัน Zip Slip ที่ระดับ Executor — รายการที่ชี้ออกนอกปลายทางถูกข้ามและรายงานกลับมา
+      summary: แตกไฟล์บีบอัด — `.zip`, `.tar.gz`/`.tgz`/`.tar` และ `.gz` ไฟล์เดี่ยว
+      description: |
+        `.zip` กัน Zip Slip ที่ระดับ Executor — รายการที่ชี้ออกนอกปลายทางถูกข้ามและรายงานกลับมา
+
+        `.tar.*` ตรวจรายชื่อข้างในด้วย `--list` **ก่อนแตะดิสก์** แล้ว**ปฏิเสธทั้งไฟล์**
+        ถ้ามีรายการที่ขึ้นต้นด้วย `/` หรือมี `..` · GNU tar ตัดสองอย่างนี้ทิ้งให้เองอยู่แล้ว
+        ในทางปฏิบัติ แต่นั่นเป็นพฤติกรรมของเครื่องมือที่เราไม่ได้ควบคุม
+
+        `.gz` ที่ไม่ใช่ tar (เช่น `.sql.gz` ของฐานข้อมูล) คลายเป็นไฟล์ข้าง ๆ ตัวเอง
+        โดยเก็บต้นฉบับที่บีบไว้ · ปลายทางที่มีอยู่แล้วถูกปฏิเสธ ไม่เขียนทับ
+
+        รองรับชนิดพวกนี้เพราะไฟล์สำรองของระบบเป็น `.tar.gz`/`.sql.gz` และอยู่ในบ้าน
+        ของลูกค้า — แตกไม่ได้แปลว่าเขาต้องกู้คืนทั้งเว็บเพื่อเอาไฟล์เดียวคืน
       requestBody:
         required: true
         content:
@@ -3124,11 +3143,12 @@ paths:
               required: [root, path]
               properties:
                 root: { type: string }
-                path: { type: string, description: "ไฟล์ .zip ที่จะแตก (เส้นทางสัมพัทธ์)" }
+                path: { type: string, description: "ไฟล์บีบอัดที่จะแตก (เส้นทางสัมพัทธ์)" }
                 destination:
                   type: string
                   description: |
-                    **ชื่อโฟลเดอร์** ที่จะสร้างใหม่ใต้โฟลเดอร์ของไฟล์ zip ไม่ใช่เส้นทาง —
+                    **ชื่อโฟลเดอร์** ที่จะสร้างใหม่ใต้โฟลเดอร์ของไฟล์บีบอัด ไม่ใช่เส้นทาง —
+                    (ไม่มีผลกับ `.gz` ไฟล์เดี่ยว ซึ่งคลายลงข้าง ๆ ตัวเองเสมอ)
                     ค่าที่มี `/` จะถูกปฏิเสธ · ว่าง = แตกลงโฟลเดอร์เดียวกับไฟล์เลย
       responses:
         "200":
@@ -4061,56 +4081,6 @@ paths:
                       bytes: { type: integer, description: ขนาดรวมของไฟล์เหล่านั้น }
         "403": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
-
-  /backups/imports:
-    post:
-      tags: [backups]
-      summary: ดึงไฟล์สำรองจากปลายทางนอกเครื่องกลับเข้าโฟลเดอร์ของเจ้าของ
-      description: |
-        **ทางเดียวที่ทำให้สำเนานอกเครื่องอ่านกลับได้** — ไม่งั้นไฟล์ที่ไปนอนอยู่อีกเครื่อง
-        เป็นแค่ `.tar.gz` ที่ต้องแตกเองแล้วไล่ตั้งเจ้าของไฟล์เอง ซึ่งเป็นงานที่คนทำตอน
-        ตกใจแล้วพลาดได้ง่ายที่สุด
-
-        ปลายทางรู้ว่าไฟล์เป็นของโดเมนไหนจาก `backup.json` ที่รากของ archive ซึ่งอ่านได้
-        โดยไม่ต้องแตกทั้งก้อน · เว็บไซต์ชื่อนั้น**ต้องมีอยู่บนเครื่องนี้ก่อน** ระบบไม่สร้างให้
-        — และเมื่อไม่มีเว็บ ก็ไม่มีบ้านที่จะวางไฟล์ลงไปด้วย
-
-        ไฟล์ลงที่ `<บ้านของเจ้าของเว็บนั้น>/backup/` **ไม่ใช่บ้านของคนที่กดปุ่ม** (ข้อ B5)
-        · ดึงลงที่พักของ panel ก่อนแล้วค่อยย้ายเข้าบ้าน เพราะตอนเริ่มดึงยังไม่มีใครรู้ว่า
-        บ้านไหนคือบ้านที่ถูก
-
-        จบที่การวางไฟล์เท่านั้น ไม่กู้คืนต่อให้ — กู้คืนยังต้องกดแยกและพิมพ์ชื่อโดเมนยืนยัน
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [destination_id, remote_name]
-              properties:
-                destination_id: { type: integer }
-                remote_name:
-                  type: string
-                  description: ชื่อไฟล์ล้วนที่ปลายทาง ไม่มีไดเรกทอรีนำหน้า
-      responses:
-        "200":
-          description: นำเข้าและวางไว้ในโฟลเดอร์ของเจ้าของแล้ว
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok: { type: boolean, const: true }
-                  message: { type: string }
-                  file: { type: string, description: ชื่อไฟล์ในโฟลเดอร์ของเจ้าของ }
-                  user_id: { type: integer, description: บัญชีที่ได้รับไฟล์ }
-                  domain: { type: string }
-                  site_id: { type: integer }
-                  source_host: { type: string, description: ชื่อเครื่องที่สร้างไฟล์นี้ }
-                  created_at: { type: integer, description: เวลาที่ไฟล์ถูกสร้างที่ต้นทาง }
-                  bytes: { type: integer }
-        "403": { $ref: "#/components/responses/Error" }
-        "422": { $ref: "#/components/responses/Error" }
 
   /backup-destinations:
     get:

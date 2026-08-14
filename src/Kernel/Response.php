@@ -18,6 +18,15 @@ final class Response
     /** @var list<array{name:string,value:string,options:array<string,mixed>}> */
     private array $cookies = [];
 
+    /**
+     * ตัวผลิตเนื้อคำตอบทีละก้อน — null = คำตอบธรรมดาที่เนื้อทั้งก้อนอยู่ใน `$body` แล้ว
+     *
+     * มีไว้เพื่อไฟล์ที่ใหญ่เกินกว่าจะถือไว้ในหน่วยความจำทั้งไฟล์ · ดู {@see stream()}
+     *
+     * @var (callable(callable(string):void):void)|null
+     */
+    private $producer = null;
+
     private function __construct(
         private string $body,
         private int $status,
@@ -55,6 +64,30 @@ final class Response
     public static function text(string $body, int $status = 200): self
     {
         return new self($body, $status, 'text/plain; charset=UTF-8');
+    }
+
+    /**
+     * คำตอบที่ทยอยส่งออกทีละก้อน — สำหรับไฟล์ที่ใหญ่เกินกว่าจะถือไว้ทั้งไฟล์
+     *
+     * `$producer` รับฟังก์ชัน `emit(string $chunk)` แล้วเรียกมันกี่ครั้งก็ได้ ·
+     * ทุกก้อนถูกส่งออกทันทีและล้าง buffer ตาม เพื่อให้เบราว์เซอร์เริ่มบันทึกไฟล์
+     * ได้ตั้งแต่ก้อนแรก และหน่วยความจำของ PHP ไม่โตตามขนาดไฟล์
+     *
+     * **ไม่ส่ง `Content-Length`** เพราะผู้ผลิตอาจยังไม่รู้ขนาดรวมตอนเริ่ม ·
+     * ผู้เรียกที่รู้ขนาดแน่นอนใส่เองได้ด้วย `withHeader()` แล้วเบราว์เซอร์จะขึ้น
+     * แถบความคืบหน้าให้
+     *
+     * `body()` ยังคืนเนื้อทั้งก้อนได้ (ประกอบให้ตอนถาม) เพื่อให้เทสต์ที่ตรวจคำตอบ
+     * ไม่ต้องรู้ว่า endpoint ไหนสตรีมหรือไม่สตรีม
+     *
+     * @param callable(callable(string):void):void $producer
+     */
+    public static function stream(callable $producer, string $contentType = 'application/octet-stream'): self
+    {
+        $response = new self('', 200, $contentType);
+        $response->producer = $producer;
+
+        return $response;
     }
 
     public static function redirect(string $location, int $status = 303): self
@@ -96,7 +129,17 @@ final class Response
 
     public function body(): string
     {
-        return $this->body;
+        if ($this->producer === null) {
+            return $this->body;
+        }
+
+        // ประกอบทั้งก้อนเฉพาะตอนมีคนถาม (เทสต์) — ทางส่งจริงไม่เคยเดินทางนี้
+        $collected = '';
+        ($this->producer)(static function (string $chunk) use (&$collected): void {
+            $collected .= $chunk;
+        });
+
+        return $collected;
     }
 
     /** @return array<string,string> */
@@ -124,6 +167,27 @@ final class Response
         }
 
         // ไม่ส่ง Content-Length เพราะอาจมีการบีบอัดที่ web server
-        echo $this->body;
+        if ($this->producer === null) {
+            echo $this->body;
+
+            return;
+        }
+
+        /*
+         * ทยอยส่งทีละก้อนแล้วล้าง buffer ทุกก้อน
+         *
+         * ไม่ล้าง = PHP สะสมทั้งไฟล์ไว้ในหน่วยความจำอยู่ดี ซึ่งลบล้างเหตุผลทั้งหมด
+         * ที่ทางนี้มีอยู่ · `ob_flush()` ถูกเรียกเฉพาะเมื่อมี buffer อยู่จริง เพราะ
+         * การเรียกตอนไม่มี buffer ทำให้ PHP ขึ้น notice ทุกก้อน
+         */
+        ($this->producer)(static function (string $chunk): void {
+            echo $chunk;
+
+            if (ob_get_level() > 0) {
+                @ob_flush();
+            }
+
+            flush();
+        });
     }
 }

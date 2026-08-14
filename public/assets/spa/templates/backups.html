@@ -10,7 +10,7 @@
           <h1 class="icon-stack" data-i18n>Backups</h1>
           <p data-i18n>Backup files live in each account's own home folder</p>
         </div>
-        <div class="header-actions" data-if="permissions['backup.manage']">
+        <div class="header-actions" data-if="permissions['backup.offsite']">
           <!--
             ฟอร์มอยู่คนละเทมเพลตตาม FRAMEWORK_GUIDE Pattern 3 — หน้านี้มีแต่ตาราง
             สามช่องกรอกถือว่าน้อย จึงเปิดใน Modal ที่เซิร์ฟเวอร์เป็นคนสั่ง
@@ -68,36 +68,6 @@
           </p>
         </div>
         <p class="comment" data-i18n>Files are written into each account's own folder and count against that account's disk quota.</p>
-        <!--
-          นำไฟล์ที่อยู่ปลายทางกลับมา (ข้อ B5) — ทางเดียวที่ทำให้สำเนานอกเครื่องใช้กู้คืน
-          ได้จริง · ระบบอ่านจาก `backup.json` ที่รากของไฟล์ว่าเป็นของโดเมนไหน แล้ววาง
-          ไฟล์ลงในบ้านของ**เจ้าของเว็บนั้น** ไม่ใช่ของคนที่กดปุ่ม
-        -->
-        <form class="form-inline" data-form="backupImport" action="/api/v2/backups/imports" method="post"
-              data-ajax-submit="true" data-validate="true"
-              data-component="api" data-endpoint="/api/v2/backup-destinations" data-refresh-event="phpcp:reload">
-          <div>
-            <label for="import_from" data-i18n>Bring a file back from</label>
-            <span class="form-control icon-cloud">
-              <select id="import_from" name="destination_id" required data-for="d in data">
-                <template>
-                  <option data-attr="value:d.id" data-text="d.name"></option>
-                </template>
-              </select>
-            </span>
-          </div>
-          <div>
-            <label for="import_name" data-i18n>File name at the destination</label>
-            <span class="form-control icon-stack">
-              <input type="text" id="import_name" name="remote_name" required maxlength="255"
-                     autocomplete="off" placeholder="cust-example.com-files-20260814-193000-a1b2c3.tar.gz">
-            </span>
-            <div class="comment" data-i18n>The name shown at the destination. The website must already exist here.</div>
-          </div>
-          <div>
-            <button type="submit" class="btn icon-download" data-i18n>Import</button>
-          </div>
-        </form>
       </div>
 
       <!--
@@ -156,11 +126,6 @@
             <span data-text="bytes | bytes"></span>
           </p>
         </div>
-        <!--
-          เลือกปลายทางครั้งเดียวตรงนี้ แล้วปุ่ม "ส่งออก" ของทุกแถวใช้ค่านี้ · ตัวเลือกนี้
-          อยู่นอกแถว ปุ่ม "ส่งออก" (formatBackupActions ใน js/formatters.js) จึงต้องเป็น
-          โค้ดจริง — data-row-actions ประกอบค่าจากแถวเดียวล้วน ๆ อ่านค่านี้ไม่ได้
-        -->
         <div class="tablebody">
           <form data-table-filter="backups" class="table_nav">
             <div>
@@ -171,16 +136,6 @@
                   <option value="25" data-i18n>25 {LNG_entries}</option>
                   <option value="50" data-i18n>50 {LNG_entries}</option>
                   <option value="100" data-i18n>100 {LNG_entries}</option>
-                </select>
-              </span>
-            </div>
-            <div data-if="permissions['backup.offsite']" data-component="api" data-endpoint="/api/v2/backup-destinations" data-refresh-event="phpcp:reload">
-              <label for="offsite_to" data-i18n>Copy to</label>
-              <span class="form-control icon-cloud">
-                <select id="offsite_to" data-offsite-destination data-for="d in data">
-                  <template>
-                    <option data-attr="value:d.id" data-text="d.name"></option>
-                  </template>
                 </select>
               </span>
             </div>

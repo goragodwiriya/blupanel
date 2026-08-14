@@ -36,9 +36,19 @@ final class BackupCreate extends BackupCapability implements Capability
         return 'backup.create';
     }
 
+    /**
+     * **สิทธิ์ของผู้ดูแลเซิร์ฟเวอร์ ไม่ใช่ของลูกค้า**
+     *
+     * การสร้างไฟล์สำรองหนึ่งครั้งกินพื้นที่เท่าเว็บทั้งเว็บในโควตาของลูกค้า และกิน CPU
+     * ของเครื่องที่เว็บทุกรายใช้ร่วมกัน · ผู้ดูแลเป็นคนตัดสินว่าบัญชีไหนถูกสำรองบ้าง
+     * (สวิตช์รายบัญชี + รอบเดียวทั้งเครื่อง) ปุ่ม "สำรองเดี๋ยวนี้" จึงต้องอยู่ในมือ
+     * คนเดียวกัน ไม่ใช่ให้ลูกค้ากดเองได้ไม่จำกัด
+     *
+     * ลูกค้ายังมี `backup.manage` สำหรับ **ลบ** สำเนาของตัวเอง — ซึ่งคืนพื้นที่ ไม่ใช่กิน
+     */
     public function permission(): string
     {
-        return 'backup.manage';
+        return 'backup.offsite';
     }
 
     public function isMutating(): bool

@@ -65,7 +65,14 @@
     mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', flac: 'audio/flac', m4a: 'audio/mp4'
   };
 
-  const ARCHIVE_EXTENSIONS = ['zip'];
+  /*
+   * นามสกุลที่กด "แตกไฟล์" ได้ — ต้องตรงกับ `FileUnzip::kindOf()` ฝั่งเซิร์ฟเวอร์
+   *
+   * `gz` ครอบทั้ง `.tar.gz` และ `.sql.gz` เพราะ `extensionOf()` คืนส่วนหลังจุดสุดท้าย
+   * · ฝั่งเซิร์ฟเวอร์เป็นคนแยกว่าอันไหนเป็น tar อันไหนเป็นไฟล์เดี่ยว (เรียงลำดับสำคัญ
+   * ที่นั่น) ที่นี่แค่ตัดสินว่าจะแสดงเมนูไหม
+   */
+  const ARCHIVE_EXTENSIONS = ['zip', 'gz', 'tgz', 'tar'];
 
   /** คำสั่งที่ต้องมีสิทธิ์ `file.manage` — ปุ่มและรายการเมนูของมันถูกซ่อนเมื่อไม่มีสิทธิ์ */
   const WRITE_COMMANDS = ['mkdir', 'touch', 'upload', 'rename', 'cut', 'paste', 'zip', 'unzip', 'chmod', 'delete'];

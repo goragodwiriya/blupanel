@@ -536,30 +536,21 @@
   });
 
   /**
-   * ส่งไฟล์สำรองออกไปยังปลายทางที่เลือกไว้เหนือตาราง
+   * ส่งไฟล์สำรองออกไปยังปลายทางนอกเครื่อง
    *
-   * ต้องเป็นโค้ดจริงเพราะปลายทางถูกเลือกที่ **นอกแถว** — `data-param-*` ของ
-   * `apiRefresh` ถูกประกอบตอนเรนเดอร์แถว จึงไม่รู้ค่าที่ผู้ใช้จะเลือกทีหลัง
+   * **ต้องเป็นโค้ดจริง ไม่ใช่ `data-row-actions`** เพราะชื่อไฟล์เป็นของลูกค้า เขาตั้ง
+   * ชื่อเป็นอะไรก็ได้ · ค่าที่ `data-row-actions` แทนลงใน URL ไม่ถูกเข้ารหัสให้
+   * ชื่อที่มีช่องว่างหรืออักษรไทยจึงพาไปยัง URL ที่ไม่มีอยู่จริง
+   *
+   * ไม่มีตัวเลือกปลายทางอีกแล้ว — เครื่องหนึ่งมีปลายทางได้ชุดเดียว (PLAN-BACKUP-V2
+   * §4.2) เซิร์ฟเวอร์จึงรู้คำตอบอยู่แล้วโดยไม่ต้องถาม
    */
   events.registerAction('pushOffsite', async (event, element) => {
-    const picker = document.querySelector('[data-offsite-destination]');
-    const destination = picker ? Number(picker.value) : 0;
-
-    if (!destination) {
-      window.NotificationManager.error(window.Now.translate('Add a destination first'));
-
-      return;
-    }
-
-    // ไฟล์ถูกอ้างด้วยบัญชี + ชื่อไฟล์ ไม่ใช่รหัสแถว — ชื่อไฟล์ต้องเข้ารหัสก่อนต่อเป็น URL
-    // เพราะมันเป็นชื่อที่ลูกค้าเปลี่ยนเองได้ (จุด ขีด และอะไรก็ตามที่เขาตั้ง)
     const path = '/backups/' + Number(element.dataset.backupUser)
       + '/' + encodeURIComponent(element.dataset.backupFile) + '/offsite-copy';
 
     try {
-      const result = await window.PhpcpApi.post(path, {
-        destination_id: destination,
-      });
+      const result = await window.PhpcpApi.post(path, {});
 
       window.NotificationManager.success(result.message);
       window.TableManager.loadTableData('backups', {force: true});

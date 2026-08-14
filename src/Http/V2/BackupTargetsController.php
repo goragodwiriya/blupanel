@@ -36,36 +36,53 @@ final class BackupTargetsController extends ApiController
 {
     public function index(Request $request): Response
     {
-        // บัญชีโฮสติ้งทุกบัญชีที่มีบ้านจริง — บัญชีผู้ดูแลไม่มีเว็บให้สำรอง
+        /*
+         * **บัญชีโฮสติ้งทุกบัญชี ไม่ว่าจะพร้อมหรือยัง**
+         *
+         * เคยกรอง `system_user IS NOT NULL` ออกไป ซึ่งแปลว่าบัญชีที่ยังไม่เคยมีเว็บ
+         * หายไปจากตารางเงียบ ๆ · ผู้ดูแลที่เปิดหน้านี้มาหาลูกค้ารายนั้นจะไม่เจอชื่อเขา
+         * แล้วสรุปว่าระบบพัง หรือแย่กว่านั้นคือคิดว่าเปิดสำรองให้เขาไปแล้ว
+         *
+         * บัญชีที่ยังไม่มีบ้านยังติ๊กไม่ได้ (ไม่มีโฟลเดอร์ให้เขียน) แต่ต้อง**เห็นพร้อม
+         * เหตุผล** ไม่ใช่หายไปเฉย ๆ
+         */
         $rows = $this->app->db()->all(
             "SELECT u.id, u.username, u.system_user, u.backup_files, u.backup_database,
-                    u.disk_quota_mb, u.disk_used_mb,
+                    u.disk_quota_mb, u.disk_used_mb, u.service_status,
                     (SELECT COUNT(*) FROM sites s WHERE s.owner_user_id = u.id) AS sites,
                     (SELECT COUNT(*) FROM databases_ d
                        JOIN sites s2 ON s2.id = d.site_id
                       WHERE s2.owner_user_id = u.id) AS databases
                FROM users u
-              WHERE u.role = :role AND u.system_user IS NOT NULL
+              WHERE u.role = :role
               ORDER BY u.username",
             ['role' => Permissions::WEBADMIN],
         );
 
-        $canManage = $this->ctx->can('backup.manage');
+        $canManage = $this->ctx->can('backup.offsite');
 
         $items = array_map(
-            static fn (array $row): array => [
-                'id' => (int) $row['id'],
-                'username' => (string) $row['username'],
-                'backup_dir' => Paths::usersDir() . '/' . (string) ($row['system_user'] ?: $row['username']) . '/backup',
-                'backup_files' => (int) $row['backup_files'] === 1,
-                'backup_database' => (int) $row['backup_database'] === 1,
-                'sites' => (int) $row['sites'],
-                'databases' => (int) $row['databases'],
-                // โควตาที่เหลือ — ไฟล์สำรองนับในนี้ด้วย ผู้ดูแลจึงต้องเห็นก่อนกดเปิด
-                'disk_quota_mb' => (int) ($row['disk_quota_mb'] ?? -1),
-                'disk_used_mb' => (int) ($row['disk_used_mb'] ?? 0),
-                'can_manage' => $canManage,
-            ],
+            static function (array $row) use ($canManage): array {
+                $home = (string) ($row['system_user'] ?? '');
+                $ready = $home !== '';
+
+                return [
+                    'id' => (int) $row['id'],
+                    'username' => (string) $row['username'],
+                    // ยังไม่มีบัญชีระบบ = ยังไม่มีบ้าน · บอกตรง ๆ ดีกว่าโชว์เส้นทางที่ไม่มีอยู่
+                    'backup_dir' => $ready ? Paths::usersDir() . '/' . $home . '/backup' : '—',
+                    'backup_files' => (int) $row['backup_files'] === 1,
+                    'backup_database' => (int) $row['backup_database'] === 1,
+                    'sites' => (int) $row['sites'],
+                    'databases' => (int) $row['databases'],
+                    // โควตาที่เหลือ — ไฟล์สำรองนับในนี้ด้วย ผู้ดูแลจึงต้องเห็นก่อนกดเปิด
+                    'disk_quota_mb' => (int) ($row['disk_quota_mb'] ?? -1),
+                    'disk_used_mb' => (int) ($row['disk_used_mb'] ?? 0),
+                    'ready' => $ready,
+                    'reason' => $ready ? '' : 'ยังไม่มีบัญชีระบบ — สร้างเว็บไซต์แรกให้บัญชีนี้ก่อน',
+                    'can_manage' => $canManage && $ready,
+                ];
+            },
             $rows,
         );
 
@@ -76,12 +93,20 @@ final class BackupTargetsController extends ApiController
     {
         $id = $request->paramInt('id');
         $row = $this->app->db()->first(
-            'SELECT id, username, backup_files, backup_database FROM users WHERE id = :id AND role = :role',
+            'SELECT id, username, system_user, backup_files, backup_database FROM users WHERE id = :id AND role = :role',
             ['id' => $id, 'role' => Permissions::WEBADMIN],
         );
 
         if ($row === null) {
             return $this->problem(ApiProblem::NotFound, 'Hosting account not found');
+        }
+
+        // บัญชีที่ยังไม่มีบ้านเปิดสำรองไม่ได้ — รอบจะไปล้มทุกคืนโดยไม่มีทางสำเร็จ
+        if ((string) ($row['system_user'] ?? '') === '') {
+            return $this->problem(
+                ApiProblem::ValidationError,
+                'This account has no home folder yet — create its first website first',
+            );
         }
 
         $fields = [];

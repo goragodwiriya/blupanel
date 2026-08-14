@@ -333,10 +333,10 @@ final class Routes
 
         $router->add(new Route('GET', '/api/v2/backups', BackupsController::class, 'index', 'backup.view', 'api.v2.backups.index'));
         // ต้องมาก่อน {id} — ไม่งั้น "form" ถูกอ่านเป็นรหัสไฟล์สำรอง
-        $router->add(new Route('GET', '/api/v2/backups/form', BackupsController::class, 'form', 'backup.manage', 'api.v2.backups.form'));
+        $router->add(new Route('GET', '/api/v2/backups/form', BackupsController::class, 'form', 'backup.offsite', 'api.v2.backups.form'));
         // ที่เก็บไฟล์สำรองบนเครื่องนี้ — เหตุผลเดียวกับ /form ที่ต้องมาก่อน {id}
         $router->add(new Route('GET', '/api/v2/backups/storage', BackupsController::class, 'storage', 'backup.view', 'api.v2.backups.storage'));
-        $router->add(new Route('POST', '/api/v2/backups', BackupsController::class, 'store', 'backup.manage', 'api.v2.backups.store'));
+        $router->add(new Route('POST', '/api/v2/backups', BackupsController::class, 'store', 'backup.offsite', 'api.v2.backups.store'));
 
         /*
          * ไฟล์ถูกอ้างด้วย **บัญชี + ชื่อไฟล์** ไม่ใช่รหัสแถว
@@ -350,10 +350,6 @@ final class Routes
         $router->add(new Route('POST', '/api/v2/backups/{user}/{file}/restoration', BackupsController::class, 'restore', 'backup.restore', 'api.v2.backups.restore'));
         // สำเนาที่อยู่นอกเครื่องของไฟล์สำรองนั้น — คำนามตาม §4.1 ไม่ใช่กริยา "push"
         $router->add(new Route('POST', '/api/v2/backups/{user}/{file}/offsite-copy', BackupsController::class, 'pushOffsite', 'backup.offsite', 'api.v2.backups.offsite'));
-
-        // นำไฟล์สำรองที่อยู่ปลายทางนอกเครื่องกลับมาลงทะเบียน — ทางเดียวที่ทำให้
-        // สำเนานอกเครื่อง "อ่านกลับได้" ไม่ใช่เขียนได้อย่างเดียว (ดู BackupImport)
-        $router->add(new Route('POST', '/api/v2/backups/imports', BackupsController::class, 'import', 'backup.offsite', 'api.v2.backups.import'));
 
         // --- ปลายทางของไฟล์สำรอง (เฟส E1) — ของชั้น SERVER ทั้งหมด ---
         $router->add(new Route('GET', '/api/v2/backup-destinations', BackupDestinationsController::class, 'index', 'backup.offsite', 'api.v2.backup_destinations.index'));

@@ -430,31 +430,31 @@ test('นำเข้าไฟล์ที่ไม่มีใบแจ้ง�
     );
 });
 
-test('ชื่อไฟล์ที่นำเข้าต้องเป็นชื่อล้วน — กันการหยิบไฟล์อื่นบนเครื่องปลายทาง', static function (): void {
-    // ค่านี้ถูกต่อเข้ากับเส้นทางของปลายทาง · ยอมให้มี / หรือ .. แปลว่าผู้เรียก
-    // เลือกได้ว่าจะให้ไปอ่านไฟล์ไหนบนเครื่องนั้น
-    $capability = new Phpcp\Agent\Capability\BackupImport();
+test('ชื่อไฟล์ที่รับจากหน้าจอต้องเป็นชื่อล้วนเสมอ — กันการหยิบไฟล์อื่นบนเครื่อง', static function (): void {
+    /*
+     * ค่านี้ถูกต่อเข้ากับเส้นทางบ้านของลูกค้าแล้วเอาไปแตกทับเว็บ · ยอมให้มี `/` หรือ
+     * `..` แม้แต่ตัวเดียวแปลว่าผู้เรียกเลือกได้ว่าจะให้ระบบเอาไฟล์ไหนบนเครื่องมาแตก
+     * ทับเว็บที่ให้บริการอยู่
+     *
+     * ตรวจที่ `validate()` ของ capability จริง ไม่ใช่ที่ตัวช่วย — ด่านที่นับคือด่านที่
+     * คำขอเดินผ่านจริง
+     */
+    $capability = new Phpcp\Agent\Capability\BackupRestore();
 
-    foreach (['../../etc/passwd', 'sub/dir.tar.gz', '', '  '] as $bad) {
-        $rejected = false;
-
-        try {
-            $capability->validate(['destination_id' => 1, 'remote_name' => $bad]);
-        } catch (\Phpcp\Agent\ValidationError) {
-            $rejected = true;
-        }
-
-        // ชื่อที่ผ่าน validate() ต้องถูกด่านที่สองใน run() จับ — ตรวจด้วยการประกอบเส้นทาง
-        if (!$rejected) {
-            $method = new ReflectionMethod($capability, 'remotePath');
-            $method->setAccessible(true);
-            $path = $method->invoke($capability, ['config' => ['path' => '/srv/backups']], basename(trim($bad)));
-
-            $inside = str_starts_with($path, '/srv/backups/')
-                && !str_contains(substr($path, strlen('/srv/backups/')), '/')
-                && !str_contains($path, '..');
-
-            assertTrue($inside, "ชื่อ '{$bad}' ต้องไม่ทำให้เส้นทางหลุดออกนอกไดเรกทอรีของปลายทาง");
-        }
+    foreach (['../../etc/passwd', 'sub/dir.tar.gz', '', '  ', 'x.php'] as $bad) {
+        assertRejects(
+            \Phpcp\Agent\ValidationError::class,
+            static fn () => $capability->validate(['site_id' => 1, 'file' => $bad, 'confirm' => 'example.com']),
+            "ชื่อ '{$bad}' ต้องถูกปฏิเสธตั้งแต่ชั้นตรวจค่า",
+        );
     }
+
+    // ชื่อที่ถูกต้องต้องผ่านจริง ไม่ใช่ปฏิเสธทุกอย่างแล้วเทสต์ผ่าน
+    $ok = $capability->validate([
+        'site_id' => 1,
+        'file' => 'example.com-files-20260814-010101-aabbcc.tar.gz',
+        'confirm' => 'example.com',
+    ]);
+
+    assertSame('example.com-files-20260814-010101-aabbcc.tar.gz', $ok['file'], 'ชื่อที่ถูกต้องต้องผ่าน');
 });

@@ -135,7 +135,10 @@
       box.type = 'checkbox';
       box.checked = isOn(value) || value === true;
       box.disabled = !(row && row.can_manage);
-      box.title = t('Include this account in the automatic backup round');
+      // บัญชีที่ยังไม่มีบ้านติ๊กไม่ได้ — บอกเหตุผลที่ช่องนั้นเลย ไม่ใช่ปล่อยให้กดแล้วเงียบ
+      box.title = row && row.reason
+        ? row.reason
+        : t('Include this account in the automatic backup round');
 
       box.addEventListener('change', async () => {
         const body = {};
