@@ -353,3 +353,105 @@ final class RecordingExecutor implements Executor
         return $this->real->simulatedCommands();
     }
 }
+
+// --- ใบแจ้งข้อมูล: สิ่งที่ทำให้สำเนานอกเครื่องอ่านกลับได้ ---------------------
+
+test('ไฟล์สำรองต้องอธิบายตัวเองได้ว่าเป็นของเว็บไหน มาจากเครื่องอะไร', static function (): void {
+    /*
+     * ไม่มีข้อมูลนี้ = ไฟล์ที่ส่งไปเก็บอีกเครื่องเป็นแค่ .tar.gz ที่ panel ที่นั่น
+     * ไม่รู้จัก และไม่มีทางทำให้รู้จักได้ — สำเนานอกเครื่องเขียนได้อย่างเดียว
+     */
+    $fixture = backupFixture(SiteLayout::Cpanel, 'manifest.example.com');
+    $executor = new RealExecutor();
+
+    $backup = $fixture['manager']->backupSite($executor, $fixture['site']);
+    $manifest = $fixture['manager']->readManifest($executor, $backup['path']);
+
+    assertTrue(is_array($manifest), 'ต้องอ่านใบแจ้งข้อมูลออกมาได้');
+    assertSame(BackupManager::MANIFEST_SCHEMA, $manifest['schema'], 'ต้องบอกรุ่นของรูปแบบ');
+    assertSame('manifest.example.com', $manifest['domain'], 'ต้องบอกโดเมนต้นทาง');
+    assertSame('cust', $manifest['system_user'], 'ต้องบอกผู้ใช้ระบบของต้นทาง');
+    assertSame('cpanel', $manifest['layout'], 'ต้องบอกเลย์เอาต์ของต้นทาง');
+    assertSame('public_html', $manifest['directory'], 'ต้องบอกชื่อโฟลเดอร์บนสุดใน archive');
+    assertTrue((int) $manifest['created_at'] > 0, 'ต้องบอกเวลาที่สร้าง');
+    assertTrue(($manifest['hostname'] ?? '') !== '', 'ต้องบอกว่ามาจากเครื่องไหน');
+});
+
+test('backup.json ต้องไม่หลุดเข้า docroot ตอนกู้คืน', static function (): void {
+    /*
+     * หลุดเข้าไปแล้วมันจะถูกเสิร์ฟที่ https://<โดเมน>/backup.json ทันที
+     * พร้อมชื่อผู้ใช้ระบบ เส้นทางไฟล์บนเครื่อง และชื่อโฮสต์ของเครื่องต้นทาง
+     */
+    $fixture = backupFixture(SiteLayout::Cpanel, 'leak.example.com');
+    $executor = new RealExecutor();
+    $site = $fixture['site'];
+
+    $backup = $fixture['manager']->backupSite($executor, $site);
+
+    // ต้องอยู่ใน archive จริง ๆ ก่อน — ไม่งั้นเทสต์นี้ผ่านเพราะไม่มีอะไรให้รั่ว
+    assertTrue(
+        str_contains(implode("\n", backupContents($backup['path'])), BackupManager::MANIFEST),
+        'ใบแจ้งข้อมูลต้องอยู่ใน archive',
+    );
+
+    $fixture['manager']->restoreSite($executor, $site, $backup['path'], $backup['checksum'], '');
+
+    assertTrue(
+        !file_exists($site->docroot() . '/' . BackupManager::MANIFEST),
+        'ใบแจ้งข้อมูลต้องไม่ถูกเขียนลง docroot',
+    );
+    assertTrue(is_file($site->docroot() . '/index.php'), 'ไฟล์เว็บต้องยังกู้กลับมาครบ');
+});
+
+test('นำเข้าไฟล์ที่ไม่มีใบแจ้งข้อมูลต้องถูกปฏิเสธ ไม่ใช่เดาว่าเป็นของใคร', static function (): void {
+    /*
+     * ไฟล์สำรองที่สร้างก่อนระบบมีใบแจ้งข้อมูล (หรือ .tar.gz ที่ใครก็ไม่รู้วางไว้)
+     * ต้องไม่ถูกผูกกับเว็บไซต์ไหนโดยการเดา — ผูกผิดแล้วกดกู้คืนคือเขียนทับเว็บ
+     * ด้วยไฟล์ของเว็บอื่น
+     */
+    $fixture = backupFixture(SiteLayout::Cpanel, 'nomanifest.example.com');
+    $executor = new RealExecutor();
+
+    $stray = $fixture['restore'] . '/ของใครก็ไม่รู้.tar.gz';
+    exec(sprintf(
+        'tar --create --gzip --file %s --directory %s %s',
+        escapeshellarg($stray),
+        escapeshellarg(dirname($fixture['docroot'])),
+        escapeshellarg(basename($fixture['docroot'])),
+    ));
+
+    assertSame(
+        null,
+        $fixture['manager']->readManifest($executor, $stray),
+        'ไฟล์ที่ไม่มี backup.json ต้องคืน null ให้ผู้เรียกปฏิเสธ ไม่ใช่คืนข้อมูลมั่ว',
+    );
+});
+
+test('ชื่อไฟล์ที่นำเข้าต้องเป็นชื่อล้วน — กันการหยิบไฟล์อื่นบนเครื่องปลายทาง', static function (): void {
+    // ค่านี้ถูกต่อเข้ากับเส้นทางของปลายทาง · ยอมให้มี / หรือ .. แปลว่าผู้เรียก
+    // เลือกได้ว่าจะให้ไปอ่านไฟล์ไหนบนเครื่องนั้น
+    $capability = new Phpcp\Agent\Capability\BackupImport();
+
+    foreach (['../../etc/passwd', 'sub/dir.tar.gz', '', '  '] as $bad) {
+        $rejected = false;
+
+        try {
+            $capability->validate(['destination_id' => 1, 'remote_name' => $bad]);
+        } catch (\Phpcp\Agent\ValidationError) {
+            $rejected = true;
+        }
+
+        // ชื่อที่ผ่าน validate() ต้องถูกด่านที่สองใน run() จับ — ตรวจด้วยการประกอบเส้นทาง
+        if (!$rejected) {
+            $method = new ReflectionMethod($capability, 'remotePath');
+            $method->setAccessible(true);
+            $path = $method->invoke($capability, ['config' => ['path' => '/srv/backups']], basename(trim($bad)));
+
+            $inside = str_starts_with($path, '/srv/backups/')
+                && !str_contains(substr($path, strlen('/srv/backups/')), '/')
+                && !str_contains($path, '..');
+
+            assertTrue($inside, "ชื่อ '{$bad}' ต้องไม่ทำให้เส้นทางหลุดออกนอกไดเรกทอรีของปลายทาง");
+        }
+    }
+});

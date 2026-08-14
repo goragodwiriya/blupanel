@@ -3996,6 +3996,50 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
 
+  /backups/imports:
+    post:
+      tags: [backups]
+      summary: นำไฟล์สำรองจากปลายทางนอกเครื่องกลับมาลงทะเบียน
+      description: |
+        **ทางเดียวที่ทำให้สำเนานอกเครื่องอ่านกลับได้** — `backup.push` บันทึกผลลงตาราง
+        ของเครื่องต้นทาง ส่วนการกู้คืนเริ่มจากตารางของเครื่องที่กู้ · ไฟล์ที่ไปนอนอยู่
+        อีกเครื่องจึงเป็นแค่ `.tar.gz` ที่ panel ที่นั่นไม่รู้จัก จนกว่าจะนำเข้าทางนี้
+
+        ปลายทางรู้ว่าไฟล์เป็นของโดเมนไหนจาก `backup.json` ที่รากของ archive ซึ่งอ่านได้
+        โดยไม่ต้องแตกทั้งก้อน · เว็บไซต์ชื่อนั้น**ต้องมีอยู่บนเครื่องนี้ก่อน** ระบบไม่สร้างให้
+
+        จบที่การลงทะเบียนเท่านั้น ไม่กู้คืนต่อให้ — กู้คืนยังต้องกดแยกและพิมพ์ชื่อโดเมนยืนยัน
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [destination_id, remote_name]
+              properties:
+                destination_id: { type: integer }
+                remote_name:
+                  type: string
+                  description: ชื่อไฟล์ล้วนที่ปลายทาง ไม่มีไดเรกทอรีนำหน้า
+      responses:
+        "200":
+          description: นำเข้าและลงทะเบียนแล้ว
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  message: { type: string }
+                  id: { type: integer, description: รหัสไฟล์สำรองบนเครื่องนี้ }
+                  domain: { type: string }
+                  site_id: { type: integer }
+                  source_host: { type: string, description: ชื่อเครื่องที่สร้างไฟล์นี้ }
+                  created_at: { type: integer, description: เวลาที่ไฟล์ถูกสร้างที่ต้นทาง }
+                  bytes: { type: integer }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
   /backup-destinations:
     get:
       tags: [backups]

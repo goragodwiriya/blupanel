@@ -90,6 +90,38 @@
         <a class="btn icon-plus" href="/app/backup-destination?id=0" data-route="/backup-destination?id=0" data-i18n>Add destination</a>
       </div>
       <p class="muted" data-i18n>Backups stay on the same disk as the live data until they are copied somewhere else</p>
+      <!--
+        นำไฟล์ที่อยู่ปลายทางกลับมา — ทางเดียวที่ทำให้สำเนานอกเครื่องใช้กู้คืนได้จริง
+
+        แถวใน `backups` ถูกบันทึกไว้ที่เครื่องต้นทางเท่านั้น เครื่องนี้จึงไม่รู้จักไฟล์
+        ที่ถูกส่งมาวางไว้ จนกว่าจะนำเข้าทางนี้ · ระบบอ่านจาก backup.json ที่รากของ
+        ไฟล์สำรองว่าเป็นของโดเมนไหน แล้วผูกกับเว็บชื่อเดียวกันบนเครื่องนี้ให้เอง
+      -->
+      <form class="form-inline" data-form="backupImport" action="/api/v2/backups/imports" method="post"
+            data-ajax-submit="true" data-validate="true"
+            data-component="api" data-endpoint="/api/v2/backup-destinations" data-refresh-event="phpcp:reload">
+        <div>
+          <label for="import_from" data-i18n>Bring a file back from</label>
+          <span class="form-control icon-cloud">
+            <select id="import_from" name="destination_id" required data-for="d in data">
+              <template>
+                <option data-attr="value:d.id" data-text="d.name"></option>
+              </template>
+            </select>
+          </span>
+        </div>
+        <div>
+          <label for="import_name" data-i18n>File name at the destination</label>
+          <span class="form-control icon-stack">
+            <input type="text" id="import_name" name="remote_name" required maxlength="255"
+                   autocomplete="off" placeholder="site-example.com-20260814-193000-a1b2c3.tar.gz">
+          </span>
+          <div class="comment" data-i18n>The name shown on the source machine after it was copied offsite. The website must already exist here.</div>
+        </div>
+        <div>
+          <button type="submit" class="btn icon-download" data-i18n>Import</button>
+        </div>
+      </form>
       <div class="tablebody">
         <table class="table border fullwidth" data-table="destinations" data-source="/api/v2/backup-destinations" data-page-size="25" data-row-actions='{
                    "edit": {

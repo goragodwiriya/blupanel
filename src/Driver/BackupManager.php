@@ -26,6 +26,12 @@ final class BackupManager
 {
     private const TAR = '/usr/bin/tar';
 
+    /** ใบแจ้งข้อมูลของเว็บต้นทาง ที่รากของ archive — ดู writeManifest() */
+    public const MANIFEST = 'backup.json';
+
+    /** รุ่นของรูปแบบใบแจ้งข้อมูล — ปลายทางที่อ่านไม่เข้าใจต้องปฏิเสธ ไม่ใช่เดา */
+    public const MANIFEST_SCHEMA = 1;
+
     /**
      * ที่เก็บไฟล์สำรองเมื่อไม่ได้ระบุ — ตรงกับ `Paths::backups()` ของการติดตั้งแบบ system
      *
@@ -96,22 +102,102 @@ final class BackupManager
 
         $executor->makeDirectory($executor->path($this->dir), 0750);
 
-        // -C แล้วอ้างชื่อโฟลเดอร์ — ไฟล์ในนี้จึงไม่มีเส้นทางเต็มของเครื่องติดไปด้วย
-        // และแตกกลับที่ไหนก็ได้โดยไม่เขียนทับตำแหน่งอื่นโดยไม่ตั้งใจ
-        $result = $executor->exec([
-            self::TAR,
-            '--create', '--gzip',
-            '--file', $executor->path($path),
-            '--directory', dirname($root),
-            '--exclude', 'tmp',
-            basename($root),
-        ], timeout: 900);
+        $manifest = $this->writeManifest($executor, $site, basename($root));
+
+        try {
+            // -C แล้วอ้างชื่อโฟลเดอร์ — ไฟล์ในนี้จึงไม่มีเส้นทางเต็มของเครื่องติดไปด้วย
+            // และแตกกลับที่ไหนก็ได้โดยไม่เขียนทับตำแหน่งอื่นโดยไม่ตั้งใจ
+            //
+            // `-C` ใช้ได้หลายครั้งในคำสั่งเดียว โดยมีผลกับรายการที่ตามหลังมันเท่านั้น —
+            // ใบแจ้งข้อมูลจึงเข้าไปอยู่ที่รากของ archive คู่กับโฟลเดอร์เว็บ ไม่ใช่ข้างใน
+            $result = $executor->exec([
+                self::TAR,
+                '--create', '--gzip',
+                '--file', $executor->path($path),
+                '--directory', dirname($manifest), self::MANIFEST,
+                '--directory', dirname($root),
+                '--exclude', 'tmp',
+                basename($root),
+            ], timeout: 900);
+        } finally {
+            // ลบทั้งไดเรกทอรีชั่วคราว ไม่ใช่แค่ไฟล์ — ไม่งั้นเหลือโฟลเดอร์เปล่าสะสม
+            $executor->removePath(dirname($executor->path($manifest)));
+        }
 
         if (!$result->ok()) {
             throw new ExecutionFailed('สร้างไฟล์สำรองไม่สำเร็จ: ' . trim($result->stderr));
         }
 
         return $this->describe($executor, $path);
+    }
+
+    /**
+     * ใบแจ้งข้อมูลของเว็บต้นทาง — สิ่งที่ทำให้ไฟล์สำรอง "อธิบายตัวเองได้"
+     *
+     * ไฟล์สำรองที่ถูกส่งไปเก็บอีกเครื่องเป็นแค่ `.tar.gz` ที่ panel ปลายทางไม่รู้จัก:
+     * ไม่รู้ว่าเป็นของโดเมนไหน สร้างเมื่อไร มาจากเครื่องอะไร · ทำให้สำเนานอกเครื่อง
+     * **เขียนได้อย่างเดียว อ่านกลับไม่ได้** ซึ่งกลับหัวกับเหตุผลที่มันมีอยู่
+     *
+     * เก็บไว้ **ในตัว archive** ไม่ใช่ไฟล์คู่กัน เพราะไฟล์คู่กันหายระหว่างทางได้ง่าย
+     * (คัดลอกด้วยมือ ย้ายที่เก็บ ดาวน์โหลดผ่านหน้าเว็บ) แล้วเหลือ archive ที่ไร้ที่มา
+     *
+     * @return string เส้นทางไฟล์ชั่วคราวที่ผู้เรียกต้องลบทิ้ง
+     */
+    private function writeManifest(Executor $executor, Site $site, string $directory): string
+    {
+        $manifest = [
+            'schema' => self::MANIFEST_SCHEMA,
+            'type' => 'site',
+            'domain' => $site->domain,
+            'system_user' => $site->systemUser(),
+            'php_version' => $site->phpVersion,
+            // ชื่อโฟลเดอร์บนสุดใน archive — ปลายทางใช้ตรวจว่าแตกไฟล์ถูกที่
+            'directory' => $directory,
+            'docroot' => $site->docroot(),
+            'layout' => $site->owner->layout()->value,
+            'aliases' => $site->aliases,
+            'hostname' => php_uname('n'),
+            'created_at' => time(),
+        ];
+
+        // ไดเรกทอรีของตัวเอง เพราะ `-C <dir> backup.json` ต้องการให้ชื่อไฟล์ใน archive
+        // เป็น `backup.json` เปล่า ๆ ไม่มีเส้นทางนำหน้า
+        $directoryPath = $this->dir . '/.manifest-' . bin2hex(random_bytes(6));
+
+        $executor->makeDirectory($executor->path($directoryPath), 0700);
+        $executor->writeFile(
+            $executor->path($directoryPath . '/' . self::MANIFEST),
+            (string) json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            0600,
+        );
+
+        return $directoryPath . '/' . self::MANIFEST;
+    }
+
+    /**
+     * อ่านใบแจ้งข้อมูลออกมาโดยไม่แตกไฟล์ทั้งก้อน
+     *
+     * ปลายทางต้องรู้ว่าไฟล์นี้เป็นของโดเมนไหน **ก่อน** ตัดสินใจว่าจะเอาไปทับที่ไหน ·
+     * แตกทั้งก้อนเพื่อดูข้อมูลบรรทัดเดียวแปลว่าต้องมีที่ว่างเท่าขนาดเว็บทั้งเว็บ
+     *
+     * @return array<string,mixed>|null null = ไฟล์สำรองรุ่นเก่าที่ยังไม่มีใบแจ้งข้อมูล
+     */
+    public function readManifest(Executor $executor, string $archive): ?array
+    {
+        $result = $executor->exec([
+            self::TAR,
+            '--extract', '--gzip', '--to-stdout',
+            '--file', $executor->path($archive),
+            self::MANIFEST,
+        ], timeout: 60);
+
+        if (!$result->ok()) {
+            return null;
+        }
+
+        $manifest = json_decode(trim($result->stdout), true);
+
+        return is_array($manifest) ? $manifest : null;
     }
 
     /**
@@ -203,11 +289,21 @@ final class BackupManager
         $executor->makeDirectory($staging, 0750);
 
         // ขั้นที่ 2 — แตกลงที่ชั่วคราว ยังไม่แตะของเดิม
+        /*
+         * **ห้ามให้ `backup.json` หลุดเข้า docroot** — มันจะถูกเสิร์ฟที่
+         * `https://<โดเมน>/backup.json` ทันที พร้อมชื่อผู้ใช้ระบบ เส้นทางไฟล์บนเครื่อง
+         * และชื่อโฮสต์ของเครื่องต้นทาง
+         *
+         * `--strip-components 1` ตัดรายการที่มีชั้นเดียวทิ้งอยู่แล้วในทางปฏิบัติ แต่
+         * นั่นเป็นผลข้างเคียงของการนับชั้น ไม่ใช่คำสั่ง · เขียน `--exclude` ให้ชัด
+         * เพื่อไม่ให้ความปลอดภัยขึ้นอยู่กับพฤติกรรมที่ไม่ได้ประกาศไว้ของ tar
+         */
         $result = $executor->exec([
             self::TAR,
             '--extract', '--gzip',
             '--file', $executor->path($archive),
             '--directory', $staging,
+            '--exclude', self::MANIFEST,
             '--strip-components', '1',
         ], timeout: 900);
 

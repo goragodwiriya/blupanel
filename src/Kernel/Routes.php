@@ -340,6 +340,10 @@ final class Routes
         // สำเนาที่อยู่นอกเครื่องของไฟล์สำรองนั้น — คำนามตาม §4.1 ไม่ใช่กริยา "push"
         $router->add(new Route('POST', '/api/v2/backups/{id}/offsite-copy', BackupsController::class, 'pushOffsite', 'backup.offsite', 'api.v2.backups.offsite'));
 
+        // นำไฟล์สำรองที่อยู่ปลายทางนอกเครื่องกลับมาลงทะเบียน — ทางเดียวที่ทำให้
+        // สำเนานอกเครื่อง "อ่านกลับได้" ไม่ใช่เขียนได้อย่างเดียว (ดู BackupImport)
+        $router->add(new Route('POST', '/api/v2/backups/imports', BackupsController::class, 'import', 'backup.offsite', 'api.v2.backups.import'));
+
         // --- ปลายทางของไฟล์สำรอง (เฟส E1) — ของชั้น SERVER ทั้งหมด ---
         $router->add(new Route('GET', '/api/v2/backup-destinations', BackupDestinationsController::class, 'index', 'backup.offsite', 'api.v2.backup_destinations.index'));
         $router->add(new Route('POST', '/api/v2/backup-destinations', BackupDestinationsController::class, 'store', 'backup.offsite', 'api.v2.backup_destinations.store'));

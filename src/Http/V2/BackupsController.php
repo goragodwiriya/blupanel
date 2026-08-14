@@ -184,6 +184,26 @@ final class BackupsController extends HostingController
         );
     }
 
+    /**
+     * นำไฟล์สำรองที่อยู่ปลายทางนอกเครื่องกลับมาลงทะเบียนบนเครื่องนี้
+     *
+     * จบที่การลงทะเบียน **ไม่กู้คืนต่อให้** — ผู้ดูแลกดกู้คืนเองแล้วพิมพ์ชื่อโดเมนยืนยัน
+     * ตามเดิม · "ดึงไฟล์จากที่เก็บ" กับ "เขียนทับเว็บที่ใช้งานอยู่" เป็นคนละการตัดสินใจ
+     */
+    public function import(Request $request): Response
+    {
+        $result = $this->agent()->data('backup.import', [
+            'destination_id' => (int) $request->payload('destination_id', 0),
+            'remote_name' => trim($request->payloadString('remote_name')),
+        ], $this->ctx->actor($request));
+
+        return $this->saved(
+            (string) ($result['message'] ?? 'Backup imported'),
+            'backups',
+            is_array($result) ? $result : [],
+        );
+    }
+
     public function destroy(Request $request): Response
     {
         $backup = $this->findBackup($request->paramInt('id'));
