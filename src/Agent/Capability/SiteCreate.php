@@ -8,11 +8,14 @@ use Phpcp\Agent\Context;
 use Phpcp\Agent\ExecutionFailed;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\ValidationError;
+use Phpcp\Domain\DnsZoneDefaults;
+use Phpcp\Domain\ServerAddress;
 use Phpcp\Domain\UserAccount;
 use Phpcp\Domain\UserRepository;
 use Phpcp\Domain\QuotaChecker;
 use Phpcp\Domain\Site;
 use Phpcp\Driver\ConfigTransaction;
+use Phpcp\Driver\Dns\BindZoneManager;
 use Phpcp\Support\Validator;
 
 /**
@@ -250,6 +253,9 @@ final class SiteCreate extends SiteCapability
             $repository->completeProvisioning($site);
             $this->recordDomains($context, $site);
 
+            // ต้องหลัง recordDomains — แถวใน `domains` ต้องมีก่อนถึงจะผูกเรกคอร์ดได้
+            $dns = $this->seedDnsZone($executor, $context, $site);
+
             if ($this->isLocalEnvironment($executor, $context)) {
                 if (str_ends_with($site->domain, '.test')) {
                     $this->updateHostsFile($executor, $site->domain, true);
@@ -283,7 +289,11 @@ final class SiteCreate extends SiteCapability
             'fpm_socket' => $site->fpmSocket(),
             'vhost' => $provisioner->webserver()->vhostPath($site),
             'aliases' => $site->aliases,
+            'dns' => $dns,
             'message' => "สร้างเว็บไซต์ {$site->domain} เรียบร้อยแล้ว"
+                . (($dns['seeded'] ?? false)
+                    ? sprintf(' · สร้าง DNS zone ให้แล้ว (%d เรกคอร์ด ชี้ไป %s)', count($dns['records'] ?? []), $dns['ip'] ?? '')
+                    : ' · ยังไม่ได้สร้าง DNS zone: ' . ($dns['reason'] ?? 'ไม่ทราบสาเหตุ')),
         ];
     }
 
@@ -306,6 +316,61 @@ final class SiteCreate extends SiteCapability
                 'type' => 'alias',
                 'created_at' => $now
             ]);
+        }
+    }
+
+    /**
+     * สร้าง zone ที่ใช้งานได้ทันทีให้โดเมนใหม่ — ไม่ใช่หน้า DNS ว่างเปล่า
+     *
+     * **เดิมการสร้างเว็บไม่สร้างเรกคอร์ด DNS ให้เลย** ผู้ดูแลต้องพิมพ์เองทุกบรรทัด
+     * และ zone file ไม่เกิดขึ้นจนกว่าจะเพิ่มตัวแรก · ต่างจากทุก control panel ที่
+     * ผู้ใช้ย้ายมา ซึ่งสร้างโดเมนแล้วได้ zone ที่ตอบ query ได้ทันที
+     *
+     * ไม่โยน exception เมื่อล้ม — เว็บถูกสร้างเสร็จแล้วและใช้งานได้ตามปกติ การที่ DNS
+     * ยังไม่พร้อม (ยังไม่เปิด `dns.enabled` · หาไอพีสาธารณะไม่ได้ · BIND ปฏิเสธ zone)
+     * ไม่ใช่เหตุให้ล้มการสร้างเว็บทั้งงานแล้วคืนค่าทุกอย่าง · รายงานกลับไปแทน
+     *
+     * @return array<string,mixed>
+     */
+    private function seedDnsZone(Executor $executor, Context $context, Site $site): array
+    {
+        if (!$context->config->dnsEnabled()) {
+            return ['seeded' => false, 'reason' => 'ยังไม่ได้เปิดการเชื่อม BIND9'];
+        }
+
+        $ip = ServerAddress::detect($executor, $context->config->string('server.public_ip'));
+
+        if ($ip === '') {
+            return [
+                'seeded' => false,
+                'reason' => 'หาไอพีสาธารณะของเครื่องไม่ได้ — ตั้ง server.public_ip แล้วสร้าง zone อีกครั้งจากหน้า DNS',
+            ];
+        }
+
+        $row = $context->db->first(
+            'SELECT id FROM domains WHERE site_id = :s AND type = :t',
+            ['s' => $site->id, 't' => 'primary'],
+        );
+
+        if ($row === null) {
+            return ['seeded' => false, 'reason' => 'ไม่พบโดเมนหลักของเว็บนี้'];
+        }
+
+        try {
+            $created = DnsZoneDefaults::seed(
+                $context->db,
+                (int) $row['id'],
+                $site->domain,
+                $ip,
+                $context->config->dnsNameservers(),
+            );
+
+            $write = (new BindZoneManager($executor, $context->config, $context->db))
+                ->writeZone($context->db->first('SELECT * FROM domains WHERE id = :id', ['id' => (int) $row['id']]));
+
+            return ['seeded' => true, 'ip' => $ip, 'records' => $created, 'pushed' => $write['pushed'] ?? false];
+        } catch (\Throwable $e) {
+            return ['seeded' => false, 'ip' => $ip, 'reason' => $e->getMessage()];
         }
     }
 }
