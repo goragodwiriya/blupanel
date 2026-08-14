@@ -25,68 +25,59 @@
         </div>
       </header>
       <div class="content-body">
-        <form data-form="backupDestination"
-              action="/api/v2/backup-destinations"
-              method="post"
-              data-ajax-submit="true"
-              data-validate="true">
+        <form data-form="backupDestination" action="/api/v2/backup-destinations" method="post" data-ajax-submit="true" data-validate="true">
           <fieldset>
             <div class="form-group">
               <div class="width50">
                 <label for="nd_name" data-i18n>Name</label>
                 <span class="form-control icon-cloud">
-                  <input type="text" id="nd_name" name="name" required maxlength="100"
-                         autocomplete="off" data-attr="value:name">
+                  <input type="text" id="nd_name" name="name" required maxlength="100" autocomplete="off" data-attr="value:name">
                 </span>
               </div>
               <div class="width50">
-                <!--
+                <label for="nd_host" data-i18n>Host</label>
+                <span class="form-control icon-cpu">
+                  <input type="text" id="nd_host" name="host" maxlength="255" autocomplete="off" data-attr="value:config.host" placeholder="{LNG_sftp/rsync only}">
+                </span>
+              </div>
+            </div>
+            <div>
+              <!--
                   ชนิดของปลายทางเปลี่ยนทีหลังไม่ได้ — ค่าที่ตั้งไว้ผูกกับรูปแบบของ config
                   ที่เก็บไว้แล้ว · ตอนแก้ไขจึงแสดงเป็นข้อความ ไม่ใช่ตัวเลือกที่กดได้แล้ว
                   ไม่มีผล
                 -->
-                <label for="nd_driver" data-i18n>Type</label>
-                <span class="form-control icon-menus" data-show="id === 0">
-                  <select id="nd_driver" name="driver" data-value="driver">
-                    <option value="local">local</option>
-                    <option value="sftp">sftp</option>
-                    <option value="rsync">rsync</option>
-                    <option value="s3">s3</option>
-                  </select>
-                </span>
-                <p class="mono" data-show="id > 0" data-text="driver"></p>
-                <div class="comment" data-i18n>local = another path on this machine, such as a mounted NAS. s3 = AWS S3 or a compatible service (MinIO, Backblaze B2, DigitalOcean
-                  Spaces, Cloudflare R2)</div>
-              </div>
+              <label for="nd_driver" data-i18n>Type</label>
+              <span class="form-control icon-menus" data-show="id === 0">
+                <select id="nd_driver" name="driver" data-value="driver">
+                  <option value="local">local</option>
+                  <option value="sftp">sftp</option>
+                  <option value="rsync">rsync</option>
+                  <option value="s3">s3</option>
+                </select>
+              </span>
+              <p class="mono" data-show="id > 0" data-text="driver"></p>
+              <div class="comment" data-i18n>local = another path on this machine, such as a mounted NAS. s3 = AWS S3 or a compatible service (MinIO, Backblaze B2, DigitalOcean
+                Spaces, Cloudflare R2)</div>
             </div>
             <div class="form-group">
               <div class="width50">
-                <label for="nd_host" data-i18n>Host</label>
-                <span class="form-control icon-cpu">
-                  <input type="text" id="nd_host" name="host" maxlength="255"
-                         autocomplete="off" data-attr="value:config.host">
-                </span>
-                <div class="comment" data-i18n>sftp/rsync only</div>
-              </div>
-              <div class="width25">
                 <label for="nd_port" data-i18n>Port</label>
                 <span class="form-control">
                   <input type="number" id="nd_port" name="port" min="1" max="65535" data-attr="value:config.port">
                 </span>
               </div>
-              <div class="width25">
+              <div class="width50">
                 <label for="nd_user" data-i18n>User</label>
                 <span class="form-control icon-user">
-                  <input type="text" id="nd_user" name="user" maxlength="64"
-                         autocomplete="off" data-attr="value:config.user">
+                  <input type="text" id="nd_user" name="user" maxlength="64" autocomplete="off" data-attr="value:config.user">
                 </span>
               </div>
             </div>
             <div>
               <label for="nd_path" data-i18n>Path</label>
               <span class="form-control icon-folder">
-                <input type="text" id="nd_path" name="path" maxlength="512" autocomplete="off"
-                       placeholder="/srv/backups" data-attr="value:config.path">
+                <input type="text" id="nd_path" name="path" maxlength="512" autocomplete="off" placeholder="/srv/backups" data-attr="value:config.path">
               </span>
               <div class="comment" data-i18n>Required for local/sftp/rsync. Optional key prefix for s3</div>
             </div>
@@ -96,16 +87,14 @@
               <div class="width50">
                 <label for="nd_bucket" data-i18n>Bucket</label>
                 <span class="form-control icon-stack">
-                  <input type="text" id="nd_bucket" name="bucket" maxlength="63"
-                         autocomplete="off" data-attr="value:config.bucket">
+                  <input type="text" id="nd_bucket" name="bucket" maxlength="63" autocomplete="off" data-attr="value:config.bucket">
                 </span>
                 <div class="comment" data-i18n>s3 only</div>
               </div>
               <div class="width50">
                 <label for="nd_region" data-i18n>Region</label>
                 <span class="form-control icon-world">
-                  <input type="text" id="nd_region" name="region" maxlength="64" autocomplete="off"
-                         placeholder="us-east-1" data-attr="value:config.region">
+                  <input type="text" id="nd_region" name="region" maxlength="64" autocomplete="off" placeholder="us-east-1" data-attr="value:config.region">
                 </span>
               </div>
             </div>
@@ -113,22 +102,20 @@
               <div class="width50">
                 <label for="nd_access_key" data-i18n>Access key</label>
                 <span class="form-control icon-user">
-                  <input type="text" id="nd_access_key" name="access_key" maxlength="128"
-                         autocomplete="off" data-attr="value:config.access_key">
+                  <input type="text" id="nd_access_key" name="access_key" maxlength="128" autocomplete="off" data-attr="value:config.access_key">
                 </span>
               </div>
               <div class="width50">
                 <label for="nd_endpoint" data-i18n>Endpoint</label>
                 <span class="form-control icon-link">
-                  <input type="text" id="nd_endpoint" name="endpoint" maxlength="255" autocomplete="off"
-                         placeholder="https://s3.us-west-000.backblazeb2.com" data-attr="value:config.endpoint">
+                  <input type="text" id="nd_endpoint" name="endpoint" maxlength="255" autocomplete="off" placeholder="https://s3.us-west-000.backblazeb2.com"
+                         data-attr="value:config.endpoint">
                 </span>
                 <div class="comment" data-i18n>Leave blank for AWS S3. Required for other s3-compatible services</div>
               </div>
             </div>
             <div>
-              <input type="checkbox" class="switch" id="nd_path_style" name="path_style" value="1"
-                     data-attr="checked:config.path_style">
+              <input type="checkbox" class="switch" id="nd_path_style" name="path_style" value="1" data-attr="checked:config.path_style">
               <label for="nd_path_style" data-i18n>Path-style addressing</label>
               <div class="comment" data-i18n>Turn on for services without wildcard DNS per bucket, such as self-hosted MinIO</div>
             </div>
@@ -139,10 +126,8 @@
               -->
               <label for="nd_secret" data-i18n>Private key / secret key</label>
               <span class="form-control">
-                <textarea id="nd_secret" name="secret" rows="4" class="mono" autocomplete="off"></textarea>
+                <textarea id="nd_secret" name="secret" rows="4" class="mono" autocomplete="off" placeholder="{LNG_Needed for sftp, rsync and s3 (secret access key). Stored encrypted and never shown again. Leave blank to keep the current one. Password authentication is not supported for sftp/rsync}"></textarea>
               </span>
-              <div class="comment" data-i18n>Needed for sftp, rsync and s3 (secret access key). Stored encrypted and never shown again. Leave blank to keep the current one. Password
-                authentication is not supported for sftp/rsync</div>
             </div>
             <div class="form-group">
               <div class="width50">

@@ -603,7 +603,7 @@ body {
 /* ตัวแก้ไขไฟล์ — ต้องเห็นเนื้อหาได้เยอะและไม่ตัดบรรทัดจนโครงสร้างไฟล์เพี้ยน */
 textarea.mono {
   width: 100%;
-  min-height: 60vh;
+  min-height: 20vh;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.85rem;
   line-height: 1.5;
