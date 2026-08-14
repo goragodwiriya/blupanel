@@ -36,7 +36,20 @@ final class Response
     {
         $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
-        return new self($json === false ? '{}' : $json, $status, 'application/json; charset=UTF-8');
+        /*
+         * คำตอบ JSON คือ**สถานะสด**ของเครื่อง ห้ามให้เบราว์เซอร์เก็บไว้ใช้ซ้ำ
+         *
+         * GET ที่ไม่มี header กำกับ เบราว์เซอร์เก็บแคชเองได้ตามใจ (heuristic caching) ·
+         * URL ของเราคงที่ทุกครั้ง เช่น `/api/v2/metrics/history?range=24h` ที่หน้า
+         * เซิร์ฟเวอร์เรียกซ้ำทุกนาที — **กราฟจึงค้างอยู่ที่เวลาที่โหลดสำเร็จครั้งแรก
+         * ตลอดไป** ทั้งที่ตัวเก็บข้อมูลเขียนแถวใหม่ทุกนาทีและ API ตอบข้อมูลสด
+         * (เจอบนเซิร์ฟเวอร์จริง 2026-08-14 — กราฟค้างที่เวลาเดิมนานหลายชั่วโมง)
+         *
+         * ตั้งที่นี่ที่เดียวเพราะเป็นจริงกับทุก endpoint ของ API ไม่ใช่แค่ metrics ·
+         * ผู้เรียกที่อยากให้แคชได้จริง ๆ ใช้ `withHeader()` ทับได้
+         */
+        return (new self($json === false ? '{}' : $json, $status, 'application/json; charset=UTF-8'))
+            ->withHeader('Cache-Control', 'no-store');
     }
 
     public static function text(string $body, int $status = 200): self
