@@ -273,3 +273,83 @@ test('งานตามเวลา metrics.record ถูกตั้งไว�
     assertTrue($job !== null, 'ต้องมีงาน metrics.record ในรายการตั้งต้น');
     assertSame('* * * * *', $job['schedule'], 'ต้องทุกนาที — ถี่กว่านี้ค่าถูกเฉลี่ยรวมอยู่ดี ห่างกว่านี้กราฟ 24 ชม. จะมีช่วงว่าง');
 });
+
+// --- 4. สรุปให้เหลือเท่าที่กราฟวาดได้ ------------------------------------------
+
+test('summarise() ยุบให้เหลือหนึ่งจุดต่อช่วง โดยถ่วงน้ำหนักด้วย samples', static function (): void {
+    /*
+     * ค่าเฉลี่ยตรงนี้ผิดแล้วไม่มีอะไรฟ้อง — กราฟยังวาดสวยเหมือนเดิม แค่โกหก
+     * เหตุผลเดียวกับที่ rollUpInto() ต้องถ่วงน้ำหนัก แต่คนละเส้นทางโค้ด
+     */
+    $repository = new MetricsHistoryRepository(metricsDb());
+
+    // สองแถวในช่วงเดียวกัน: 60 ตัวอย่างที่ 10% กับ 1 ตัวอย่างที่ 90%
+    // เฉลี่ยธรรมดาได้ 50% ซึ่งไกลจากความจริงมาก · ถ่วงน้ำหนักแล้วต้องได้ ~11.3%
+    $rows = [
+        ['bucket_at' => 3600, 'cpu_percent' => 10.0, 'cpu_peak' => 12.0, 'memory_percent' => 40.0,
+            'disk_percent' => 20.0, 'load1' => 1.0, 'memory_used_bytes' => 100, 'disk_used_bytes' => 200, 'samples' => 60],
+        ['bucket_at' => 3660, 'cpu_percent' => 90.0, 'cpu_peak' => 95.0, 'memory_percent' => 40.0,
+            'disk_percent' => 20.0, 'load1' => 1.0, 'memory_used_bytes' => 111, 'disk_used_bytes' => 222, 'samples' => 1],
+    ];
+
+    $summary = $repository->summarise($rows, 3600);
+
+    assertSame(1, count($summary), 'สองแถวในชั่วโมงเดียวกันต้องเหลือจุดเดียว');
+    assertSame(3600, $summary[0]['bucket_at'], 'เวลาของจุดต้องเป็นต้นช่วง');
+    assertSame(11.3, round($summary[0]['cpu_percent'], 1), 'ต้องถ่วงน้ำหนัก ไม่ใช่ได้ 50');
+    assertSame(95.0, $summary[0]['cpu_peak'], 'พีคต้องเป็นค่าสูงสุด ไม่ใช่ค่าเฉลี่ย');
+    assertSame(111, $summary[0]['memory_used_bytes'], 'ไบต์ต้องเป็นค่าล่าสุดของช่วง');
+    assertSame(61, $summary[0]['samples'], 'จำนวนตัวอย่างต้องรวมกัน');
+});
+
+test('ทุกช่วงที่เลือกได้ต้องส่งจุดน้อยกว่าที่กราฟวาดไหว', static function (): void {
+    /*
+     * **เจอจากการใช้งานจริง (2026-08-14):** กราฟค้างที่เวลาเดิมตลอดทั้งที่ข้อมูลสด
+     * มาครบ · GraphComponent วาด `data.slice(0, maxDataPoints)` ซึ่งเป็นจุด **แรก ๆ**
+     * ของชุด ไม่ใช่จุดล่าสุด · 24 ชม. ส่งไป 1,440 จุด กราฟจึงวาดแค่ 20 นาทีแรกของ
+     * ชุดเสมอ และทุกช่วงหน้าตาเหมือนกันหมดเพราะเป็นต้นชุดเหมือนกัน
+     *
+     * เทสต์นี้ตรึงฝั่งเซิร์ฟเวอร์ให้สรุปมาแล้ว ส่วนฝั่งเทมเพลตมี data-max-data-points="0"
+     * กำกับไว้อีกชั้น (ตรวจในเทสต์ถัดไป)
+     */
+    $reflection = new ReflectionClass(Phpcp\Http\V2\MetricsController::class);
+    $ranges = $reflection->getConstant('RANGES');
+
+    assertTrue(is_array($ranges) && $ranges !== [], 'ต้องมีรายการช่วงเวลา');
+
+    $repository = new MetricsHistoryRepository(metricsDb());
+
+    foreach ($ranges as $name => [$seconds, $step, $format]) {
+        // จำลองข้อมูลเต็มช่วงที่ความละเอียดของชั้นที่ใช้จริง
+        $bucketSize = MetricsHistoryRepository::BUCKETS[MetricsHistoryRepository::bucketForRange($seconds)][0];
+        $rows = [];
+
+        for ($at = 0; $at < $seconds; $at += $bucketSize) {
+            $rows[] = ['bucket_at' => $at, 'cpu_percent' => 10.0, 'cpu_peak' => 10.0, 'memory_percent' => 10.0,
+                'disk_percent' => 10.0, 'load1' => 1.0, 'memory_used_bytes' => 1, 'disk_used_bytes' => 1, 'samples' => 1];
+        }
+
+        $points = count($repository->summarise($rows, $step));
+
+        assertTrue($points > 0, "ช่วง {$name} ต้องมีจุดให้วาด");
+        assertTrue(
+            $points <= 32,
+            "ช่วง {$name} ส่ง {$points} จุด — มากเกินกว่าที่แกนเวลาจะอ่านออก และเสี่ยงถูกกราฟตัดท้ายทิ้ง",
+        );
+
+        // ป้ายของแต่ละช่วงต้องต่างกันจริง ไม่ใช่ 'H:i' เหมือนกันหมดจนแยกไม่ออกว่าดูช่วงไหน
+        assertTrue($format !== '', "ช่วง {$name} ต้องมีรูปแบบป้าย");
+    }
+});
+
+test('เทมเพลตต้องสั่งกราฟไม่ให้ตัดจุดท้ายทิ้ง', static function (): void {
+    // ค่าเริ่มต้นของ GraphComponent คือ 20 จุด — ช่วง 30 วันส่ง 30 จุด ถ้าไม่มีบรรทัดนี้
+    // สิบวันสุดท้ายจะหายไปเงียบ ๆ โดยไม่มี error ให้เห็น
+    $html = (string) file_get_contents(PHPCP_ROOT . '/public/assets/spa/templates/server.html');
+    $graph = strstr($html, 'data-metrics-graph');
+
+    assertTrue(
+        str_contains((string) strstr((string) $graph, '>', true), 'data-max-data-points="0"'),
+        'ธาตุกราฟต้องมี data-max-data-points="0"',
+    );
+});

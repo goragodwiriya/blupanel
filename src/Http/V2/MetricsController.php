@@ -28,14 +28,27 @@ final class MetricsController extends ApiController
     private const INTERVAL_SECONDS = 2;
     private const MAX_DURATION = 1800;     // 30 นาที แล้วให้เบราว์เซอร์ต่อใหม่เอง
 
-    /** ช่วงเวลาที่เลือกได้ในหน้าจอ => จำนวนวินาทีย้อนหลัง */
+    /**
+     * ช่วงเวลาที่เลือกได้ => [ย้อนหลังกี่วินาที, หนึ่งจุดในกราฟกว้างกี่วินาที, รูปแบบป้าย]
+     *
+     * **จำนวนจุดถูกกำหนดที่นี่ ไม่ใช่ให้กราฟไปตัดเอง** — `GraphComponent` วาดแค่
+     * `data.slice(0, maxDataPoints)` ซึ่งเป็น **จุดแรก ๆ ของชุด ไม่ใช่จุดล่าสุด** ·
+     * ส่งค่ารายนาทีทั้ง 1,440 จุดของ 24 ชั่วโมงไป กราฟจึงวาดแค่ 20 นาทีแรกของชุด
+     * แล้วค้างอยู่ตรงนั้นตลอด (ดูเหมือนกราฟ "ไม่ขยับ" ทั้งที่ข้อมูลสดมาครบ) และป้าย
+     * ทุกช่วงก็หน้าตาเหมือนกันหมดเพราะเป็นนาทีแรก ๆ ของชุดเสมอ ไม่ว่าจะเลือกช่วงไหน
+     *
+     * ผลพลอยได้คือคำตอบเล็กลงจากหลักพันจุดเหลือหลักสิบ — แต่เหตุผลหลักคือ **หนึ่งจุด
+     * ต่อหนึ่งช่วงเวลาที่อ่านออก** ซึ่งเป็นสิ่งเดียวที่ทำให้ตัวเลือกช่วงมีความหมาย
+     *
+     * @var array<string,array{0:int,1:int,2:string}>
+     */
     private const RANGES = [
-        '1h' => 3600,
-        '6h' => 21600,
-        '24h' => 86400,
-        '7d' => 604800,
-        '30d' => 2592000,
-        '1y' => 31536000,
+        '1h' => [3600, 300, 'H:i'],            // 12 จุด · ทุก 5 นาที
+        '6h' => [21600, 1800, 'H:i'],          // 12 จุด · ทุกครึ่งชั่วโมง
+        '24h' => [86400, 3600, 'H:i'],         // 24 จุด · ทุกชั่วโมง
+        '7d' => [604800, 43200, 'j/n H:i'],    // 14 จุด · ทุกครึ่งวัน
+        '30d' => [2592000, 86400, 'j/n'],      // 30 จุด · ทุกวัน
+        '1y' => [31536000, 2592000, 'M'],      // 12 จุด · ทุก 30 วัน
     ];
 
     public function index(Request $request): Response
@@ -62,18 +75,21 @@ final class MetricsController extends ApiController
             );
         }
 
-        $seconds = self::RANGES[$range];
+        [$seconds, $step, $format] = self::RANGES[$range];
         $bucket = MetricsHistoryRepository::bucketForRange($seconds);
         $since = time() - $seconds;
 
-        $rows = (new MetricsHistoryRepository($this->app->db()))->range($bucket, $since);
+        $repository = new MetricsHistoryRepository($this->app->db());
+        $rows = $repository->summarise($repository->range($bucket, $since), $step);
 
         return $this->ok(
-            $this->toSeries($rows, $bucket),
+            $this->toSeries($rows, $format),
             [
                 'range' => $range,
                 'bucket' => $bucket,
                 'since' => $since,
+                // ความกว้างของหนึ่งจุด — หน้าจออธิบายให้ผู้ใช้ได้ว่ากำลังดูค่าเฉลี่ยของอะไร
+                'step' => $step,
                 'points' => count($rows),
                 // หน้าจอใช้บอกผู้ใช้ว่าทำไมกราฟถึงว่าง แทนที่จะแสดงกล่องเปล่าเฉย ๆ
                 'collecting' => $rows === [],
@@ -96,10 +112,10 @@ final class MetricsController extends ApiController
      * @param list<array<string,mixed>> $rows
      * @return list<array{name:string,data:list<array{label:string,value:float}>}>
      */
-    private function toSeries(array $rows, string $bucket): array
+    private function toSeries(array $rows, string $format): array
     {
-        // ชั้นรายวันแสดงวันที่ · ชั้นอื่นแสดงเวลา — ป้ายที่ยาวเกินทำให้แกนอ่านไม่ออก
-        $format = $bucket === 'day' ? 'j/n' : 'H:i';
+        // รูปแบบป้ายมากับช่วงที่เลือก ไม่ใช่กับชั้นที่เก็บ — ชั้นเดียวกันใช้ได้หลายช่วง
+        // (7 วันกับ 30 วันอ่านจากชั้นชั่วโมงเหมือนกัน แต่ป้ายต้องคนละแบบ)
         $labels = array_map(
             static fn (array $row): string => date($format, (int) $row['bucket_at']),
             $rows,

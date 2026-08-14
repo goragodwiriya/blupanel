@@ -83,8 +83,15 @@
           GraphComponent อ่านได้ตรง ๆ จึงไม่ต้องมี JS แปลงข้อมูล (แบบเดียวกับตัวอย่าง
           api/v1/quarterly-sales ของ adminframework) · pageServer แค่สลับ data-url
           ตอนกดปุ่มเลือกช่วง ซึ่งเป็นสิ่งเดียวที่ประกาศด้วยแอตทริบิวต์ไม่ได้
+
+          **data-max-data-points="0" ห้ามลบ** — ค่าเริ่มต้นของ GraphComponent คือ 20 และ
+          มันวาด `data.slice(0, 20)` ซึ่งเป็น **จุดแรก ๆ ของชุด ไม่ใช่จุดล่าสุด** ·
+          ทุกช่วงที่ส่งจุดมามากกว่า 20 จะถูกตัดท้ายทิ้งเงียบ ๆ เหลือแต่ต้นชุด
+          กราฟจึงค้างอยู่ที่เวลาเดิมตลอดทั้งที่ข้อมูลสดมาครบ · 0 = วาดทุกจุดที่ได้มา
+          ซึ่งใช้ได้เพราะฝั่งเซิร์ฟเวอร์สรุปให้เหลือ 12–30 จุดตามช่วงที่เลือกมาแล้ว
         -->
-        <div data-metrics-graph class="metrics-graph" data-component="graph" data-type="line" data-url="/api/v2/metrics/history?range=24h"></div>
+        <div data-metrics-graph class="metrics-graph" data-component="graph" data-type="line"
+             data-max-data-points="0" data-url="/api/v2/metrics/history?range=24h"></div>
       </div>
       <div class="content-body" data-component="api" data-endpoint="/api/v2/system/info">
         <h2 class="icon-host" data-i18n>System information</h2>

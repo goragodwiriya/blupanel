@@ -102,6 +102,70 @@ final class MetricsHistoryRepository
         );
     }
 
+    /**
+     * ยุบแถวที่อ่านมาให้เหลือหนึ่งจุดต่อหนึ่งช่วง `$step` วินาที
+     *
+     * **ต่างจาก `rollUp()` ตรงที่ไม่แตะฐานข้อมูลเลย** — `rollUp()` เปลี่ยนสิ่งที่ *เก็บ*
+     * ตามอายุของข้อมูล ส่วนตัวนี้เปลี่ยนสิ่งที่ *ส่งให้หน้าจอ* ตามช่วงที่ผู้ใช้เลือก ·
+     * ชั้นเดียวกันจึงตอบได้หลายช่วง (7 วันกับ 30 วันอ่านจากชั้นชั่วโมงเหมือนกัน
+     * แต่ต้องการ 14 จุดกับ 30 จุดตามลำดับ)
+     *
+     * ถ่วงน้ำหนักด้วย `samples` ด้วยเหตุผลเดียวกับ `rollUpInto()` — ช่วงที่เก็บตัวอย่าง
+     * ได้น้อย (เครื่องเพิ่งบูต หรือ scheduler ขาดไปบางนาที) ต้องไม่ดึงค่าเฉลี่ยของทั้ง
+     * ช่วงไปหาตัวมันเอง · `cpu_peak` เอาค่าสูงสุดเพราะพีคสั้น ๆ คือสิ่งที่กราฟมีไว้ตอบ
+     *
+     * @param list<array<string,mixed>> $rows เรียงตาม bucket_at แล้ว
+     * @return list<array<string,mixed>>
+     */
+    public function summarise(array $rows, int $step): array
+    {
+        if ($rows === [] || $step <= 0) {
+            return $rows;
+        }
+
+        $groups = [];
+
+        foreach ($rows as $row) {
+            $groups[$this->floorTo((int) $row['bucket_at'], $step)][] = $row;
+        }
+
+        ksort($groups);
+
+        $summary = [];
+
+        foreach ($groups as $bucketAt => $group) {
+            // ตัวอย่างรวมของทั้งช่วง — ศูนย์ไม่ได้ในทางปฏิบัติ แต่ถ้าเป็นก็ห้ามหารด้วย
+            $weight = array_sum(array_map(static fn (array $r): int => max(1, (int) $r['samples']), $group));
+
+            $average = function (string $column) use ($group, $weight): float {
+                $total = 0.0;
+
+                foreach ($group as $row) {
+                    $total += (float) $row[$column] * max(1, (int) $row['samples']);
+                }
+
+                return $total / $weight;
+            };
+
+            $last = $group[count($group) - 1];
+
+            $summary[] = [
+                'bucket_at' => $bucketAt,
+                'cpu_percent' => $average('cpu_percent'),
+                'cpu_peak' => max(array_map(static fn (array $r): float => (float) $r['cpu_peak'], $group)),
+                'memory_percent' => $average('memory_percent'),
+                'disk_percent' => $average('disk_percent'),
+                'load1' => $average('load1'),
+                // ไบต์ใช้ค่าล่าสุดของช่วง ไม่ใช่ค่าเฉลี่ย — ตอบคำถาม "ตอนนั้นใช้ไปเท่าไร"
+                'memory_used_bytes' => (int) $last['memory_used_bytes'],
+                'disk_used_bytes' => (int) $last['disk_used_bytes'],
+                'samples' => $weight,
+            ];
+        }
+
+        return $summary;
+    }
+
     /** ชั้นที่เหมาะกับช่วงเวลาที่ขอ — เลือกให้เองเพื่อไม่ให้หน้าจอต้องรู้กฎนี้ */
     public static function bucketForRange(int $seconds): string
     {
