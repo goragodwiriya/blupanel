@@ -109,17 +109,19 @@ final class SiteProvisioner
      * ข้อยกเว้นเดียว: filesystem ที่เก็บ uid/gid ไม่ได้ (NTFS/exFAT/FAT) — ดู
      * assertOwnershipUnsupported() และ SECURITY §2.6
      */
-    public function setOwnership(Executor $executor, Site $site): void
+
+    /**
+     * ทุกไดเรกทอรีที่เว็บนี้เป็นเจ้าของ — ใช้ร่วมกันระหว่างตอน provision และตอนซ่อมเจ้าของ
+     *
+     * **ต้องเป็นชุดเดียวกันทั้งสองที่** · ตอนสร้างเว็บเราตั้งเจ้าของครบทุกไดเรกทอรี
+     * แต่ `site.reset_owner` เคย chown แค่ `root()` ตัวเดียว ซึ่งในเลย์เอาต์ cpanel คือ
+     * `.phpcp/<โดเมน>` — ไม่แตะ `public_html` ที่เป็นที่ที่ปัญหาเจ้าของไฟล์เกิดขึ้นจริง
+     * ปุ่มซ่อมจึงรายงานว่าสำเร็จโดยที่เว็บยังพังเหมือนเดิม
+     *
+     * @return list<string>
+     */
+    public static function ownershipTargets(Site $site): array
     {
-        if ($this->sharedOwner) {
-            // fail-closed — ยอมข้าม chown ได้ก็ต่อเมื่อพิสูจน์ได้ว่า filesystem ทำไม่ได้จริง
-            $this->assertOwnershipUnsupported($executor, $site);
-
-            return;
-        }
-
-        $owner = $site->systemUser().':'.$this->webserver->runAsGroup();
-
         $root = rtrim($site->root(), '/');
         $targets = [$root];
 
@@ -155,6 +157,22 @@ final class SiteProvisioner
         }
 
         $targets = array_values(array_unique($targets));
+
+        return $targets;
+    }
+
+    public function setOwnership(Executor $executor, Site $site): void
+    {
+        if ($this->sharedOwner) {
+            // fail-closed — ยอมข้าม chown ได้ก็ต่อเมื่อพิสูจน์ได้ว่า filesystem ทำไม่ได้จริง
+            $this->assertOwnershipUnsupported($executor, $site);
+
+            return;
+        }
+
+        $owner = $site->systemUser().':'.$this->webserver->runAsGroup();
+
+        $targets = self::ownershipTargets($site);
 
         foreach ($targets as $target) {
             $executor->exec([

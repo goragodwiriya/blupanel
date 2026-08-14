@@ -7,6 +7,7 @@ namespace Phpcp\Agent\Capability;
 use Phpcp\Agent\Capability;
 use Phpcp\Agent\Context;
 use Phpcp\Agent\ExecutionFailed;
+use Phpcp\Driver\SiteProvisioner;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\SelfProtection;
 use Phpcp\Agent\ValidationError;
@@ -101,14 +102,33 @@ final class SiteResetOwner extends SiteCapability implements Capability
 
         $before = $this->sample($executor, $site);
 
-        // -h เปลี่ยนตัว symlink เอง ไม่ไล่ตามไปเปลี่ยนปลายทาง
-        $result = $executor->exec(
-            ['/usr/bin/chown', '-Rh', $owner . ':' . $group, $real],
-            timeout: 300,
-        );
+        /*
+         * ทุกไดเรกทอรีของเว็บ ไม่ใช่แค่ `root()`
+         *
+         * เดิม chown แค่ `root()` ตัวเดียว ซึ่งใช้ได้ตอนเลย์เอาต์เก็บทุกอย่างไว้ใต้กล่อง
+         * เดียวกัน · **ในเลย์เอาต์ cpanel `root()` คือ `.phpcp/<โดเมน>`** ส่วนไฟล์เว็บ
+         * อยู่ที่ `public_html` และ log อยู่ที่ `logs/<โดเมน>` ซึ่งอยู่คนละที่ —
+         * ปุ่มซ่อมเจ้าของไฟล์จึงรายงานว่าสำเร็จโดยที่ไฟล์ที่พังจริงไม่ถูกแตะเลย
+         *
+         * ใช้รายการเดียวกับตอนสร้างเว็บ (SiteProvisioner::ownershipTargets) เพื่อให้
+         * "ซ่อมให้กลับเป็นค่าที่ถูกต้อง" หมายถึงค่าเดียวกับที่ระบบตั้งไว้ตอนสร้างจริง ๆ
+         */
+        foreach (SiteProvisioner::ownershipTargets($site) as $target) {
+            $path = $executor->path($target);
 
-        if (!$result->ok()) {
-            throw new ExecutionFailed('เปลี่ยนเจ้าของไฟล์ไม่สำเร็จ: ' . trim($result->stderr));
+            if (!$executor->exists($path)) {
+                continue;
+            }
+
+            // -h เปลี่ยนตัว symlink เอง ไม่ไล่ตามไปเปลี่ยนปลายทาง
+            $result = $executor->exec(
+                ['/usr/bin/chown', '-Rh', $owner . ':' . $group, $path],
+                timeout: 300,
+            );
+
+            if (!$result->ok()) {
+                throw new ExecutionFailed('เปลี่ยนเจ้าของไฟล์ไม่สำเร็จ: ' . trim($result->stderr));
+            }
         }
 
         $changedModes = 0;

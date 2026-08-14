@@ -176,7 +176,20 @@ final class SitesController extends HostingController
         );
 
         return $this->ok(SiteResource::one($site) + [
-            'domains' => DomainResource::collection($domains),
+            /*
+             * แต่ละโดเมนบอกเองว่าเสิร์ฟจากที่ไหน — ไม่ใช่ให้ผู้ดูแลอนุมานจากเลย์เอาต์
+             *
+             * เว็บสองแห่งของบัญชีเดียวกันอยู่คนละที่ได้ (โดเมนหลักได้ `public_html`
+             * ส่วนที่เพิ่มทีหลังได้โฟลเดอร์ชื่อตัวเอง) และโดเมนย่อยชี้ไปพาธย่อยได้อีก ·
+             * การแสดงรูปทรงรวมของบัญชีจึงตอบคำถามที่ผู้ดูแลถามจริงไม่ได้ ซึ่งคือ
+             * "ชื่อนี้เปิดไปเจอไฟล์ที่ไหน"
+             */
+            'domains' => array_map(
+                fn (array $row): array => DomainResource::one($row) + [
+                    'docroot' => $this->domainDocroot($site, $row),
+                ],
+                $domains,
+            ),
             'aliases' => $this->sites()->aliasesOf((int) $site['id']),
             // ปุ่มบนหน้าจอถาม `can[...]` จากคำตอบนี้ ไม่ได้เดาเองจากบทบาท
             'can' => $this->can([
@@ -633,5 +646,29 @@ final class SitesController extends HostingController
             (string) ($result['message'] ?? 'PHP version changed'),
             extra: ['site_id' => $siteId, 'php_version' => $phpVersion],
         );
+    }
+    /**
+     * โดเมนนี้เสิร์ฟไฟล์จากไดเรกทอรีไหน
+     *
+     * โดเมนย่อยที่ผูกไว้กับพาธย่อย (`redirect_target`) ชี้ไปที่นั่น · ที่เหลือใช้ docroot
+     * ของเว็บ ซึ่งมาจากเลย์เอาต์ของเจ้าของหรือจาก Domain Pointer ที่ตั้งไว้
+     *
+     * คำนวณจาก `Site` ตัวจริงเสมอ ไม่ประกอบเส้นทางเองที่นี่ — ที่นี่เป็นชั้นเว็บ
+     * การประกอบเส้นทางซ้ำคือทางที่ทำให้หน้าจอกับความจริงบนดิสก์เริ่มไม่ตรงกัน
+     *
+     * @param array<string,mixed> $site
+     * @param array<string,mixed> $domain
+     */
+    private function domainDocroot(array $site, array $domain): string
+    {
+        $target = trim((string) ($domain['redirect_target'] ?? ''));
+
+        if (($domain['type'] ?? '') === 'subdomain' && $target !== '') {
+            return $target;
+        }
+
+        $loaded = $this->sites()->load((int) $site['id']);
+
+        return $loaded === null ? '' : $loaded->docroot();
     }
 }

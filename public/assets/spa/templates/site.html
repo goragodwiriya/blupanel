@@ -92,6 +92,18 @@
                   data-api-url="/api/v2/sites/{id}/suspension" data-api-method="put" data-param-suspended="false" data-confirm="Resume serving this website?"
                   data-i18n>Resume</button>
           <!--
+            ซ่อมเจ้าของไฟล์ — capability กับ endpoint มีมาตั้งแต่ต้น แต่ไม่เคยมีปุ่มเรียก
+            จึงไม่มีใครใช้ได้เลย
+
+            จำเป็นจริงเพราะเจ้าของไฟล์เพี้ยนได้จากหลายทางที่ panel ควบคุมไม่ได้ทั้งหมด:
+            ผู้ดูแลแตะไฟล์ผ่าน ssh ในนาม root · กู้ไฟล์จากสำเนาสำรอง · แตกไฟล์ที่ลูกค้า
+            อัปโหลดมาพร้อมเจ้าของเดิม · อาการที่ได้คือเว็บตอบ 403 ทั้งเว็บโดยไม่มีอะไร
+            ชี้ว่าเป็นเรื่องสิทธิ์ไฟล์
+          -->
+          <button type="button" class="btn icon-user" data-if="can['edit']" data-action="click.prevent:apiRefresh" data-api-url="/api/v2/sites/{id}/owner-reset"
+                  data-api-method="post" data-param-fix_permissions="true"
+                  data-confirm="Set every file and folder of this website back to the owner and permissions the panel expects?" data-i18n>Reset file owner</button>
+          <!--
             ลบเว็บไซต์ย้อนกลับไม่ได้ · API บังคับให้ส่งชื่อโดเมนมายืนยันอยู่แล้ว
             `data-attr` เติมชื่อโดเมนจริงลง `data-param-confirm_domain` ให้ตอนเรนเดอร์
           -->
@@ -262,6 +274,12 @@
               <tr>
                 <th data-field="domain" data-cell-class="mono" data-i18n>{LNG_Domain}</th>
                 <th data-field="type" class="center" data-cell-class="center" data-i18n>{LNG_Type}</th>
+                <!--
+                  แต่ละโดเมนบอกเองว่าเปิดไปเจอไฟล์ที่ไหน — เว็บสองแห่งของบัญชีเดียวกัน
+                  อยู่คนละที่ได้ และโดเมนย่อยชี้ไปพาธย่อยได้อีก การแสดงรูปทรงรวมของบัญชี
+                  จึงตอบคำถามที่ผู้ดูแลถามจริงไม่ได้
+                -->
+                <th data-field="docroot" data-cell-class="mono" data-i18n>Serves from</th>
               </tr>
             </thead>
             <tbody></tbody>
