@@ -49,27 +49,62 @@ final class SecurityController extends ApiController
     }
 
     /**
-     * ภาพรวมการป้องกันทั้งเครื่อง — สวิตช์ใหญ่ ทุก jail และ IP ที่ถูกแบนทั้งหมด
+     * The whole machine's protection picture — the master switch, every jail, and
+     * every banned IP
      *
-     * คำถามที่หน้านี้ตอบคือ "เครื่องนี้กำลังแบนใครอยู่บ้าง" ซึ่งเป็นคำถามระดับเครื่อง
-     * ไม่ใช่ระดับเว็บ · ก่อนหน้านี้ต้องไล่เปิดหน้าของแต่ละเว็บเพื่อหาคำตอบ
+     * The question this page answers is "who is this machine banning right now",
+     * which is a machine-level question, not a per-site one — previously this meant
+     * opening each site's own page one at a time to find the answer.
      */
     public function protection(Request $request): Response
     {
-        return $this->ok(
+        return $this->ok($this->translateProtection(
             $this->agent()->data('security.protection', [], $this->ctx->actor($request)),
-        );
+        ));
     }
 
-    /** รายการ IP ที่ถูกแบนของทุก jail รวมกัน — แยกเส้นทางเพื่อให้ตารางโหลดใหม่เองได้ */
+    /** Every jail's banned IPs combined — its own route so the table can reload itself */
     public function protectionBans(Request $request): Response
     {
-        $data = $this->agent()->data('security.protection', [], $this->ctx->actor($request));
+        $data = $this->translateProtection(
+            $this->agent()->data('security.protection', [], $this->ctx->actor($request)),
+        );
 
         return $this->ok($data['bans'] ?? []);
     }
 
-    /** เปิด/ปิดการใช้ fail2ban ทั้งตัว */
+    /**
+     * Translates the label fields ProtectionOverview returns
+     *
+     * Only the fully static fields can round-trip through the catalogue —
+     * `mode_label`, `count_label`, and `state_label` are each one of a fixed, small
+     * set of values, so a th.json entry matches them exactly. `label` and
+     * `jail_label` for per-site rows carry a domain name baked in
+     * (`'Request rate limit — ' . $domain`), so they can never match a catalogue key;
+     * those stay in English until the response carries the site name and the
+     * template's own label separately.
+     */
+    private function translateProtection(array $data): array
+    {
+        $data['jails'] = array_map(function (array $jail): array {
+            $jail['label'] = $this->t((string) ($jail['label'] ?? ''));
+            $jail['mode_label'] = $this->t((string) ($jail['mode_label'] ?? ''));
+            $jail['count_label'] = $this->t((string) ($jail['count_label'] ?? ''));
+
+            return $jail;
+        }, $data['jails'] ?? []);
+
+        $data['bans'] = array_map(function (array $ban): array {
+            $ban['jail_label'] = $this->t((string) ($ban['jail_label'] ?? ''));
+            $ban['state_label'] = $this->t((string) ($ban['state_label'] ?? ''));
+
+            return $ban;
+        }, $data['bans'] ?? []);
+
+        return $data;
+    }
+
+    /** Turns fail2ban use on or off, for the panel as a whole */
     public function fail2banSet(Request $request): Response
     {
         $data = $this->agent()->data('security.fail2ban_set', [
@@ -82,15 +117,17 @@ final class SecurityController extends ApiController
         );
     }
 
-    /** สถานะการกันเดารหัสผ่านหน้าเข้าสู่ระบบ */
+    /** Status of login brute-force protection */
     public function panelJail(Request $request): Response
     {
         $data = $this->agent()->data('security.panel_jail', [], $this->ctx->actor($request));
 
         /*
-         * เพดานของ `max_retry` ไม่ใช่ค่าที่ตั้งใจเลือก แต่คำนวณจากโควตาของหน้าล็อกอิน
-         * — คำขอที่โดน 429 ไม่มีบรรทัดใน audit log ให้ fail2ban นับ · ส่งไปให้หน้าจอ
-         * เขียนเป็นคำอธิบายใต้ช่องกรอก ผู้ใช้จะได้รู้ก่อนกดบันทึกแล้วโดนปฏิเสธ
+         * The ceiling on `max_retry` isn't a chosen number — it's computed from the
+         * login page's own rate-limit quota. A request rejected with 429 never
+         * produces a line in the audit log for fail2ban to count. Sent to the screen
+         * to write as a caption under the field, so the user knows before saving
+         * rather than being rejected after.
          */
         $data['max_retry_ceiling'] = RateLimit::maxLoginFailuresWithin(
             (int) ($data['find_seconds'] ?? 600),
@@ -100,10 +137,11 @@ final class SecurityController extends ApiController
     }
 
     /**
-     * เปิด/ปิดการกันเดารหัสผ่าน
+     * Turns login brute-force protection on or off
      *
-     * **ไม่ใช้ `saved()`** — ฟอร์มนี้ไม่ได้อยู่ใน Modal และหน้าจอต้องแสดงสถานะจริงจาก
-     * fail2ban ต่อทันที (jail ทำงานอยู่ไหม แบนใครอยู่บ้าง) จึงสั่งให้โหลดหน้าใหม่แทน
+     * **Doesn't use `saved()`** — this form doesn't live in a modal, and the screen
+     * needs to show the real state from fail2ban right away (is the jail running,
+     * who is it banning), so it tells the page to reload instead.
      */
     public function panelJailSet(Request $request): Response
     {
@@ -123,10 +161,11 @@ final class SecurityController extends ApiController
     }
 
     /**
-     * ตั้งรายการที่อยู่ที่ห้ามแบน — ระดับเครื่อง ใช้กับทุก jail
+     * Sets the never-ban address list — machine-wide, applied to every jail
      *
-     * แยกจากฟอร์มของ jail หน้าเข้าสู่ระบบโดยตั้งใจ: รายการนี้มีผลกับ jail รายเว็บด้วย
-     * จึงต้องบันทึกได้แม้ jail หน้าเข้าสู่ระบบจะปิดอยู่
+     * Kept separate from the login jail's own form on purpose: this list also
+     * affects per-site jails, so it has to be saveable even while the login jail
+     * itself is off.
      */
     public function neverBanSet(Request $request): Response
     {
@@ -141,16 +180,18 @@ final class SecurityController extends ApiController
     }
 
     /**
-     * ปลดแบน IP หนึ่งออกจาก jail ของหน้าเข้าสู่ระบบ
+     * Unbans one IP from the login page's jail
      *
-     * ต้องมี เพราะการแบนพลาดเกิดขึ้นจริงและตัดขาดทุกพอร์ต — ผู้ดูแลที่แบนตัวเองจาก
-     * อีกเครื่องหนึ่งต้องปลดได้จากหน้าจอ ไม่ต้องหา SSH
+     * Has to exist because bad bans happen for real and block every port — an admin
+     * who banned themselves from another machine needs to be able to unban from the
+     * screen, without having to find SSH.
      */
     public function panelJailUnban(Request $request): Response
     {
         $data = $this->agent()->data('security.panel_jail_unban', [
             'ip' => $request->payloadString('ip'),
-            // หน้ารวมส่งชื่อ jail มาด้วยเพราะมีหลายตัว · หน้าเดิมไม่ส่ง = jail หน้าล็อกอิน
+            // The combined view sends the jail name since it lists several — the
+            // older page doesn't send it, meaning the login jail
             'jail' => $request->payloadString('jail'),
         ], $this->ctx->actor($request));
 

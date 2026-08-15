@@ -14,15 +14,17 @@ use Phpcp\Middleware\RateLimit;
 use Phpcp\Support\Validator;
 
 /**
- * เปิด/ปิดการกันเดารหัสผ่านของหน้าเข้าสู่ระบบ — บังคับใช้ด้วย fail2ban
+ * Turns login brute-force protection on or off — enforced through fail2ban
  *
- * **ทำไมต้องมีทั้งที่แอปล็อกบัญชีอยู่แล้ว** — การล็อกบัญชีกันได้ทีละบัญชี คนที่ไล่เดา
- * รหัสของ `admin`, `root`, `administrator` สลับกันไปจึงไม่เคยชนเพดานของบัญชีไหนเลย
- * และทุกครั้งที่ลองยังกิน worker ของ PHP-FPM ที่มีอยู่สี่ตัว · การแบนที่ firewall
- * ตัดตั้งแต่ก่อนถึง PHP
+ * **Why this exists despite the app already having account lockout** — lockout only
+ * stops one account at a time; someone cycling through `admin`, `root`,
+ * `administrator` is never caught by it at all, and every attempt still costs one of
+ * only four PHP-FPM workers. A ban at the firewall cuts them off before they ever
+ * reach PHP.
  *
- * **เขียนไฟล์ก่อน บันทึกค่าทีหลังเสมอ** — สลับลำดับเมื่อไร หน้าจอจะรายงานว่าเปิด
- * ป้องกันไว้แล้วทั้งที่ fail2ban ปฏิเสธไฟล์ไป ซึ่งอันตรายกว่าไม่มีฟีเจอร์นี้
+ * **The file is always written before the setting is saved** — swap that order and
+ * the screen can report protection turned on while fail2ban actually rejected the
+ * file, which is worse than not having this feature at all.
  */
 final class PanelJailSet implements Capability
 {
@@ -43,16 +45,16 @@ final class PanelJailSet implements Capability
 
     public function summary(): string
     {
-        return 'ตั้งค่าการกันเดารหัสผ่านหน้าเข้าสู่ระบบ';
+        return 'Configure login brute-force protection';
     }
 
     public function validate(array $args): array
     {
         /*
-         * `mode` แทน `enabled` แบบเปิด/ปิด — สามสถานะ off | notify | ban
+         * `mode` replaces the old on/off `enabled` — three states, off | notify | ban
          *
-         * ยังรับ `enabled` แบบเดิมด้วยเพื่อไม่ให้ผู้เรียกเก่าพัง: true = ban เพราะ
-         * นั่นคือความหมายเดียวที่ "เปิด" เคยมี
+         * Still accepts the old `enabled` too, so an older caller doesn't break:
+         * true = ban, since that was the only meaning "on" ever had.
          */
         $mode = Validator::optionalString($args, 'mode', '', 16);
 
@@ -63,10 +65,10 @@ final class PanelJailSet implements Capability
         }
 
         if (!in_array($mode, Fail2banManager::modes(), true)) {
-            throw new ValidationError('โหมดของ jail ไม่ถูกต้อง — ต้องเป็น off, notify หรือ ban');
+            throw new ValidationError('Invalid jail mode — must be off, notify, or ban');
         }
 
-        // ปิดแล้วไม่ต้องกรอกค่าที่กำลังจะไม่ถูกใช้
+        // Turning it off means the rest of the fields don't need to be filled in at all
         if ($mode === Fail2banManager::MODE_OFF) {
             return ['mode' => Fail2banManager::MODE_OFF, 'enabled' => false];
         }
@@ -74,30 +76,34 @@ final class PanelJailSet implements Capability
         $findSeconds = Validator::requireInt($args, 'find_seconds', 60, 86_400);
 
         /*
-         * ขั้นต่ำ 3 ครั้ง — ต่ำกว่านั้นคนที่พิมพ์รหัสผิดสองครั้งแล้วเปิด Caps Lock
-         * ค้างไว้จะโดนตัดขาดจากหน้าจัดการของตัวเอง ซึ่งเป็นการล็อกเจ้าของออกจากบ้าน
-         * เพื่อกันขโมยที่ยังไม่มา
+         * Minimum of 3 attempts — below that, someone who mistypes their password
+         * twice with Caps Lock stuck on gets locked out of their own control panel,
+         * locking the owner out of their own house to guard against a burglar who
+         * hasn't shown up yet.
          */
         $maxRetry = Validator::requireInt($args, 'max_retry', 3, 100);
 
         /*
-         * **เพดานบนมาจากตัวจำกัดอัตราของหน้าล็อกอิน ไม่ใช่ตัวเลขที่ตั้งใจเลือก**
+         * **The ceiling comes from the login page's own rate limiter, not a number
+         * chosen on purpose.**
          *
-         * คำขอที่โดน 429 ถูกตัดที่ middleware ก่อนถึง controller จึงไม่มีบรรทัดใน
-         * audit log · IP เดียวจึงสร้างบรรทัด "denied" ได้มากที่สุดเท่าที่โควตายอมให้
-         * (กดรัวได้ 5 ครั้ง แล้วเติมกลับนาทีละครั้ง) — วัดบนเครื่องจริงแล้วว่ายิงรัว
-         * 10 ครั้งได้บรรทัดเดียว ที่เหลือเป็น 429 ล้วน
+         * A request rejected with 429 is cut off at the middleware, before it ever
+         * reaches the controller, so it never produces a line in the audit log — one
+         * IP can only produce as many "denied" lines as the quota allows (5 rapid
+         * attempts, refilling one per minute). Measured on a real machine: firing 10
+         * rapid attempts produced exactly one line; the rest were plain 429s.
          *
-         * ตั้ง maxretry เกินเพดานนั้น = jail ที่เปิดอยู่แต่ไม่มีวันทำงาน ซึ่งแย่กว่า
-         * ปิดไว้ เพราะหน้าจอจะบอกว่ากันอยู่ · ปฏิเสธไปเลยพร้อมบอกเพดานที่แท้จริง
+         * Setting maxretry above that ceiling means a jail that's turned on but can
+         * never fire — worse than off, because the screen would say it's protecting.
+         * Reject it outright and say what the real ceiling is.
          */
         $ceiling = RateLimit::maxLoginFailuresWithin($findSeconds);
 
         if ($maxRetry > $ceiling) {
             throw new ValidationError(sprintf(
-                'ใน %d วินาที ระบบปล่อยให้ล็อกอินผิดได้มากที่สุด %d ครั้ง (ตัวจำกัดอัตราตัด'
-                . 'ที่เหลือทิ้งก่อนถึงการตรวจรหัสผ่าน) — ตั้งเกณฑ์ %d ครั้งจึงไม่มีวันถึง '
-                . 'ให้ลดเกณฑ์ลงเหลือไม่เกิน %d หรือขยายช่วงเวลาให้ยาวขึ้น',
+                'Within %d seconds the system allows at most %d failed logins (the rate '
+                . 'limiter drops the rest before the password is even checked) — a threshold '
+                . 'of %d can never be reached. Lower it to %d or fewer, or widen the window.',
                 $findSeconds,
                 $ceiling,
                 $maxRetry,
@@ -135,22 +141,23 @@ final class PanelJailSet implements Capability
                 'mode' => Fail2banManager::MODE_OFF,
                 'enabled' => false,
                 'active' => false,
-                'message' => 'ปิดการกันเดารหัสผ่านหน้าเข้าสู่ระบบแล้ว',
+                'message' => 'Login brute-force protection turned off',
             ];
         }
 
         /*
-         * สวิตช์ใหญ่ปิดอยู่ = ผู้ดูแลเลือกไว้ว่าเครื่องนี้ไม่ใช้ fail2ban (เช่นเพราะ RAM น้อย)
-         * · เขียน jail ทับความตั้งใจนั้นไม่ได้ ต้องบอกให้ชัดว่าติดที่ไหน
+         * The master switch being off means the admin chose not to use fail2ban on
+         * this machine at all (limited RAM, say) — a jail write can't override that
+         * choice silently, it has to say exactly where it's blocked.
          */
         if (!$settings->bool('security.fail2ban.enabled')) {
             throw new ValidationError(
-                'เครื่องนี้ปิดการใช้ fail2ban ไว้ — เปิดสวิตช์ "ใช้ fail2ban" ในหน้าความปลอดภัยก่อน',
+                'fail2ban is turned off on this machine — turn on "Use fail2ban" on the security page first',
             );
         }
 
-        // สำเนา audit log แบบข้อความคือแหล่งเดียวที่ fail2ban อ่านได้ — ตาราง audit_log
-        // เป็น SQLite ซึ่งมันอ่านไม่เป็น (ดู AuditLog::mirror)
+        // The text copy of the audit log is the only thing fail2ban can read — the
+        // audit_log table is SQLite, which it can't parse (see AuditLog::mirror)
         $auditLog = $context->config->paths->logFile('audit');
 
         $settingsToWrite = [
@@ -161,7 +168,8 @@ final class PanelJailSet implements Capability
             'ignore_ips' => $args['ignore_ips'],
         ];
 
-        // ไฟล์ก่อน ค่าทีหลัง — บรรทัดนี้โยน exception แล้วจะไม่มีค่าที่บอกว่า "เปิดอยู่"
+        // File first, setting saved after — throw here and there's no stored value
+        // claiming this is "on"
         $manager->applyPanelLogin($auditLog, $settingsToWrite);
 
         $settings->save([
@@ -181,12 +189,12 @@ final class PanelJailSet implements Capability
             'status' => $manager->statusOf(Fail2banManager::PANEL_LOGIN_JAIL),
             'message' => $args['mode'] === Fail2banManager::MODE_NOTIFY
                 ? sprintf(
-                    'เปิดโหมดแจ้งเตือนแล้ว — ล็อกอินผิด %d ครั้งใน %d นาที จะส่งข้อความหาคุณ **โดยไม่แบน**',
+                    'Notify mode turned on — %d failed logins within %d minutes will send you a message, **without banning**',
                     $args['max_retry'],
                     (int) round($args['find_seconds'] / 60),
                 )
                 : sprintf(
-                    'เปิดโหมดแบนแล้ว — ล็อกอินผิด %d ครั้งใน %d นาที จะถูกแบน %d นาที',
+                    'Ban mode turned on — %d failed logins within %d minutes will result in a %d-minute ban',
                     $args['max_retry'],
                     (int) round($args['find_seconds'] / 60),
                     (int) round($args['ban_seconds'] / 60),

@@ -13,18 +13,20 @@ use Phpcp\Driver\Security\Fail2banManager;
 use Phpcp\Support\Validator;
 
 /**
- * สวิตช์ใหญ่ — เครื่องนี้ให้ panel ใช้ fail2ban หรือไม่
+ * Master switch — does this machine let the panel use fail2ban at all?
  *
- * **มีไว้เพราะ fail2ban ไม่ได้ฟรี** · วัดบนเครื่องจริงได้ 55MB และโตตามจำนวน jail
- * (หนึ่งเธรด + หนึ่ง log tail + แผนที่ในหน่วยความจำต่อ jail) · บนเครื่อง 1–2GB ที่ยัง
- * ต้องรัน MariaDB, Apache, Dovecot และ rspamd นั่นคือส่วนที่ตัดออกได้จริง โดยเฉพาะ
- * เมื่อการป้องกันที่มีค่าที่สุดคือ {@see \Phpcp\Driver\WebServer\ProbeBlocklist}
- * ซึ่งทำงานที่เว็บเซิร์ฟเวอร์และไม่กินหน่วยความจำเพิ่มเลย
+ * **Exists because fail2ban isn't free** — measured at 55MB on a real machine, and it
+ * grows with every jail (one thread + one log tail + an in-memory map per jail). On a
+ * 1–2GB machine that still has to run MariaDB, Apache, Dovecot, and rspamd, that's a
+ * real thing to be able to cut, especially once the most valuable protection is
+ * {@see \Phpcp\Driver\WebServer\ProbeBlocklist}, which runs at the web server and
+ * costs no extra memory at all.
  *
- * **ปิดแล้วไม่หยุดบริการ fail2ban ให้เอง** — jail ของ SSH มาจากแพ็กเกจของดิสโทร
- * ไม่ใช่ของ panel · หยุดบริการแปลว่าการกันเดารหัส SSH หายไปด้วย ซึ่งเป็นผลข้างเคียง
- * ที่ผู้ดูแลไม่ได้ขอและอาจไม่รู้ตัว · คำสั่งหยุดบริการจึงถูกส่งกลับไปให้เขาสั่งเอง
- * พร้อมคำเตือน ไม่ใช่ทำแทน
+ * **Turning it off does not stop the fail2ban service itself** — the SSH jail ships
+ * with the distro, not with the panel, so stopping the service would drop SSH
+ * brute-force protection too, a side effect the admin didn't ask for and might not
+ * notice. The command to stop the service is handed back for them to run themselves,
+ * with that warning attached, rather than doing it on their behalf.
  */
 final class Fail2banSet implements Capability
 {
@@ -45,7 +47,7 @@ final class Fail2banSet implements Capability
 
     public function summary(): string
     {
-        return 'เปิด/ปิดการใช้ fail2ban ของ panel';
+        return 'Turn fail2ban use on or off for the panel';
     }
 
     public function validate(array $args): array
@@ -63,15 +65,15 @@ final class Fail2banSet implements Capability
             return [
                 'enabled' => true,
                 'removed' => [],
-                'message' => 'เปิดการใช้ fail2ban แล้ว — เลือกโหมดของแต่ละรายการด้านล่าง',
+                'message' => 'fail2ban use turned on — choose a mode for each item below',
             ];
         }
 
         /*
-         * ปิด = ต้องไม่เหลือ jail ของ panel ค้างบนเครื่องเลย
+         * Off = no jail the panel manages may be left on the machine at all.
          *
-         * บันทึกค่าอย่างเดียวไม่พอ — jail ที่ยังอยู่ก็ยังทำงานและยังกินหน่วยความจำ
-         * ต่อไป โดยที่หน้าจอบอกว่าปิดแล้ว
+         * Saving the setting alone isn't enough — any jail still standing keeps
+         * working and keeps costing memory, while the screen would say it's off.
          */
         $manager = new Fail2banManager($executor);
         $removed = [];
@@ -94,8 +96,9 @@ final class Fail2banSet implements Capability
             $removed[] = $manager->jailName($site);
         }
 
-        // สถานะของแต่ละรายการถูกปิดตามไปด้วย ไม่งั้นเปิดสวิตช์ใหญ่กลับมาแล้วหน้าจอ
-        // จะบอกว่ารายการเหล่านั้นยังเปิดอยู่ทั้งที่ไฟล์ถูกลบไปแล้ว
+        // Each item's stored state is turned off along with it — otherwise turning
+        // the master switch back on would have the screen claim those are still on
+        // when their files are already gone
         $context->db->run('UPDATE site_rate_limits SET enabled = 0, updated_at = :t', ['t' => time()]);
 
         $settings->save([
@@ -108,15 +111,17 @@ final class Fail2banSet implements Capability
             'enabled' => false,
             'removed' => $removed,
             /*
-             * บอกวิธีคืนหน่วยความจำจริง ๆ พร้อมสิ่งที่จะเสียไป — คนที่ปิดเพราะ RAM
-             * ไม่พอต้องได้คำสั่งที่ใช้ได้เลย ไม่ใช่รู้แค่ว่า "panel ไม่ใช้แล้ว"
+             * Says how to actually reclaim the memory, along with what's given up —
+             * someone turning this off for RAM reasons needs a command they can run
+             * right away, not just "the panel isn't using it anymore".
              */
             'stop_command' => 'sudo systemctl disable --now fail2ban',
             'message' => sprintf(
-                'ปิดการใช้ fail2ban ของ panel แล้ว — ลบ jail ไป %d รายการ · '
-                . 'บริการ fail2ban ยัง**ทำงานอยู่** เพราะ jail ของ SSH มาจากดิสโทร ไม่ใช่ของ panel · '
-                . 'ถ้าต้องการคืนหน่วยความจำ (~55MB) ให้สั่ง `sudo systemctl disable --now fail2ban` เอง '
-                . 'แต่การกันเดารหัสผ่าน SSH จะหายไปด้วย',
+                'fail2ban use turned off for the panel — removed %d jail(s). '
+                . 'The fail2ban service is **still running**, because the SSH jail ships with '
+                . 'the distro, not the panel. To reclaim the memory (~55MB), run '
+                . '`sudo systemctl disable --now fail2ban` yourself — but SSH brute-force '
+                . 'protection goes with it.',
                 count($removed),
             ),
         ];

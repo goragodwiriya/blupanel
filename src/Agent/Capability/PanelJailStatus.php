@@ -11,13 +11,16 @@ use Phpcp\Domain\SettingsRepository;
 use Phpcp\Driver\Security\Fail2banManager;
 
 /**
- * สถานะการกันเดารหัสผ่านของหน้าเข้าสู่ระบบ
+ * Status of login brute-force protection
  *
- * **ตอบจาก fail2ban เป็นหลัก ไม่ใช่จากค่าที่ panel จำไว้** — สองอย่างนี้ไม่ตรงกันได้จริง:
- * ผู้ดูแลอาจลบไฟล์ jail ทิ้งเอง หรือ fail2ban อาจไม่โหลด jail นั้นเพราะ config ที่อื่นพัง
- * · คำถามที่หน้าจอต้องตอบคือ "ตอนนี้กันอยู่จริงไหม" ไม่ใช่ "เคยกดเปิดไว้ไหม"
+ * **Answered from fail2ban itself, not from what the panel remembers** — the two can
+ * genuinely disagree: an admin might delete the jail file by hand, or fail2ban might
+ * not have loaded that jail because some other config broke. The question the screen
+ * has to answer is "is this actually protecting right now", not "was the switch ever
+ * clicked".
  *
- * ค่าที่ตั้งไว้ยังส่งไปด้วยเพื่อให้ฟอร์มเติมค่าเดิมได้ และเพื่อให้เห็นตอนที่สองอย่างไม่ตรงกัน
+ * The stored settings are sent along too, so the form can fill in its previous
+ * values, and so the two can be seen disagreeing when they do.
  */
 final class PanelJailStatus implements Capability
 {
@@ -38,7 +41,7 @@ final class PanelJailStatus implements Capability
 
     public function summary(): string
     {
-        return 'ดูสถานะการกันเดารหัสผ่านหน้าเข้าสู่ระบบ';
+        return 'View login brute-force protection status';
     }
 
     public function validate(array $args): array
@@ -56,7 +59,8 @@ final class PanelJailStatus implements Capability
 
         return [
             'enabled' => $enabled,
-            // โหมดคือสิ่งที่หน้าจอเลือก ส่วน enabled เหลือไว้ให้ผู้เรียกเก่าที่รู้จักแค่เปิด/ปิด
+            // Mode is what the screen chooses; enabled stays for older callers that
+            // only know about on/off
             'mode' => $enabled
                 ? $settings->get('security.panel_jail.mode', Fail2banManager::MODE_BAN)
                 : Fail2banManager::MODE_OFF,
@@ -65,15 +69,16 @@ final class PanelJailStatus implements Capability
             'find_seconds' => $settings->int('security.panel_jail.find_seconds'),
             'ban_seconds' => $settings->int('security.panel_jail.ban_seconds'),
             'ignore_ips' => $settings->get('security.panel_jail.ignore_ips'),
-            // รายการระดับเครื่อง — ฟอร์มของมันอยู่หน้าเดียวกัน จึงส่งมาด้วยกัน
+            // The machine-wide list — its form lives on the same page, so send it along
             'never_ban_ips' => $settings->get('security.never_ban_ips'),
             'active' => $status['active'],
             'banned' => $status['banned'],
             'total_banned' => $status['total_banned'],
             'failed' => $status['failed'],
             'banned_ips' => $status['active'] ? $manager->bannedIpsOf(Fail2banManager::PANEL_LOGIN_JAIL) : [],
-            // ตั้งไว้ว่าเปิดแต่ fail2ban ไม่รู้จัก jail นี้ = การป้องกันที่หน้าจอโฆษณาไว้
-            // ไม่มีอยู่จริง · ต้องบอกออกไปให้ชัด ไม่ใช่แสดงว่า "เปิดอยู่" เฉย ๆ
+            // Set to on but fail2ban doesn't know this jail = the protection the
+            // screen is advertising doesn't actually exist — this has to be said
+            // plainly, not just shown as "on"
             'drifted' => $enabled && !$status['active'],
         ];
     }

@@ -12,11 +12,13 @@ use Phpcp\Driver\Security\Fail2banManager;
 use Phpcp\Support\Validator;
 
 /**
- * ปลดแบน IP หนึ่งออกจาก jail ของหน้าเข้าสู่ระบบ
+ * Unbans one IP from the login page's jail
  *
- * **ทางออกฉุกเฉินของฟีเจอร์ที่แบนได้ทั้งเครื่อง** — การแบนของ fail2ban สั่ง firewall
- * ซึ่งตัดทุกพอร์ต ผู้ดูแลที่พิมพ์รหัสผิดเกินเกณฑ์จึงเข้าหน้าจัดการไม่ได้เลย ·
- * ถ้าเขายังมีเครื่องอื่นหรือเน็ตอื่นอยู่ ต้องปลดจากหน้าจอได้ ไม่ต้องหา SSH ให้ได้ก่อน
+ * **The emergency exit for a feature that can ban the whole machine** — fail2ban's
+ * ban commands the firewall, which blocks every port, so an admin who mistyped their
+ * password past the threshold can't reach the control panel at all. If they still
+ * have another machine or another network, they need to be able to unban from the
+ * screen without having to find SSH access first.
  */
 final class PanelJailUnban implements Capability
 {
@@ -37,25 +39,27 @@ final class PanelJailUnban implements Capability
 
     public function summary(): string
     {
-        return 'ปลดแบน IP จากการกันเดารหัสผ่าน';
+        return 'Unban an IP from login brute-force protection';
     }
 
     public function validate(array $args): array
     {
         $ip = Validator::requireString($args, 'ip', 45);
 
-        // ค่านี้กลายเป็นอาร์กิวเมนต์ของ fail2ban-client — ต้องเป็น IP จริงเท่านั้น
+        // This value becomes an argument to fail2ban-client — it must be a real IP only
         if (filter_var($ip, FILTER_VALIDATE_IP) === false) {
-            throw new ValidationError('รูปแบบ IP ไม่ถูกต้อง');
+            throw new ValidationError('Invalid IP format');
         }
 
         /*
-         * ชื่อ jail มาจากหน้ารวมซึ่งมีหลาย jail · ว่าง = jail หน้าเข้าสู่ระบบตามเดิม
+         * The jail name comes from the combined view, which lists several jails —
+         * empty means the login page's jail, as before.
          *
-         * **ต้องขึ้นต้นด้วยคำนำหน้าของ panel เท่านั้น** — ค่านี้กลายเป็นอาร์กิวเมนต์ของ
-         * `fail2ban-client` · ถ้ารับชื่ออะไรก็ได้ ผู้ที่มีสิทธิ์ security.manage จะปลดแบน
-         * jail ที่ผู้ดูแลเขียนเอง (เช่น sshd ของดิสโทร) ได้จากหน้าเว็บ ซึ่งอยู่นอก
-         * ขอบเขตของ panel และเป็นการยกเลิกการป้องกันที่ panel ไม่ได้เป็นคนตั้ง
+         * **Must start with the panel's own prefix** — this value becomes an
+         * argument to `fail2ban-client`. Accept any name at all, and anyone holding
+         * security.manage could unban a jail an admin wrote by hand (the distro's
+         * `sshd` jail, for instance) from the web UI — outside the panel's scope, and
+         * reversing protection the panel never set up.
          */
         $jail = Validator::optionalString($args, 'jail', '', 64);
 
@@ -64,7 +68,7 @@ final class PanelJailUnban implements Capability
         }
 
         if (!Fail2banManager::isOwnJail($jail)) {
-            throw new ValidationError('ปลดแบนได้เฉพาะ jail ที่ panel เป็นผู้ดูแลเท่านั้น');
+            throw new ValidationError('Only jails the panel manages can be unbanned this way');
         }
 
         return ['ip' => $ip, 'jail' => $jail];
@@ -80,7 +84,7 @@ final class PanelJailUnban implements Capability
             'ip' => $args['ip'],
             'jail' => $args['jail'],
             'status' => $manager->statusOf($args['jail']),
-            'message' => sprintf('ปลดแบน %s แล้ว', $args['ip']),
+            'message' => sprintf('Unbanned %s', $args['ip']),
         ];
     }
 }

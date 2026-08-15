@@ -5,66 +5,73 @@ declare(strict_types=1);
 namespace Phpcp\Driver\WebServer;
 
 /**
- * เส้นทางที่ไม่มีผู้เข้าชมจริงคนไหนเรียก — ปฏิเสธไปเลย ไม่ต้องรอให้ใครถูกแบน
+ * Paths no genuine visitor ever requests — deny them outright, no need to wait for
+ * anyone to get banned.
  *
- * ### ทำไมบล็อกที่เส้นทาง ไม่ใช่แบนที่ IP
+ * ### Why block by path, not ban by IP
  *
- * ลูกค้าบางรายเป็นโรงเรียนที่ทั้งโรงเรียนออกเน็ตผ่าน IP เดียว · การแบน IP เพราะ
- * นักเรียนคนเดียวที่เครื่องติดมัลแวร์แล้วสแกนอัตโนมัติ แปลว่าทั้งโรงเรียนเข้าเว็บ
- * ตัวเองไม่ได้ — และเพราะ fail2ban สั่ง firewall ซึ่งไม่รู้จัก vhost เขาจะเข้าเว็บ
- * ของลูกค้ารายอื่นบนเครื่องเดียวกันไม่ได้ด้วย · **เมื่อ IP ไม่ได้แทนคนคนเดียว
- * การแบน IP ก็ไม่ใช่เครื่องมือที่ถูก** และไม่มีการปรับเกณฑ์ไหนแก้ข้อนี้ได้
+ * Some customers are schools where the whole school shares one outbound IP. Banning
+ * an IP because one student's infected machine started scanning automatically means
+ * the whole school can't reach its own site — and because fail2ban commands the
+ * firewall, which knows nothing about vhosts, they can't reach any other customer's
+ * site on the same machine either. **When an IP doesn't stand for one person, banning
+ * the IP isn't the right tool**, and no amount of threshold tuning fixes that.
  *
- * เส้นทางในรายการนี้ไม่มีเบราว์เซอร์ของคนจริงเรียกเลยสักเส้นทางเดียว การปฏิเสธจึง:
+ * Not one path on this list is ever requested by a real browser, so denying them:
  *
- *   · ไม่ต้องระบุตัวผู้เรียก — NAT ของโรงเรียนไม่เกี่ยวข้องโดยสิ้นเชิง
- *   · ไม่กินหน่วยความจำเพิ่มแม้แต่ไบต์เดียว — เป็นการจับคู่ที่เว็บเซิร์ฟเวอร์ทำอยู่แล้ว
- *     ต่างจาก fail2ban ที่กินราว 55MB และเพิ่มขึ้นตามจำนวน jail
- *   · กันตั้งแต่คำขอแรก ต่างจากการแบนที่ปล่อยครั้งที่ 1..N-1 ผ่านไปก่อน
+ *   · needs no identification of the caller at all — a school's NAT is irrelevant
+ *   · costs not one extra byte of memory — it's a match the web server already
+ *     performs, unlike fail2ban, which measured around 55MB and grows with every jail
+ *   · blocks from the very first request, unlike a ban which lets attempts 1..N-1
+ *     through first
  *
- * ### เกณฑ์ที่ใช้เลือกว่าอะไรควรอยู่ในรายการนี้
+ * ### The bar for what belongs on this list
  *
- * **ต้องไม่มีการใช้งานที่ถูกต้องเลย** ไม่ใช่แค่ "ส่วนใหญ่ไม่ใช้" · `xmlrpc.php`
- * จึงไม่อยู่ในรายการ ทั้งที่เป็นเป้ายอดนิยม เพราะ WordPress ที่ใช้แอปมือถือหรือ
- * Jetpack เรียกมันจริง · ผู้ดูแลที่อยากปิดเพิ่มเขียนเองได้ในไฟล์ตั้งค่าของตัวเอง
- * ซึ่งถูกอ่านท้ายสุด
+ * **There must be zero legitimate use**, not just "mostly unused". `xmlrpc.php` is
+ * left off despite being a favourite target, because WordPress mobile apps and
+ * Jetpack call it for real. An admin who wants it closed can write that themselves
+ * in their own config file, which is read last.
  *
- * ไฟล์บีบอัดทั่วไป (`.zip`, `.tar.gz`) ก็ไม่อยู่ในรายการ — เว็บจำนวนมากแจกไฟล์
- * ดาวน์โหลดจริง ๆ · ปิดไปแล้วลูกค้าโทรมา ซึ่งแย่กว่าปล่อยไว้
+ * Common archive extensions (`.zip`, `.tar.gz`) are left off too — plenty of sites
+ * hand out real downloads. Blocking those brings a phone call from the customer,
+ * which is worse than leaving it be.
  */
 final class ProbeBlocklist
 {
     /**
-     * โฟลเดอร์ของ dependency ที่ไฟล์ PHP ข้างในต้องรันไม่ได้
+     * Dependency directories whose PHP files must never execute
      *
-     * `/vendor/phpunit/phpunit/src/Util/PHP/eval-stdin.php` คือเส้นทางที่ถูกยิงบ่อย
-     * ที่สุดในโลกของโฮสติ้ง PHP — เป็น RCE ทันทีถ้าลูกค้า deploy โดยวาง `vendor/`
-     * ไว้ใต้ docroot ซึ่งเจอบ่อยมาก · กฎเดิมกันแค่ `vendor/bin/` จึงไม่ครอบเส้นทางนี้
+     * `/vendor/phpunit/phpunit/src/Util/PHP/eval-stdin.php` is the single most
+     * frequently probed path in PHP hosting — an instant RCE if a customer deploys
+     * with `vendor/` sitting under the docroot, which happens often. The older rule
+     * only blocked `vendor/bin/`, so it never covered this.
      *
-     * **กันเฉพาะไฟล์ `.php` ไม่ใช่ทั้งโฟลเดอร์** — บางธีมอ้างอิง css/js จาก `vendor/`
-     * จริง การปิดทั้งก้อนจะทำหน้าเว็บพัง ส่วนการปิดเฉพาะ `.php` ปิดช่องรันโค้ด
-     * โดยไม่แตะไฟล์ที่หน้าเว็บใช้
+     * **Only `.php` files are blocked, not the whole directory** — some themes
+     * genuinely reference css/js from `vendor/`, and closing the entire folder would
+     * break the page. Blocking just `.php` closes the code-execution path without
+     * touching what the page actually uses.
      */
     public const CODE_DIRS = ['vendor', 'node_modules', 'bower_components'];
 
     /**
-     * นามสกุลที่เป็นข้อมูลหลังบ้านหลุดออกมา ไม่ใช่ของที่ตั้งใจแจก
+     * Extensions that mean backend data leaked out, not something meant to be served
      *
-     * `.sql` คือ dump ของฐานข้อมูลทั้งก้อน · ที่เหลือคือไฟล์ที่ editor กับ
-     * `cp file file.bak` ทิ้งไว้ ซึ่งเสิร์ฟเป็นข้อความล้วนพร้อมรหัสผ่านข้างใน
-     * (ไฟล์ `.php.bak` ไม่ถูกส่งไป FPM เพราะนามสกุลไม่ใช่ `.php`)
+     * `.sql` is a full database dump. The rest are what editors and `cp file
+     * file.bak` leave behind, served as plain text with credentials inside
+     * (`.php.bak` is never sent to FPM, since the extension isn't `.php`).
      */
     public const LEAK_EXTENSIONS = ['sql', 'sql.gz', 'sql.bz2', 'bak', 'old', 'orig', 'save', 'swp', 'swo', 'rej'];
 
-    /** เส้นทางเดี่ยว ๆ ที่ไม่ควรเปิดสู่ภายนอกเลย */
+    /** Single paths that should never be reachable from outside */
     public const EXACT_PATHS = ['server-status', 'server-info'];
 
     /**
-     * กฎสำหรับ Apache — ใช้ทั้งโหมด apache ล้วนและโหมด nginx ชั้นหน้า
+     * Rules for Apache — used by both plain Apache mode and the nginx front tier
      *
-     * ใช้ `LocationMatch` (เทียบกับ URL) ไม่ใช่ `DirectoryMatch` (เทียบกับเส้นทางไฟล์)
-     * เพราะสิ่งที่ต้องกันคือ**คำขอ** · เส้นทางไฟล์จริงเปลี่ยนไปตาม docroot ของแต่ละเว็บ
-     * แต่ URL ที่สแกนเนอร์ยิงเหมือนกันทุกเครื่องในโลก
+     * Uses `LocationMatch` (matched against the URL) rather than `DirectoryMatch`
+     * (matched against the file path), because what needs blocking is **the
+     * request** — the real file path changes with each site's docroot, but the URLs
+     * scanners probe are the same on every machine in the world.
      */
     public static function apache(): string
     {
@@ -76,12 +83,12 @@ final class ProbeBlocklist
         $exact = implode('|', self::EXACT_PATHS);
 
         return <<<CONF
-            # ไฟล์ PHP ในโฟลเดอร์ dependency — /vendor/phpunit/.../eval-stdin.php คือ RCE
+            # PHP files inside a dependency directory — /vendor/phpunit/.../eval-stdin.php is an RCE
             <LocationMatch "(?i)^/({$dirs})/.*\.php$">
                 Require all denied
             </LocationMatch>
 
-            # ข้อมูลหลังบ้านที่หลุดออกมา — dump ฐานข้อมูลและไฟล์ที่ editor ทิ้งไว้
+            # Backend data that leaked out — database dumps and files editors left behind
             <LocationMatch "(?i)\.({$extensions})$">
                 Require all denied
             </LocationMatch>
@@ -93,11 +100,12 @@ final class ProbeBlocklist
     }
 
     /**
-     * กฎสำหรับ nginx — ต้องอยู่**ก่อน**บล็อกที่เสิร์ฟไฟล์ static
+     * Rules for nginx — must come **before** the block that serves static files
      *
-     * nginx เลือก location แบบ regex ตามลำดับที่เขียน อันแรกที่ตรงชนะ · ในโหมด
-     * nginx ชั้นหน้า รายการนามสกุลที่เสิร์ฟตรงมี `gz` อยู่ด้วย ถ้ากฎนี้อยู่ทีหลัง
-     * `backup.sql.gz` จะถูกส่งออกไปโดยไม่เคยผ่าน Apache ที่มีกฎกันอยู่เลย
+     * nginx picks a regex location in the order they're written; the first match
+     * wins. In the nginx front-tier mode, the list of extensions served directly
+     * includes `gz` — if this rule sat after that block, `backup.sql.gz` would go
+     * straight out without ever passing through Apache, where the rule above lives.
      */
     public static function nginx(): string
     {
@@ -109,12 +117,12 @@ final class ProbeBlocklist
         $exact = implode('|', self::EXACT_PATHS);
 
         return <<<CONF
-            # ไฟล์ PHP ในโฟลเดอร์ dependency — /vendor/phpunit/.../eval-stdin.php คือ RCE
+            # PHP files inside a dependency directory — /vendor/phpunit/.../eval-stdin.php is an RCE
             location ~* ^/({$dirs})/.*\.php$ {
                 deny all;
             }
 
-            # ข้อมูลหลังบ้านที่หลุดออกมา — ต้องมาก่อนบล็อก static ที่เสิร์ฟ .gz ตรง ๆ
+            # Backend data that leaked out — must come before the static block that serves .gz directly
             location ~* \.({$extensions})$ {
                 deny all;
             }

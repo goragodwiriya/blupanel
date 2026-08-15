@@ -11,14 +11,16 @@ use Phpcp\Driver\Security\Fail2banManager;
 use Phpcp\Support\Validator;
 
 /**
- * ตั้งค่าการจำกัดอัตราคำขอของเว็บไซต์หนึ่ง — PLAN-V2 เฟส E5
+ * Sets one website's request rate limit — PLAN-V2 phase E5
  *
- * บังคับใช้ผ่าน fail2ban ที่อ่าน access log ของเว็บนั้นแล้วสั่ง firewall แบน IP
- * (เหตุผลที่ไม่ใช้โมดูลของเว็บเซิร์ฟเวอร์อยู่ใน `Driver\Security\Fail2banManager`)
+ * Enforced through fail2ban, which reads that site's access log and tells the
+ * firewall to ban an IP (the reason a web server module isn't used lives in
+ * `Driver\Security\Fail2banManager`).
  *
- * **ฐานข้อมูลถูกเขียนหลังไฟล์สำเร็จเสมอ** — ถ้าบันทึกก่อนแล้ว fail2ban ล้มเหลว
- * หน้าจอจะบอกว่าเปิดการป้องกันไว้แล้วทั้งที่ไม่มีอะไรบังคับใช้เลย ซึ่งอันตราย
- * กว่าไม่มีฟีเจอร์นี้ เพราะผู้ดูแลเข้าใจว่าเว็บมีการป้องกันอยู่
+ * **The database is always written after the file succeeds** — save it first and
+ * have fail2ban fail, and the screen would say protection is on while nothing is
+ * enforcing anything at all, more dangerous than not having the feature, because the
+ * admin believes the site is protected.
  */
 final class SiteRateLimitSet extends SiteCapability
 {
@@ -39,12 +41,12 @@ final class SiteRateLimitSet extends SiteCapability
 
     public function summary(): string
     {
-        return 'ตั้งค่าการจำกัดอัตราคำขอของเว็บไซต์';
+        return 'Configure a website\'s request rate limit';
     }
 
     public function validate(array $args): array
     {
-        // `mode` (off|notify|ban) แทน enabled แบบสองสถานะ · ยังรับของเดิมเพื่อความเข้ากันได้
+        // `mode` (off|notify|ban) replaces the old on/off `enabled` — still accepted for compatibility
         $mode = Validator::optionalString($args, 'mode', '', 16);
 
         if ($mode === '') {
@@ -54,10 +56,11 @@ final class SiteRateLimitSet extends SiteCapability
         }
 
         if (!in_array($mode, Fail2banManager::modes(), true)) {
-            throw new \Phpcp\Agent\ValidationError('โหมดของ jail ไม่ถูกต้อง — ต้องเป็น off, notify หรือ ban');
+            throw new \Phpcp\Agent\ValidationError('Invalid jail mode — must be off, notify, or ban');
         }
 
-        // ค่าตัวเลขตรวจเฉพาะตอนเปิด — คนที่กดปิดไม่ควรถูกบังคับให้กรอกค่าที่กำลังจะไม่ถูกใช้
+        // Numeric fields are only checked while turning it on — someone turning it off
+        // shouldn't be forced to fill in values that are about to go unused
         if ($mode === Fail2banManager::MODE_OFF) {
             return ['site_id' => Validator::requireInt($args, 'site_id', 1), 'mode' => $mode, 'enabled' => false];
         }
@@ -66,8 +69,9 @@ final class SiteRateLimitSet extends SiteCapability
             'site_id' => Validator::requireInt($args, 'site_id', 1),
             'mode' => $mode,
             'enabled' => true,
-            // ขอบเขตตรงกับ CHECK ใน migration 0016 — ตรวจสองชั้นเพราะฐานข้อมูลเป็นด่านสุดท้าย
-            // ที่ไม่มีข้อความอธิบายให้ผู้ใช้ ส่วนด่านนี้บอกได้ว่าผิดตรงไหนและช่วงที่ยอมรับคืออะไร
+            // The range matches the CHECK in migration 0016 — checked twice because
+            // the database is the last line of defence with no message for the user,
+            // while this layer can say exactly what's wrong and what range is accepted
             'max_requests' => Validator::requireInt($args, 'max_requests', 10, 100_000),
             'window_seconds' => Validator::requireInt($args, 'window_seconds', 10, 3600),
             'ban_seconds' => Validator::requireInt($args, 'ban_seconds', 60, 86_400),
@@ -82,8 +86,9 @@ final class SiteRateLimitSet extends SiteCapability
         $this->assertSiteAccess($context, $args['site_id']);
 
         $site = $this->loadSite($context, $args['site_id']);
-        // รายการห้ามแบนระดับเครื่องต้องถูกฉีดเข้าทุก jail ที่เขียน ไม่งั้นลูกค้าที่เป็น
-        // โรงเรียน (คนทั้งโรงเรียนออกเน็ตผ่าน IP เดียว) จะถูกแบนยกองค์กรจากเว็บเดียว
+        // The machine-wide never-ban list has to be injected into every jail written
+        // here — otherwise a customer that's a school (the whole school sharing one
+        // outbound IP) gets the whole organisation banned over one site
         $manager = (new Fail2banManager($executor))
             ->withNeverBan((new SettingsRepository($context->db))->get('security.never_ban_ips'))
             ->withAlertBinary($context->config->paths->binary('phpcp-alert'));
@@ -100,7 +105,7 @@ final class SiteRateLimitSet extends SiteCapability
             return [
                 'site_id' => $args['site_id'],
                 'enabled' => false,
-                'message' => sprintf('ปิดการจำกัดอัตราคำขอของ %s แล้ว', $site->domain),
+                'message' => sprintf('Request rate limit turned off for %s', $site->domain),
             ];
         }
 
@@ -112,7 +117,7 @@ final class SiteRateLimitSet extends SiteCapability
             'ignore_ips' => $args['ignore_ips'],
         ];
 
-        // ไฟล์ก่อน ฐานข้อมูลทีหลัง — ถ้าบรรทัดนี้โยน exception จะไม่มีแถวที่บอกว่า "เปิดอยู่"
+        // File first, database after — throw here and there's no row claiming this is "on"
         $manager->apply($site, $settings);
 
         $context->db->run(
@@ -139,7 +144,7 @@ final class SiteRateLimitSet extends SiteCapability
             'jail' => $manager->jailName($site),
             'status' => $manager->status($site),
             'message' => sprintf(
-                'เปิดการจำกัดอัตราของ %s แล้ว — เกิน %d คำขอใน %d วินาที จะถูกแบน %d นาที',
+                'Rate limit turned on for %s — more than %d requests within %d seconds results in a %d-minute ban',
                 $site->domain,
                 $settings['max_requests'],
                 $settings['window_seconds'],

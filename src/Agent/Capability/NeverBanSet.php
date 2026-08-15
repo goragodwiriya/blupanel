@@ -13,18 +13,20 @@ use Phpcp\Driver\Security\Fail2banManager;
 use Phpcp\Support\Validator;
 
 /**
- * ตั้งรายการที่อยู่ที่ห้ามแบน — รายการเดียวของทั้งเครื่อง ใช้กับทุก jail
+ * Sets the never-ban address list — one machine-wide list, applied to every jail
  *
- * **โจทย์ที่ทำให้ต้องมี:** ลูกค้าที่เป็นโรงเรียนออกเน็ตผ่าน IP เดียวกันทั้งโรงเรียน
- * นักเรียนคนเดียวที่เครื่องติดมัลแวร์แล้วสแกนอัตโนมัติจะทำให้ครูและนักเรียนทั้งหมด
- * เข้าเว็บของโรงเรียนไม่ได้ — และเข้าเว็บของลูกค้ารายอื่นบนเครื่องเดียวกันไม่ได้ด้วย
- * เพราะ fail2ban สั่ง firewall ซึ่งไม่รู้จัก vhost
+ * **The problem this solves:** a customer that is a school shares one outbound IP for
+ * the whole school. One student's infected machine scanning automatically would lock
+ * every teacher and student out of the school's own site — and out of every other
+ * customer's site on the same machine too, because fail2ban commands the firewall,
+ * which knows nothing about vhosts.
  *
- * **เขียนค่าอย่างเดียวไม่พอ ต้องเขียนไฟล์ jail ใหม่ด้วย** — `ignoreip` ถูกอบเข้าไปใน
- * ไฟล์ตอนที่ jail ถูกเขียน · ถ้าบันทึกแค่ค่าแล้วจบ รายการใหม่จะมีผลกับ jail ที่ถูก
- * เขียนหลังจากนี้เท่านั้น ส่วน jail ที่เปิดอยู่แล้วยังแบนโรงเรียนต่อไปเหมือนเดิม
- * โดยที่หน้าจอบอกว่าลงทะเบียนยกเว้นแล้ว — ซึ่งเป็นความปลอดภัยหลอกแบบเดียวกับที่
- * ระบบนี้ไล่ปิดมาตลอด
+ * **Saving the value alone isn't enough — the jail files have to be rewritten too** —
+ * `ignoreip` is baked into the file at the moment a jail gets written. Save only the
+ * value and stop there, and the new list only applies to jails written after this
+ * point; a jail already running keeps banning the school exactly as before, while the
+ * screen claims the exemption is registered — the same class of false security this
+ * system has been closing off throughout.
  */
 final class NeverBanSet implements Capability
 {
@@ -45,7 +47,7 @@ final class NeverBanSet implements Capability
 
     public function summary(): string
     {
-        return 'ตั้งรายการที่อยู่ที่ห้ามแบน';
+        return 'Set the never-ban address list';
     }
 
     public function validate(array $args): array
@@ -68,13 +70,15 @@ final class NeverBanSet implements Capability
             ->withAlertBinary($context->config->paths->binary('phpcp-alert'));
         $rewritten = [];
 
-        // jail หน้าเข้าสู่ระบบ — เขียนใหม่เฉพาะเมื่อเปิดอยู่ เพราะการเขียนตอนปิดอยู่
-        // เท่ากับเปิดให้เองโดยที่ผู้ดูแลไม่ได้สั่ง
+        // The login jail — only rewritten while it's on, since writing it while off
+        // would be the same as turning it on without the admin asking for that
         if ($settings->bool('security.panel_jail.enabled')) {
             $manager->applyPanelLogin($context->config->paths->logFile('audit'), [
-                // **ต้องส่งโหมดเดิมไปด้วย** — ไม่ส่งแล้วมันตกไปที่ค่าเริ่มต้น (ban)
-                // การแก้รายการยกเว้นจะกลายเป็นการเปลี่ยน jail ที่ตั้งเป็น "แจ้งเตือน"
-                // ให้เริ่มแบนคนจริง ๆ โดยที่ผู้ดูแลไม่ได้สั่งและไม่มีอะไรบอก
+                // **The existing mode must be sent along** — leave it out and it
+                // falls back to the default (ban). Editing the exempt list would
+                // then turn a jail set to "notify" into one that starts actually
+                // banning people, with the admin never having asked for that and
+                // nothing telling them it happened.
                 'mode' => $settings->get('security.panel_jail.mode', Fail2banManager::MODE_BAN),
                 'max_retry' => $settings->int('security.panel_jail.max_retry'),
                 'find_seconds' => $settings->int('security.panel_jail.find_seconds'),
@@ -85,14 +89,14 @@ final class NeverBanSet implements Capability
             $rewritten[] = Fail2banManager::PANEL_LOGIN_JAIL;
         }
 
-        // jail รายเว็บที่เปิดอยู่ — อ่านค่าเดิมของแต่ละเว็บมาเขียนไฟล์ใหม่ทั้งชุด
+        // Per-site jails that are on — read each site's existing values and rewrite the whole set
         $sites = new SiteRepository($context->db);
 
         foreach ($context->db->all('SELECT * FROM site_rate_limits WHERE enabled = 1') as $row) {
             $site = $sites->load((int) $row['site_id']);
 
             if ($site === null) {
-                continue;   // เว็บถูกลบไปแล้วแต่แถวยังค้าง — ไม่ใช่ความผิดพลาดของคำสั่งนี้
+                continue;   // The site has already been deleted but the row is still there — not this command's error
             }
 
             $manager->apply($site, [
@@ -110,8 +114,8 @@ final class NeverBanSet implements Capability
             'ips' => $args['ips'],
             'rewritten' => $rewritten,
             'message' => $rewritten === []
-                ? 'บันทึกรายการห้ามแบนแล้ว — ยังไม่มี jail เปิดอยู่ รายการนี้จะถูกใช้เมื่อเปิด'
-                : sprintf('บันทึกแล้ว และเขียนไฟล์ของ %d jail ที่เปิดอยู่ใหม่ให้ทันที', count($rewritten)),
+                ? 'Never-ban list saved — no jail is on yet, so this list will be used once one is'
+                : sprintf('Saved, and rewrote the files of %d jail(s) currently on, effective immediately', count($rewritten)),
         ];
     }
 }

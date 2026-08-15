@@ -12,17 +12,20 @@ use Phpcp\Domain\SiteRepository;
 use Phpcp\Driver\Security\Fail2banManager;
 
 /**
- * ภาพรวมการป้องกันทั้งเครื่องในคำตอบเดียว — ทุก jail ที่ panel ดูแล พร้อม IP ที่ถูกแบน
+ * The whole machine's protection picture in one response — every jail the panel
+ * manages, plus every IP currently banned
  *
- * **ทำไมต้องรวมเป็นหน้าเดียว** — ก่อนหน้านี้รายการ IP ที่ถูกแบนกระจายอยู่ในหน้าของ
- * แต่ละเว็บ ผู้ดูแลที่ได้รับแจ้งว่า "ลูกค้าเข้าเว็บไม่ได้" จึงต้องไล่เปิดทีละหน้าเพื่อหา
- * ว่าที่อยู่นั้นติดอยู่ใน jail ไหน · คำถามจริงคือ "เครื่องนี้กำลังแบนใครอยู่บ้าง"
- * ซึ่งเป็นคำถามระดับเครื่อง ไม่ใช่ระดับเว็บ
+ * **Why this is combined into one view** — banned IPs used to be scattered across
+ * each site's own page. An admin told "the customer can't reach the site" had to open
+ * one page at a time to find which jail an address was stuck in. The real question is
+ * "who is this machine banning right now", which is a machine-level question, not a
+ * per-site one.
  *
- * **อ่านจาก fail2ban ทุกครั้ง ไม่ใช่จากค่าที่ panel จำไว้** — สองอย่างนี้ไม่ตรงกันได้:
- * ผู้ดูแลสั่ง `fail2ban-client` เองได้ตลอด และ jail อาจไม่ถูกโหลดเพราะ config ที่อื่นพัง
- * · `drifted` คือคำตอบของกรณีที่ค่าบอกว่าเปิดแต่ของจริงไม่ทำงาน ซึ่งแย่กว่าปิดไว้
- * เพราะผู้ดูแลเชื่อว่ามีการป้องกันแล้วจึงไม่ไปหาทางอื่น
+ * **Read from fail2ban every time, never from what the panel remembers** — the two
+ * can disagree: an admin can run `fail2ban-client` by hand at any time, and a jail
+ * might not have loaded because some other config broke. `drifted` answers the case
+ * where the stored value says on but the real thing isn't running, which is worse
+ * than off, because the admin believes they're protected and stops looking further.
  */
 final class ProtectionOverview implements Capability
 {
@@ -43,7 +46,7 @@ final class ProtectionOverview implements Capability
 
     public function summary(): string
     {
-        return 'ภาพรวมการป้องกันและรายการ IP ที่ถูกแบน';
+        return 'Protection overview and banned IP list';
     }
 
     public function validate(array $args): array
@@ -62,13 +65,13 @@ final class ProtectionOverview implements Capability
         $jails = [];
         $bans = [];
 
-        // --- jail หน้าเข้าสู่ระบบของ panel ---------------------------------------
+        // --- the panel's own login jail -----------------------------------------
         $panelMode = $settings->get('security.panel_jail.mode', Fail2banManager::MODE_OFF);
         $panelStatus = $manager->statusOf(Fail2banManager::PANEL_LOGIN_JAIL);
 
         $jails[] = $this->row(
             Fail2banManager::PANEL_LOGIN_JAIL,
-            'หน้าเข้าสู่ระบบของ panel',
+            'Panel login page',
             $settings->bool('security.panel_jail.enabled') ? $panelMode : Fail2banManager::MODE_OFF,
             $panelStatus,
             '/server/security',
@@ -78,13 +81,13 @@ final class ProtectionOverview implements Capability
 
         foreach ($this->bansOf($manager, Fail2banManager::PANEL_LOGIN_JAIL, $panelStatus) as $ban) {
             $bans[] = $ban + [
-                'jail_label' => 'หน้าเข้าสู่ระบบของ panel',
+                'jail_label' => 'Panel login page',
                 'blocks' => $panelBlocks,
-                'state_label' => $panelBlocks ? 'ถูกกันจริง' : 'ตรวจพบ ไม่ได้กัน',
+                'state_label' => $panelBlocks ? 'Actually blocked' : 'Detected, not blocked',
             ];
         }
 
-        // --- jail รายเว็บ ---------------------------------------------------------
+        // --- per-site jails -------------------------------------------------------
         $sites = new SiteRepository($context->db);
 
         foreach ($context->db->all('SELECT * FROM site_rate_limits WHERE enabled = 1') as $rateLimit) {
@@ -99,7 +102,7 @@ final class ProtectionOverview implements Capability
 
             $jails[] = $this->row(
                 $name,
-                'จำกัดอัตราคำขอ — ' . $site->domain,
+                'Request rate limit — ' . $site->domain,
                 (string) ($rateLimit['mode'] ?? Fail2banManager::MODE_BAN),
                 $status,
                 '/site?id=' . $site->id,
@@ -111,7 +114,7 @@ final class ProtectionOverview implements Capability
                 $bans[] = $ban + [
                     'jail_label' => $site->domain,
                     'blocks' => $blocks,
-                    'state_label' => $blocks ? 'ถูกกันจริง' : 'ตรวจพบ ไม่ได้กัน',
+                    'state_label' => $blocks ? 'Actually blocked' : 'Detected, not blocked',
                 ];
             }
         }
@@ -119,8 +122,9 @@ final class ProtectionOverview implements Capability
         return [
             'fail2ban_enabled' => $master,
             'fail2ban_running' => $running,
-            // ปิดสวิตช์ไว้แต่บริการยังรันอยู่เป็นเรื่องปกติ (jail ของ SSH จากดิสโทร) —
-            // แต่ "เปิดสวิตช์ไว้แล้วบริการไม่รัน" คือการป้องกันที่ไม่มีอยู่จริง
+            // The switch being off while the service still runs is normal (the SSH
+            // jail comes from the distro) — but "switch on, service not running" is
+            // protection that doesn't actually exist
             'drifted' => $master && !$running,
             'never_ban_ips' => $settings->get('security.never_ban_ips'),
             'jails' => $jails,
@@ -141,9 +145,9 @@ final class ProtectionOverview implements Capability
             'label' => $label,
             'mode' => $mode,
             'mode_label' => match ($mode) {
-                Fail2banManager::MODE_BAN => 'แบนอัตโนมัติ',
-                Fail2banManager::MODE_NOTIFY => 'แจ้งเตือนอย่างเดียว',
-                default => 'ปิดอยู่',
+                Fail2banManager::MODE_BAN => 'Automatic ban',
+                Fail2banManager::MODE_NOTIFY => 'Notify only',
+                default => 'Off',
             },
             'mode_tone' => match ($mode) {
                 Fail2banManager::MODE_BAN => 'danger',
@@ -154,17 +158,19 @@ final class ProtectionOverview implements Capability
             'banned' => $status['banned'],
             'failed' => $status['failed'],
             /*
-             * **โหมดแจ้งเตือนก็ยังนับ "banned" ใน fail2ban** — วัดบนเครื่องจริงแล้ว:
-             * สั่ง banip ตอนอยู่โหมด notify แล้ว `Currently banned: 1` แต่ firewall
-             * ว่างเปล่าเพราะ action ไม่มีคำสั่งแตะมันเลย
+             * **Notify mode still counts as "banned" inside fail2ban** — measured on
+             * a real machine: issuing banip while in notify mode produces `Currently
+             * banned: 1`, while the firewall stays empty because the action has no
+             * command touching it at all.
              *
-             * แสดงเลขนั้นว่า "ถูกแบน" จึงเป็นการโกหก — คนอ่านจะเข้าใจว่ามีคนถูกตัด
-             * ออกจากเครื่องแล้วทั้งที่ไม่มีใครถูกตัดเลย · หน้าจอต้องเรียกตามสิ่งที่
-             * เกิดขึ้นจริงในโหมดนั้น
+             * Showing that number as "banned" would be a lie — a reader would
+             * understand it as someone actually cut off from the machine when nobody
+             * was. The screen has to name what actually happens in that mode.
              */
             'blocks' => $mode === Fail2banManager::MODE_BAN,
-            'count_label' => $mode === Fail2banManager::MODE_BAN ? 'ถูกแบนอยู่' : 'ตรวจพบ',
-            // ตั้งโหมดไว้แต่ fail2ban ไม่รู้จัก jail = สิ่งที่หน้าจอโฆษณาไม่มีอยู่จริง
+            'count_label' => $mode === Fail2banManager::MODE_BAN ? 'Currently banned' : 'Detected',
+            // Mode set but fail2ban doesn't know this jail = what the screen is
+            // advertising doesn't actually exist
             'drifted' => $mode !== Fail2banManager::MODE_OFF && !$status['active'],
             'manage_url' => $manageUrl,
         ];
