@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Phpcp\Http\V2;
 
 use Phpcp\Http\ApiController;
+use Phpcp\Middleware\RateLimit;
 use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
@@ -35,9 +36,35 @@ final class SecurityController extends ApiController
     /** สถานะการกันเดารหัสผ่านหน้าเข้าสู่ระบบ */
     public function panelJail(Request $request): Response
     {
-        return $this->ok(
-            $this->agent()->data('security.panel_jail', [], $this->ctx->actor($request)),
+        $data = $this->agent()->data('security.panel_jail', [], $this->ctx->actor($request));
+
+        /*
+         * เพดานของ `max_retry` ไม่ใช่ค่าที่ตั้งใจเลือก แต่คำนวณจากโควตาของหน้าล็อกอิน
+         * — คำขอที่โดน 429 ไม่มีบรรทัดใน audit log ให้ fail2ban นับ · ส่งไปให้หน้าจอ
+         * เขียนเป็นคำอธิบายใต้ช่องกรอก ผู้ใช้จะได้รู้ก่อนกดบันทึกแล้วโดนปฏิเสธ
+         */
+        $data['max_retry_ceiling'] = RateLimit::maxLoginFailuresWithin(
+            (int) ($data['find_seconds'] ?? 600),
         );
+
+        return $this->ok($data);
+    }
+
+    /**
+     * IP ที่ jail นี้แบนอยู่ตอนนี้ — รูปแบบตารางเพื่อให้ปุ่มปลดแบนผูกกับแถวได้
+     *
+     * แยกเป็นเส้นทางของตัวเองแทนที่จะใช้ `banned_ips` จากสถานะ เพราะตารางที่มี
+     * `data-source` ของตัวเองสั่งโหลดใหม่หลังปลดแบนได้ตรง ๆ (`data-refresh-table`)
+     * ซึ่งเป็นรูปเดียวกับหน้าเว็บไซต์ใช้อยู่แล้ว
+     */
+    public function panelJailBans(Request $request): Response
+    {
+        $data = $this->agent()->data('security.panel_jail', [], $this->ctx->actor($request));
+
+        return $this->ok(array_map(
+            static fn (string $ip): array => ['ip' => $ip],
+            $data['banned_ips'] ?? [],
+        ));
     }
 
     /**

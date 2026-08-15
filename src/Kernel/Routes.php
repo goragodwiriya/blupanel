@@ -232,6 +232,7 @@ final class Routes
          */
         $router->add(new Route('GET', '/api/v2/security/panel-jail', V2SecurityController::class, 'panelJail', 'security.view', 'api.v2.security.panel_jail'));
         $router->add(new Route('PUT', '/api/v2/security/panel-jail', V2SecurityController::class, 'panelJailSet', 'security.manage', 'api.v2.security.panel_jail_set'));
+        $router->add(new Route('GET', '/api/v2/security/panel-jail/bans', V2SecurityController::class, 'panelJailBans', 'security.view', 'api.v2.security.panel_jail_bans'));
         $router->add(new Route('POST', '/api/v2/security/panel-jail/unban', V2SecurityController::class, 'panelJailUnban', 'security.manage', 'api.v2.security.panel_jail_unban'));
 
         $router->add(new Route('GET', '/api/v2/metrics', V2MetricsController::class, 'index', 'dashboard.view', 'api.v2.metrics.index'));

@@ -1,26 +1,5 @@
-<!--
-  ฟอร์มงานอัตโนมัติ — ใช้ทั้งสร้างใหม่และแก้ไข (FRAMEWORK_GUIDE Pattern 3)
-
-  **ไฟล์เดียวจริง ๆ ไม่ใช่สองไฟล์ที่หน้าตาเหมือนกัน** — เพิ่มช่องกรอกทีหลังจึงไม่มีทาง
-  ลืมแก้อีกฝั่ง · ตัวที่บอกว่าเป็นของใหม่หรือของเดิมคือ `id` ที่ซ่อนอยู่ท้ายฟอร์ม
-  ซึ่งเซิร์ฟเวอร์เป็นคนตัดสิน ไม่ใช่หน้าเว็บ
-
-  ปลายทางเดียวเสมอ (`POST /api/v2/cron-jobs`) — ไม่ต้องผูก action หรือ method
-  ตามเงื่อนไขในเทมเพลต
-
-  ไม่มี chrome ของหน้าเลย เพราะถูกโหลดเข้า Modal ตามคำสั่งที่มากับคำตอบของ API
-  (`actions: [{type:'modal', template:'cron-job-form.html'}]`) — ตารางอยู่คนละไฟล์
--->
-<form data-form="cronJob"
-      action="/api/v2/cron-jobs"
-      method="post"
-      data-ajax-submit="true"
-      data-validate="true">
+<form data-form="cronJob" action="/api/v2/cron-jobs" method="post" data-ajax-submit="true" data-validate="true">
   <fieldset>
-    <!--
-      เลือกเว็บไซต์จากรายการจริง ไม่ให้กรอกเลข id เอง — `data-value` ทำให้ค่าที่
-      โหลดมาถูกเลือกไว้ตอนแก้ไข ส่วนตอนสร้างใหม่ site_id เป็น 0 จึงไม่ตรงกับตัวเลือกใด
-    -->
     <div data-component="api" data-endpoint="/api/v2/sites">
       <label for="cj_site" data-i18n>Website</label>
       <span class="form-control icon-website">
@@ -34,44 +13,31 @@
     <div>
       <label for="cj_name" data-i18n>Name</label>
       <span class="form-control icon-edit">
-        <input type="text" id="cj_name" name="name" required maxlength="100"
-               autocomplete="off" data-attr="value:name">
+        <input type="text" id="cj_name" name="name" required maxlength="100" autocomplete="off" data-attr="value:name">
       </span>
     </div>
     <div>
       <label for="cj_schedule" data-i18n>Schedule</label>
       <span class="form-control icon-clock">
-        <input type="text" id="cj_schedule" name="schedule" required maxlength="100"
-               placeholder="0 3 * * *" autocomplete="off" data-attr="value:schedule">
+        <input type="text" id="cj_schedule" name="schedule" required maxlength="100" placeholder="0 3 * * *" autocomplete="off" data-attr="value:schedule">
       </span>
       <div class="comment" data-i18n>Five fields in cron format: minute hour day month weekday</div>
-      <!--
-        ตัวเลือกที่ใช้บ่อย — กดแล้วเติมให้ทันที
-
-        รูปแบบ cron เขียนเองผิดง่ายและผิดแบบเงียบ ๆ (`0 0 * * *` กับ `0 * * * *` ต่างกัน
-        24 เท่า) แต่ค่าที่คนใช้จริงมีไม่กี่แบบ · ปุ่มพวกนี้ทำหน้าที่เป็นทั้งตัวเลือกและ
-        ตัวอย่างในตัวเดียว โดยที่ช่องยังพิมพ์เองได้เหมือนเดิม
-      -->
       <div class="header-actions" style="margin-top:.5rem">
-        <button type="button" class="btn small" data-action="click.prevent:fillField"
-                data-fill-target="cj_schedule" data-fill-value="*/5 * * * *" data-i18n>Every 5 minutes</button>
-        <button type="button" class="btn small" data-action="click.prevent:fillField"
-                data-fill-target="cj_schedule" data-fill-value="0 * * * *" data-i18n>Hourly</button>
-        <button type="button" class="btn small" data-action="click.prevent:fillField"
-                data-fill-target="cj_schedule" data-fill-value="0 0 * * *" data-i18n>Daily at midnight</button>
-        <button type="button" class="btn small" data-action="click.prevent:fillField"
-                data-fill-target="cj_schedule" data-fill-value="0 2 * * *" data-i18n>Daily at 2 AM</button>
-        <button type="button" class="btn small" data-action="click.prevent:fillField"
-                data-fill-target="cj_schedule" data-fill-value="0 3 * * 0" data-i18n>Weekly on Sunday</button>
-        <button type="button" class="btn small" data-action="click.prevent:fillField"
-                data-fill-target="cj_schedule" data-fill-value="0 4 1 * *" data-i18n>Monthly on the 1st</button>
+        <button type="button" class="btn small" data-action="click.prevent:fillField" data-fill-target="cj_schedule" data-fill-value="*/5 * * * *" data-i18n>Every 5
+          minutes</button>
+        <button type="button" class="btn small" data-action="click.prevent:fillField" data-fill-target="cj_schedule" data-fill-value="0 * * * *" data-i18n>Hourly</button>
+        <button type="button" class="btn small" data-action="click.prevent:fillField" data-fill-target="cj_schedule" data-fill-value="0 0 * * *" data-i18n>Daily at
+          midnight</button>
+        <button type="button" class="btn small" data-action="click.prevent:fillField" data-fill-target="cj_schedule" data-fill-value="0 2 * * *" data-i18n>Daily at 2 AM</button>
+        <button type="button" class="btn small" data-action="click.prevent:fillField" data-fill-target="cj_schedule" data-fill-value="0 3 * * 0" data-i18n>Weekly on Sunday</button>
+        <button type="button" class="btn small" data-action="click.prevent:fillField" data-fill-target="cj_schedule" data-fill-value="0 4 1 * *" data-i18n>Monthly on the
+          1st</button>
       </div>
     </div>
     <div>
       <label for="cj_command" data-i18n>Command</label>
       <span class="form-control icon-keyboard">
-        <input type="text" id="cj_command" name="command" required maxlength="500"
-               autocomplete="off" data-attr="value:command">
+        <input type="text" id="cj_command" name="command" required maxlength="500" autocomplete="off" data-attr="value:command">
       </span>
     </div>
   </fieldset>
