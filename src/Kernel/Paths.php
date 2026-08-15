@@ -5,54 +5,60 @@ declare (strict_types = 1);
 namespace Phpcp\Kernel;
 
 /**
- * ที่อยู่ของทุกอย่างในระบบ รวมไว้ที่เดียว
+ * Every location in the system, gathered in one place
  *
- * รองรับ 2 layout:
- *   system   — ติดตั้งจริงตาม ARCHITECTURE §13 (/etc/phpcp, /var/lib/phpcp, ...)
- *   portable — ทุกอย่างอยู่ใต้โฟลเดอร์โปรเจกต์ ใช้ตอนพัฒนา/ทดสอบโดยไม่ต้องติดตั้งและไม่ต้องใช้ root
+ * Supports 2 layouts:
+ *   system   — a real install per ARCHITECTURE §13 (/etc/phpcp, /var/lib/phpcp, ...)
+ *   portable — everything lives under the project directory; used for development
+ *              and testing without installing and without root
  *
- * เหตุผลที่ต้องมี portable: เครื่องนักพัฒนา (เช่นเครื่องที่ออกแบบระบบนี้) ต้องรัน panel
- * ทดสอบได้ครบทุกหน้าโดยไม่แตะ /etc และไม่ต้อง sudo — ดู ARCHITECTURE §6
+ * Why portable has to exist: a developer's machine (the one this system was designed
+ * on, for instance) needs to run the panel and exercise every page without touching
+ * /etc and without sudo — see ARCHITECTURE §6.
  */
 final class Paths
 {
     public const LAYOUT_SYSTEM = 'system';
     public const LAYOUT_PORTABLE = 'portable';
 
-    /** ที่เก็บไฟล์เว็บไซต์เริ่มต้น — เปลี่ยนได้ด้วยค่าตั้ง sites.dir */
+    /** Default website storage location — changeable with the sites.dir setting */
     public const DEFAULT_SITES_DIR = '/srv/phpcp/sites';
 
     /**
-     * บ้านของผู้ใช้โฮสติ้ง — เปลี่ยนได้ด้วยค่าตั้ง sites.users_dir
+     * Hosting users' home directory — changeable with the sites.users_dir setting
      *
-     * ตั้งแต่ migration 0006 ไฟล์เว็บไม่ได้อยู่ที่ `<sites.dir>/<domain>` อีกแล้ว แต่อยู่ใต้
-     * บ้านของเจ้าของ เพราะ uid และโควตาดิสก์ผูกกับผู้ใช้ ไม่ใช่ผูกกับเว็บ ·
-     * `sitesDir()` ยังอยู่เพื่ออ่านไฟล์ของเลย์เอาต์เดิมที่ยังไม่ได้ย้าย
+     * As of migration 0006, website files no longer live at `<sites.dir>/<domain>`
+     * but under the owner's home, because uid and disk quota are bound to the user,
+     * not the site. `sitesDir()` still exists to read files under the older layout
+     * that haven't been migrated.
      *
-     * **ค่าเริ่มต้นคือ `/home`** ซึ่งเป็นที่ที่ผู้ดูแลระบบยูนิกซ์ทุกคนคาดว่าจะเจอบ้านผู้ใช้
-     * และเป็นที่เดียวกับที่ cPanel/DirectAdmin/Plesk ใช้ · เดิมเป็น `/srv/phpcp/users`
-     * ซึ่งลึกและไม่ตรงกับความคาดหวังของใครเลย ทั้งลูกค้าที่ย้ายมาและผู้ดูแลที่ ssh เข้าเครื่อง
+     * **Defaults to `/home`**, the location every Unix admin expects to find user
+     * homes, and the same one cPanel/DirectAdmin/Plesk use. It used to be
+     * `/srv/phpcp/users`, which was buried and matched nobody's expectations —
+     * neither a migrating customer's nor an admin's who ssh'd into the machine.
      */
     public const DEFAULT_USERS_DIR = '/home';
 
     /**
-     * ที่เก็บไฟล์เว็บไซต์ที่ใช้จริง
+     * The website storage location actually in use
      *
-     * เป็น static เพราะ Site เป็น value object ที่ถูกสร้างจากหลายสิบจุดทั่วระบบ
-     * (capability, controller, CLI, seeder) การส่ง Config ตามไปทุกจุดจะทำให้
-     * ลายเซ็นของ Site เปลี่ยนไปทั้งหมดโดยไม่ได้ความปลอดภัยเพิ่มขึ้นเลย
-     * รูปแบบเดียวกับ SelfProtection::protectAlso() ที่ใช้อยู่แล้ว
+     * Static because Site is a value object constructed from dozens of places across
+     * the system (capabilities, controllers, the CLI, seeders) — threading a Config
+     * through every one of them would change Site's signature everywhere for no
+     * added security at all. The same pattern already used by
+     * SelfProtection::protectAlso().
      */
     private static string $sitesDir = self::DEFAULT_SITES_DIR;
 
-    /** บ้านของผู้ใช้ที่ใช้จริง — static ด้วยเหตุผลเดียวกับ $sitesDir */
+    /** The users' home directory actually in use — static for the same reason as $sitesDir */
     private static string $usersDir = self::DEFAULT_USERS_DIR;
 
     /**
-     * รูปทรงของไฟล์ใต้บ้านผู้ใช้ที่ใช้เป็นค่าเริ่มต้น — ดู {@see \Phpcp\Domain\SiteLayout}
+     * The default file layout under a user's home — see {@see \Phpcp\Domain\SiteLayout}
      *
-     * เก็บเป็นข้อความดิบไม่ใช่ตัว enum เพราะ `Paths` อยู่ชั้น Kernel ซึ่งต้องไม่พึ่ง Domain
-     * · ตัว enum เป็นคนแปลค่าและตัดสินว่าค่าที่ไม่รู้จักตกไปที่ไหน
+     * Kept as a raw string, not the enum, because `Paths` sits in the Kernel layer,
+     * which must not depend on Domain — the enum is what interprets the value and
+     * decides where an unrecognised one falls.
      */
     private static string $siteLayout = '';
 
@@ -102,7 +108,8 @@ final class Paths
     }
 
     /**
-     * เดา layout จากสภาพเครื่อง — มี /etc/phpcp/config.php แปลว่าติดตั้งแบบ system แล้ว
+     * Guesses the layout from the machine's state — /etc/phpcp/config.php existing
+     * means a system install has already happened
      */
     public static function detect(string $root): self
     {
@@ -111,42 +118,43 @@ final class Paths
             : self::forLayout(self::LAYOUT_PORTABLE, $root);
     }
 
-    /** ที่เก็บไฟล์เว็บไซต์ที่ใช้อยู่จริง — เส้นทางเชิงตรรกะ โหมด sandbox เติม prefix ให้ทีหลัง */
+    /** The website storage location actually in use — a logical path; sandbox mode adds the prefix later */
     public static function sitesDir(): string
     {
         return self::$sitesDir;
     }
 
-    /** บ้านของผู้ใช้ที่ใช้อยู่จริง — เส้นทางเชิงตรรกะ โหมด sandbox เติม prefix ให้ทีหลัง */
+    /** The users' home directory actually in use — a logical path; sandbox mode adds the prefix later */
     public static function usersDir(): string
     {
         return self::$usersDir;
     }
 
-    /** เปลี่ยนบ้านของผู้ใช้ — เรียกจาก Config::load() จุดเดียว กฎเดียวกับ useSitesDir() */
+    /** Changes the users' home directory — called only from Config::load(), same rule as useSitesDir() */
     public static function useUsersDir(string $dir): void
     {
         self::$usersDir = self::assertHostingDir($dir, 'sites.users_dir') ?? self::DEFAULT_USERS_DIR;
     }
 
-    /** ค่าเริ่มต้นของรูปทรงไฟล์ — ค่าว่างแปลว่ายังไม่ได้ตั้ง ให้ SiteLayout เลือกเอง */
+    /** The default file layout — empty means unset, letting SiteLayout choose */
     public static function siteLayout(): string
     {
         return self::$siteLayout;
     }
 
-    /** เรียกจาก Config::load() จุดเดียว — ไม่ตรวจค่าที่นี่ ตัว enum เป็นคนตัดสิน */
+    /** Called only from Config::load() — not validated here; the enum decides */
     public static function useSiteLayout(string $value): void
     {
         self::$siteLayout = trim($value);
     }
 
     /**
-     * เส้นทางที่จะถูกเอาไปประกอบเป็น vhost, FPM pool และ open_basedir ต้องสะอาดตั้งแต่ต้นทาง
+     * A path headed into a vhost, an FPM pool, or open_basedir has to be clean from the source
      *
-     * กัน `..` และเส้นทางสัมพัทธ์ที่นี่ ไม่ใช่ปล่อยไปโผล่ที่ปลายทางซึ่งไม่มีใครตรวจแล้ว
+     * `..` and relative paths are rejected right here, not left to surface at the
+     * destination where nothing checks for them anymore.
      *
-     * @return string|null null = ไม่ได้ตั้งค่า ให้ผู้เรียกใช้ค่าเริ่มต้น
+     * @return string|null null = not set, the caller should use its default
      */
     private static function assertHostingDir(string $dir, string $setting): ?string
     {
@@ -157,21 +165,22 @@ final class Paths
         }
 
         if (!str_starts_with($dir, '/') || str_contains($dir, "\0")) {
-            throw new \RuntimeException("{$setting} ต้องเป็นเส้นทางสัมบูรณ์: {$dir}");
+            throw new \RuntimeException("{$setting} must be an absolute path: {$dir}");
         }
 
         if (in_array('..', explode('/', $dir), true)) {
-            throw new \RuntimeException("{$setting} ต้องไม่มี .. : {$dir}");
+            throw new \RuntimeException("{$setting} must not contain ..: {$dir}");
         }
 
         return $dir;
     }
 
     /**
-     * เปลี่ยนที่เก็บไฟล์เว็บไซต์ — เรียกจาก Config::load() จุดเดียว
+     * Changes the website storage location — called only from Config::load()
      *
-     * ค่านี้ถูกนำไปประกอบเป็นเส้นทางของ vhost, FPM pool และ open_basedir
-     * จึงต้องกัน `..` และเส้นทางสัมพัทธ์ตั้งแต่ตรงนี้ ไม่ใช่ปล่อยไปโผล่ที่ปลายทาง
+     * This value is used to build vhost paths, FPM pool paths, and open_basedir, so
+     * `..` and relative paths must be rejected right here, not left to surface at
+     * the destination.
      */
     public static function useSitesDir(string $dir): void
     {
@@ -250,13 +259,14 @@ final class Paths
     }
 
     /**
-     * ที่เก็บไฟล์ของ SPA (Now.js)
+     * The SPA's (Now.js) file location
      *
-     * อยู่ใต้ `public/assets/` **ไม่ใช่ `public/app/`** ทั้งที่ URL ของหน้าจอคือ `/app/*` —
-     * เพราะเส้นทางของ SPA ต้องไม่ตรงกับไดเรกทอรีจริงบนดิสก์ ไม่งั้น `mod_dir` ของ Apache
-     * จะเข้ามาจัดการเองก่อน แล้ว `FallbackResource` จะไม่ทำงาน (มันข้าม URL ที่ชี้ไปยัง
-     * ไฟล์หรือไดเรกทอรีที่มีอยู่จริง) ผลคือ `/app/` ได้ 404 ของ Apache โดยที่ PHP
-     * ไม่เคยเห็นคำขอนั้นเลย · ดู `SpaController` ประกอบ
+     * Lives under `public/assets/` **not `public/app/`**, even though the screen's
+     * URL is `/app/*` — because the SPA's URL must not match a real directory on
+     * disk, or Apache's `mod_dir` would handle it first and `FallbackResource` would
+     * never run (it skips any URL pointing at a file or directory that actually
+     * exists). The result would be `/app/` returning Apache's own 404, with PHP
+     * never seeing that request at all. See `SpaController` alongside this.
      */
     public function spa(): string
     {
@@ -264,29 +274,31 @@ final class Paths
     }
 
     /**
-     * สำเนา phpMyAdmin ที่ตัวติดตั้งผูกไว้ใต้เว็บรูทของ panel
+     * The phpMyAdmin copy the installer wires up under the panel's own web root
      *
-     * เป็น symlink ชี้ไป /usr/share/phpmyadmin ของระบบ ไม่ใช่สำเนาที่ดาวน์โหลดเอง
-     * จึงได้อัปเดตความปลอดภัยตาม apt ของดิสทริบิวชัน (ดู install.sh §5.1)
+     * A symlink to the system's /usr/share/phpmyadmin, not a separately downloaded
+     * copy, so it gets security updates through the distro's own apt (see install.sh §5.1).
      */
     public function phpMyAdmin(): string
     {
         return $this->root.'/public/phpmyadmin';
     }
 
-    /** phpMyAdmin ใช้งานได้จริงหรือไม่ — ใช้ตัดสินว่าจะแสดงปุ่มเข้าใช้งานไหม */
+    /** Is phpMyAdmin actually usable — decides whether to show the button to open it */
     public function hasPhpMyAdmin(): bool
     {
         return is_file($this->phpMyAdmin().'/index.php');
     }
 
     /**
-     * ที่พักของไฟล์สำรองที่ดึงมาจากปลายทางนอกเครื่อง — **ไม่ใช่ที่เก็บถาวรอีกแล้ว**
+     * Resting place for backup files pulled in from an offsite destination — **no
+     * longer permanent storage**
      *
-     * ไฟล์สำรองของลูกค้าอยู่ที่ `<บ้าน>/backup` ของเขาเอง (PLAN-BACKUP-V2 ข้อ B1) ·
-     * ที่นี่เหลือไว้สำหรับช่วงเวลาสั้น ๆ ระหว่างที่ `backup.import` ดึงไฟล์ลงมาแล้วยัง
-     * ไม่รู้ว่าเป็นของบ้านไหน จนกว่าจะอ่าน `backup.json` ข้างในเสร็จ · หลังจากนั้นไฟล์
-     * ถูกย้ายเข้าบ้านทันที ที่นี่จึงว่างเสมอในสภาพปกติ
+     * A customer's backup files live at their own `<home>/backup` (PLAN-BACKUP-V2
+     * item B1). What's left here is for the brief window while `backup.import` has
+     * pulled a file down but doesn't yet know which home it belongs to, until
+     * `backup.json` inside it has been read. After that the file is moved into the
+     * home immediately, so this stays empty under normal conditions.
      */
     public function backups(): string
     {
@@ -294,7 +306,7 @@ final class Paths
     }
 
     /**
-     * ไดเรกทอรีที่ต้องมีอยู่จริงก่อนระบบทำงานได้ พร้อมสิทธิ์ที่ต้องการ
+     * Directories that must exist before the system can run, with the permissions each needs
      *
      * @return array<string,int> path => mode
      */
@@ -313,7 +325,7 @@ final class Paths
     {
         foreach ($this->required() as $dir => $mode) {
             if (!is_dir($dir) && !@mkdir($dir, $mode, true) && !is_dir($dir)) {
-                throw new \RuntimeException("สร้างไดเรกทอรีไม่สำเร็จ: {$dir}");
+                throw new \RuntimeException("Failed to create directory: {$dir}");
             }
         }
     }

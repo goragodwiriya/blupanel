@@ -5,17 +5,17 @@ declare (strict_types = 1);
 namespace Phpcp\Kernel;
 
 /**
- * ค่าตั้งของระบบ อ่านครั้งเดียวตอน bootstrap
+ * System settings, read once at bootstrap
  *
- * ลำดับการค้นหาไฟล์ config:
- *   1. ตัวแปรสภาพแวดล้อม PHPCP_CONFIG
- *   2. /etc/phpcp/config.php            (ติดตั้งแบบ system)
+ * Config file search order:
+ *   1. the PHPCP_CONFIG environment variable
+ *   2. /etc/phpcp/config.php            (system install)
  *   3. <root>/etc/config.php            (portable)
- *   ไม่พบเลย → ใช้ค่าเริ่มต้นแบบ portable + sandbox เพื่อให้ clone แล้วรันได้ทันที
+ *   None found → falls back to portable + sandbox defaults, so a fresh clone runs immediately
  */
 final class Config
 {
-    /** @var list<string> ไฟล์ config ที่มีอยู่แต่อ่านไม่ได้ — ดู locate() */
+    /** @var list<string> config files that exist but couldn't be read — see locate() */
     private static array $unreadable = [];
 
     /** @param array<string,mixed> $values */
@@ -38,18 +38,19 @@ final class Config
         if ($file !== null) {
             $loaded = require $file;
             if (!is_array($loaded)) {
-                throw new \RuntimeException("ไฟล์ config ต้อง return array: {$file}");
+                throw new \RuntimeException("Config file must return an array: {$file}");
             }
             $values = $loaded;
         }
 
         $values = array_replace_recursive(self::defaults(), $values);
 
-        // ต้องมาก่อนสร้าง Paths — ทั้ง Paths และ Site อ่านค่านี้จากที่เดียวกัน
+        // Must happen before Paths is built — both Paths and Site read this value from the same place
         Paths::useSitesDir((string) (($values['sites'] ?? [])['dir'] ?? ''));
         Paths::useUsersDir((string) (($values['sites'] ?? [])['users_dir'] ?? ''));
-        // ระวัง: `sites.layout` (รูปทรงไฟล์ของเว็บ) คนละเรื่องกับ `layout` ระดับบนสุด
-        // ซึ่งเป็นเลย์เอาต์ของ**การติดตั้ง** (system/portable) — ชื่อใกล้กันแต่ไม่เกี่ยวกันเลย
+        // Careful: `sites.layout` (a website's file layout) is unrelated to the
+        // top-level `layout`, which is the **install's** layout (system/portable) —
+        // similar names, nothing to do with each other
         Paths::useSiteLayout((string) (($values['sites'] ?? [])['layout'] ?? ''));
 
         $layout = (string) ($values['layout'] ?? '');
@@ -57,9 +58,9 @@ final class Config
             ? Paths::forLayout($layout, $root)
             : Paths::detect($root);
 
-        // อนุญาตให้ override เฉพาะตอนพัฒนา — production ต้องมาจากไฟล์เท่านั้น
+        // Overriding is only ever allowed in development — production must come from the file alone
         $modeRaw = (string) ($values['mode'] ?? Mode::Sandbox->value);
-        $mode = Mode::tryFrom($modeRaw) ?? throw new \RuntimeException("โหมดไม่ถูกต้อง: {$modeRaw} (ใช้ได้: production, sandbox, dryrun)");
+        $mode = Mode::tryFrom($modeRaw) ?? throw new \RuntimeException("Invalid mode: {$modeRaw} (valid values: production, sandbox, dryrun)");
 
         return new self($values, $paths, $mode, $file);
     }
@@ -81,11 +82,13 @@ final class Config
                 return $candidate;
             }
 
-            // มีไฟล์อยู่แต่อ่านไม่ได้ = ปัญหาสิทธิ์ ไม่ใช่ "ยังไม่ได้ติดตั้ง" — จำไว้บอกผู้ดูแล
+            // The file exists but can't be read = a permissions problem, not "not
+            // installed yet" — remembered so an admin can be told.
             //
-            // ถ้าเงียบไปเฉย ๆ ระบบจะถอยไปใช้ค่าเริ่มต้นซึ่งเป็น sandbox + ไม่มีฐานข้อมูล
-            // แล้วทุกหน้าจอจะดู "ว่างเปล่าแต่ปกติ" ทั้งที่ config จริงมีอยู่ครบ
-            // (เกิดขึ้นจริงตอน install.sh ลืม chown config.php เป็น root:phpcp)
+            // Staying silent here would fall back to the sandbox defaults with no
+            // database, and every screen would look "empty but fine" even though the
+            // real config exists and is complete (happened for real when install.sh
+            // forgot to chown config.php to root:phpcp).
             if (is_file($candidate)) {
                 self::$unreadable[] = $candidate;
             }
@@ -95,7 +98,8 @@ final class Config
     }
 
     /**
-     * ไฟล์ config ที่มีอยู่จริงแต่โปรเซสนี้อ่านไม่ได้ — ว่างเมื่อไม่มีปัญหาสิทธิ์
+     * Config files that genuinely exist but this process can't read — empty when
+     * there's no permission problem
      *
      * @return list<string>
      */
@@ -113,50 +117,51 @@ final class Config
             'panel' => [
                 'port' => 8443,
                 'base_url' => '',
-                // __Host- prefix ต้องใช้คู่กับ Secure เท่านั้น dev บน http จึงต้องปิดได้
+                // The __Host- prefix only works paired with Secure, so dev over http needs to turn it off
                 'cookie_secure' => false,
-                'session_ttl' => 28800, // 8 ชั่วโมง
-                'session_idle' => 1800, // 30 นาที
-                'session_rotate' => 900, // หมุน id ทุก 15 นาที
-                'ip_allowlist' => [], // ว่าง = ไม่จำกัด
+                'session_ttl' => 28800, // 8 hours
+                'session_idle' => 1800, // 30 minutes
+                'session_rotate' => 900, // rotates the id every 15 minutes
+                'ip_allowlist' => [], // empty = unrestricted
                 'trusted_proxies' => []
             ],
             'agent' => [
-                'socket' => '', // ว่าง = ใช้ค่าจาก Paths
+                'socket' => '', // empty = use the value from Paths
                 'timeout' => 30,
-                // uid ที่อนุญาตให้ต่อ socket ได้ ตรวจด้วย SO_PEERCRED เสมอ
-                // (root กับ uid ของ agent เองอยู่ในรายการโดยปริยาย — ดู Server::allowedUids())
+                // uids allowed to connect to the socket, always checked with SO_PEERCRED
+                // (root and the agent's own uid are implicitly on the list — see Server::allowedUids())
                 'allowed_uids' => [],
-                // ชื่อผู้ใช้ของชั้นเว็บ · แปลงเป็น uid ตอนตรวจ เพราะ uid ต่างกันในแต่ละเครื่อง
+                // Usernames for the web tier — turned into uids when checked, since uids differ by machine
                 'allowed_users' => ['phpcp-web']
             ],
             'sandbox' => [
-                'prefix' => '' // ว่าง = ใช้ค่าจาก Paths
+                'prefix' => '' // empty = use the value from Paths
             ],
             'sites' => [
                 'dir' => Paths::DEFAULT_SITES_DIR,
-                // บ้านของผู้ใช้โฮสติ้ง — ไฟล์เว็บอยู่ที่ <users_dir>/<ผู้ใช้>/domains/<โดเมน>/
+                // Hosting users' home — website files live at <users_dir>/<user>/domains/<domain>/
                 'users_dir' => Paths::DEFAULT_USERS_DIR,
-                // รูปทรงไฟล์เริ่มต้นของบัญชีที่ยังไม่ได้เลือกเอง — 'phpcp' หรือ 'cpanel'
-                // ดู Phpcp\Domain\SiteLayout · แก้จากหน้าตั้งค่าได้ ค่านั้นทับค่านี้
+                // The default file layout for an account that hasn't chosen one — 'phpcp' or 'cpanel'
+                // See Phpcp\Domain\SiteLayout — changeable from the settings page, which overrides this
                 'layout' => '',
-                'shared_owner' => false, // ดูคำอธิบายที่ sharedOwner()
-                'pointer_roots' => [] // โฟลเดอร์นอก sites.dir ที่ยอมให้ชี้ docroot เข้าไปได้
+                'shared_owner' => false, // see the explanation at sharedOwner()
+                'pointer_roots' => [] // folders outside sites.dir that a docroot is allowed to point into
             ],
             'dns' => [
-                // ปิดไว้เป็นค่าเริ่มต้นโดยตั้งใจ — เปิดเองหลังตรวจสอบว่าเครื่องนี้มี BIND9
-                // พร้อมใช้งานจริงแล้วเท่านั้น (PLAN-V2 เฟส E3) ดูคำอธิบายที่ dnsEnabled()
+                // Off by default on purpose — turned on only after confirming this
+                // machine has BIND9 genuinely ready (PLAN-V2 phase E3); see the
+                // explanation at dnsEnabled()
                 'enabled' => false,
                 'zone_dir' => '/etc/bind/zones',
                 'named_conf_local' => '/etc/bind/named.conf.local',
-                // ต้องมีอย่างน้อยหนึ่งเครื่องก่อนจะสร้าง zone ได้เลย — BIND9 ปฏิเสธ zone
-                // ที่ไม่มี NS record อยู่แล้วโดยธรรมชาติของโปรโตคอล
+                // At least one is required before a zone can be created at all —
+                // BIND9 rejects a zone with no NS record by the nature of the protocol
                 'nameservers' => [],
-                // อีเมลผู้ดูแล DNS ในฟอร์แมต SOA (จุดแทน @) เช่น hostmaster.example.com
+                // The DNS admin's email in SOA format (a dot instead of @), e.g. hostmaster.example.com
                 'soa_email' => '',
             ],
             'security' => [
-                'secret_key' => '', // base64 32 byte — ใช้เข้ารหัส TOTP secret
+                'secret_key' => '', // base64, 32 bytes — used to encrypt the TOTP secret
                 'require_2fa_roles' => ['superadmin', 'sysadmin'],
                 'max_login_attempts' => 5,
                 'lockout_seconds' => 900,
@@ -168,7 +173,7 @@ final class Config
         ];
     }
 
-    /** อ่านค่าด้วย dot notation เช่น get('panel.port') */
+    /** Reads a value with dot notation, e.g. get('panel.port') */
     public function get(string $key, mixed $default = null): mixed
     {
         $value = $this->values;
@@ -244,11 +249,12 @@ final class Config
     }
 
     /**
-     * ยอมรับว่า filesystem เก็บเจ้าของไฟล์ไม่ได้ จึงข้ามการแยกสิทธิ์ระหว่างเว็บ
+     * Accepts that the filesystem can't record file ownership, so per-site permission separation is skipped
      *
-     * เปิดได้เฉพาะเมื่อที่เก็บเว็บเป็น NTFS/exFAT/FAT ซึ่งเก็บ uid/gid ไม่ได้
-     * agent จะตรวจจริงก่อนทำงานทุกครั้ง ถ้า filesystem รองรับ ownership อยู่แล้ว
-     * จะประตูจนคำสั่งทันที ค่านี้จึงหลุดขึ้น production จริงไปโดยไม่มีใครรู้ไม่ได้
+     * Only meant to be turned on when website storage sits on NTFS/exFAT/FAT, which
+     * can't hold uid/gid. The agent verifies this for real before every action — if
+     * the filesystem does support ownership, it refuses the command immediately, so
+     * this value can never silently reach real production unnoticed.
      */
     public function sharedOwner(): bool
     {
@@ -256,43 +262,48 @@ final class Config
     }
 
     /**
-     * เชื่อม BIND9 จริงแล้วหรือยัง — ปิดไว้เป็นค่าเริ่มต้นเสมอ (PLAN-V2 เฟส E3)
+     * Has BIND9 actually been wired up — always off by default (PLAN-V2 phase E3)
      *
-     * รูปแบบเดียวกับ `sharedOwner()`: เป็นการตัดสินใจเชิงโครงสร้างพื้นฐานที่ต้องเปิดเอง
-     * หลังตรวจสอบด้วยมือว่าเครื่องนี้มี BIND9 ทำงานอยู่จริงและมี `dns.nameservers` ที่ถูกต้อง
-     * — ไม่ใช่ค่าที่ควรเปิดอัตโนมัติเพียงเพราะแพ็กเกจ bind9 ถูกติดตั้งไว้ (ทุกเครื่องที่ผ่าน
-     * `install.sh` มีแพ็กเกจอยู่แล้ว แต่ไม่ได้แปลว่าตั้งค่าให้ panel เขียนทับ named.conf.local
-     * ได้อย่างปลอดภัย) ปิดอยู่ = `dns.zone_write` เป็น no-op ที่บอกชัดเจนว่ายังไม่ได้เชื่อม
+     * Same pattern as `sharedOwner()`: an infrastructure-level decision that has to
+     * be turned on deliberately, after confirming by hand that this machine has
+     * BIND9 genuinely running with correct `dns.nameservers` — not something that
+     * should switch on automatically just because the bind9 package happens to be
+     * installed (every machine that went through `install.sh` has the package, but
+     * that doesn't mean it's safe to let the panel overwrite named.conf.local). Off
+     * means `dns.zone_write` is a no-op that says plainly it hasn't been wired up yet.
      */
     /**
-     * ค่าที่ผู้ดูแลตั้งจากหน้าจอ — ทับค่าใน config.php
+     * Values the admin set from the screen — override config.php
      *
-     * ใช้รูปแบบเดียวกับ `Paths::useSitesDir()` คือ setter แบบ static ที่ถูกเรียกครั้งเดียว
-     * ตอนที่ฐานข้อมูลพร้อม · จำเป็นเพราะ `Config` ถูกสร้างก่อน `Db` เสมอ (Db ต้องใช้
-     * เส้นทางจาก Config) จึงอ่านตารางตั้งค่าตอนสร้างไม่ได้
+     * Uses the same pattern as `Paths::useSitesDir()`: a static setter called once
+     * when the database becomes ready. Necessary because `Config` is always built
+     * before `Db` (Db needs a path from Config), so the settings table can't be read
+     * at construction time.
      *
      * @var array<string,mixed>
      */
     private static array $stored = [];
 
     /**
-     * @param array<string,string> $values ค่าจากตาราง settings
+     * @param array<string,string> $values values from the settings table
      */
     public static function useStoredSettings(array $values): void
     {
         self::$stored = $values;
 
-        // รูปทรงไฟล์ที่ผู้ดูแลเลือกจากหน้าจอ ทับค่าใน config.php — ต้องผลักเข้า Paths
-        // ที่นี่ด้วย เพราะ `UserAccount` อ่านจากที่นั่น ไม่ได้ถือ Config ไว้
+        // A file layout the admin chose from the screen overrides config.php — has
+        // to be pushed into Paths here too, because `UserAccount` reads it from
+        // there and doesn't hold a Config reference
         if (array_key_exists('sites.layout', $values)) {
             Paths::useSiteLayout((string) $values['sites.layout']);
         }
     }
 
     /**
-     * เปิดใช้งาน DNS หรือยัง — **ค่าจากหน้าจอมาก่อน config.php เสมอ**
+     * Is DNS turned on — **the screen's value always wins over config.php**
      *
-     * ผู้ดูแลที่กดเปิดจากหน้าตั้งค่าต้องได้ผลทันที ไม่ใช่ต้อง ssh เข้าไปแก้ไฟล์ตาม
+     * An admin who turns it on from the settings page must see the effect
+     * immediately, not have to ssh in and edit a file to match.
      */
     public function dnsEnabled(): bool
     {
@@ -333,28 +344,31 @@ final class Config
     }
 
     /**
-     * เส้นทางทั้งหมดที่ docroot ของเว็บไซต์ชี้เข้าไปได้
+     * Every location a website's docroot is allowed to point into
      *
-     * จำกัดไว้เพราะ docroot ที่กำหนดเองได้อิสระ เท่ากับการเปิดเสิร์ฟ /etc หรือ /root
-     * ออกสู่อินเทอร์เน็ตได้ด้วยการกดปุ่มเดียว
+     * Kept restricted, because a freely customisable docroot is the same as being
+     * able to serve /etc or /root out to the internet with one click.
      *
      * @return list<string>
      */
     public function docrootRoots(): array
     {
         /*
-         * **เฉพาะที่ผู้ดูแลระบุไว้เท่านั้น ไม่เติมอะไรให้เอง**
+         * **Only what the admin has named — nothing added automatically.**
          *
-         * เดิมใส่ `Paths::sitesDir()` เข้าไปเป็นรายการแรกเสมอ ซึ่งทำให้ Domain Pointer
-         * ถูกเปิดใช้งานบนทุกเครื่องโดยไม่มีใครขอ — ช่องเลือก "โฟลเดอร์แม่" โผล่ในหน้า
-         * สร้างเว็บของเซิร์ฟเวอร์จริงทุกเครื่อง ชี้ไปยัง `sites.dir` ซึ่งเป็นที่เก็บของ
-         * เลย์เอาต์เก่าที่ไม่ได้ใช้แล้วตั้งแต่ migration 0006 ด้วยซ้ำ
+         * This used to always prepend `Paths::sitesDir()` as the first entry, which
+         * turned on Domain Pointer on every machine without anyone asking for it —
+         * a "parent folder" field appeared in the site-creation page of every real
+         * server, pointing at `sites.dir`, storage for a layout that hasn't even
+         * been used since migration 0006.
          *
-         * Domain Pointer คือการยอมให้ vhost เสิร์ฟไฟล์จากนอกบ้านของผู้ใช้ ซึ่งเป็น
-         * การผ่อนขอบเขตที่ต้องมาจากการตัดสินใจของผู้ดูแล ไม่ใช่ค่าที่ติดมาเอง ·
-         * รายการว่าง = ปิดฟีเจอร์นี้ทั้งหมด และหน้าจอไม่แสดงช่องนั้นเลย
+         * Domain Pointer means letting a vhost serve files from outside a user's
+         * home — loosening that boundary has to come from the admin's own decision,
+         * not something that comes bundled in. An empty list = this feature is
+         * entirely off, and the screen doesn't show that field at all.
          *
-         * เครื่องพัฒนาที่เก็บโปรเจกต์ไว้ที่อื่นตั้ง `sites.pointer_roots` เองได้ตามเดิม
+         * A development machine keeping its project elsewhere can still set
+         * `sites.pointer_roots` itself, as before.
          */
         $roots = [];
 
@@ -369,12 +383,12 @@ final class Config
     }
 
     /**
-     * โฟลเดอร์ที่เสิร์ฟที่ http://localhost — ว่าง = ปิดฟีเจอร์
+     * The folder served at http://localhost — empty = feature off
      *
-     * ฟีเจอร์ของเครื่องพัฒนา · ปิดไว้เป็นค่าเริ่มต้นเพราะการเสิร์ฟโฟลเดอร์รวมงาน
-     * ทุกโปรเจกต์ผ่านเว็บไม่ใช่สิ่งที่เครื่องให้บริการจริงควรทำ
+     * A development-machine feature. Off by default, since serving a folder holding
+     * every project through the web isn't something a real production machine should do.
      *
-     * ต้องเป็นพาธสัมบูรณ์และไม่มี `..` — ค่านี้กลายเป็น DocumentRoot ตรง ๆ
+     * Must be an absolute path with no `..` — this value becomes a DocumentRoot directly.
      */
     public function localhostDocroot(): string
     {
@@ -388,10 +402,11 @@ final class Config
     }
 
     /**
-     * เวอร์ชัน PHP ของ localhost — ว่างในไฟล์ตั้งค่า = เวอร์ชันที่ panel รันอยู่
+     * localhost's PHP version — empty in the config means whatever version the panel is running
      *
-     * ค่าเริ่มต้นมาจากโปรเซสตัวเอง เพราะ pool มาตรฐานของดิสโทรที่ติดตั้งมาพร้อมกัน
-     * ก็เป็นเวอร์ชันนั้น — เดาถูกโดยไม่ต้องให้ใครมากรอก
+     * Defaults to the current process's own version, since the distro's standard
+     * pool that ships alongside it is that same version — a correct guess with
+     * nobody having to type anything in.
      */
     public function localhostPhp(): string
     {
@@ -403,21 +418,21 @@ final class Config
     }
 
     /**
-     * คีย์สำหรับเข้ารหัสข้อมูลอ่อนไหวใน DB (TOTP secret)
-     * ไม่มีคีย์ = ยอมให้ระบบเดินต่อไม่ได้ เพราะจะเก็บ secret แบบ plaintext
+     * The key used to encrypt sensitive data in the DB (the TOTP secret)
+     * No key = the system is not allowed to continue, since it would store the secret as plaintext
      */
     public function secretKey(): string
     {
         $raw = $this->string('security.secret_key');
         if ($raw === '') {
             throw new \RuntimeException(
-                'ยังไม่ได้ตั้ง security.secret_key ใน config — รัน `phpcp key:generate` ก่อน'
+                'security.secret_key has not been set in the config — run `phpcp key:generate` first'
             );
         }
 
         $key = base64_decode($raw, true);
         if ($key === false || strlen($key) !== SODIUM_CRYPTO_SECRETBOX_KEYBYTES) {
-            throw new \RuntimeException('security.secret_key ต้องเป็น base64 ของข้อมูล 32 ไบต์');
+            throw new \RuntimeException('security.secret_key must be base64-encoded 32-byte data');
         }
 
         return $key;
