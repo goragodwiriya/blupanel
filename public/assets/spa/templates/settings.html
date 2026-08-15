@@ -12,22 +12,6 @@
         </div>
       </header>
       <div class="content-body">
-        <!--
-          FormManager ทำทั้งหมด: โหลดค่าเดิมจาก data-load-api · ผูกค่าลงช่องด้วย data-attr
-          · ส่งด้วยเมธอดที่ data-method กำหนด (v2 ใช้ PATCH สำหรับแก้บางส่วน) · แจ้งผลเอง
-          ไม่มี JS ประจำหน้าเลย
-
-          **คีย์ของค่าตั้งมีจุดอยู่ในชื่อ** (`notify.telegram.enabled`) จึงต้องอ้างด้วย
-          วงเล็บเหลี่ยม `values['...']` ไม่ใช่จุด ไม่งั้นตัวประเมินนิพจน์จะอ่านเป็นเส้นทางซ้อน
-          แล้วได้ค่าว่างโดยไม่มี error ให้เห็น
-        -->
-        <!--
-          เว็บเซิร์ฟเวอร์ — แยกออกมาเป็นฟอร์มของตัวเองโดยเจตนา
-
-          ไม่ใช่แค่บันทึกค่า แต่เขียนไฟล์ตั้งค่าของทุกเว็บใหม่แล้วรีสตาร์ตบริการจริง
-          ซึ่งใช้เวลาหลายวินาที · ถ้ารวมไว้กับปุ่ม "บันทึก" ของค่าตั้งอื่น ผู้ใช้ที่แค่
-          แก้อีเมลแจ้งเตือนจะโดนรีสตาร์ตเว็บเซิร์ฟเวอร์ไปด้วยโดยไม่ได้ตั้งใจ
-        -->
         <form data-form="webserver" action="/api/v2/settings/webserver" method="post" data-ajax-submit="true" data-load-api="/api/v2/settings" data-emit-event="phpcp:reload">
           <fieldset>
             <legend class="icon-service" data-i18n>Web server</legend>
@@ -54,13 +38,6 @@
         </form>
       </div>
       <div class="content-body">
-        <!--
-          ใบรับรองของหน้าจัดการเอง — คนละเรื่องกับหน้า SSL ซึ่งจัดการใบของเว็บไซต์
-
-          สถานะมาจากการอ่าน**ไฟล์จริง**ที่เว็บเซิร์ฟเวอร์ใช้อยู่ ไม่ใช่จากค่าที่บันทึกไว้ ·
-          `self_signed` กับ `hook` ส่งมาจากเซิร์ฟเวอร์เป็นบูลีน เพราะตัวผูกค่าไม่มี
-          เครื่องหมาย "ไม่ใช่" และเงื่อนไขที่ตีความไม่ได้จะทำให้ธาตุ "แสดง" เสมอ
-        -->
         <form data-form="panelCert" action="/api/v2/settings/panel-certificate" method="post" data-ajax-submit="true" data-load-api="/api/v2/settings"
               data-emit-event="phpcp:reload" data-confirm="Switch the panel to this certificate? If it does not work the panel restores the old one automatically.">
           <fieldset>
@@ -89,22 +66,12 @@
         </form>
       </div>
       <div class="content-body">
-        <!--
-          รูปทรงไฟล์เริ่มต้น — มีผลกับ**บัญชีที่สร้างหลังจากนี้**เท่านั้น
-          บัญชีที่มีเว็บอยู่แล้วต้องสั่งย้ายเป็นรายคนจากหน้าผู้ใช้ เพราะการย้ายแตะไฟล์จริง
-        -->
         <form data-form="siteLayout" action="/api/v2/settings" method="post" data-method="PATCH" data-ajax-submit="true" data-load-api="/api/v2/settings">
           <fieldset>
             <legend class="icon-folder" data-i18n>Default file layout</legend>
             <div>
               <label for="sites_layout" data-i18n>Where site files go</label>
               <span class="form-control icon-folder">
-                <!--
-                  cpanel มาก่อนเพราะเป็นค่าเริ่มต้นของระบบ · **ห้ามใส่ `|| 'phpcp'` กลับมา** —
-                  ตัวเลือกแรกคือสิ่งที่เบราว์เซอร์เลือกให้เมื่อค่าที่ผูกไว้ยังว่าง การใส่ fallback
-                  เป็นค่าอื่นแปลว่าผู้ดูแลที่แค่เปิดหน้านี้แล้วกดบันทึก จะเขียนทับค่าเริ่มต้น
-                  ด้วยของที่ไม่ได้ตั้งใจเลือก (เกิดขึ้นจริงมาแล้ว 2026-08-14)
-                -->
                 <select id="sites_layout" name="sites.layout" data-value="values['sites.layout']">
                   <option value="cpanel">cPanel — &lt;home&gt;/public_html</option>
                   <option value="phpcp">phpcp — &lt;home&gt;/domains/&lt;domain&gt;/public</option>
@@ -120,10 +87,6 @@
         </form>
       </div>
       <div class="content-body">
-        <!--
-          DNS — ค่าพวกนี้เคยอยู่ใน config.php ซึ่งแปลว่าต้อง ssh เข้าไปแก้ไฟล์เอง
-          ทั้งที่เป็นค่าที่ผู้ดูแลต้องตั้งตั้งแต่วันแรกที่จะใช้ DNS ของเครื่องนี้
-        -->
         <form data-form="dns" action="/api/v2/settings" method="post" data-method="PATCH" data-ajax-submit="true" data-load-api="/api/v2/settings">
           <fieldset>
             <legend class="icon-world" data-i18n>DNS (BIND9)</legend>
@@ -182,12 +145,6 @@
             </div>
             <div class="comment" data-i18n>Leave the masked value untouched to keep the current token</div>
           </fieldset>
-          <!--
-            ปุ่มทดสอบทุกช่องทางยิงไปที่ endpoint เดียวกัน ต่างกันที่ `data-param-channel`
-            — ทดสอบทีละช่องเพราะผู้ดูแลต้องรู้ว่า "ช่องไหน" พัง ไม่ใช่รู้แค่ว่าบางช่องพัง
-            · ค่าที่ต้องกรอกถูกอ่านจากฐานข้อมูลฝั่งเซิร์ฟเวอร์ ไม่ใช่จากช่องกรอกในฟอร์ม
-            จึงต้อง **กดบันทึกก่อน** แล้วค่อยทดสอบ (ดูคำเตือนใต้ปุ่ม)
-          -->
           <fieldset>
             <legend class="icon-email" data-i18n>Email notifications</legend>
             <div>
@@ -274,14 +231,6 @@
         </form>
       </div>
       <div class="content-body">
-        <!--
-          เมลขาออก — ฟอร์มของตัวเองด้วยเหตุผลเดียวกับเว็บเซิร์ฟเวอร์ข้างบน
-
-          ไม่ใช่แค่บันทึกค่า แต่เขียน `main.cf`/`master.cf` ใหม่แล้ว reload Postfix จริง
-          · ตอนที่ช่องเหล่านี้อยู่ในฟอร์ม "บันทึก" รวม ค่าจะถูกเก็บลงฐานข้อมูลแล้ว
-          **ไม่มีผลกับเครื่องเลย** จนกว่าจะมีใครไปแตะกล่องจดหมายสักกล่อง — ผู้ดูแลที่
-          เพิ่งตั้ง relay จึงเห็นว่า "บันทึกแล้ว" ทั้งที่เมลยังออกทางเดิมอยู่
-        -->
         <form data-form="mail" action="/api/v2/settings/mail-config" method="post" data-ajax-submit="true" data-load-api="/api/v2/settings" data-emit-event="phpcp:reload">
           <fieldset>
             <legend class="icon-email" data-i18n>Outgoing mail</legend>
@@ -289,13 +238,6 @@
               <input type="checkbox" class="switch" id="mail_enabled" name="mail.enabled" data-checked="isOn(values['mail.enabled'])">
               <label for="mail_enabled" data-i18n>Enable outgoing mail</label>
             </div>
-            <!--
-              โหมดขาออก — PLAN-MAIL §1
-
-              เครื่องของผู้ให้บริการรายใหญ่บล็อกพอร์ต 25 ขาออกเป็นค่าเริ่มต้น (AWS, GCP,
-              Azure, DigitalOcean) · เครื่องเหล่านั้นยังโฮสต์เมลได้เต็มรูปแบบ เพราะการ
-              **รับ**เมลไม่ได้พึ่งพอร์ต 25 ขาออก ขาดแค่ทางออก ซึ่งคือตัวเลือกนี้
-            -->
             <div>
               <label for="mail_mode" data-i18n>How mail leaves this server</label>
               <span class="form-control icon-send">
@@ -369,13 +311,6 @@
           </fieldset>
         </form>
       </div>
-      <!--
-        เกณฑ์เตือนที่ยังค้างอยู่ — ตารางอ่านอย่างเดียว
-
-        จำเป็นเพราะระบบแจ้งเตือน**ตั้งใจให้เงียบ**เมื่อปัญหายังเหมือนเดิม (ดู AlertRules)
-        ผู้ดูแลที่เพิ่งเปิดเครื่องจึงไม่มีทางรู้ว่าดิสก์ยังเต็มอยู่ไหม ถ้าข้อความรอบล่าสุด
-        ถูกส่งไปตั้งแต่เมื่อวาน · ตารางว่าง = ตอนนี้ไม่มีอะไรผิดปกติ
-      -->
       <div class="content-body">
         <h2 class="icon-warning" data-i18n>Active alerts</h2>
         <div class="tablebody">
@@ -395,7 +330,6 @@
           </table>
         </div>
       </div>
-      <!-- ชีพจรของตัวจับเวลา — ตารางอ่านอย่างเดียว ผูกกับ endpoint ตรง ๆ -->
       <div class="content-body">
         <h2 class="icon-tools" data-i18n>Scheduled jobs</h2>
         <div class="tablebody">
