@@ -77,7 +77,7 @@
           SSH.</div>
         <div data-component="api" data-endpoint="/api/v2/security/panel-jail">
           <form data-form="neverBan" action="/api/v2/security/never-ban" method="post" data-method="PUT" data-ajax-submit="true">
-            <fieldset>
+            <div class="form-group bottom">
               <div>
                 <label for="never_ban_ips" data-i18n>Never ban these IPs (whole server)</label>
                 <span class="form-control icon-shield">
@@ -86,10 +86,10 @@
                 <div class="comment" data-i18n>Applies to every jail, including ones created later. Put customers here whose whole organisation shares one IP — a school or an
                   office where one infected machine would otherwise get everyone banned from every site on this server.</div>
               </div>
-            </fieldset>
-            <fieldset class="submit">
-              <button type="submit" class="btn icon-save" data-i18n>Save exempt list</button>
-            </fieldset>
+              <div>
+                <button type="submit" class="btn fullwidth icon-save" data-i18n>Save exempt list</button>
+              </div>
+            </div>
           </form>
         </div>
         <div data-component="api" data-endpoint="/api/v2/security/panel-jail">
