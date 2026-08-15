@@ -699,6 +699,7 @@
     "Timezone": "เขตเวลา",
     "Too many failed sign-ins — this account is locked for another {minutes} minutes": "บัญชีถูกล็อกชั่วคราวจากการเข้าสู่ระบบผิดหลายครั้ง กรุณารออีก {minutes} นาที",
     "Turn on for services without wildcard DNS per bucket, such as self-hosted MinIO": "เปิดเมื่อใช้บริการที่ไม่มี DNS แยกตาม bucket เช่น MinIO ที่ติดตั้งเอง",
+    "Turning this off deletes every jail the panel manages, and turning it back on does not restore what each website had. Continue?": "ปิดแล้ว jail ที่ panel ดูแลจะถูกลบทั้งหมด และการเปิดกลับมาไม่ได้คืนค่าที่แต่ละเว็บตั้งไว้ · ยืนยันหรือไม่",
     "Turning this off removes every jail the panel manages. The service itself keeps running because the SSH jail comes from the distro, not from the panel — stop it yourself only if you accept losing SSH brute-force protection too.": "ปิดแล้ว panel จะลบ jail ที่ตัวเองดูแลทั้งหมด · ตัวบริการยังทำงานต่อเพราะ jail ของ SSH มาจากดิสโทร ไม่ใช่ของ panel — สั่งหยุดบริการเองต่อเมื่อยอมรับได้ว่าการกันเดารหัสผ่าน SSH จะหายไปด้วย",
     "Turning this on lets the panel write zone files. Zones you created by hand in named.conf.local will be replaced.": "การเปิดค่านี้ทำให้ panel เขียนไฟล์ zone เอง · zone ที่คุณสร้างไว้เองใน named.conf.local จะถูกเขียนทับ",
     "Two-factor disabled for {user}": "ปิด 2FA ของ {user} แล้ว",
