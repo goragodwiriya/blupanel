@@ -38,15 +38,16 @@ use Phpcp\Http\V2\SitesController;
 use Phpcp\Http\SpaController;
 
 /**
- * ตารางเส้นทางทั้งระบบ — จุดเดียวที่ตอบได้ว่า "URL ไหนต้องใช้สิทธิ์อะไร"
+ * The system-wide route table — the single place that answers "which URL needs which permission"
  *
- * permission = null หมายถึงเส้นทางสาธารณะ ต้องระบุอย่างจงใจเท่านั้น
- * ลืมใส่ permission = เส้นทางถูกปิด ไม่ใช่เปิด (ค่าเริ่มต้นปลอดภัย)
+ * permission = null means a public route, and it must be set deliberately.
+ * Forgetting to set permission means the route is closed, not open (safe default).
  *
- * **ทั้งระบบเหลือหน้าเว็บอยู่ไฟล์เดียว** — shell ของ SPA ที่ `/app` · ที่เหลือคือ
- * `/api/v2/*` ล้วน ๆ · UI แบบ HTML ฝั่งเซิร์ฟเวอร์ (92 เส้นทาง) กับ API v1 (8 เส้นทาง)
- * ถูกลบทิ้งทั้งชุดเมื่อ 2026-08-08 หลัง SPA ทำงานได้ครบ — ระบบยังไม่ขึ้นใช้จริง
- * จึงไม่ต้องมีช่วงเปลี่ยนผ่าน · เหตุผลเต็มอยู่ใน PLAN-V2 หัวข้อ "เลิกใช้ UI แบบ HTML"
+ * **Only one page file is left in the whole system** — the SPA shell at `/app` ·
+ * everything else is pure `/api/v2/*`. The server-side HTML UI (92 routes) and the
+ * v1 API (8 routes) were deleted wholesale on 2026-08-08 once the SPA was fully
+ * working — the system hadn't gone live yet, so there was no need for a transition
+ * period. Full reasoning is in PLAN-V2, under "Retiring the HTML UI".
  */
 final class Routes
 {
@@ -57,25 +58,30 @@ final class Routes
     {
         $router = new Router();
 
-        // เข้าเว็บที่รากโดเมนแล้วต้องไปโผล่ที่แอป ไม่ใช่ 404 · เป็นเส้นทางสาธารณะ
-        // เพราะคนที่ยังไม่ล็อกอินก็ต้องถูกพาไปหน้าล็อกอินของ SPA ได้เหมือนกัน
+        // Visiting the root domain must land in the app, not a 404 · public route
+        // because someone not logged in still needs to be taken to the SPA's login page
         $router->add(new Route('GET', '/', SpaController::class, 'root', null, 'root'));
 
-        // --- SPA (Now.js) — เฟส C ---
+        // --- SPA (Now.js) — Phase C ---
         //
-        // ทุกเส้นทางที่นี่ส่งไฟล์ shell ตัวเดียวกันเสมอ เส้นทางย่อยของหน้าจอตัดสินฝั่งเบราว์เซอร์
-        // สาธารณะโดยตั้งใจ: shell ไม่มีข้อมูลผู้ใช้เลย (ดูเหตุผลเต็มใน SpaController)
+        // Every route here always sends the same shell file; the browser decides the
+        // sub-route of the actual screen. Public on purpose: the shell carries no
+        // user data at all (see SpaController for the full reasoning).
         //
-        // ไฟล์จริงใต้ /app (js, css, vendor, templates, lang) ไม่มาถึงตรงนี้ —
-        // Apache ส่งเองเพราะมีอยู่บนดิสก์ FallbackResource จึงไม่ทำงานกับมัน
+        // The real files under /app (js, css, vendor, templates, lang) never reach
+        // here — Apache serves them directly because they exist on disk, so
+        // FallbackResource never runs for them.
         //
-        // **ห้ามมีไดเรกทอรี `public/app/` อยู่จริง** — `FallbackResource` ของ Apache ข้าม
-        // URL ที่ชี้ไปยังไฟล์หรือไดเรกทอรีที่มีอยู่จริง ถ้ามีไดเรกทอรีนั้น `mod_dir`
-        // จะเข้ามาก่อน แล้วจบที่ 404 ของ Apache เองโดยที่ PHP ไม่เคยเห็นคำขอเลย
-        // · ไฟล์นิ่งของ SPA จึงอยู่ที่ `public/assets/spa/` (ดู `Paths::spa()`)
+        // **A real `public/app/` directory must never exist** — Apache's
+        // `FallbackResource` skips any URL pointing at a file or directory that
+        // actually exists. If that directory existed, `mod_dir` would handle it
+        // first and end in Apache's own 404, with PHP never seeing the request at
+        // all. So the SPA's static files live at `public/assets/spa/` instead (see
+        // `Paths::spa()`).
         //
-        // รูปที่ลงท้ายด้วย `/` มีไว้เพราะผู้ใช้พิมพ์ `/app/` กันเป็นปกติ · `php -S` กับ Apache
-        // จัดการสแลชท้ายไม่เหมือนกัน จึงต้องรับทั้งสองรูปให้เหมือนกันทั้งสองที่
+        // The trailing-`/` forms exist because users routinely type `/app/` · `php
+        // -S` and Apache handle a trailing slash differently, so both forms must be
+        // accepted identically in both places.
         $router->add(new Route('GET', '/app', SpaController::class, 'shell', null, 'app.shell'));
         $router->add(new Route('GET', '/app/', SpaController::class, 'shell', null, 'app.shell.slash'));
         $router->add(new Route('GET', '/app/{page}', SpaController::class, 'shell', null, 'app.page'));
@@ -87,31 +93,34 @@ final class Routes
     }
 
     /**
-     * REST API v2 — PLAN-V2 เฟส B
+     * REST API v2 — PLAN-V2 Phase B
      *
-     * เพิ่มล้วน ไม่แตะเส้นทางเดิมแม้แต่เส้นเดียว UI แบบ HTML จึงใช้งานได้ตลอดเฟสนี้
-     * และถ้า v2 มีปัญหาก็ถอยกลับได้ด้วยการลบบล็อกนี้ทิ้งบล็อกเดียว
+     * Purely additive — not a single existing route was touched, so the HTML UI
+     * kept working throughout this phase. And if v2 ran into trouble, rolling back
+     * meant deleting this one block.
      *
-     * ทุกเส้นทางที่นี่ตอบ JSON เสมอ — HttpKernel และ middleware ทั้งเจ็ดตัวเช็ค
-     * `Request::isApiV2()` แล้วเปลี่ยนรูปแบบคำตอบให้เองโดยที่ controller ไม่ต้องรู้เรื่อง
+     * Every route here always answers JSON — HttpKernel and all seven middleware
+     * check `Request::isApiV2()` and adapt the response shape themselves, so the
+     * controller never has to know about it.
      */
     private static function apiV2(Router $router): void
     {
-        // --- เซสชัน: เรียกได้โดยไม่ต้องล็อกอิน (จุด bootstrap ของ SPA) ---
+        // --- Session: callable without logging in (the SPA's bootstrap point) ---
         $router->add(new Route('GET', '/api/v2/session', SessionController::class, 'show', null, 'api.v2.session.show'));
         $router->add(new Route('POST', '/api/v2/session', SessionController::class, 'create', null, 'api.v2.session.create'));
         $router->add(new Route('POST', '/api/v2/session/2fa', SessionController::class, 'verifyTwoFactor', null, 'api.v2.session.2fa'));
-        // ออกจากระบบไม่ต้องมีสิทธิ์ใด ๆ — คนที่ถือคุกกี้อยู่ต้องทิ้งมันได้เสมอ
+        // Logging out needs no permission at all — whoever holds the cookie must
+        // always be able to discard it
         $router->add(new Route('DELETE', '/api/v2/session', SessionController::class, 'destroy', null, 'api.v2.session.destroy'));
 
-        // --- แดชบอร์ด: ทุกอย่างที่หน้าแรกต้องใช้ในคำขอเดียว ---
+        // --- Dashboard: everything the home page needs, in one request ---
         $router->add(new Route('GET', '/api/v2/dashboard', V2DashboardController::class, 'index', 'dashboard.view', 'api.v2.dashboard'));
 
-        // --- บัญชีของตัวเอง ---
+        // --- Own account ---
         $router->add(new Route('GET', '/api/v2/me', MeController::class, 'show', 'dashboard.view', 'api.v2.me.show'));
         $router->add(new Route('PATCH', '/api/v2/me/password', MeController::class, 'changePassword', 'dashboard.view', 'api.v2.me.password'));
 
-        // --- เว็บไซต์ ---
+        // --- Websites ---
         $router->add(new Route('GET', '/api/v2/sites', SitesController::class, 'index', 'site.view', 'api.v2.sites.index'));
         $router->add(new Route('POST', '/api/v2/sites', SitesController::class, 'store', 'site.create', 'api.v2.sites.store'));
         $router->add(new Route('GET', '/api/v2/sites/{id}', SitesController::class, 'show', 'site.view', 'api.v2.sites.show'));
@@ -121,7 +130,7 @@ final class Routes
         $router->add(new Route('PUT', '/api/v2/sites/{id}/suspension', SitesController::class, 'setSuspension', 'site.suspend', 'api.v2.sites.suspension'));
         $router->add(new Route('POST', '/api/v2/sites/{id}/owner-reset', SitesController::class, 'resetOwner', 'site.edit', 'api.v2.sites.owner_reset'));
 
-        // จำกัดอัตราคำขอต่อเว็บ — บังคับใช้ด้วย fail2ban (เฟส E5)
+        // Per-site request rate limiting — enforced through fail2ban (Phase E5)
         $router->add(new Route('GET', '/api/v2/sites/{id}/rate-limit', SitesController::class, 'rateLimit', 'site.view', 'api.v2.sites.rate_limit'));
         $router->add(new Route('PUT', '/api/v2/sites/{id}/rate-limit', SitesController::class, 'setRateLimit', 'site.edit', 'api.v2.sites.rate_limit.set'));
         $router->add(new Route('GET', '/api/v2/sites/{id}/rate-limit/bans', SitesController::class, 'rateLimitBans', 'site.view', 'api.v2.sites.rate_limit.bans'));
@@ -132,7 +141,7 @@ final class Routes
         $router->add(new Route('PUT', '/api/v2/sites/{id}/domains', SitesController::class, 'setDomains', 'domain.manage', 'api.v2.sites.domains.set'));
         $router->add(new Route('DELETE', '/api/v2/sites/{id}/domains/{domain}', SitesController::class, 'removeDomain', 'domain.manage', 'api.v2.sites.domains.remove'));
 
-        // --- โดเมนและ DNS ---
+        // --- Domains and DNS ---
         $router->add(new Route('GET', '/api/v2/domains', DomainsController::class, 'index', 'domain.view', 'api.v2.domains.index'));
         $router->add(new Route('POST', '/api/v2/domains', DomainsController::class, 'store', 'domain.manage', 'api.v2.domains.store'));
         $router->add(new Route('DELETE', '/api/v2/domains/{id}', DomainsController::class, 'destroy', 'domain.manage', 'api.v2.domains.destroy'));
@@ -140,9 +149,10 @@ final class Routes
         $router->add(new Route('GET', '/api/v2/domains/{id}/dns-records/form', DomainsController::class, 'recordForm', 'domain.manage', 'api.v2.dns.form'));
         $router->add(new Route('POST', '/api/v2/domains/{id}/dns-records', DomainsController::class, 'addRecord', 'domain.manage', 'api.v2.dns.store'));
         $router->add(new Route('GET', '/api/v2/domains/{id}/zone-file', DomainsController::class, 'zoneFile', 'domain.view', 'api.v2.domains.zone'));
-        // แก้เรกคอร์ดทั้ง zone พร้อมกัน — สิทธิ์เดียวกับการเพิ่ม/ลบทีละรายการ เพราะเป็นงาน
-        // เดียวกันทำทีเดียวหลายรายการ · ข้อความที่ส่งมาไม่ได้ถูกเขียนลงดิสก์ แต่ถูกแปลงกลับ
-        // เป็นเรกคอร์ดในฐานข้อมูลแล้วระบบเขียนไฟล์เองตามปกติ (ดู DnsZoneImport)
+        // Editing all zone records at once — same permission as adding/removing one
+        // at a time, since it's the same job done in bulk · the submitted text isn't
+        // written to disk directly, it's parsed back into database records and the
+        // system writes the file itself as usual (see DnsZoneImport)
         $router->add(new Route('GET', '/api/v2/domains/{id}/zone-form', DomainsController::class, 'zoneForm', 'domain.manage', 'api.v2.domains.zone_form'));
         $router->add(new Route('PUT', '/api/v2/domains/{id}/zone-file', DomainsController::class, 'zoneImport', 'domain.manage', 'api.v2.domains.zone_import'));
         $router->add(new Route('DELETE', '/api/v2/dns-records/{id}', DomainsController::class, 'deleteRecord', 'domain.manage', 'api.v2.dns.destroy'));
@@ -151,28 +161,34 @@ final class Routes
         // --- PHP ---
         $router->add(new Route('GET', '/api/v2/php-versions', PhpVersionsController::class, 'index', 'php.view', 'api.v2.php.index'));
 
-        // --- ผู้ใช้ panel · ลูกค้า · ค่าตั้ง ---
-        // บัญชีผู้ใช้ทั้งหมด — ผู้ดูแลระบบและลูกค้าโฮสติ้งอยู่ทรัพยากรเดียวกันตั้งแต่ migration 0005
+        // --- Panel users · customers · settings ---
+        // All user accounts — admins and hosting customers have shared one resource
+        // since migration 0005
         //
-        // สิทธิ์ระดับ route ตั้งไว้ที่ `customer.manage` ซึ่ง sysadmin มี เพื่อให้จัดการลูกค้าได้
-        // ต่อไปเหมือนเดิม · การแตะบัญชี**ผู้ดูแล**ต้องมี `user.manage` เพิ่ม ซึ่ง
-        // UsersController::assertMayManage() บังคับอยู่ และมีเทสต์เฝ้าทุกเมธอด
-        // ห้ามลดด่านนั้นออกโดยเด็ดขาด ไม่งั้น sysadmin จะรีเซ็ตรหัสผ่าน superadmin ได้
+        // The route-level permission is set to `customer.manage`, which sysadmin
+        // holds, so managing customers keeps working as before · touching an
+        // **admin** account needs `user.manage` on top of that, enforced by
+        // `UsersController::assertMayManage()` and guarded by a test on every
+        // method. That gate must never be weakened — otherwise a sysadmin could
+        // reset a superadmin's password.
         $router->add(new Route('GET', '/api/v2/users', UsersController::class, 'index', 'user.view', 'api.v2.users.index'));
         $router->add(new Route('POST', '/api/v2/users', UsersController::class, 'store', 'customer.manage', 'api.v2.users.store'));
         $router->add(new Route('GET', '/api/v2/users/{id}', UsersController::class, 'show', 'user.view', 'api.v2.users.show'));
         $router->add(new Route('PATCH', '/api/v2/users/{id}', UsersController::class, 'update', 'customer.manage', 'api.v2.users.update'));
         $router->add(new Route('DELETE', '/api/v2/users/{id}', UsersController::class, 'destroy', 'customer.manage', 'api.v2.users.destroy'));
         $router->add(new Route('PUT', '/api/v2/users/{id}/quota', UsersController::class, 'setQuota', 'customer.manage', 'api.v2.users.quota'));
-        // sub-resource แยกจาก PATCH /users/{id} โดยเจตนา — การเปลี่ยนรูปทรงไฟล์**ย้ายไฟล์จริง**
-        // และทำให้เว็บของบัญชีนั้นหยุดชั่วขณะ ต้องเป็นการกดที่ตั้งใจ ไม่ใช่ผลพลอยได้ของการบันทึกฟอร์ม
+        // A sub-resource kept separate from PATCH /users/{id} on purpose — changing
+        // the layout **moves real files** and briefly takes that account's website
+        // down, so it must be a deliberate click, not a side effect of saving a form
         $router->add(new Route('PUT', '/api/v2/users/{id}/layout', UsersController::class, 'setLayout', 'customer.manage', 'api.v2.users.layout'));
         $router->add(new Route('POST', '/api/v2/users/{id}/password-reset', UsersController::class, 'resetPassword', 'customer.manage', 'api.v2.users.password'));
         $router->add(new Route('POST', '/api/v2/users/{id}/sites', UsersController::class, 'attachSites', 'customer.manage', 'api.v2.users.sites.attach'));
         $router->add(new Route('DELETE', '/api/v2/users/{id}/sites/{site_id}', UsersController::class, 'detachSite', 'customer.manage', 'api.v2.users.sites.detach'));
         $router->add(new Route('DELETE', '/api/v2/users/{id}/two-factor', UsersController::class, 'disableTwoFactor', 'customer.manage', 'api.v2.users.2fa'));
-        // sub-resource ตาม §4.1 — "การเข้าถึงผ่าน SFTP" ของบัญชีนี้ · PUT = ตั้งค่าทั้งชุด (เปิด+รหัสผ่าน)
-        // ฟอร์มตั้งรหัสผ่านเปิดใน Modal — ช่องเดียวไม่ควรกินที่ในหน้าตลอดเวลา
+        // A sub-resource per §4.1 — this account's "SFTP access" · PUT = set the
+        // whole thing at once (enable + password)
+        // The password-setting form opens in a Modal — a single field shouldn't
+        // permanently take up space on the page
         $router->add(new Route('GET', '/api/v2/users/{id}/sftp/form', UsersController::class, 'sftpForm', 'customer.manage', 'api.v2.users.sftp.form'));
         $router->add(new Route('PUT', '/api/v2/users/{id}/sftp', UsersController::class, 'enableSftp', 'customer.manage', 'api.v2.users.sftp.enable'));
         $router->add(new Route('DELETE', '/api/v2/users/{id}/sftp', UsersController::class, 'disableSftp', 'customer.manage', 'api.v2.users.sftp.disable'));
@@ -184,27 +200,30 @@ final class Routes
         $router->add(new Route('POST', '/api/v2/settings/mail-config', V2SettingsController::class, 'applyMail', 'settings.manage', 'api.v2.settings.mail_config'));
         $router->add(new Route('POST', '/api/v2/settings/mail-test', V2SettingsController::class, 'testMail', 'settings.manage', 'api.v2.settings.mail_test'));
 
-        // เปลี่ยนเว็บเซิร์ฟเวอร์ — เส้นทางแยกจาก PATCH /settings เพราะไม่ใช่แค่บันทึกค่า
-        // แต่เขียนไฟล์ตั้งค่าของทุกเว็บใหม่แล้วรีสตาร์ตบริการจริง ซึ่งใช้เวลาหลายวินาที
-        // ใบรับรองของหน้าจัดการเอง — คนละเรื่องกับ /certificates ซึ่งเป็นของเว็บไซต์
+        // Switching web server — a route kept separate from PATCH /settings because
+        // it's not just saving a value, it rewrites every site's config file and
+        // actually restarts the service, which takes several seconds
+        // The panel's own management certificate — a different thing from
+        // /certificates, which belongs to websites
         $router->add(new Route('POST', '/api/v2/settings/panel-certificate', V2SettingsController::class, 'applyPanelCertificate', 'settings.manage', 'api.v2.settings.panel_cert'));
         $router->add(new Route('POST', '/api/v2/settings/webserver', V2SettingsController::class, 'applyWebserver', 'settings.manage', 'api.v2.settings.webserver'));
 
-        // ชีพจรของตัวจับเวลา — อ่านอย่างเดียว (เฟส A1 ข้อ 7 ที่ค้างไว้ให้เฟส C)
+        // The scheduler's heartbeat — read-only (Phase A1 item 7, left pending for Phase C)
         $router->add(new Route('GET', '/api/v2/scheduled-jobs', ScheduledJobsController::class, 'index', 'settings.view', 'api.v2.scheduled_jobs'));
 
-        // เกณฑ์เตือนที่ยังค้างอยู่ — อ่านอย่างเดียว (เฟส E6)
+        // Outstanding alert thresholds — read-only (Phase E6)
         $router->add(new Route('GET', '/api/v2/alerts', AlertsController::class, 'index', 'settings.view', 'api.v2.alerts'));
 
-        // --- ฝั่ง SERVER ---
+        // --- SERVER-side ---
         //
-        // ทุกเส้นทางในบล็อกนี้ใช้ permission หมวด SERVER ซึ่ง webadmin ไม่มีสักตัวเดียว
-        // ตาม Permissions::forRole() — ลูกค้าจึงได้ 403 ทุกเส้นทางที่นี่โดยอัตโนมัติ
+        // Every route in this block uses a permission from the SERVER category,
+        // which webadmin holds none of per Permissions::forRole() — so customers
+        // get a 403 on every route here automatically
         $router->add(new Route('GET', '/api/v2/services', ServicesController::class, 'index', 'service.view', 'api.v2.services.index'));
         $router->add(new Route('POST', '/api/v2/services/{unit}/actions', ServicesController::class, 'action', 'service.control', 'api.v2.services.action'));
 
         $router->add(new Route('GET', '/api/v2/firewall', V2FirewallController::class, 'index', 'firewall.view', 'api.v2.firewall.index'));
-        // ต้องมาก่อน {number} — ไม่งั้น "form" ถูกอ่านเป็นหมายเลขกฎ
+        // Must come before {number} — otherwise "form" gets read as a rule number
         $router->add(new Route('GET', '/api/v2/firewall/rules/form', V2FirewallController::class, 'form', 'firewall.manage', 'api.v2.firewall.rules.form'));
         $router->add(new Route('POST', '/api/v2/firewall/rules', V2FirewallController::class, 'addRule', 'firewall.manage', 'api.v2.firewall.rules.add'));
         $router->add(new Route('DELETE', '/api/v2/firewall/rules/{number}', V2FirewallController::class, 'deleteRule', 'firewall.manage', 'api.v2.firewall.rules.delete'));
@@ -213,8 +232,9 @@ final class Routes
         $router->add(new Route('GET', '/api/v2/ssh-config', SshConfigController::class, 'show', 'ssh.view', 'api.v2.ssh.show'));
         $router->add(new Route('PATCH', '/api/v2/ssh-config', SshConfigController::class, 'update', 'ssh.manage', 'api.v2.ssh.update'));
 
-        // การยืนยัน/คืนค่าใช้สิทธิ์ security.view — คนที่เห็นว่ามีรายการค้างต้องกดยืนยันได้
-        // ไม่งั้นจะเกิดสภาพ "เห็นตัวนับถอยหลังแต่กดอะไรไม่ได้" ซึ่งแย่กว่าไม่เห็นเลย
+        // Confirming/reverting uses security.view — whoever can see a pending item
+        // must be able to confirm it, or you get "seeing a countdown but unable to
+        // click anything", which is worse than not seeing it at all
         $router->add(new Route('GET', '/api/v2/rollbacks', RollbacksController::class, 'index', 'security.view', 'api.v2.rollbacks.index'));
         $router->add(new Route('POST', '/api/v2/rollbacks/{id}/confirmation', RollbacksController::class, 'confirm', 'security.view', 'api.v2.rollbacks.confirm'));
         $router->add(new Route('POST', '/api/v2/rollbacks/{id}/execution', RollbacksController::class, 'execute', 'security.view', 'api.v2.rollbacks.execute'));
@@ -244,17 +264,20 @@ final class Routes
         $router->add(new Route('GET', '/api/v2/metrics/history', V2MetricsController::class, 'history', 'dashboard.view', 'api.v2.metrics.history'));
 
         $router->add(new Route('GET', '/api/v2/system/info', SystemController::class, 'info', 'server.view', 'api.v2.system.info'));
-        // ชื่อโฮสต์กระทบทั้งเครื่อง (Postfix แนะนำตัวด้วยชื่อนี้ · ใบรับรองอ้างชื่อนี้)
-        // จึงใช้ settings.manage เหมือนค่าตั้งระดับเครื่องอื่น ไม่ใช่ server.view ที่เป็นแค่การดู
+        // The hostname affects the whole machine (Postfix introduces itself with
+        // this name · certificates reference this name), so it uses settings.manage
+        // like other machine-level settings, not server.view, which is view-only
         $router->add(new Route('PUT', '/api/v2/system/hostname', SystemController::class, 'setHostname', 'settings.manage', 'api.v2.system.hostname'));
-        // health ใช้ dashboard.view เพราะทุกบทบาทต้องรู้ได้ว่า agent ล่มหรือไม่ —
-        // ลูกค้าที่กดปุ่มแล้วไม่มีอะไรเกิดขึ้นควรเห็นสาเหตุ ไม่ใช่เดาเอง
+        // health uses dashboard.view because every role needs to know whether the
+        // agent is down — a customer who clicks a button and nothing happens should
+        // see why, not have to guess
         $router->add(new Route('GET', '/api/v2/system/health', SystemController::class, 'health', 'dashboard.view', 'api.v2.system.health'));
 
-        // --- ตัวจัดการไฟล์ ---
+        // --- File manager ---
         //
-        // ทุกเส้นทางอ้าง root (คีย์ขอบเขต) + path (เส้นทางสัมพัทธ์) ไม่มีเส้นทางสัมบูรณ์
-        // ของเครื่องปรากฏใน API เลย · การอ่านใช้สิทธิ์ file.view การเปลี่ยนแปลงใช้ file.manage
+        // Every route references root (a scope key) + path (a relative path) — no
+        // absolute machine path ever appears in the API · reading uses file.view,
+        // changes use file.manage
         $router->add(new Route('GET', '/api/v2/files/roots', FilesController::class, 'roots', 'file.view', 'api.v2.files.roots'));
         $router->add(new Route('GET', '/api/v2/files', FilesController::class, 'index', 'file.view', 'api.v2.files.index'));
         $router->add(new Route('GET', '/api/v2/files/tree', FilesController::class, 'tree', 'file.view', 'api.v2.files.tree'));
@@ -272,25 +295,26 @@ final class Routes
         $router->add(new Route('POST', '/api/v2/files/archives', FilesController::class, 'archive', 'file.manage', 'api.v2.files.archive'));
         $router->add(new Route('POST', '/api/v2/files/extractions', FilesController::class, 'extract', 'file.manage', 'api.v2.files.extract'));
 
-        // --- ใบรับรอง SSL (อ้างด้วย site id เพราะหนึ่งเว็บ = หนึ่งใบเสมอ) ---
+        // --- SSL certificates (referenced by site id, since one site always = one certificate) ---
         $router->add(new Route('GET', '/api/v2/certificates', CertificatesController::class, 'index', 'ssl.view', 'api.v2.certificates.index'));
         $router->add(new Route('POST', '/api/v2/certificates', CertificatesController::class, 'store', 'ssl.manage', 'api.v2.certificates.store'));
         $router->add(new Route('POST', '/api/v2/certificates/{site_id}/renewal', CertificatesController::class, 'renew', 'ssl.manage', 'api.v2.certificates.renew'));
         $router->add(new Route('PUT', '/api/v2/certificates/{site_id}/mode', CertificatesController::class, 'setMode', 'ssl.manage', 'api.v2.certificates.mode'));
         $router->add(new Route('DELETE', '/api/v2/certificates/{site_id}', CertificatesController::class, 'destroy', 'ssl.manage', 'api.v2.certificates.destroy'));
 
-        // --- ฐานข้อมูล (อ้างด้วยชื่อ เพราะชื่อคือสิ่งที่ MariaDB รู้จัก) ---
+        // --- Databases (referenced by name, since name is what MariaDB knows) ---
         $router->add(new Route('GET', '/api/v2/databases', DatabasesController::class, 'index', 'db.view', 'api.v2.databases.index'));
         $router->add(new Route('POST', '/api/v2/databases', DatabasesController::class, 'store', 'db.manage', 'api.v2.databases.store'));
-        // ฟอร์มสร้างฐานข้อมูล — คืนโครงเปล่าพร้อมคำสั่งเปิด modal ให้หน้าเว็บ
-        // (แบบเดียวกับ GET /cron-jobs/0) หน้าเว็บจึงไม่ต้องรู้จักชื่อไฟล์เทมเพลต
+        // The database-creation form — returns an empty scaffold with a modal-open
+        // instruction for the page (same pattern as GET /cron-jobs/0), so the page
+        // never needs to know the template's filename
         $router->add(new Route('GET', '/api/v2/databases/form', DatabasesController::class, 'form', 'db.manage', 'api.v2.databases.form'));
         $router->add(new Route('DELETE', '/api/v2/databases/{name}', DatabasesController::class, 'destroy', 'db.manage', 'api.v2.databases.destroy'));
-        // POST ไม่ใช่ GET โดยตั้งใจ — นี่คือการล็อกอินเข้า phpMyAdmin ไม่ใช่ลิงก์ธรรมดา
+        // POST, not GET, on purpose — this logs into phpMyAdmin, it isn't an ordinary link
         $router->add(new Route('POST', '/api/v2/phpmyadmin/session', PhpMyAdminController::class, 'create', 'db.view', 'api.v2.phpmyadmin.session'));
         $router->add(new Route('POST', '/api/v2/database-users/{user}/password', DatabasesController::class, 'resetPassword', 'db.manage', 'api.v2.database_users.password'));
 
-        // --- งานอัตโนมัติ ---
+        // --- Automated jobs ---
         $router->add(new Route('GET', '/api/v2/cron-jobs', CronJobsController::class, 'index', 'cron.view', 'api.v2.cron.index'));
         $router->add(new Route('POST', '/api/v2/cron-jobs', CronJobsController::class, 'store', 'cron.manage', 'api.v2.cron.store'));
         $router->add(new Route('GET', '/api/v2/cron-jobs/{id}', CronJobsController::class, 'show', 'cron.view', 'api.v2.cron.show'));
@@ -298,37 +322,44 @@ final class Routes
         $router->add(new Route('DELETE', '/api/v2/cron-jobs/{id}', CronJobsController::class, 'destroy', 'cron.manage', 'api.v2.cron.destroy'));
 
         /*
-         * ไฟล์ตั้งค่าของระบบ — ทรัพยากรกลางที่ทุกหน้าจอเรียกใช้ได้
+         * System config files — a shared resource every screen can reach
          *
-         * `settings.manage` เท่านั้น ไม่ใช่ `site.edit` เพราะไฟล์เหล่านี้ถูกอ่านโดย
-         * บริการที่ใช้ร่วมกันทั้งเครื่อง เขียนผิดแล้วเว็บทุกเว็บหยุดโหลดค่าใหม่ตามไปด้วย
+         * `settings.manage` only, not `site.edit`, because these files are read by
+         * services shared across the whole machine — a bad write and every site
+         * stops picking up new config along with it
          *
-         * **หน้าจอส่งคีย์จากทะเบียน ไม่เคยส่งเส้นทางไฟล์** — ดู ConfigFileCatalog
+         * **The screen sends a key from the registry, never a file path** — see
+         * ConfigFileCatalog
          */
         $router->add(new Route('GET', '/api/v2/config-files', ConfigFilesController::class, 'index', 'settings.manage', 'api.v2.config_files.index'));
         $router->add(new Route('GET', '/api/v2/config-files/{key}', ConfigFilesController::class, 'show', 'settings.manage', 'api.v2.config_files.show'));
         /*
-         * **เขียนยิงไปที่ collection ไม่ใช่ `/{key}`** — ฟอร์มอยู่ใน Modal ซึ่งไม่มีใคร
-         * เติมค่าลง `{key}` ในเส้นทางให้ (`RouterManager` เติม `{id}` ตอนเทมเพลตยังเป็น
-         * สตริงของหน้า ไม่ใช่ของ Modal ที่เปิดทีหลัง) · คีย์จึงส่งมาในเนื้อคำขอแทน
+         * **Writes go to the collection, not `/{key}`** — the form lives in a
+         * Modal, and nothing fills `{key}` into the route for it (`RouterManager`
+         * fills in `{id}` while the template is still the page's own string, not
+         * the Modal's, which opens later) · so the key is sent in the request body
+         * instead
          */
         $router->add(new Route('PUT', '/api/v2/config-files', ConfigFilesController::class, 'update', 'settings.manage', 'api.v2.config_files.update'));
 
-        // --- ข้อมูลสำรอง ---
-        // เมลโฮสติ้ง — กล่องจดหมายและที่อยู่ส่งต่อ (PLAN-MAIL เฟส M2)
+        // --- Mail and backups ---
+        // Mail hosting — mailboxes and forwarding addresses (PLAN-MAIL Phase M2)
         $router->add(new Route('GET', '/api/v2/mailboxes', MailboxesController::class, 'index', 'mail.view', 'api.v2.mailboxes.index'));
-        // ต้องมาก่อน {id} — ไม่งั้น "form" ถูกอ่านเป็นรหัสกล่อง
+        // Must come before {id} — otherwise "form" gets read as a mailbox id
         $router->add(new Route('GET', '/api/v2/mail/readiness', MailboxesController::class, 'readiness', 'mail.view', 'api.v2.mail.readiness'));
-        // ใบรับรองของ mail hostname เป็นของทั้งเครื่อง จึงเป็นสิทธิ์ของผู้ดูแลเครื่อง
-        // ไม่ใช่ `mail.manage` ที่เจ้าของเว็บมีไว้จัดการกล่องของโดเมนตัวเอง
+        // The mail hostname's certificate belongs to the whole machine, so it's a
+        // machine-admin permission, not `mail.manage`, which site owners hold to
+        // manage their own domain's mailboxes
         $router->add(new Route('POST', '/api/v2/mail/certificate', MailboxesController::class, 'certificate', 'settings.manage', 'api.v2.mail.certificate'));
 
         /*
-         * คิวเมลขาออก (PLAN-MAIL §5) — ทั้งหมดเป็น `settings.manage` เพราะคิวเป็นของ
-         * ทั้งเครื่อง แต่ละแถวมีที่อยู่ผู้ส่ง/ผู้รับของลูกค้าทุกรายปนกัน
+         * The outbound mail queue (PLAN-MAIL §5) — entirely `settings.manage`
+         * because the queue belongs to the whole machine, with every customer's
+         * sender/recipient addresses mixed together row by row
          *
-         * **`/flush` ต้องมาก่อน `{id}`** ไม่งั้น "flush" ถูกอ่านเป็นรหัสเมล · และการล้าง
-         * ทั้งคิวเป็นคนละเส้นทางกับการลบฉบับเดียว ไม่ใช่ `{id}` ที่มีค่าพิเศษ
+         * **`/flush` must come before `{id}`** — otherwise "flush" gets read as a
+         * mail id · and clearing the whole queue is a different route from
+         * deleting a single message, not a special value of `{id}`
          */
         $router->add(new Route('GET', '/api/v2/mail/queue', MailQueueController::class, 'index', 'settings.manage', 'api.v2.mail.queue.index'));
         $router->add(new Route('POST', '/api/v2/mail/queue/flush', MailQueueController::class, 'flush', 'settings.manage', 'api.v2.mail.queue.flush'));
@@ -347,53 +378,59 @@ final class Routes
         $router->add(new Route('DELETE', '/api/v2/mail-aliases/{id}', MailAliasesController::class, 'destroy', 'mail.manage', 'api.v2.mail_aliases.destroy'));
 
         $router->add(new Route('GET', '/api/v2/backups', BackupsController::class, 'index', 'backup.view', 'api.v2.backups.index'));
-        // ต้องมาก่อน {id} — ไม่งั้น "form" ถูกอ่านเป็นรหัสไฟล์สำรอง
+        // Must come before {id} — otherwise "form" gets read as a backup file id
         $router->add(new Route('GET', '/api/v2/backups/form', BackupsController::class, 'form', 'backup.offsite', 'api.v2.backups.form'));
-        // ที่เก็บไฟล์สำรองบนเครื่องนี้ — เหตุผลเดียวกับ /form ที่ต้องมาก่อน {id}
+        // Where backup files are stored on this machine — same reason /form must come before {id}
         $router->add(new Route('GET', '/api/v2/backups/storage', BackupsController::class, 'storage', 'backup.view', 'api.v2.backups.storage'));
         $router->add(new Route('POST', '/api/v2/backups', BackupsController::class, 'store', 'backup.offsite', 'api.v2.backups.store'));
 
         /*
-         * ไฟล์ถูกอ้างด้วย **บัญชี + ชื่อไฟล์** ไม่ใช่รหัสแถว
+         * Files are referenced by **account + filename**, not a row id
          *
-         * ตั้งแต่รายการอ่านจากโฟลเดอร์จริง (ข้อ B4) ไม่มีรหัสแถวให้อ้างอีกแล้ว · และนั่น
-         * ตรงกับความจริงมากกว่า: สิ่งที่ผู้ใช้กดลบคือไฟล์ที่เขาเห็นในโฟลเดอร์ของตัวเอง
-         * ไม่ใช่บันทึกที่ panel เคยเขียนไว้ว่าเคยมีไฟล์นั้น
+         * Ever since the listing started reading straight from the real folder
+         * (item B4), there's no row id left to reference · and that matches
+         * reality more closely: what the user clicks delete on is the file they
+         * see in their own folder, not a record the panel once wrote saying that
+         * file existed
          */
         $router->add(new Route('DELETE', '/api/v2/backups/{user}/{file}', BackupsController::class, 'destroy', 'backup.manage', 'api.v2.backups.destroy'));
-        // กู้คืนใช้สิทธิ์แยกจากการสร้าง/ลบ — เป็นคำสั่งที่เขียนทับข้อมูลปัจจุบันทั้งหมด
+        // Restoring uses a permission separate from create/delete — it's a command that overwrites all current data
         $router->add(new Route('POST', '/api/v2/backups/{user}/{file}/restoration', BackupsController::class, 'restore', 'backup.restore', 'api.v2.backups.restore'));
-        // สำเนาที่อยู่นอกเครื่องของไฟล์สำรองนั้น — คำนามตาม §4.1 ไม่ใช่กริยา "push"
+        // An offsite copy of that backup file — a noun per §4.1, not the verb "push"
         $router->add(new Route('POST', '/api/v2/backups/{user}/{file}/offsite-copy', BackupsController::class, 'pushOffsite', 'backup.offsite', 'api.v2.backups.offsite'));
 
-        // --- ปลายทางของไฟล์สำรอง (เฟส E1) — ของชั้น SERVER ทั้งหมด ---
+        // --- Backup destinations (Phase E1) — all SERVER-tier ---
         $router->add(new Route('GET', '/api/v2/backup-destinations', BackupDestinationsController::class, 'index', 'backup.offsite', 'api.v2.backup_destinations.index'));
         $router->add(new Route('POST', '/api/v2/backup-destinations', BackupDestinationsController::class, 'store', 'backup.offsite', 'api.v2.backup_destinations.store'));
         $router->add(new Route('GET', '/api/v2/backup-destinations/{id}', BackupDestinationsController::class, 'show', 'backup.offsite', 'api.v2.backup_destinations.show'));
         $router->add(new Route('PATCH', '/api/v2/backup-destinations/{id}', BackupDestinationsController::class, 'update', 'backup.offsite', 'api.v2.backup_destinations.update'));
         $router->add(new Route('DELETE', '/api/v2/backup-destinations/{id}', BackupDestinationsController::class, 'destroy', 'backup.offsite', 'api.v2.backup_destinations.destroy'));
-        // host key ของเครื่องปลายทาง — อ่านจาก **เครื่องนี้** ซึ่งเป็นเครื่องที่จะส่งไฟล์จริง
-        // ไม่ผูกกับ {id} เพราะต้องใช้ตอนกรอกฟอร์มปลายทางใหม่ที่ยังไม่มี id
+        // The destination machine's host key — read from **this machine**, the one
+        // that will actually send the files. Not bound to {id} because it's needed
+        // while filling out a new destination's form that doesn't have an id yet
         $router->add(new Route('POST', '/api/v2/backup-destinations/host-key', BackupDestinationsController::class, 'hostKey', 'backup.offsite', 'api.v2.backup_destinations.host_key'));
 
         $router->add(new Route('POST', '/api/v2/backup-destinations/{id}/verification', BackupDestinationsController::class, 'verify', 'backup.offsite', 'api.v2.backup_destinations.verify'));
 
         /*
-         * --- ตารางเวลาสำรองอัตโนมัติ — **ตัวเดียวทั้งเครื่อง** (ข้อ B10) ---
+         * --- Automatic backup schedule — **one, for the whole machine** (item B10) ---
          *
-         * เอกพจน์โดยเจตนา · ของเดิมเป็น CRUD ของตารางเวลาหลายชุด ซึ่งแปลว่าผู้ดูแลที่มี
-         * ลูกค้าห้าสิบรายต้องดูแลตารางเวลาเป็นร้อยชุดด้วยมือ และเว็บที่สร้างใหม่จะไม่ถูก
-         * สำรองเลยจนกว่าจะมีใครนึกได้ · ตอนนี้ "สำรองอะไรบ้าง" อยู่ที่สวิตช์รายบัญชี
-         * (`/api/v2/backup-targets`) ส่วนที่นี่ตอบแค่ "รอบนั้นเดินตอนไหน"
+         * Singular on purpose · the original design was CRUD over many schedules,
+         * which meant an admin with fifty customers had to hand-maintain a hundred
+         * schedules, and a newly created site got no backups at all until someone
+         * remembered to add one · now "what gets backed up" lives in a per-account
+         * switch (`/api/v2/backup-targets`), while this just answers "when does the
+         * run happen"
          */
         $router->add(new Route('GET', '/api/v2/backup-schedule', BackupSchedulesController::class, 'show', 'backup.offsite', 'api.v2.backup_schedule.show'));
         $router->add(new Route('GET', '/api/v2/backup-schedule/form', BackupSchedulesController::class, 'form', 'backup.offsite', 'api.v2.backup_schedule.form'));
         $router->add(new Route('PATCH', '/api/v2/backup-schedule', BackupSchedulesController::class, 'update', 'backup.offsite', 'api.v2.backup_schedule.update'));
-        // เดินรอบเดี๋ยวนี้โดยไม่รอ cron — ผู้ดูแลต้องพิสูจน์ได้ว่าค่าที่ตั้งไว้ทำงานจริง
-        // ก่อนถึงคืนแรก ไม่ใช่รู้ตอนที่ไฟล์สำรองควรจะมีแล้วแต่ไม่มี
+        // Run the cycle right now without waiting for cron — the admin needs to be
+        // able to prove the configured settings actually work before the first
+        // night, not find out only when a backup file should exist but doesn't
         $router->add(new Route('POST', '/api/v2/backup-schedule/runs', BackupSchedulesController::class, 'runNow', 'backup.offsite', 'api.v2.backup_schedule.run'));
 
-        // --- บัญชีไหนถูกสำรองอัตโนมัติบ้าง (ข้อ B3) ---
+        // --- Which accounts get backed up automatically (item B3) ---
         $router->add(new Route('GET', '/api/v2/backup-targets', BackupTargetsController::class, 'index', 'backup.offsite', 'api.v2.backup_targets.index'));
         $router->add(new Route('PATCH', '/api/v2/backup-targets/{id}', BackupTargetsController::class, 'update', 'backup.offsite', 'api.v2.backup_targets.update'));
     }
