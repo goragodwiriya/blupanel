@@ -21,23 +21,9 @@
       <div class="content-body" data-component="api" data-endpoint="/api/v2/security/protection" data-refresh-event="phpcp:reload">
         <h2 class="icon-shield" data-i18n>Protection</h2>
         <div class="alert alert-danger" data-if="drifted" data-i18n>fail2ban is switched on here but the service is not running — nothing is being enforced right now.</div>
-        <!--
-          สวิตช์บันทึกทันทีที่กด ไม่ต้องมีปุ่มบันทึกแยก — `change:requestApi` ของเฟรมเวิร์ก
-          ทำให้ทั้งหมดนี้ประกาศได้ ไม่ต้องมี JS ประจำหน้า
-          (`apiRefresh` = `requestApi` + สั่งโหลดข้อมูลรอบใหม่ · ดู js/ui.js)
-
-          **แต่ต้องมี `data-confirm`** เพราะการปิดสวิตช์นี้ลบ jail ที่ panel ดูแลทั้งหมด
-          และเปิดกลับมาไม่ได้คืนสถานะเดิมของแต่ละเว็บให้ · สวิตช์ที่กดพลาดครั้งเดียว
-          แล้วเสียค่าที่ตั้งไว้ทั้งหมดคือสิ่งที่ต้องถามก่อน ไม่ใช่ทำให้เลย
-
-          เฟรมเวิร์กข้าม `change` ที่เกิดจากการผูกค่าตอนโหลดให้เอง สวิตช์จึงไม่ยิงคำขอ
-          ตอนหน้าเพิ่งเปิด (ดู data-request-api-on-programmatic-change ในคู่มือ)
-        -->
         <div>
-          <input type="checkbox" class="switch" id="fail2ban_enabled" data-checked="fail2ban_enabled"
-                 data-action="change:apiRefresh"
-                 data-api-url="/api/v2/security/fail2ban" data-api-method="put"
-                 data-param-enabled="{#fail2ban_enabled}"
+          <input type="checkbox" class="switch" id="fail2ban_enabled" data-checked="fail2ban_enabled" data-action="change:apiRefresh" data-api-url="/api/v2/security/fail2ban"
+                 data-api-method="put" data-param-enabled="{#fail2ban_enabled}"
                  data-confirm="Turning this off deletes every jail the panel manages, and turning it back on does not restore what each website had. Continue?"
                  data-notify-success="true">
           <label for="fail2ban_enabled" data-i18n>Use fail2ban on this server</label>
@@ -53,11 +39,6 @@
             <thead>
               <tr>
                 <th data-field="label" data-i18n>{LNG_Protection}</th>
-                <!--
-                  ค่าจากแถวอ้างด้วย `${ชื่อฟิลด์}` ไม่ใช่ `{ชื่อฟิลด์}` — ปีกกาเปล่า
-                  ไม่ถูกแทนค่า แล้วจะพิมพ์ออกหน้าจอตรง ๆ ว่า {mode_label}
-                  (`{LNG_...}` เป็นคนละกลไก คือการแปลภาษา)
-                -->
                 <th data-field="mode_label" class="center" data-cell-class="center" data-template="<span class='pill pill-${mode_tone}'>${mode_label}</span>" data-i18n>{LNG_Mode}
                 </th>
                 <th data-field="failed" class="center" data-cell-class="center" data-i18n>{LNG_Currently failed}</th>
@@ -90,73 +71,70 @@
         <h2 class="icon-ban" data-i18n>Login brute-force protection</h2>
         <div class="alert alert-warning" data-i18n>A ban blocks every port, including this control panel. Put your own IP in the exempt list, and remember you can always unban from
           SSH.</div>
-        <form data-form="neverBan" action="/api/v2/security/never-ban" method="post" data-method="PUT" data-ajax-submit="true"
-              data-load-api="/api/v2/security/panel-jail">
-            <div class="form-group bottom">
-              <div class="width90">
-                <label for="never_ban_ips" data-i18n>Never ban these IPs (whole server)</label>
-                <span class="form-control icon-shield">
-                  <input type="text" id="never_ban_ips" name="ips" maxlength="2000" placeholder="203.0.113.5 198.51.100.0/24" data-attr="value:never_ban_ips">
+        <form data-form="neverBan" action="/api/v2/security/never-ban" method="post" data-method="PUT" data-ajax-submit="true" data-load-api="/api/v2/security/panel-jail">
+          <div class="form-group bottom">
+            <div class="width90">
+              <label for="never_ban_ips" data-i18n>Never ban these IPs (whole server)</label>
+              <span class="form-control icon-shield">
+                <input type="text" id="never_ban_ips" name="ips" maxlength="2000" placeholder="203.0.113.5 198.51.100.0/24" data-attr="value:never_ban_ips">
+              </span>
+            </div>
+            <div>
+              <button type="submit" class="btn fullwidth icon-save" data-i18n>Save exempt list</button>
+            </div>
+          </div>
+          <div class="comment" data-i18n>Applies to every jail, including ones created later. Put customers here whose whole organisation shares one IP — a school or an office
+            where one infected machine would otherwise get everyone banned from every site on this server.</div>
+        </form>
+        <form data-form="panelJail" action="/api/v2/security/panel-jail" method="post" data-method="PUT" data-ajax-submit="true" data-load-api="/api/v2/security/panel-jail">
+          <div class="alert alert-danger" data-if="drifted" data-i18n>Set to on, but fail2ban has not loaded this jail — nothing is protecting the login page right now. Save the
+            form again to rewrite the file.</div>
+          <fieldset>
+            <div>
+              <label for="panel_jail_mode" data-i18n>When someone keeps failing to sign in</label>
+              <span class="form-control icon-shield">
+                <select id="panel_jail_mode" name="mode" data-attr="value:mode">
+                  <option value="off" data-i18n>Do nothing</option>
+                  <option value="notify" data-i18n>Notify me, do not ban</option>
+                  <option value="ban" data-i18n>Ban at the firewall</option>
+                </select>
+              </span>
+              <div class="comment" data-i18n>Notify sends to whichever channels you set up under Settings, and never touches the firewall — you decide whether to ban.</div>
+            </div>
+            <div class="form-group">
+              <div class="width30">
+                <label for="panel_jail_max_retry" data-i18n>Failed sign-ins</label>
+                <span class="form-control icon-number">
+                  <input type="number" id="panel_jail_max_retry" name="max_retry" min="3" max="100" required data-attr="value:max_retry">
+                </span>
+                <div class="comment"><span data-i18n>At most</span> <span data-text="max_retry_ceiling"></span> <span data-i18n>are even possible in this window — the rate limiter
+                    drops the rest before they are checked</span></div>
+              </div>
+              <div class="width30">
+                <label for="panel_jail_find_seconds" data-i18n>Within (seconds)</label>
+                <span class="form-control icon-clock">
+                  <input type="number" id="panel_jail_find_seconds" name="find_seconds" min="60" max="86400" required data-attr="value:find_seconds">
                 </span>
               </div>
-              <div>
-                <button type="submit" class="btn fullwidth icon-save" data-i18n>Save exempt list</button>
+              <div class="width30">
+                <label for="panel_jail_ban_seconds" data-i18n>Ban duration (seconds)</label>
+                <span class="form-control icon-ban">
+                  <input type="number" id="panel_jail_ban_seconds" name="ban_seconds" min="60" max="604800" required data-attr="value:ban_seconds">
+                </span>
               </div>
             </div>
-            <div class="comment" data-i18n>Applies to every jail, including ones created later. Put customers here whose whole organisation shares one IP — a school or an office
-              where one infected machine would otherwise get everyone banned from every site on this server.</div>
-        </form>
-
-        <form data-form="panelJail" action="/api/v2/security/panel-jail" method="post" data-method="PUT" data-ajax-submit="true"
-              data-load-api="/api/v2/security/panel-jail">
-            <div class="alert alert-danger" data-if="drifted" data-i18n>Set to on, but fail2ban has not loaded this jail — nothing is protecting the login page right now. Save the
-              form again to rewrite the file.</div>
-            <fieldset>
-              <div>
-                <label for="panel_jail_mode" data-i18n>When someone keeps failing to sign in</label>
-                <span class="form-control icon-shield">
-                  <select id="panel_jail_mode" name="mode" data-attr="value:mode">
-                    <option value="off" data-i18n>Do nothing</option>
-                    <option value="notify" data-i18n>Notify me, do not ban</option>
-                    <option value="ban" data-i18n>Ban at the firewall</option>
-                  </select>
-                </span>
-                <div class="comment" data-i18n>Notify sends to whichever channels you set up under Settings, and never touches the firewall — you decide whether to ban.</div>
-              </div>
-              <div class="form-group">
-                <div class="width30">
-                  <label for="panel_jail_max_retry" data-i18n>Failed sign-ins</label>
-                  <span class="form-control icon-number">
-                    <input type="number" id="panel_jail_max_retry" name="max_retry" min="3" max="100" required data-attr="value:max_retry">
-                  </span>
-                  <div class="comment"><span data-i18n>At most</span> <span data-text="max_retry_ceiling"></span> <span data-i18n>are even possible in this window — the rate
-                      limiter drops the rest before they are checked</span></div>
-                </div>
-                <div class="width30">
-                  <label for="panel_jail_find_seconds" data-i18n>Within (seconds)</label>
-                  <span class="form-control icon-clock">
-                    <input type="number" id="panel_jail_find_seconds" name="find_seconds" min="60" max="86400" required data-attr="value:find_seconds">
-                  </span>
-                </div>
-                <div class="width30">
-                  <label for="panel_jail_ban_seconds" data-i18n>Ban duration (seconds)</label>
-                  <span class="form-control icon-ban">
-                    <input type="number" id="panel_jail_ban_seconds" name="ban_seconds" min="60" max="604800" required data-attr="value:ban_seconds">
-                  </span>
-                </div>
-              </div>
-              <div>
-                <label for="panel_jail_ignore_ips" data-i18n>Never ban these IPs</label>
-                <span class="form-control icon-shield">
-                  <input type="text" id="panel_jail_ignore_ips" name="ignore_ips" maxlength="2000" placeholder="203.0.113.5 198.51.100.0/24" data-attr="value:ignore_ips">
-                </span>
-                <div class="comment" data-i18n>Separate with spaces. CIDR ranges are allowed. Add the IP you administer from — locking yourself out is the most common way this
-                  feature goes wrong.</div>
-              </div>
-            </fieldset>
-            <fieldset class="submit">
-              <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
-            </fieldset>
+            <div>
+              <label for="panel_jail_ignore_ips" data-i18n>Never ban these IPs</label>
+              <span class="form-control icon-shield">
+                <input type="text" id="panel_jail_ignore_ips" name="ignore_ips" maxlength="2000" placeholder="203.0.113.5 198.51.100.0/24" data-attr="value:ignore_ips">
+              </span>
+              <div class="comment" data-i18n>Separate with spaces. CIDR ranges are allowed. Add the IP you administer from — locking yourself out is the most common way this
+                feature goes wrong.</div>
+            </div>
+          </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
+          </fieldset>
         </form>
       </div>
       <div class="content-body">
