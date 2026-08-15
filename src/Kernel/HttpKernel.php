@@ -17,16 +17,16 @@ use Phpcp\Middleware\SecurityHeaders;
 use Phpcp\Middleware\SessionMiddleware;
 
 /**
- * ประกอบทุกอย่างเข้าด้วยกัน — ARCHITECTURE §3.2
+ * Wires everything together — ARCHITECTURE §3.2
  *
- * ลำดับ middleware สำคัญมากและห้ามสลับ:
- *   SecurityHeaders  ชั้นนอกสุด header ต้องติดไปกับทุกคำตอบ รวมหน้า error
- *   RateLimit        ตัดคำขอที่ยิงรัวก่อนแตะฐานข้อมูลหรือคำนวณ Argon2id
- *   Session          โหลดผู้ใช้ ต้องมาก่อน CSRF เพราะ token ผูกกับ session
- *   Authenticate     ยังไม่ล็อกอิน → ส่งไปหน้าล็อกอิน
- *   CsrfProtection   ตัดคำขอที่ไม่มี token ก่อนแตะ logic ใด ๆ
- *   Authorize        ตรวจ permission ของเส้นทาง
- *   AuditContext     ชั้นในสุด บันทึกสิ่งที่เกิดขึ้นจริง
+ * Middleware order matters and must not be reshuffled:
+ *   SecurityHeaders  outermost — headers must ride on every response, error pages too
+ *   RateLimit        drops bursts before they touch the database or cost an Argon2id hash
+ *   Session          loads the user; must come before CSRF since the token is bound to it
+ *   Authenticate     not signed in → redirect to login
+ *   CsrfProtection   rejects requests with no token before any logic runs
+ *   Authorize        checks the route's permission
+ *   AuditContext     innermost — records what actually happened
  */
 final class HttpKernel
 {
@@ -46,9 +46,9 @@ final class HttpKernel
      */
     public function handle(Request $request): Response
     {
-        // ภาษาของคำขอนี้มาจากคุกกี้ที่หน้าเว็บเขียนไว้ตอนผู้ใช้กดสลับภาษา —
-        // เป็นแหล่งเดียวที่ตรงกับสิ่งที่ผู้ใช้เลือกจริง (`Accept-Language` บอกภาษาของ
-        // เบราว์เซอร์ ไม่ใช่ภาษาที่เลือกในแผงควบคุม)
+        // This request's language comes from the cookie the SPA writes when the user
+        // switches language — the one source that matches what they actually chose
+        // (`Accept-Language` reports the browser's language, not the panel's)
         $this->app->setLocale($request->cookie('phpcp_lang'));
 
         $ctx = new Ctx($this->app);
@@ -67,9 +67,10 @@ final class HttpKernel
         try {
             return $this->pipeline($terminal, $ctx)($request);
         } catch (\Throwable $e) {
-            // ข้อผิดพลาดไม่ได้วิ่งกลับผ่าน middleware ที่ค้างอยู่ คำตอบนี้จึงไม่มี header
-            // ความปลอดภัยติดมาเลย ต้องห่อด้วย SecurityHeaders เองไม่งั้นหน้า error
-            // จะไม่มี CSP ซึ่งทำให้พฤติกรรมต่างจากหน้าปกติโดยไม่มีเหตุผล
+            // An exception doesn't travel back through the middleware stack that was
+            // still on it, so this response carries no security headers on its own —
+            // wrap it in SecurityHeaders here or the error page ships without CSP,
+            // behaving differently from every normal page for no good reason
             return (new SecurityHeaders())->handle(
                 $request,
                 $ctx,
@@ -79,7 +80,7 @@ final class HttpKernel
     }
 
     /**
-     * ห่อ middleware เข้าด้วยกันจากในออกนอก
+     * Wraps the middleware together from the inside out
      *
      * @param callable(Request):Response $terminal
      * @return callable(Request):Response
@@ -117,17 +118,17 @@ final class HttpKernel
      */
     private function invoke(Route $route, Request $request, Ctx $ctx): Response
     {
-        // JSON ที่แปลงไม่ได้ต้องถูกปฏิเสธก่อนถึง controller — ไม่งั้นค่าที่ส่งมาจะกลายเป็น
-        // "ไม่ได้ส่งมา" เงียบ ๆ แล้วผู้เรียกจะได้ 422 ว่าฟิลด์ขาด ทั้งที่ปัญหาจริงคือ
-        // เครื่องหมายจุลภาคเกินมาตัวเดียวใน body
+        // Unparseable JSON must be rejected before it reaches the controller — otherwise
+        // whatever was sent silently becomes "not sent at all", and the caller gets a
+        // 422 about a missing field when the real problem is one stray comma in the body
         if ($request->isApiV2() && $request->hasBrokenJson()) {
-            return ApiProblem::BadRequest->response('เนื้อหาที่ส่งมาไม่ใช่ JSON ที่ถูกต้อง');
+            return ApiProblem::BadRequest->response($this->app->t('The request body is not valid JSON'));
         }
 
         $controller = new $route->controller($this->app, $ctx, $this->router);
 
         if (!method_exists($controller, $route->action)) {
-            throw new \LogicException("ไม่พบ action {$route->controller}::{$route->action}");
+            throw new \LogicException("No such action {$route->controller}::{$route->action}");
         }
 
         return $controller->{$route->action}($request);
@@ -139,25 +140,26 @@ final class HttpKernel
      */
     private function notFound(Request $request, Ctx $ctx): Response
     {
-        // path มีอยู่แต่คนละ method → 405 ซึ่งช่วยตอนดีบักมากกว่า 404
+        // The path exists under a different method → 405, which helps far more while
+        // debugging than a flat 404
         $status = $this->router->pathExists($request->path) ? 405 : 404;
 
         if ($request->isApiV2()) {
             return $status === 405
-                ? ApiProblem::MethodNotAllowed->response('เส้นทางนี้ไม่รองรับวิธีการเรียกแบบนี้')
-                : ApiProblem::NotFound->response('ไม่พบเส้นทางที่ร้องขอ');
+                ? ApiProblem::MethodNotAllowed->response($this->app->t('This route does not support that method'))
+                : ApiProblem::NotFound->response($this->app->t('The requested route was not found'));
         }
 
         if ($request->wantsJson()) {
-            return Response::json(['ok' => false, 'error' => 'ไม่พบเส้นทางที่ร้องขอ'], $status);
+            return Response::json(['ok' => false, 'error' => $this->app->t('The requested route was not found')], $status);
         }
 
         return ErrorPage::response(
             $status,
-            $status === 405 ? 'วิธีเรียกไม่ถูกต้อง' : 'ไม่พบหน้าที่ต้องการ',
+            $status === 405 ? $this->app->t('Method not allowed') : $this->app->t('Page not found'),
             $status === 405
-                ? 'เส้นทางนี้มีอยู่ แต่ไม่รองรับวิธีการเรียกแบบนี้'
-                : 'หน้าที่คุณเรียกไม่มีอยู่ในระบบ',
+                ? $this->app->t('This route exists, but does not support that method')
+                : $this->app->t('The page you requested does not exist'),
         );
     }
 
@@ -168,10 +170,9 @@ final class HttpKernel
      */
     private function handleException(\Throwable $e, Request $request, Ctx $ctx): Response
     {
-        // ข้อผิดพลาดจาก agent มีข้อความไทยที่แสดงให้ผู้ใช้เห็นได้อยู่แล้ว
         $isAgentError = $e instanceof AgentException;
 
-        $this->app->logger()->error($isAgentError ? 'คำสั่งล้มเหลว' : 'ข้อผิดพลาดที่ไม่ได้จัดการ', [
+        $this->app->logger()->error($isAgentError ? 'Command failed' : 'Unhandled error', [
             'request_id' => $request->requestId,
             'exception' => $e::class,
             'message' => $e->getMessage(),
@@ -181,15 +182,29 @@ final class HttpKernel
         ]);
 
         $status = $isAgentError ? 400 : 500;
-        $message = $isAgentError
-            ? $e->getMessage()
-            : 'เกิดข้อผิดพลาดภายในระบบ กรุณาตรวจสอบ log (รหัสอ้างอิง: '.$request->requestId.')';
 
-        // REST API v2 ต้องได้รหัสที่เครื่องอ่านได้และ status ที่ตรงความหมายจริง
+        /*
+         * This is the one boundary where an agent exception message becomes a
+         * response the user reads. Capabilities throw messages written in English —
+         * that string is the translation key, so `t()` returns Thai when a
+         * translation exists in th.json and the English original otherwise. Messages
+         * built with sprintf() (an id, a path) rarely match a catalogue key and stay
+         * English on purpose — those are for whoever reads the log, not the customer.
+         */
+        $message = $isAgentError
+            ? $this->app->t($e->getMessage())
+            : $this->app->t(
+                'An internal error occurred. Check the log (reference: {id})',
+                ['id' => $request->requestId],
+            );
+
+        // REST API v2 needs a machine-readable code and a status that actually means
+        // something.
         //
-        // ของเดิมยุบข้อผิดพลาดจาก agent ทุกชนิดเป็น 400 เหมือนกันหมด ทำให้ฝั่งเรียก
-        // แยกไม่ออกว่า "ค่าที่ส่งมาผิด" (แก้แล้วลองใหม่ได้) ต่างจาก "agent ไม่ตอบ"
-        // (ต้องไปดูว่าบริการล่มหรือเปล่า) ทั้งที่สองอย่างนี้ต้องทำคนละอย่างกันสิ้นเชิง
+        // The old behaviour collapsed every kind of agent error into the same 400,
+        // so a caller couldn't tell "the value you sent was wrong" (fix it and retry)
+        // from "the agent isn't answering" (go check whether the service is down) —
+        // two situations that call for completely different responses.
         if ($request->isApiV2()) {
             $problem = $isAgentError
                 ? ApiProblem::fromAgentException($e)
@@ -202,12 +217,13 @@ final class HttpKernel
             return Response::json(['ok' => false, 'error' => $message], $status);
         }
 
-        // ไม่แสดง $message ตรง ๆ กับผู้ใช้ที่เปิดผ่านเบราว์เซอร์เมื่อเป็นข้อผิดพลาด
-        // ภายใน — ข้อความนั้นมีไว้ให้คนดู log · รหัสอ้างอิงคือสิ่งที่ผู้ใช้ต้องบอกต่อ
+        // Don't show $message straight to a browser visitor for an internal error —
+        // that text is for whoever reads the log; the reference id is what the user
+        // needs to hand back
         return ErrorPage::response(
             $status,
-            $isAgentError ? 'ดำเนินการไม่สำเร็จ' : 'เกิดข้อผิดพลาดภายในระบบ',
-            $isAgentError ? $message : 'รหัสอ้างอิง: '.$request->requestId,
+            $isAgentError ? $this->app->t('The action failed') : $this->app->t('An internal error occurred'),
+            $isAgentError ? $message : $this->app->t('Reference: {id}', ['id' => $request->requestId]),
         );
     }
 }

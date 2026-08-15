@@ -32,21 +32,23 @@ final class RateLimit implements Middleware
     private const LOGIN_PATHS = ['/api/v2/session', '/api/v2/session/2fa'];
 
     /**
-     * โควตาของหน้าล็อกอิน — กดรัวได้กี่ครั้ง และเติมกลับเร็วแค่ไหน
+     * The login page's quota — how many rapid attempts, and how fast it refills
      *
-     * **เป็น public เพราะมีคนอื่นต้องคำนวณตาม ไม่ใช่แค่ใช้ที่นี่** — คำขอที่ถูกปฏิเสธ
-     * ด้วย 429 ถูกตัดตั้งแต่ชั้นนี้ จึงไม่มีบรรทัดใน audit log · jail ที่นับบรรทัด
-     * เหล่านั้น ({@see \Phpcp\Driver\Security\Fail2banManager::PANEL_LOGIN_JAIL})
-     * จึงมีเพดานว่าในหนึ่งช่วงเวลาจะเห็นได้มากที่สุดกี่บรรทัด · ตั้ง maxretry เกิน
-     * เพดานนั้นเมื่อไร jail จะไม่มีวันทำงานเลยโดยไม่มีอะไรฟ้อง
+     * **Public because something else has to compute against it, not just use it
+     * here** — requests rejected with 429 are cut off at this layer, so they never
+     * reach the audit log. The jail that counts those lines
+     * ({@see \Phpcp\Driver\Security\Fail2banManager::PANEL_LOGIN_JAIL}) therefore has a
+     * ceiling on how many lines it can ever see in one window — set `maxretry` above
+     * that ceiling and the jail can never fire, with nothing to say so.
      */
     public const LOGIN_BURST = 5.0;
     public const LOGIN_REFILL_PER_SECOND = 1 / 60;
 
     /**
-     * จำนวนการล็อกอินที่ล้มเหลวมากที่สุดที่ IP เดียวทำได้ในช่วงเวลาหนึ่ง
+     * The most failed logins one IP can produce in a given window
      *
-     * = ที่กดรัวได้ตอนแรก + ที่เติมกลับระหว่างนั้น · ใช้เป็นเพดานของ `maxretry`
+     * = the initial burst + whatever refills during that window. Used as the ceiling
+     * on `maxretry`.
      */
     public static function maxLoginFailuresWithin(int $seconds): int
     {

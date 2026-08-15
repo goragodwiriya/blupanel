@@ -145,15 +145,15 @@ final class SiteRepository
     }
 
     /**
-     * รายการเว็บไซต์แบบย่อสำหรับทำตัวเลือกให้ผู้ใช้เลือก — id, โดเมน, ชื่อเจ้าของ
+     * A short list of websites for building choices — id, domain, owner name
      *
-     * เบากว่า {@see self::listWithCounts()} มากเพราะไม่มี subquery สักตัว · ใช้กับหน้าที่
-     * ต้องรู้แค่ "มีเว็บอะไรบ้าง ของใคร" และถูกเรียกบ่อย เช่นรายการแหล่ง log ซึ่ง
-     * ถูกสร้างใหม่ทุกครั้งที่มีการอ่าน log หนึ่งครั้ง
+     * Much lighter than {@see self::listWithCounts()} because it has no subqueries at
+     * all — use it where a page only needs "what sites exist, whose are they", and
+     * needs it often, such as the list of log sources rebuilt on every single log read.
      *
-     * เรียงตามเจ้าของก่อนโดเมน เพื่อให้เว็บของลูกค้ารายเดียวกันอยู่ติดกันในรายการ
+     * Sorted by owner before domain, so one customer's sites sit next to each other.
      *
-     * @param int|null $ownerId null = ทุกเจ้าของ
+     * @param int|null $ownerId null = every owner
      * @return list<array{id:int,domain:string,owner:string}>
      */
     public function listBrief(?int $ownerId = null): array

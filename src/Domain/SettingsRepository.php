@@ -104,25 +104,27 @@ final class SettingsRepository
         'sites.layout' => 'string',
 
         /*
-         * กันเดารหัสผ่านหน้าเข้าสู่ระบบของ panel — บังคับใช้ด้วย fail2ban
+         * Login brute-force protection for the panel itself — enforced through fail2ban
          *
-         * **แก้ผ่านฟอร์มตั้งค่าทั่วไปไม่ได้เหมือน `webserver.*`** — การเปลี่ยนค่าเหล่านี้
-         * ต้องเขียนไฟล์ jail ผ่านตัวตรวจของ fail2ban แล้ว reload · ถ้าเขียนตรงเข้าตาราง
-         * ได้ ค่าจะเปลี่ยนโดยไฟล์บนเครื่องไม่เปลี่ยนตาม แล้วหน้าจอจะรายงานการป้องกัน
-         * ที่ไม่มีอยู่จริง · เขียนได้ที่ `security.panel_jail_set` เท่านั้น
+         * **Not editable through the general settings form, same as `webserver.*`** —
+         * changing these has to write a jail file through fail2ban's own validator and
+         * reload it. Writing straight into the table would let the value drift from
+         * the file on disk, and the screen would then report protection that doesn't
+         * actually exist. Only `security.panel_jail_set` may write these.
          */
         /*
-         * สวิตช์ใหญ่ — panel ใช้ fail2ban หรือไม่
+         * Master switch — does the panel use fail2ban at all?
          *
-         * ปิดแล้ว panel ลบ jail ของตัวเองทั้งหมด · **ไม่หยุดบริการ fail2ban ให้เอง**
-         * เพราะ jail ของ SSH มาจากแพ็กเกจของดิสโทร ไม่ใช่ของ panel — หยุดบริการ
-         * แล้วการกันเดารหัส SSH หายไปด้วยโดยที่ผู้ดูแลไม่ได้ขอ · หน้าจอบอกวิธี
-         * หยุดบริการเองพร้อมคำเตือนนั้นแทน
+         * Off deletes every jail the panel manages. **It does not stop the fail2ban
+         * service itself** — the SSH jail ships with the distro, not with the panel,
+         * so stopping the service would drop SSH brute-force protection too without
+         * the admin ever asking for that. The screen offers the command to stop the
+         * service themselves, with that warning attached, instead.
          */
         'security.fail2ban.enabled' => 'bool',
 
         'security.panel_jail.enabled' => 'bool',
-        // off | notify | ban — ดู Fail2banManager::modes()
+        // off | notify | ban — see Fail2banManager::modes()
         'security.panel_jail.mode' => 'string',
         'security.panel_jail.max_retry' => 'int',
         'security.panel_jail.find_seconds' => 'int',
@@ -130,34 +132,39 @@ final class SettingsRepository
         'security.panel_jail.ignore_ips' => 'string',
 
         /*
-         * ที่อยู่ที่ห้ามแบนไม่ว่า jail ไหน — ลงทะเบียนครั้งเดียว ใช้กับทุก jail
+         * Addresses never to ban, no matter the jail — one machine-wide list
          *
-         * มีไว้สำหรับลูกค้าที่คนจำนวนมากออกเน็ตผ่าน IP เดียวกัน (โรงเรียน สำนักงาน)
-         * ซึ่งการแบนหนึ่งครั้งตัดคนทั้งองค์กรออกจากทุกเว็บบนเครื่อง
+         * For customers where many people share one outbound IP (a school, an
+         * office), where a single ban would cut the whole organisation off from
+         * every site on the machine.
          *
-         * แก้ผ่านฟอร์มตั้งค่าทั่วไปไม่ได้ด้วยเหตุผลเดียวกับ `security.panel_jail.*` —
-         * ค่าต้องเดินทางคู่กับไฟล์ jail ที่เขียนใหม่แล้วผ่านตัวตรวจของ fail2ban
+         * Not editable through the general settings form, same reason as
+         * `security.panel_jail.*` — the value has to travel together with the jail
+         * file rewritten through fail2ban's validator.
          */
         'security.never_ban_ips' => 'string',
     ];
 
-    /** ค่าเริ่มต้นเมื่อยังไม่เคยตั้ง */
+    /** Defaults used until a value has been set */
     private const DEFAULTS = [
         /*
-         * ปิดไว้ก่อน แล้วให้ `security.scan` เป็นคนบอกว่าควรเปิด
+         * Off by default, and let `security.scan` say when it should be turned on.
          *
-         * การเปิดให้เองตอนอัปเดตแปลว่าเครื่องที่กำลังใช้งานอยู่จู่ ๆ ก็เริ่มแบนที่ firewall
-         * ได้โดยที่เจ้าของยังไม่รู้ว่ามีของนี้ · ผู้ดูแลที่พิมพ์รหัสผิดจะเข้าหน้าจัดการ
-         * ไม่ได้ทั้งที่ไม่เคยเลือกเปิด — ต้องเป็นการกดเอง
+         * Turning it on for free on an update means a machine already in production
+         * suddenly starts banning at the firewall, with the owner not even knowing
+         * this feature exists — an admin who mistypes a password would be locked out
+         * of the control panel despite never having opted in. It has to be a
+         * deliberate click.
          *
-         * ค่าเริ่มต้นตั้งให้ "กันคนไล่เดา แต่ไม่กันคนที่จำรหัสตัวเองไม่ได้": ผิด 10 ครั้ง
-         * ใน 10 นาที แล้วแบนครึ่งชั่วโมง — คนพิมพ์ผิดเองแทบไม่มีทางถึง ส่วนเครื่องมือ
-         * ไล่เดาถึงภายในไม่กี่วินาที
+         * The default values aim for "stops someone guessing, not someone who
+         * forgot their own password": 10 wrong attempts in 10 minutes, then a
+         * half-hour ban — a human mistyping barely gets close, while an automated
+         * guesser reaches it within seconds.
          */
         'security.fail2ban.enabled' => '1',
         'security.panel_jail.enabled' => '0',
-        // ค่าเริ่มต้นเป็น "แจ้งเตือน" ไม่ใช่ "แบน" — ผู้ดูแลควรได้เห็นว่าระบบจับอะไรได้บ้าง
-        // ก่อนที่จะมอบอำนาจตัดคนออกจากเครื่องให้มันทำเอง
+        // Default is "notify", not "ban" — the admin should see what the system
+        // catches before handing it the power to cut someone off the machine
         'security.panel_jail.mode' => 'notify',
         'security.panel_jail.max_retry' => '10',
         'security.panel_jail.find_seconds' => '600',
@@ -216,9 +223,11 @@ final class SettingsRepository
         return array_filter(
             self::keys(),
             static fn (string $key): bool => !str_starts_with($key, 'webserver.')
-                // ค่าของ jail ต้องเดินทางคู่กับไฟล์ที่ fail2ban ตรวจแล้วเสมอ · เขียนตรง
-                // เข้าตารางได้เมื่อไร ค่าจะเปลี่ยนโดยไฟล์บนเครื่องไม่เปลี่ยนตาม แล้วหน้าจอ
-                // จะรายงานการป้องกันที่ไม่มีอยู่จริง — ต้องผ่าน `security.panel_jail_set`
+                // A jail's values must always travel with the file fail2ban has
+                // validated. Writing straight into the table lets the value drift
+                // from the file on disk, and the screen would then report protection
+                // that doesn't actually exist — it has to go through
+                // `security.panel_jail_set`
                 && !str_starts_with($key, 'security.panel_jail.')
                 && !str_starts_with($key, 'security.fail2ban.')
                 && $key !== 'security.never_ban_ips'
@@ -303,10 +312,11 @@ final class SettingsRepository
     }
 
     /**
-     * ค่าเริ่มต้นของทุกคีย์ที่ยังไม่เคยถูกตั้ง
+     * The default value of every key that has never been set
      *
-     * เปิดออกมาให้เทสต์ตรวจได้ว่าค่าเริ่มต้นสมเหตุสมผลกับข้อจำกัดที่อื่นในระบบ —
-     * ค่าเริ่มต้นที่ผิดคือค่าที่ทุกเครื่องได้ไปโดยไม่มีใครเลือก
+     * Exposed so tests can check that the defaults hold up against constraints
+     * defined elsewhere in the system — a wrong default is a value every machine
+     * gets without anyone choosing it.
      *
      * @return array<string,string>
      */

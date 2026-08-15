@@ -194,14 +194,15 @@ final class Permissions
     }
 
     /**
-     * role ที่เห็นเว็บไซต์ของทุกคน ไม่ใช่เฉพาะของตัวเอง
+     * Roles that see every website, not only their own
      *
-     * ตรวจจาก role ตรง ๆ ไม่ใช่จาก permission เพราะ `site.view` มีทั้งสองฝั่ง —
-     * ผู้ดูแลเว็บไซต์ก็ "ดูเว็บไซต์" ได้ แต่เห็นเฉพาะของตัวเอง · สิ่งที่ต่างกันคือ
-     * **ขอบเขต** ซึ่งไม่มี permission ตัวไหนแทนได้
+     * Checked straight from the role, not from a permission, because `site.view` sits
+     * on both sides — a website admin also "views websites", just scoped to their own.
+     * What differs is **scope**, and no permission stands in for that.
      *
-     * ใช้ทั้งตอนกรองรายการฝั่งเว็บและตอนตรวจซ้ำฝั่ง agent — เขียนรายชื่อ role ไว้
-     * สองที่เมื่อไร วันหนึ่งจะมี role ใหม่ที่ผ่านด่านหนึ่งแต่ไม่ผ่านอีกด่าน
+     * Used both to filter the web-tier list and to re-check on the agent side — write
+     * the role list in two places and one day a new role will pass one gate but not
+     * the other.
      */
     public static function seesAllSites(string $role): bool
     {

@@ -225,10 +225,11 @@ final class Routes
         $router->add(new Route('GET', '/api/v2/security/scan', V2SecurityController::class, 'scan', 'security.view', 'api.v2.security.scan'));
 
         /*
-         * กันเดารหัสผ่านหน้าเข้าสู่ระบบ — อ่านด้วย security.view แก้ด้วย security.manage
+         * Login brute-force protection — read with security.view, changed with
+         * security.manage.
          *
-         * การปลดแบนเป็น security.manage เหมือนการตั้งค่า เพราะมันคือการยกเลิกผลของ
-         * มาตรการความปลอดภัย ไม่ใช่แค่การดู
+         * Unbanning takes security.manage too, same as changing settings, because it
+         * reverses the effect of a security measure — it isn't just viewing.
          */
         $router->add(new Route('GET', '/api/v2/security/protection', V2SecurityController::class, 'protection', 'security.view', 'api.v2.security.protection'));
         $router->add(new Route('GET', '/api/v2/security/protection/bans', V2SecurityController::class, 'protectionBans', 'security.view', 'api.v2.security.protection_bans'));

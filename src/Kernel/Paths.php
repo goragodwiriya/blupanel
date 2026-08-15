@@ -220,12 +220,13 @@ final class Paths
     }
 
     /**
-     * โปรแกรมช่วยของ panel ที่โปรแกรมอื่นบนเครื่องเรียกได้ — `bin/<ชื่อ>`
+     * A panel helper binary that other programs on the machine can call — `bin/<name>`
      *
-     * **ไม่ใช่ `/usr/local/bin`** · ตัวติดตั้งทำ symlink ไว้ที่นั่นให้แค่ `phpcp`
-     * ตัวเดียว ที่เหลืออยู่ในโฟลเดอร์ติดตั้ง · เดาเส้นทางผิดแล้วผู้เรียกจะล้มเหลว
-     * เงียบ ๆ (fail2ban ที่เรียก action ไม่เจอไฟล์ก็แค่บันทึกลง log ของตัวเอง
-     * แล้วเดินต่อ ผู้ดูแลจึงไม่มีทางรู้ว่าการแจ้งเตือนไม่เคยถูกส่งเลย)
+     * **Not `/usr/local/bin`** — the installer only symlinks `phpcp` itself there; the
+     * rest stay inside the install directory. Get the path wrong and the caller fails
+     * silently (fail2ban calling an action that can't find the file just logs it to
+     * its own log and moves on, so the admin has no way to know a notification was
+     * never sent at all).
      */
     public function binary(string $name): string
     {

@@ -381,15 +381,17 @@ final class SecurityScan implements Capability
     }
 
     /**
-     * มีอะไรหยุดคนที่กำลังเดารหัสผ่านอยู่จริงหรือเปล่า
+     * Is anything actually stopping someone who is guessing passwords right now?
      *
-     * ข้อบนนับว่ามีคนพยายามกี่ครั้ง ข้อนี้ตอบคำถามที่ต่างออกไปและสำคัญกว่า:
-     * **นับแล้วทำอะไรต่อ** · การล็อกบัญชีที่แอปมีอยู่กันได้ทีละบัญชี คนที่ไล่เดา
-     * รหัสของหลายชื่อสลับกันจึงไม่เคยชนเพดานของบัญชีไหนเลย และทุกครั้งที่ลอง
-     * ยังกิน worker ของ PHP-FPM ที่มีอยู่สี่ตัว
+     * The check above counts how many attempts happened. This one answers a
+     * different, more important question: **what happens after the count** — the
+     * app's built-in account lockout only stops one account at a time, so someone
+     * cycling through several usernames never hits any single account's ceiling, and
+     * every attempt still costs one of the four PHP-FPM workers.
      *
-     * ตรวจจาก fail2ban เอง ไม่ใช่จากค่าที่ตั้งไว้ — "ตั้งว่าเปิดแต่ jail ไม่ทำงาน"
-     * แย่กว่า "ปิดอยู่" เพราะผู้ดูแลเชื่อว่ามีการป้องกันแล้ว
+     * Checked against fail2ban itself, not the stored setting — "set to on but the
+     * jail isn't running" is worse than "off", because the admin believes they're
+     * protected.
      *
      * @return array<string,mixed>
      */
@@ -401,35 +403,35 @@ final class SecurityScan implements Capability
         if ($status['active']) {
             return $this->check(
                 'account.panel_jail',
-                'การกันเดารหัสผ่านหน้าเข้าสู่ระบบ',
+                'Login brute-force protection',
                 SecurityScore::PASS,
                 10,
                 $status['banned'] > 0
-                    ? sprintf('ทำงานอยู่ — กำลังแบน %d ที่อยู่', $status['banned'])
-                    : 'ทำงานอยู่',
+                    ? sprintf('Active — currently banning %d addresses', $status['banned'])
+                    : 'Active',
             );
         }
 
         if ($enabled) {
             return $this->check(
                 'account.panel_jail',
-                'การกันเดารหัสผ่านหน้าเข้าสู่ระบบ',
+                'Login brute-force protection',
                 SecurityScore::FAIL,
                 10,
-                'ตั้งไว้ว่าเปิด แต่ fail2ban ไม่ได้โหลด jail นี้ — ตอนนี้ไม่มีอะไรกันเลย',
-                'กดบันทึกในหน้าความปลอดภัยอีกครั้งเพื่อเขียนไฟล์ใหม่ '
-                . 'หรือตรวจด้วย `sudo fail2ban-client status ' . Fail2banManager::PANEL_LOGIN_JAIL . '`',
+                'Set to on, but fail2ban has not loaded this jail — nothing is protecting it right now',
+                'Save the form again on the security page to rewrite the file, '
+                . 'or check with `sudo fail2ban-client status ' . Fail2banManager::PANEL_LOGIN_JAIL . '`',
                 '/server/security',
             );
         }
 
         return $this->check(
             'account.panel_jail',
-            'การกันเดารหัสผ่านหน้าเข้าสู่ระบบ',
+            'Login brute-force protection',
             SecurityScore::WARN,
             10,
-            'ยังไม่ได้เปิด — การล็อกบัญชีในแอปกันได้ทีละบัญชี คนที่ไล่เดาหลายชื่อสลับกันจึงไม่ถูกกัน',
-            'เปิดในหน้าความปลอดภัย แล้วใส่ไอพีประจำของคุณไว้ในช่องยกเว้นกันแบนตัวเอง',
+            'Not turned on — the app\'s account lockout only stops one account at a time, so cycling through several usernames is never caught',
+            'Turn it on in the security page, and put your own IP in the exempt list first so you can\'t ban yourself',
             '/server/security',
         );
     }

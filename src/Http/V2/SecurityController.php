@@ -18,14 +18,29 @@ final class SecurityController extends ApiController
         $checks = $data['checks'] ?? [];
         unset($data['checks']);
 
-        // สีของป้ายมาจากฝั่งเซิร์ฟเวอร์ เทมเพลตจึงเขียน `pill-${status_tone}` ได้ตรง ๆ
-        $checks = array_map(static function (array $check): array {
+        /*
+         * Pill colour comes from the server, so the template can write
+         * `pill-${status_tone}` directly.
+         *
+         * Title/detail/advice are translated here rather than in SecurityScan itself,
+         * because a capability has no request context to know the caller's language.
+         * This is safe for checks not yet converted to English: `t()` returns any
+         * string unchanged when it finds no catalogue entry for it, and Thai text
+         * never matches an English key, so old Thai checks just pass through as-is.
+         */
+        $checks = array_map(function (array $check): array {
             $check['status_tone'] = match ($check['status'] ?? '') {
                 'pass' => 'ok',
                 'fail' => 'danger',
                 'warn' => 'warn',
                 default => 'muted',
             };
+            $check['title'] = $this->t((string) ($check['title'] ?? ''));
+            $check['detail'] = $this->t((string) ($check['detail'] ?? ''));
+
+            if (($check['advice'] ?? '') !== '') {
+                $check['advice'] = $this->t((string) $check['advice']);
+            }
 
             return $check;
         }, $checks);
