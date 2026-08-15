@@ -12,24 +12,39 @@ namespace Phpcp\Domain;
  * ความปลอดภัย: ไม่มีทางระบุ path เองได้เลย ผู้ใช้เลือกได้แค่ "คีย์" จากรายการนี้
  * ซึ่งตัดทั้ง path traversal และการอ่านไฟล์ตามใจชอบออกตั้งแต่ต้นทาง
  * ต่างจากการรับ path แล้วมาตรวจทีหลัง ซึ่งเป็นรูปแบบที่พลาดกันบ่อย
+ *
+ * **แหล่งมีสองชุด** — `all()` คือ log ระดับเครื่องซึ่งเป็นเส้นทางคงที่ ส่วน log ของ
+ * แต่ละเว็บไซต์อยู่ในบ้านของเจ้าของ เส้นทางจึงคำนวณจาก {@see \Phpcp\Domain\Site}
+ * ตอนใช้งาน ไม่ใช่เขียนตายตัวไว้ที่นี่ · สิ่งที่คงเดิมคือหลักการ: ผู้ใช้ส่ง "คีย์"
+ * มาเสมอ (`site:<id>:<ชนิด>`) ไม่เคยส่งเส้นทาง
  */
 final class LogCatalog
 {
+    /** สิทธิ์ที่ต้องมีจึงจะอ่าน log ของเว็บไซต์ได้ — ขอบเขตว่า "เว็บไหนบ้าง" แยกต่างหาก */
+    public const SITE_PERMISSION = 'log.view';
+
     /**
      * @return array<string,array{label:string,path:string,permission:string,format:string,group:string}>
      */
     public static function all(): array
     {
         return [
+            /*
+             * **สองรายการนี้ไม่ใช่ทราฟฟิกของลูกค้า** — vhost ทุกตัวที่ panel สร้างเขียน
+             * `CustomLog`/`ErrorLog` ลงบ้านของเจ้าของเว็บ (ดู `Site::accessLog()`)
+             * ไฟล์ระดับเครื่องจึงเหลือแต่คำขอที่ไม่ตรง vhost ไหนเลยกับข้อความระดับ
+             * เซิร์ฟเวอร์ · ป้ายเคยเขียนว่า "Access Log (Apache)" เฉย ๆ ซึ่งอ่านแล้ว
+             * เข้าใจว่าเป็นทราฟฟิกทั้งเครื่อง แล้วสรุปผิดว่า "ไม่มีใครเข้าเว็บเลย"
+             */
             'access' => [
-                'label' => 'Access Log (Apache)',
+                'label' => 'Access Log (คำขอที่ไม่เข้าเว็บไซต์ใด)',
                 'path' => '/var/log/apache2/access.log',
                 'permission' => 'log.view',
                 'format' => 'access',
                 'group' => 'เว็บเซิร์ฟเวอร์',
             ],
             'error' => [
-                'label' => 'Error Log (Apache)',
+                'label' => 'Error Log (ระดับเซิร์ฟเวอร์)',
                 'path' => '/var/log/apache2/error.log',
                 'permission' => 'log.view',
                 'format' => 'apache',
@@ -100,6 +115,54 @@ final class LogCatalog
     public static function has(string $key): bool
     {
         return array_key_exists($key, self::all());
+    }
+
+    /**
+     * log ที่แต่ละเว็บไซต์มีเป็นของตัวเอง — คีย์ → ป้ายและรูปแบบ
+     *
+     * `php` เป็นของ **บัญชี × เวอร์ชัน PHP** ไม่ใช่ของเว็บเดียว (pool ใช้ร่วมกันตั้งแต่
+     * migration 0006) เว็บพี่น้องของเจ้าของคนเดียวกันที่ใช้ PHP รุ่นเดียวกันจึงชี้ไป
+     * ไฟล์เดียวกัน · ป้ายบอกไว้ตรง ๆ ดีกว่าปล่อยให้งงว่าทำไม log ของเว็บ ก. มีของเว็บ ข.
+     *
+     * @return array<string,array{label:string,format:string}>
+     */
+    public static function siteKinds(): array
+    {
+        return [
+            'access' => ['label' => 'Access Log', 'format' => 'access'],
+            'error' => ['label' => 'Error Log', 'format' => 'apache'],
+            'php' => ['label' => 'PHP Error Log (ทั้งบัญชี)', 'format' => 'syslog'],
+        ];
+    }
+
+    /** คีย์ของ log รายเว็บ — รูปแบบเดียวที่ {@see self::parseSiteKey()} ยอมรับ */
+    public static function siteKey(int $siteId, string $kind): string
+    {
+        return 'site:'.$siteId.':'.$kind;
+    }
+
+    /**
+     * แกะคีย์ของ log รายเว็บ — คืน null ถ้าไม่ใช่รูปแบบนี้
+     *
+     * ชนกับคีย์ระดับเครื่องไม่ได้เลยเพราะคีย์เหล่านั้นถูกบังคับเป็น `^[a-z][a-z0-9_]+$`
+     * ซึ่งไม่มี `:` (มีเทสต์เฝ้าอยู่ใน tests/security/ServerBoundaryTest.php)
+     *
+     * **การแกะได้ไม่ได้แปลว่ามีเว็บนั้นอยู่จริงหรืออ่านได้** — ที่นี่ตรวจแค่รูปทรง
+     * ส่วนตัวตนกับสิทธิ์เป็นเรื่องของผู้เรียกซึ่งมีฐานข้อมูลอยู่ในมือ
+     *
+     * @return array{site_id:int,kind:string}|null
+     */
+    public static function parseSiteKey(string $key): ?array
+    {
+        if (preg_match('/^site:([1-9][0-9]{0,8}):([a-z]+)$/', $key, $matches) !== 1) {
+            return null;
+        }
+
+        if (!array_key_exists($matches[2], self::siteKinds())) {
+            return null;
+        }
+
+        return ['site_id' => (int) $matches[1], 'kind' => $matches[2]];
     }
 
     /** @return array{label:string,path:string,permission:string,format:string,group:string}|null */

@@ -7,8 +7,11 @@ namespace Phpcp\Agent\Capability;
 use Phpcp\Agent\Capability;
 use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
+use Phpcp\Agent\PermissionDenied;
 use Phpcp\Agent\ValidationError;
 use Phpcp\Domain\LogCatalog;
+use Phpcp\Domain\SiteRepository;
+use Phpcp\Security\Permissions;
 use Phpcp\Support\Validator;
 
 /**
@@ -17,6 +20,10 @@ use Phpcp\Support\Validator;
  * ความปลอดภัยที่สำคัญที่สุดของ capability นี้: ผู้ใช้ระบุ "คีย์" ไม่ใช่ "เส้นทางไฟล์"
  * เส้นทางจริงมาจาก LogCatalog ซึ่งเป็น allowlist ตายตัวในโค้ด
  * จึงไม่มีทางอ่านไฟล์นอกรายการได้เลย ไม่ว่าจะพยายาม traversal แบบไหน
+ *
+ * คีย์รูป `site:<id>:<ชนิด>` อ่าน log ของเว็บไซต์หนึ่งแห่ง เส้นทางมาจาก `Site` ซึ่ง
+ * คำนวณจากบ้านของเจ้าของ ผู้เรียกจึงยังระบุเส้นทางเองไม่ได้อยู่ดี — สิ่งเดียวที่เขา
+ * เลือกได้คือ **เลขเว็บ** ซึ่งถูกตรวจความเป็นเจ้าของซ้ำที่นี่อีกชั้น
  *
  * อ่านจากท้ายไฟล์ถอยขึ้นมา ไม่โหลดทั้งไฟล์เข้าหน่วยความจำ —
  * log ขนาดหลายกิกะไบต์จึงเปิดดูได้โดยไม่ทำให้เครื่องล่ม
@@ -55,7 +62,9 @@ final class LogTail implements Capability
     {
         $source = Validator::requireString($args, 'source', 32);
 
-        if (!LogCatalog::has($source)) {
+        // ตรวจได้แค่ "รูปทรงของคีย์" ที่นี่ — ชั้นนี้ไม่มีฐานข้อมูลให้ถามว่าเว็บมีจริงไหม
+        // และใครเป็นเจ้าของ · สองข้อนั้นตรวจใน run() ซึ่งมี Context
+        if (!LogCatalog::has($source) && LogCatalog::parseSiteKey($source) === null) {
             throw new ValidationError("ไม่รู้จักแหล่ง log: {$source}");
         }
 
@@ -82,23 +91,13 @@ final class LogTail implements Capability
 
     public function run(array $args, Executor $executor, Context $context): array
     {
-        $source = LogCatalog::get($args['source']);
-        // ตรวจ permission ของแหล่ง log ที่ละเอียดกว่าระดับ capability
-        // (audit log ต้องใช้ audit.view ไม่ใช่แค่ log.view)
-        if (!$context->actor->can($source['permission'])) {
-            throw new \Phpcp\Agent\PermissionDenied('คุณไม่มีสิทธิ์อ่าน log นี้');
-        }
-
-        // log ของ panel เองอยู่คนละที่ตาม layout จึงถามจาก Paths ไม่ใช่ใช้ค่าคงที่
-        // ส่วน log ของระบบใช้เส้นทางจาก catalog แล้วให้ executor แมปตามโหมด
-        $path = isset($source['panel_log'])
-            ? $context->config->paths->logFile($source['panel_log'])
-            : $executor->path($source['path']);
+        ['label' => $label, 'format' => $format, 'path' => $path]
+            = $this->resolve((string) $args['source'], $executor, $context);
 
         if (!$executor->exists($path)) {
             return [
                 'source' => $args['source'],
-                'label' => $source['label'],
+                'label' => $label,
                 'path' => $path,
                 'exists' => false,
                 'lines' => [],
@@ -113,15 +112,98 @@ final class LogTail implements Capability
 
         return [
             'source' => $args['source'],
-            'label' => $source['label'],
+            'label' => $label,
             'path' => $path,
-            'format' => $source['format'],
+            'format' => $format,
             'exists' => true,
             'lines' => $filtered,
             'total' => count($filtered),
             'scanned' => count($raw),
             'size_bytes' => (int) (@filesize($path) ?: 0),
             'read_at' => time(),
+        ];
+    }
+
+    /**
+     * แปลงคีย์เป็นเส้นทางไฟล์จริง พร้อมตรวจสิทธิ์ของแหล่งนั้น
+     *
+     * ทางเดียวที่คีย์กลายเป็นเส้นทางได้ — ทุกกรณีจบที่ค่าคงที่ในโค้ดหรือที่เส้นทาง
+     * ซึ่ง `Site` คำนวณจากโดเมนที่ผ่าน validator มาแล้ว ไม่มีสายไหนรับ path จากผู้เรียก
+     *
+     * @return array{label:string,format:string,path:string}
+     */
+    private function resolve(string $key, Executor $executor, Context $context): array
+    {
+        $siteRef = LogCatalog::parseSiteKey($key);
+
+        if ($siteRef !== null) {
+            return $this->siteLog($siteRef['site_id'], $siteRef['kind'], $executor, $context);
+        }
+
+        $source = LogCatalog::get($key);
+        // ตรวจ permission ของแหล่ง log ที่ละเอียดกว่าระดับ capability
+        // (audit log ต้องใช้ audit.view ไม่ใช่แค่ log.view)
+        if (!$context->actor->can($source['permission'])) {
+            throw new PermissionDenied('คุณไม่มีสิทธิ์อ่าน log นี้');
+        }
+
+        // log ของ panel เองอยู่คนละที่ตาม layout จึงถามจาก Paths ไม่ใช่ใช้ค่าคงที่
+        // ส่วน log ของระบบใช้เส้นทางจาก catalog แล้วให้ executor แมปตามโหมด
+        return [
+            'label' => $source['label'],
+            'format' => $source['format'],
+            'path' => isset($source['panel_log'])
+                ? $context->config->paths->logFile($source['panel_log'])
+                : $executor->path($source['path']),
+        ];
+    }
+
+    /**
+     * log ของเว็บไซต์หนึ่งแห่ง
+     *
+     * ตรวจความเป็นเจ้าของซ้ำที่ชั้นนี้แม้ web tier กรองรายการมาให้แล้ว — agent ต้อง
+     * ไม่เชื่อผู้เรียก · ถ้าข้ามด่านนี้ได้ ผู้ดูแลเว็บไซต์คนหนึ่งจะเดาเลข id แล้วอ่าน
+     * access log ของลูกค้ารายอื่นได้ทั้งเครื่อง ซึ่งมีทั้ง IP ผู้เข้าชมและ URL ที่เรียก
+     *
+     * @return array{label:string,format:string,path:string}
+     */
+    private function siteLog(int $siteId, string $kind, Executor $executor, Context $context): array
+    {
+        $actor = $context->actor;
+
+        if (!$actor->can(LogCatalog::SITE_PERMISSION)) {
+            throw new PermissionDenied('คุณไม่มีสิทธิ์อ่าน log นี้');
+        }
+
+        $sites = new SiteRepository($context->db);
+
+        if ($actor->userId !== 0
+            && !Permissions::seesAllSites($actor->role)
+            && !$sites->isOwnedBy($siteId, $actor->userId)) {
+            throw new PermissionDenied('คุณไม่มีสิทธิ์อ่าน log ของเว็บไซต์นี้');
+        }
+
+        $site = $sites->load($siteId);
+
+        if ($site === null) {
+            throw new ValidationError('ไม่พบเว็บไซต์ที่ระบุ');
+        }
+
+        $meta = LogCatalog::siteKinds()[$kind];
+
+        $path = match ($kind) {
+            'access' => $site->accessLog(),
+            'error' => $site->errorLog(),
+            'php' => $site->phpErrorLog(),
+            // ชนิดใหม่ใน siteKinds() ที่ยังไม่มีเส้นทางรองรับ — ล้มดังกว่าเงียบ
+            default => throw new ValidationError("ยังไม่รองรับ log ชนิด {$kind}"),
+        };
+
+        return [
+            'label' => $site->domain.' · '.$meta['label'],
+            'format' => $meta['format'],
+            // เส้นทางเป็นแบบ logical เสมอ — ให้ executor แมปเข้า prefix ของโหมด sandbox
+            'path' => $executor->path($path),
         ];
     }
 

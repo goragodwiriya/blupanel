@@ -227,6 +227,67 @@ test('แหล่ง log ถูกอ้างด้วยคีย์ ไม�
     }
 });
 
+test('รายการแหล่ง log มี log ของแต่ละเว็บไซต์ ไม่ใช่แค่ของระบบ', static function (): void {
+    /*
+     * vhost ทุกตัวเขียน log ลงบ้านของเจ้าของเว็บ · ถ้ารายการมีแต่ `/var/log/apache2`
+     * ผู้ดูแลจะเปิดดูทราฟฟิกของลูกค้าไม่ได้เลยสักราย แล้วสรุปผิดว่าเว็บไม่มีคนเข้า
+     */
+    $harness = serverLogin('srvadmin', 'Server-Admin-Pass-11');
+
+    $ownerId = $harness->createHostingUser('logowner', 'Log-Owner-Pass-44');
+    $now = time();
+
+    $siteId = $harness->app->db()->insert('sites', [
+        'primary_domain' => 'logtest.example.com',
+        'docroot' => '/srv/phpcp/users/logowner/domains/logtest.example.com/public',
+        'php_version' => '8.4',
+        'owner_user_id' => $ownerId,
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+
+    $sources = $harness->request('GET', '/api/v2/logs/sources');
+    assertSame(200, $sources->status, 'ต้องดูรายการแหล่ง log ได้');
+
+    $keys = array_column($sources->json['data'], 'key');
+    $byKey = array_column($sources->json['data'], null, 'key');
+
+    foreach (['access', 'error', 'php'] as $kind) {
+        $key = 'site:' . $siteId . ':' . $kind;
+
+        assertTrue(in_array($key, $keys, true), "รายการต้องมี log ชนิด {$kind} ของเว็บที่มีอยู่จริง");
+        assertTrue(
+            str_contains((string) $byKey[$key]['label'], 'logtest.example.com'),
+            'ป้ายต้องบอกว่าเป็น log ของเว็บไหน',
+        );
+        // `<select>` ยังวาด group ไม่ได้ ชื่อเจ้าของจึงต้องอยู่ในป้ายด้วย
+        assertTrue(
+            str_contains((string) $byKey[$key]['label'], 'logowner'),
+            'ป้ายต้องบอกว่าเป็น log ของลูกค้ารายไหน',
+        );
+        // จัดกลุ่มตามเจ้าของ — คำถามที่หน้านี้ต้องตอบคือ "เว็บของลูกค้ารายนี้เจออะไร"
+        assertTrue(
+            str_contains((string) $byKey[$key]['group'], 'logowner'),
+            'กลุ่มต้องบอกว่าเป็นของลูกค้ารายไหน',
+        );
+        assertTrue(!array_key_exists('path', $byKey[$key]), 'ต้องไม่ส่งเส้นทางไฟล์จริงออกไป');
+    }
+
+    // log ของระบบต้องยังอยู่ และต้องมาก่อน เพราะ tail() ใช้ตัวแรกเป็นค่าเริ่มต้น
+    assertSame('access', $keys[0], 'แหล่งระดับเครื่องต้องยังเป็นตัวแรกของรายการ');
+
+    $harness->app->db()->run('DELETE FROM sites WHERE id = :id', ['id' => $siteId]);
+});
+
+test('ผู้ดูแลเว็บไซต์ยังเข้ารายการแหล่ง log ไม่ได้เลย', static function (): void {
+    // การเพิ่ม log รายเว็บต้องไม่เผลอเปิดหมวด SERVER ให้ลูกค้าไปด้วย
+    $harness = serverLogin('srvweb', 'Server-Web-Pass-33');
+
+    foreach (['/api/v2/logs/sources', '/api/v2/logs'] as $path) {
+        assertSame(403, $harness->request('GET', $path)->status, "{$path} ต้องปิดสำหรับผู้ดูแลเว็บไซต์");
+    }
+});
+
 test('ทุกเส้นทางของ B3.4 ตอบ JSON และมีรูปร่างตามสัญญา', static function (): void {
     $harness = serverLogin('srvadmin', 'Server-Admin-Pass-11');
 

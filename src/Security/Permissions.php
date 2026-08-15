@@ -192,4 +192,19 @@ final class Permissions
     {
         return self::roleHas($role, 'server.view');
     }
+
+    /**
+     * role ที่เห็นเว็บไซต์ของทุกคน ไม่ใช่เฉพาะของตัวเอง
+     *
+     * ตรวจจาก role ตรง ๆ ไม่ใช่จาก permission เพราะ `site.view` มีทั้งสองฝั่ง —
+     * ผู้ดูแลเว็บไซต์ก็ "ดูเว็บไซต์" ได้ แต่เห็นเฉพาะของตัวเอง · สิ่งที่ต่างกันคือ
+     * **ขอบเขต** ซึ่งไม่มี permission ตัวไหนแทนได้
+     *
+     * ใช้ทั้งตอนกรองรายการฝั่งเว็บและตอนตรวจซ้ำฝั่ง agent — เขียนรายชื่อ role ไว้
+     * สองที่เมื่อไร วันหนึ่งจะมี role ใหม่ที่ผ่านด่านหนึ่งแต่ไม่ผ่านอีกด่าน
+     */
+    public static function seesAllSites(string $role): bool
+    {
+        return in_array($role, [self::SUPERADMIN, self::SYSADMIN], true);
+    }
 }

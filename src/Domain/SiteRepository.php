@@ -145,6 +145,37 @@ final class SiteRepository
     }
 
     /**
+     * รายการเว็บไซต์แบบย่อสำหรับทำตัวเลือกให้ผู้ใช้เลือก — id, โดเมน, ชื่อเจ้าของ
+     *
+     * เบากว่า {@see self::listWithCounts()} มากเพราะไม่มี subquery สักตัว · ใช้กับหน้าที่
+     * ต้องรู้แค่ "มีเว็บอะไรบ้าง ของใคร" และถูกเรียกบ่อย เช่นรายการแหล่ง log ซึ่ง
+     * ถูกสร้างใหม่ทุกครั้งที่มีการอ่าน log หนึ่งครั้ง
+     *
+     * เรียงตามเจ้าของก่อนโดเมน เพื่อให้เว็บของลูกค้ารายเดียวกันอยู่ติดกันในรายการ
+     *
+     * @param int|null $ownerId null = ทุกเจ้าของ
+     * @return list<array{id:int,domain:string,owner:string}>
+     */
+    public function listBrief(?int $ownerId = null): array
+    {
+        $where = $ownerId === null ? '' : ' WHERE s.owner_user_id = :owner';
+        $params = $ownerId === null ? [] : ['owner' => $ownerId];
+
+        $rows = $this->db->all(
+            'SELECT s.id, s.primary_domain, u.username AS owner_username
+             FROM sites s JOIN users u ON u.id = s.owner_user_id'.$where.'
+             ORDER BY u.username, s.primary_domain',
+            $params,
+        );
+
+        return array_map(static fn (array $row): array => [
+            'id' => (int) $row['id'],
+            'domain' => (string) $row['primary_domain'],
+            'owner' => (string) $row['owner_username'],
+        ], $rows);
+    }
+
+    /**
      * @param string $domain
      * @return mixed
      */

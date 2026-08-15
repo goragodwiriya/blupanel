@@ -138,8 +138,7 @@ abstract class SiteCapability implements Capability
     {
         $actor = $context->actor;
 
-        if ($actor->userId === 0
-            || in_array($actor->role, [Permissions::SUPERADMIN, Permissions::SYSADMIN], true)) {
+        if ($actor->userId === 0 || Permissions::seesAllSites($actor->role)) {
             return;
         }
 
