@@ -258,6 +258,61 @@
     };
   }
 
+  /**
+   * หน้า Logs — ผูก dropdown "รีเฟรชอัตโนมัติ" เข้ากับตัวจับเวลาของ TableManager
+   *
+   * การ poll ทั้งหมดเป็นของเฟรมเวิร์ก (`data-refresh-interval` / `setRefreshInterval`)
+   * ที่นี่เหลือแค่สองอย่างที่ประกาศด้วย data-attribute ไม่ได้: อ่านค่าจาก dropdown
+   * แล้วส่งต่อ กับเขียนเวลาที่ข้อมูลมาถึงล่าสุด
+   *
+   * **ไม่ใช้ SSE โดยตั้งใจ** — pool ของ panel มี `pm.max_children = 4` และสตรีมหนึ่งเส้น
+   * ยึด worker ไว้หนึ่งตัวจนหมดเวลา · แดชบอร์ดที่เปิดค้างกินไปแล้วหนึ่งตัว ถ้าหน้านี้
+   * กินอีกตัว ผู้ดูแลสองคนที่เปิดทั้งสองหน้าพร้อมกันจะทำให้ panel ค้างทั้งระบบ
+   * ส่วนการ poll เป็นคำขอสั้น ๆ ที่คืน worker ทุกครั้ง
+   *
+   * ค่าเริ่มต้นคือปิด — หน้าที่รีเฟรชเองโดยไม่มีใครสั่งคือหน้าที่อ่านยากตอนกำลังไล่ปัญหา
+   */
+  window.pageLogs = function(root) {
+    const picker = root.querySelector('[data-log-refresh]');
+    const stamp = root.querySelector('[data-log-updated]');
+
+    if (!picker) return () => {};
+
+    const onChange = () => {
+      const seconds = Number(picker.value) || 0;
+
+      window.TableManager.setRefreshInterval('logLines', seconds);
+
+      // ปิดแล้วต้องเอาเวลาออกด้วย ไม่งั้นเวลาที่ค้างอยู่จะอ่านเหมือนว่ายังรีเฟรชอยู่
+      if (stamp && seconds === 0) {
+        stamp.hidden = true;
+        stamp.textContent = '';
+      }
+    };
+
+    // บอกเวลาที่ข้อมูลมาถึงจริง — ไม่มีบรรทัดนี้ "log ไม่มีบรรทัดใหม่" กับ
+    // "การรีเฟรชตายไปแล้ว" จะหน้าตาเหมือนกันทุกประการ ซึ่งเป็นสองอย่างที่ต่างกันมาก
+    // ตอนกำลังนั่งดูว่ามีใครยิงเว็บอยู่หรือเปล่า
+    const onRefreshed = (event) => {
+      if (!stamp || event?.detail?.tableId !== 'logLines') return;
+
+      stamp.hidden = false;
+      stamp.textContent = t('Updated') + ' ' + new Date().toLocaleTimeString();
+    };
+
+    picker.addEventListener('change', onChange);
+    window.EventManager.on('table:refreshed', onRefreshed);
+
+    return () => {
+      picker.removeEventListener('change', onChange);
+      window.EventManager.off('table:refreshed', onRefreshed);
+
+      // ออกจากหน้าไปแล้วต้องไม่มีคำขอตามหลังไป · destroyTable() ของเฟรมเวิร์ก
+      // หยุดให้อยู่แล้ว แต่ลำดับการถอดหน้ากับการถอดตารางไม่ได้รับประกันไว้
+      window.TableManager.setRefreshInterval('logLines', 0);
+    };
+  };
+
   window.pageServer = function(root) {
     // EventSource ใช้ตรง ๆ ไม่ผ่าน Now.js ตามที่แผนระบุ (C4) — คุกกี้ session ติดไปเอง
     // เพราะเป็น origin เดียวกัน และเบราว์เซอร์ต่อกลับให้อัตโนมัติเมื่อหลุด

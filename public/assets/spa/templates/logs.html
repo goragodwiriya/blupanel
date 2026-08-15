@@ -3,12 +3,29 @@
   <header data-component="topbar"></header>
   <div data-component="mode-banner"></div>
   <div data-component="rollback-bar"></div>
-  <main class="content">
+  <main class="content" data-script="pageLogs">
     <div class="card-groups">
       <header>
         <div>
           <h1 class="icon-list" data-i18n>Logs</h1>
           <p data-i18n>Read the tail of any log source this account may see</p>
+        </div>
+        <!--
+          Sits outside `data-table-filter` on purpose: TableManager registers every
+          input inside that form as a filter, keyed by name *or id*, and would send
+          this control's value to /api/v2/logs as a query parameter.
+        -->
+        <div class="table_nav">
+          <label for="log_refresh" data-i18n>Auto refresh</label>
+          <span class="form-control icon-refresh">
+            <select id="log_refresh" data-log-refresh>
+              <option value="0" data-i18n>Off</option>
+              <option value="5" data-i18n>5 {LNG_seconds}</option>
+              <option value="10" data-i18n>10 {LNG_seconds}</option>
+              <option value="30" data-i18n>30 {LNG_seconds}</option>
+            </select>
+          </span>
+          <span class="text-muted" data-log-updated hidden></span>
         </div>
       </header>
       <div class="content-body">
