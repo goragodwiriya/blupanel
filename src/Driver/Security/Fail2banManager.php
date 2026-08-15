@@ -38,6 +38,15 @@ final class Fail2banManager
     /** นำหน้าทุกไฟล์ที่ panel เป็นเจ้าของ — กันไม่ให้แตะ jail ที่ผู้ดูแลเขียนเอง */
     private const PREFIX = 'phpcp-';
 
+    /**
+     * jail ของหน้าเข้าสู่ระบบของ panel เอง — หนึ่งตัวต่อเครื่อง ไม่ผูกกับเว็บไซต์ใด
+     *
+     * ต่างจาก jail รายเว็บตรงที่อ่าน **audit log** ไม่ใช่ access log · การล็อกอินผิด
+     * ถูกบันทึกลงตาราง `audit_log` ซึ่ง fail2ban อ่านไม่ได้ แต่ {@see \Phpcp\Security\AuditLog}
+     * เขียนสำเนาเป็น JSON บรรทัดละเหตุการณ์ไว้ด้วย — นั่นคือไฟล์ที่ jail นี้เฝ้า
+     */
+    public const PANEL_LOGIN_JAIL = self::PREFIX . 'panel-login';
+
     /** ยกเว้นเสมอ ไม่ว่าผู้ใช้จะกรอกอะไร — เหตุผลอยู่ที่ {@see jailContent()} */
     private const LOCAL_IPS = '127.0.0.1/8 ::1';
 
@@ -105,6 +114,55 @@ final class Fail2banManager
     }
 
     /**
+     * เปิดหรือปรับค่าการกันเดารหัสผ่านของหน้าเข้าสู่ระบบของ panel
+     *
+     * **ทำไมต้องมีทั้งที่มีการล็อกบัญชีในแอปอยู่แล้ว** — การล็อกบัญชีกันได้แค่บัญชีเดียว
+     * ต่อครั้ง คนที่ไล่เดารหัสผ่านของ `admin`, `root`, `administrator` สลับกันไปจึงไม่เคย
+     * ถูกกันเลย และทุกครั้งที่ลองยังกิน worker ของ PHP-FPM ที่มีอยู่แค่สี่ตัว · การแบน
+     * ที่ firewall ตัดตั้งแต่ก่อนถึง PHP
+     *
+     * @param string $auditLogPath สำเนา audit log แบบข้อความ ({@see \Phpcp\Kernel\Paths::logFile()})
+     * @param array{max_retry:int,find_seconds:int,ban_seconds:int,ignore_ips:string} $settings
+     */
+    public function applyPanelLogin(string $auditLogPath, array $settings): void
+    {
+        $this->assertRunning();
+
+        $tx = new ConfigTransaction($this->executor);
+        $tx->write($this->filterPath(self::PANEL_LOGIN_JAIL), $this->panelLoginFilter(), 0644);
+        $tx->write($this->jailPath(self::PANEL_LOGIN_JAIL), $this->panelLoginJail($auditLogPath, $settings), 0644);
+
+        $tx->commit(function (): array {
+            $test = $this->executor->exec([$this->client(), '-t'], timeout: 30);
+
+            return [
+                $test->ok(),
+                "การตรวจ config ของ fail2ban ไม่ผ่าน (ตรวจทั้งเครื่อง ไม่ใช่เฉพาะไฟล์นี้)\n\n"
+                . trim($test->stderr ?: $test->output()),
+            ];
+        });
+
+        $this->reload();
+    }
+
+    /** ปิดการกันเดารหัสผ่านของหน้าเข้าสู่ระบบ */
+    public function removePanelLogin(): void
+    {
+        if (!$this->executor->exists($this->executor->path($this->jailPath(self::PANEL_LOGIN_JAIL)))) {
+            return;
+        }
+
+        $this->assertRunning();
+
+        $tx = new ConfigTransaction($this->executor);
+        $tx->delete($this->jailPath(self::PANEL_LOGIN_JAIL));
+        $tx->delete($this->filterPath(self::PANEL_LOGIN_JAIL));
+        $tx->commitWithoutValidation();
+
+        $this->reload();
+    }
+
+    /**
      * สถานะจริงจาก fail2ban — จำนวน IP ที่ถูกแบนอยู่ตอนนี้
      *
      * อ่านจากตัว fail2ban เอง ไม่ใช่จากฐานข้อมูลของ panel เพราะสองอย่างนี้ไม่ตรงกันได้:
@@ -115,7 +173,17 @@ final class Fail2banManager
      */
     public function status(Site $site): array
     {
-        $result = $this->executor->exec([$this->client(), 'status', $this->jailName($site)], timeout: 15);
+        return $this->statusOf($this->jailName($site));
+    }
+
+    /**
+     * สถานะของ jail ที่ระบุด้วยชื่อ — ตัวเดียวกับ {@see self::status()} แต่ไม่ผูกกับเว็บไซต์
+     *
+     * @return array{active:bool,banned:int,total_banned:int,failed:int}
+     */
+    public function statusOf(string $jail): array
+    {
+        $result = $this->executor->exec([$this->client(), 'status', $jail], timeout: 15);
 
         if (!$result->ok()) {
             // jail ไม่มีอยู่ = ยังไม่ได้เปิด ไม่ใช่ error
@@ -141,10 +209,16 @@ final class Fail2banManager
      */
     public function unban(Site $site, string $ip): void
     {
+        $this->unbanFrom($this->jailName($site), $ip);
+    }
+
+    /** ปลดแบน IP หนึ่งจาก jail ที่ระบุด้วยชื่อ */
+    public function unbanFrom(string $jail, string $ip): void
+    {
         $this->assertIp($ip);
 
         $result = $this->executor->exec(
-            [$this->client(), 'set', $this->jailName($site), 'unbanip', $ip],
+            [$this->client(), 'set', $jail, 'unbanip', $ip],
             timeout: 15,
         );
 
@@ -156,8 +230,14 @@ final class Fail2banManager
     /** @return list<string> IP ที่ถูกแบนอยู่ตอนนี้ */
     public function bannedIps(Site $site): array
     {
+        return $this->bannedIpsOf($this->jailName($site));
+    }
+
+    /** @return list<string> IP ที่ถูกแบนอยู่ตอนนี้ใน jail ที่ระบุด้วยชื่อ */
+    public function bannedIpsOf(string $jail): array
+    {
         $result = $this->executor->exec(
-            [$this->client(), 'get', $this->jailName($site), 'banip'],
+            [$this->client(), 'get', $jail, 'banip'],
             timeout: 15,
         );
 
@@ -259,6 +339,89 @@ final class Fail2banManager
             $settings['window_seconds'],
             $settings['max_requests'],
             $settings['window_seconds'],
+            $settings['ban_seconds'],
+            $ignore === '' ? '' : 'ignoreip = ' . $ignore,
+        ) . "\n";
+    }
+
+    /**
+     * เนื้อไฟล์ filter ของหน้าเข้าสู่ระบบ — จับเฉพาะการยืนยันตัวตนที่ **ล้มเหลว**
+     *
+     * ต่างจาก filter รายเว็บที่นับทุกคำขอ · ที่นี่คนที่ล็อกอินถูกไม่ควรถูกนับเลย
+     *
+     * ### ทำไม regex ถึงยึดกับ `"user_id":\d+,"ip":"` ไม่ใช่ `"ip":"` เฉย ๆ
+     *
+     * `actor` ในบรรทัดเดียวกันคือ**ชื่อผู้ใช้ที่คนยิงพิมพ์เข้ามาเอง** คนที่รู้ว่า
+     * ระบบอ่าน log นี้จะตั้งชื่อผู้ใช้เป็น `evil","ip":"9.9.9.9` เพื่อให้ fail2ban
+     * ไปแบน IP ของคนอื่นแทนตัวเอง · `json_encode` หนีเครื่องหมายคำพูดให้เป็น `\"`
+     * ทำให้ข้อความปลอมไม่ตรงกับ `"ip":"` อยู่แล้ว แต่การยึดกับ `user_id` ซึ่งเป็น
+     * **จำนวนเต็มดิบ** ที่ปลอมไม่ได้เลย ทำให้ไม่ต้องพึ่งรายละเอียดการหนีอักขระ
+     *
+     * พิสูจน์ด้วย `fail2ban-regex` บนเครื่องจริงแล้วว่าบรรทัดที่พยายามปลอมให้ผลเป็น
+     * IP จริงของผู้ยิง ไม่ใช่ IP ที่ใส่มาในชื่อผู้ใช้
+     *
+     * `action` กับ `result` อยู่**หลัง** `ip` เสมอตามลำดับคีย์ที่ `AuditLog::mirror()`
+     * เขียน — ลำดับนี้จึงเป็นส่วนหนึ่งของสัญญา ไม่ใช่เรื่องบังเอิญ
+     */
+    private function panelLoginFilter(): string
+    {
+        return <<<'CONF'
+            # สร้างโดย phpcp — ห้ามแก้ด้วยมือ ไฟล์นี้ถูกเขียนทับทุกครั้งที่บันทึกค่าจากหน้าเว็บ
+            #
+            # จับการเข้าสู่ระบบและการยืนยันสองขั้นตอนที่ล้มเหลว จากสำเนา audit log แบบ JSON
+            # ยึดกับ "user_id":<เลข>,"ip":" เพราะเลขนั้นปลอมผ่านชื่อผู้ใช้ไม่ได้
+            [Definition]
+            failregex = "user_id":\d+,"ip":"<HOST>",.*"action":"auth\.(?:login|2fa)",.*"result":"denied"
+            ignoreregex =
+            # ระบุไว้ทั้งที่ค่าเริ่มต้นก็คือ auto — ไม่งั้น fail2ban เตือนทุกครั้งที่ reload
+            # ว่า "'allowipv6' not defined" จน journal เต็มไปด้วยข้อความเดียวซ้ำ ๆ
+            allowipv6 = auto
+            datepattern = ^\{"ts":"({DATE})
+                          {^LN-BEG}
+            CONF . "\n";
+    }
+
+    /**
+     * เนื้อไฟล์ jail ของหน้าเข้าสู่ระบบ
+     *
+     * @param array{max_retry:int,find_seconds:int,ban_seconds:int,ignore_ips:string} $settings
+     */
+    private function panelLoginJail(string $auditLogPath, array $settings): string
+    {
+        $ignore = trim(self::LOCAL_IPS . ' ' . trim($settings['ignore_ips']));
+
+        return sprintf(
+            <<<'CONF'
+                # สร้างโดย phpcp สำหรับหน้าเข้าสู่ระบบของ panel — ห้ามแก้ด้วยมือ
+                #
+                # **การแบนตัดขาดทุกพอร์ต รวมถึงพอร์ตของ panel เอง** — ผู้ดูแลที่พิมพ์รหัสผ่าน
+                # ผิดเกินเกณฑ์จะเข้าหน้าจัดการไม่ได้จนกว่าจะครบเวลาแบน · ถ้าโดนเอง ให้เข้า
+                # เครื่องทาง SSH แล้วสั่ง:
+                #   sudo fail2ban-client set %s unbanip <ไอพี>
+                # และใส่ไอพีประจำของตัวเองไว้ในช่อง "IP ที่ยกเว้น" กันไม่ให้เกิดซ้ำ
+                [%s]
+                enabled  = true
+                filter   = %s
+                # ต้องระบุเอง — Debian/Ubuntu ตั้ง backend = systemd ไว้ใน [DEFAULT] ซึ่งทำให้
+                # fail2ban อ่าน journal แล้วเมิน logpath ทั้งบรรทัด · jail จะดูเหมือนทำงานปกติ
+                # แต่ไม่นับอะไรเลยและไม่มีอะไรฟ้อง
+                backend  = auto
+                logpath  = %s
+                # ล็อกอินผิด %d ครั้งภายใน %d วินาที = ถูกแบน
+                maxretry = %d
+                findtime = %d
+                bantime  = %d
+                action   = %%(action_)s
+                %s
+                CONF,
+            self::PANEL_LOGIN_JAIL,
+            self::PANEL_LOGIN_JAIL,
+            self::PANEL_LOGIN_JAIL,
+            $auditLogPath,
+            $settings['max_retry'],
+            $settings['find_seconds'],
+            $settings['max_retry'],
+            $settings['find_seconds'],
             $settings['ban_seconds'],
             $ignore === '' ? '' : 'ignoreip = ' . $ignore,
         ) . "\n";

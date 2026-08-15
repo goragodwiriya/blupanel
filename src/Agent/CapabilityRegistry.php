@@ -69,6 +69,9 @@ use Phpcp\Agent\Capability\ServiceReload;
 use Phpcp\Agent\Capability\ServiceRestart;
 use Phpcp\Agent\Capability\ServiceStart;
 use Phpcp\Agent\Capability\SecurityScan;
+use Phpcp\Agent\Capability\PanelJailSet;
+use Phpcp\Agent\Capability\PanelJailStatus;
+use Phpcp\Agent\Capability\PanelJailUnban;
 use Phpcp\Agent\Capability\ServiceStatus;
 use Phpcp\Agent\Capability\ServiceStop;
 use Phpcp\Agent\Capability\SiteAddDomain;
@@ -158,6 +161,7 @@ final class CapabilityRegistry
             FirewallStatus::class,
             SslList::class,
             SecurityScan::class,
+            PanelJailStatus::class,
             SettingsGet::class,
 
             // งานวัดผลตามเวลาของ scheduler — ไม่แตะเครื่อง เขียนแค่ตารางแคชของ panel
@@ -172,6 +176,8 @@ final class CapabilityRegistry
             ServiceStop::class,
             ServiceRestart::class,
             ServiceReload::class,
+            PanelJailSet::class,
+            PanelJailUnban::class,
 
             // Hosting — สร้างและจัดการเว็บไซต์
             SiteCreate::class,

@@ -168,12 +168,31 @@ test('ต้องยืนยันว่า fail2ban ทำงานอยู�
     assertTrue(str_contains($source, 'assertRunning'), 'ต้องมีด่านตรวจว่าบริการทำงานอยู่');
     assertTrue(str_contains($source, "'ping'"), 'ต้องถาม fail2ban ว่ายังตอบไหม');
 
-    // ต้องถูกเรียกทั้งตอนเปิดและตอนปิด
-    assertSame(
-        2,
-        preg_match_all('/\$this->assertRunning\(\);/', $source),
-        'ต้องเรียกทั้งใน apply() และ remove()',
-    );
+    /*
+     * **นับ "เมธอดไหนตรวจบ้าง" ไม่ใช่ "ตรวจกี่ครั้ง"**
+     *
+     * เดิมยืนยันว่าเจอ `$this->assertRunning();` พอดี 2 ครั้ง ซึ่งพังทันทีที่มี jail
+     * ชนิดที่สองเข้ามา (panel-login) ทั้งที่ของใหม่ก็ตรวจครบเหมือนกัน · เทสต์ที่ผูก
+     * กับจำนวนบรรทัดแบบนั้นบังคับให้คนแก้ตัวเลขตามโดยไม่ได้อ่านว่ามันควรตรวจอะไร
+     *
+     * ทุกเมธอดสาธารณะที่**เขียนไฟล์ jail** ต้องตรวจก่อน ไม่งั้นจะเขียนไฟล์สำเร็จแล้ว
+     * รายงานว่าเปิดป้องกันแล้วทั้งที่ fail2ban ไม่ได้ทำงานอยู่
+     */
+    $mustGuard = ['apply', 'remove', 'applyPanelLogin', 'removePanelLogin'];
+
+    foreach ($mustGuard as $method) {
+        $start = strpos($source, 'public function ' . $method . '(');
+        assertTrue($start !== false, "ต้องมีเมธอด {$method}()");
+
+        // ตัดเอาเฉพาะตัวเมธอดนั้น — เมธอดถัดไปเริ่มที่ `    public function` หรือ `    /**`
+        $next = strpos($source, "\n    public function ", $start + 1);
+        $body = substr($source, $start, $next === false ? null : $next - $start);
+
+        assertTrue(
+            str_contains($body, '$this->assertRunning();'),
+            "{$method}() ต้องตรวจว่า fail2ban ทำงานอยู่ก่อนแตะไฟล์",
+        );
+    }
 });
 
 test('ฐานข้อมูลต้องถูกเขียนหลังไฟล์สำเร็จเสมอ', static function (): void {

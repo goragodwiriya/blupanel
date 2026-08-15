@@ -2476,6 +2476,95 @@ paths:
         "403": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
 
+  /security/panel-jail:
+    get:
+      tags: [server]
+      summary: สถานะการกันเดารหัสผ่านหน้าเข้าสู่ระบบ
+      description: |
+        การล็อกบัญชีในแอปกันได้ทีละบัญชี คนที่ไล่เดารหัสของ `admin`, `root`,
+        `administrator` สลับกันไปจึงไม่เคยชนเพดานของบัญชีไหนเลย · jail นี้อ่านสำเนา
+        audit log แล้วสั่ง fail2ban แบนที่ firewall ซึ่งตัดตั้งแต่ก่อนถึง PHP
+
+        **ตอบจาก fail2ban เป็นหลัก ไม่ใช่จากค่าที่บันทึกไว้** — `drifted` เป็น true
+        เมื่อค่าบอกว่าเปิดแต่ fail2ban ไม่รู้จัก jail นี้ ซึ่งแปลว่าการป้องกันที่
+        หน้าจอโฆษณาไว้ไม่มีอยู่จริง
+      responses:
+        "200":
+          description: ค่าที่ตั้งไว้ สถานะจริงจาก fail2ban และรายการ IP ที่ถูกแบนอยู่
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      enabled: { type: boolean, description: ค่าที่ผู้ดูแลตั้งไว้ }
+                      active: { type: boolean, description: fail2ban โหลด jail นี้อยู่จริงหรือไม่ }
+                      drifted: { type: boolean, description: ตั้งว่าเปิดแต่ไม่ได้ทำงานจริง }
+                      jail: { type: string }
+                      max_retry: { type: integer }
+                      find_seconds: { type: integer }
+                      ban_seconds: { type: integer }
+                      ignore_ips: { type: string }
+                      banned: { type: integer }
+                      total_banned: { type: integer }
+                      failed: { type: integer }
+                      banned_ips: { type: array, items: { type: string } }
+        "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [server]
+      summary: เปิด/ปิดการกันเดารหัสผ่าน
+      description: |
+        **การแบนตัดขาดทุกพอร์ต รวมถึงพอร์ตของ panel เอง** — ผู้ดูแลที่พิมพ์รหัสผิด
+        เกินเกณฑ์จะเข้าหน้าจัดการไม่ได้จนกว่าจะครบเวลาแบน · ใส่ไอพีประจำไว้ใน
+        `ignore_ips` และดู `POST /security/panel-jail/unban` เป็นทางออก
+
+        เขียนไฟล์ jail ผ่านตัวตรวจของ fail2ban ก่อนบันทึกค่าเสมอ — ล้มเหลวแล้วจะไม่มี
+        ค่าที่บอกว่า "เปิดอยู่" ค้างไว้
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+                max_retry: { type: integer, minimum: 3, maximum: 100, default: 10 }
+                find_seconds: { type: integer, minimum: 60, maximum: 86400, default: 600 }
+                ban_seconds: { type: integer, minimum: 60, maximum: 604800, default: 1800 }
+                ignore_ips: { type: string, description: IP หรือ CIDR คั่นด้วยช่องว่าง }
+      responses:
+        "200": { $ref: "#/components/responses/Done" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /security/panel-jail/unban:
+    post:
+      tags: [server]
+      summary: ปลดแบน IP จากการกันเดารหัสผ่าน
+      description: |
+        ทางออกฉุกเฉินของฟีเจอร์ที่แบนได้ทั้งเครื่อง · ผู้ดูแลที่แบนตัวเองแล้วยังมี
+        เครือข่ายอื่นอยู่ต้องปลดได้จากหน้าจอ ไม่ต้องหา SSH ให้ได้ก่อน
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ip]
+              properties:
+                ip: { type: string, description: IPv4 หรือ IPv6 }
+      responses:
+        "200": { $ref: "#/components/responses/Done" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
   /metrics:
     get:
       tags: [server]

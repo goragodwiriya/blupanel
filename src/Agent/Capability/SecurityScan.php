@@ -8,9 +8,11 @@ use Phpcp\Agent\Capability;
 use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Domain\SecurityScore;
+use Phpcp\Domain\SettingsRepository;
 use Phpcp\Domain\ServiceCatalog;
 use Phpcp\Domain\SiteRepository;
 use Phpcp\Driver\Firewall\UfwDriver;
+use Phpcp\Driver\Security\Fail2banManager;
 use Phpcp\Driver\Ssl\CertbotManager;
 use Phpcp\Driver\SshManager;
 
@@ -59,7 +61,7 @@ final class SecurityScan implements Capability
             ...$this->firewallChecks($executor, $context),
             ...$this->sshChecks($executor),
             ...$this->sslChecks($executor, $context),
-            ...$this->accountChecks($context),
+            ...$this->accountChecks($executor, $context),
             ...$this->phpChecks($context),
             ...$this->fileChecks($executor, $context),
         ];
@@ -315,7 +317,7 @@ final class SecurityScan implements Capability
     }
 
     /** @return list<array<string,mixed>> */
-    private function accountChecks(Context $context): array
+    private function accountChecks(Executor $executor, Context $context): array
     {
         $total = (int) $context->db->value('SELECT count(*) FROM users WHERE status = :s', ['s' => 'active'], 0);
         $with2fa = (int) $context->db->value(
@@ -373,7 +375,63 @@ final class SecurityScan implements Capability
             ),
         };
 
+        $checks[] = $this->panelJailCheck($executor, $context);
+
         return $checks;
+    }
+
+    /**
+     * มีอะไรหยุดคนที่กำลังเดารหัสผ่านอยู่จริงหรือเปล่า
+     *
+     * ข้อบนนับว่ามีคนพยายามกี่ครั้ง ข้อนี้ตอบคำถามที่ต่างออกไปและสำคัญกว่า:
+     * **นับแล้วทำอะไรต่อ** · การล็อกบัญชีที่แอปมีอยู่กันได้ทีละบัญชี คนที่ไล่เดา
+     * รหัสของหลายชื่อสลับกันจึงไม่เคยชนเพดานของบัญชีไหนเลย และทุกครั้งที่ลอง
+     * ยังกิน worker ของ PHP-FPM ที่มีอยู่สี่ตัว
+     *
+     * ตรวจจาก fail2ban เอง ไม่ใช่จากค่าที่ตั้งไว้ — "ตั้งว่าเปิดแต่ jail ไม่ทำงาน"
+     * แย่กว่า "ปิดอยู่" เพราะผู้ดูแลเชื่อว่ามีการป้องกันแล้ว
+     *
+     * @return array<string,mixed>
+     */
+    private function panelJailCheck(Executor $executor, Context $context): array
+    {
+        $enabled = (new SettingsRepository($context->db))->bool('security.panel_jail.enabled');
+        $status = (new Fail2banManager($executor))->statusOf(Fail2banManager::PANEL_LOGIN_JAIL);
+
+        if ($status['active']) {
+            return $this->check(
+                'account.panel_jail',
+                'การกันเดารหัสผ่านหน้าเข้าสู่ระบบ',
+                SecurityScore::PASS,
+                10,
+                $status['banned'] > 0
+                    ? sprintf('ทำงานอยู่ — กำลังแบน %d ที่อยู่', $status['banned'])
+                    : 'ทำงานอยู่',
+            );
+        }
+
+        if ($enabled) {
+            return $this->check(
+                'account.panel_jail',
+                'การกันเดารหัสผ่านหน้าเข้าสู่ระบบ',
+                SecurityScore::FAIL,
+                10,
+                'ตั้งไว้ว่าเปิด แต่ fail2ban ไม่ได้โหลด jail นี้ — ตอนนี้ไม่มีอะไรกันเลย',
+                'กดบันทึกในหน้าความปลอดภัยอีกครั้งเพื่อเขียนไฟล์ใหม่ '
+                . 'หรือตรวจด้วย `sudo fail2ban-client status ' . Fail2banManager::PANEL_LOGIN_JAIL . '`',
+                '/server/security',
+            );
+        }
+
+        return $this->check(
+            'account.panel_jail',
+            'การกันเดารหัสผ่านหน้าเข้าสู่ระบบ',
+            SecurityScore::WARN,
+            10,
+            'ยังไม่ได้เปิด — การล็อกบัญชีในแอปกันได้ทีละบัญชี คนที่ไล่เดาหลายชื่อสลับกันจึงไม่ถูกกัน',
+            'เปิดในหน้าความปลอดภัย แล้วใส่ไอพีประจำของคุณไว้ในช่องยกเว้นกันแบนตัวเอง',
+            '/server/security',
+        );
     }
 
     /** @return list<array<string,mixed>> */

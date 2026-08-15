@@ -102,10 +102,41 @@ final class SettingsRepository
          * ย้ายเป็นรายคน ซึ่งเป็นคำสั่งที่แตะไฟล์จริงจึงต้องตั้งใจกดเอง
          */
         'sites.layout' => 'string',
+
+        /*
+         * กันเดารหัสผ่านหน้าเข้าสู่ระบบของ panel — บังคับใช้ด้วย fail2ban
+         *
+         * **แก้ผ่านฟอร์มตั้งค่าทั่วไปไม่ได้เหมือน `webserver.*`** — การเปลี่ยนค่าเหล่านี้
+         * ต้องเขียนไฟล์ jail ผ่านตัวตรวจของ fail2ban แล้ว reload · ถ้าเขียนตรงเข้าตาราง
+         * ได้ ค่าจะเปลี่ยนโดยไฟล์บนเครื่องไม่เปลี่ยนตาม แล้วหน้าจอจะรายงานการป้องกัน
+         * ที่ไม่มีอยู่จริง · เขียนได้ที่ `security.panel_jail_set` เท่านั้น
+         */
+        'security.panel_jail.enabled' => 'bool',
+        'security.panel_jail.max_retry' => 'int',
+        'security.panel_jail.find_seconds' => 'int',
+        'security.panel_jail.ban_seconds' => 'int',
+        'security.panel_jail.ignore_ips' => 'string',
     ];
 
     /** ค่าเริ่มต้นเมื่อยังไม่เคยตั้ง */
     private const DEFAULTS = [
+        /*
+         * ปิดไว้ก่อน แล้วให้ `security.scan` เป็นคนบอกว่าควรเปิด
+         *
+         * การเปิดให้เองตอนอัปเดตแปลว่าเครื่องที่กำลังใช้งานอยู่จู่ ๆ ก็เริ่มแบนที่ firewall
+         * ได้โดยที่เจ้าของยังไม่รู้ว่ามีของนี้ · ผู้ดูแลที่พิมพ์รหัสผิดจะเข้าหน้าจัดการ
+         * ไม่ได้ทั้งที่ไม่เคยเลือกเปิด — ต้องเป็นการกดเอง
+         *
+         * ค่าเริ่มต้นตั้งให้ "กันคนไล่เดา แต่ไม่กันคนที่จำรหัสตัวเองไม่ได้": ผิด 10 ครั้ง
+         * ใน 10 นาที แล้วแบนครึ่งชั่วโมง — คนพิมพ์ผิดเองแทบไม่มีทางถึง ส่วนเครื่องมือ
+         * ไล่เดาถึงภายในไม่กี่วินาที
+         */
+        'security.panel_jail.enabled' => '0',
+        'security.panel_jail.max_retry' => '10',
+        'security.panel_jail.find_seconds' => '600',
+        'security.panel_jail.ban_seconds' => '1800',
+        'security.panel_jail.ignore_ips' => '',
+
         'notify.telegram.enabled' => '0',
         'notify.telegram.token' => '',
         'notify.telegram.chat_id' => '',
@@ -157,6 +188,10 @@ final class SettingsRepository
         return array_filter(
             self::keys(),
             static fn (string $key): bool => !str_starts_with($key, 'webserver.')
+                // ค่าของ jail ต้องเดินทางคู่กับไฟล์ที่ fail2ban ตรวจแล้วเสมอ · เขียนตรง
+                // เข้าตารางได้เมื่อไร ค่าจะเปลี่ยนโดยไฟล์บนเครื่องไม่เปลี่ยนตาม แล้วหน้าจอ
+                // จะรายงานการป้องกันที่ไม่มีอยู่จริง — ต้องผ่าน `security.panel_jail_set`
+                && !str_starts_with($key, 'security.panel_jail.')
                 && $key !== 'panel.cert_domain',
             ARRAY_FILTER_USE_KEY,
         );

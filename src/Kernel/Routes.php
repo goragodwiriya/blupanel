@@ -224,6 +224,16 @@ final class Routes
 
         $router->add(new Route('GET', '/api/v2/security/scan', V2SecurityController::class, 'scan', 'security.view', 'api.v2.security.scan'));
 
+        /*
+         * กันเดารหัสผ่านหน้าเข้าสู่ระบบ — อ่านด้วย security.view แก้ด้วย security.manage
+         *
+         * การปลดแบนเป็น security.manage เหมือนการตั้งค่า เพราะมันคือการยกเลิกผลของ
+         * มาตรการความปลอดภัย ไม่ใช่แค่การดู
+         */
+        $router->add(new Route('GET', '/api/v2/security/panel-jail', V2SecurityController::class, 'panelJail', 'security.view', 'api.v2.security.panel_jail'));
+        $router->add(new Route('PUT', '/api/v2/security/panel-jail', V2SecurityController::class, 'panelJailSet', 'security.manage', 'api.v2.security.panel_jail_set'));
+        $router->add(new Route('POST', '/api/v2/security/panel-jail/unban', V2SecurityController::class, 'panelJailUnban', 'security.manage', 'api.v2.security.panel_jail_unban'));
+
         $router->add(new Route('GET', '/api/v2/metrics', V2MetricsController::class, 'index', 'dashboard.view', 'api.v2.metrics.index'));
         $router->add(new Route('GET', '/api/v2/metrics/stream', V2MetricsController::class, 'stream', 'dashboard.view', 'api.v2.metrics.stream'));
         $router->add(new Route('GET', '/api/v2/metrics/history', V2MetricsController::class, 'history', 'dashboard.view', 'api.v2.metrics.history'));

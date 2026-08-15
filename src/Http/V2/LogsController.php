@@ -24,8 +24,8 @@ use Phpcp\Security\Permissions;
  */
 final class LogsController extends ApiController
 {
-    private const DEFAULT_LINES = 50;
-    private const MIN_LINES = 50;
+    private const DEFAULT_LINES = 20;
+    private const MIN_LINES = 10;
     private const MAX_LINES = 2000;
 
     /** แหล่ง log ที่ผู้เรียกอ่านได้ */
