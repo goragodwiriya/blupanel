@@ -5,14 +5,14 @@ declare (strict_types = 1);
 namespace Phpcp\Kernel;
 
 /**
- * คำขอหนึ่งครั้ง — ห่อ superglobal ไว้ที่เดียว
+ * One request — wraps the superglobals in a single place
  *
- * โค้ดส่วนอื่นห้ามแตะ $_GET/$_POST/$_SERVER โดยตรง เพื่อให้มีจุดเดียวที่ควบคุม
- * การหาค่า IP จริงและการอ่านค่าที่ไม่น่าเชื่อถือ
+ * No other code may touch $_GET/$_POST/$_SERVER directly, so there is one place that
+ * controls how the real IP is resolved and how untrusted values are read.
  */
 final class Request
 {
-    /** @param array<string,string> $params พารามิเตอร์จาก route เช่น {id} */
+    /** @param array<string,string> $params route parameters such as {id} */
     private function __construct(
         public readonly string $method,
         public readonly string $path,
@@ -25,23 +25,24 @@ final class Request
         public readonly string $userAgent,
         public readonly string $requestId,
         public array $params = [],
-        /** body ดิบที่ฉีดเข้ามาได้ตอนทดสอบ — ปกติเป็น null แล้วอ่านจาก php://input */
+        /** Raw body that can be injected for testing — normally null, then read from php://input */
         private ?string $rawBody = null,
     ) {
     }
 
-    /** @var array<string,mixed>|null ผลการแปลง JSON body เก็บไว้ใช้ซ้ำ */
+    /** @var array<string,mixed>|null the decoded JSON body, cached for reuse */
     private ?array $json = null;
 
     /**
-     * สร้าง Request จากค่าที่กำหนดเอง — ใช้ในเทสต์ contract ของ REST API
+     * Builds a Request from supplied values — used by REST API contract tests
      *
-     * มีทางนี้เพื่อให้ทดสอบทั้ง pipeline (middleware + routing + controller) ได้ในโปรเซสเดียว
-     * โดยไม่ต้องเปิดเว็บเซิร์ฟเวอร์จริง ซึ่งทำให้เทสต์ contract รันใน CI ที่ไม่มี root ได้
+     * Exists so the whole pipeline (middleware + routing + controller) can be tested
+     * in one process without starting a real web server, letting the contract tests
+     * run in CI with no root access.
      *
      * @param array<string,mixed> $query
      * @param array<string,mixed> $post
-     * @param array<string,string> $headers ชื่อ header ตามที่เขียนจริง เช่น 'X-CSRF-Token'
+     * @param array<string,string> $headers header names exactly as written, e.g. 'X-CSRF-Token'
      * @param array<string,string> $cookies
      */
     public static function make(
@@ -56,9 +57,10 @@ final class Request
     ): self {
         $server = ['REQUEST_METHOD' => $method, 'REQUEST_URI' => $path, 'REMOTE_ADDR' => $ip];
 
-        // วาง header ลง $_SERVER แบบเดียวกับที่ PHP-FPM ทำจริง — Content-Type และ
-        // Content-Length ไม่มีคำนำหน้า HTTP_ ตาม RFC 3875 · ถ้าเทสต์วางแบบอื่น
-        // มันจะเดินคนละเส้นทางกับของจริงแล้วบั๊กแบบที่เคยเกิดจะหลุดผ่านไปได้อีก
+        // Places headers into $_SERVER the same way PHP-FPM really does — Content-Type
+        // and Content-Length carry no HTTP_ prefix, per RFC 3875. If a test placed
+        // them differently, it would walk a different code path than production and
+        // let a bug like the one this class once had slip through again.
         foreach ($headers as $name => $value) {
             $normalized = strtoupper(str_replace('-', '_', $name));
             $server[in_array($normalized, ['CONTENT_TYPE', 'CONTENT_LENGTH'], true)
@@ -109,27 +111,32 @@ final class Request
     }
 
     /**
-     * หา IP จริงของผู้ใช้
+     * Resolves the caller's real IP
      *
-     * X-Forwarded-For เชื่อถือได้ก็ต่อเมื่อคำขอมาจาก proxy ที่เราตั้งไว้เองเท่านั้น
-     * ไม่อย่างนั้นผู้โจมตีปลอม header นี้เพื่อหลบ rate limit และ IP allowlist ได้ทันที
+     * X-Forwarded-For can only be trusted when the request comes from a proxy we've
+     * configured ourselves — otherwise an attacker can forge this header to dodge
+     * rate limiting and IP allowlists outright.
      *
-     * ## ทำไมต้องไล่จากขวา ไม่ใช่หยิบตัวซ้ายสุด
+     * ## Why walk from the right, not just take the leftmost entry
      *
-     * `X-Forwarded-For` เป็นรายการที่ **proxy ต่อท้าย** ทีละชั้น ตัวซ้ายสุดจึงเป็นค่าที่
-     * ชั้นนอกสุดได้รับมา — ซึ่งก็คือค่าที่**ผู้ใช้ส่งมาเอง** ถ้าเขาใส่ header นี้มาด้วย
-     * ตัวเอง · เดิมโค้ดนี้หยิบตัวซ้ายสุด แปลว่าใครก็ตามที่ยิงผ่าน proxy ที่เราเชื่อ
-     * เพียงแค่แนบ `X-Forwarded-For: 1.2.3.4` มาเอง ก็กลายเป็น 1.2.3.4 ในสายตาของระบบ
-     * ทันที — หลบ rate limit ได้ด้วยการเปลี่ยนตัวเลขทุกคำขอ และทำให้การผูก session
-     * กับ IP ({@see \Phpcp\Security\SessionStore::find()}) ไร้ความหมาย เพราะขโมยคุกกี้
-     * ไปแล้วประกาศ IP ของเจ้าของได้เอง
+     * `X-Forwarded-For` is a list **each proxy appends to** as the request passes
+     * through — so the leftmost entry is whatever the outermost layer received,
+     * which is **whatever the user sent themselves**, if they attached this header
+     * on their own. This code used to take the leftmost entry, meaning anyone
+     * sending a request through our trusted proxy could simply attach
+     * `X-Forwarded-For: 1.2.3.4` and instantly appear as 1.2.3.4 to the system —
+     * dodging rate limits by changing the number on every request, and making the
+     * session-to-IP binding ({@see \Phpcp\Security\SessionStore::find()}) meaningless,
+     * since stealing a cookie would let someone declare the owner's IP themselves.
      *
-     * วิธีที่ถูกคือไล่จาก**ขวาสุด**เข้ามา ข้ามชั้นที่เป็น proxy ของเราเอง แล้วหยุดที่
-     * ตัวแรกที่ไม่ใช่ — ตัวนั้นคือค่าที่ proxy ชั้นในสุดของเรา**เห็นกับตา** ไม่ใช่ค่าที่
-     * ใครก็ได้เขียนใส่มา
+     * The correct approach walks in from the **rightmost** entry, skipping over the
+     * layers that are our own proxies, and stops at the first one that isn't — that
+     * value is what our innermost proxy **saw with its own eyes**, not something
+     * anyone could write in.
      *
-     * รูปแบบที่อ่านไม่ออกถือว่าเชื่อไม่ได้ทั้งหัว แล้วตกกลับไปใช้ REMOTE_ADDR —
-     * ข้ามรายการที่เพี้ยนแล้วอ่านตัวถัดไปคือการให้ผู้โจมตีเลือกได้ว่าจะให้เราอ่านตัวไหน
+     * A value in an unreadable shape is treated as entirely untrustworthy and falls
+     * back to REMOTE_ADDR — skipping a malformed entry and reading the next one would
+     * let an attacker choose which entry gets read.
      *
      * @param array<string,mixed> $server
      * @param list<string> $trustedProxies
@@ -161,7 +168,7 @@ final class Request
             }
         }
 
-        // ทั้งสายเป็น proxy ของเราเอง — ไม่มีใครนอกระบบอยู่ในนี้เลย
+        // The whole chain is our own proxies — nobody outside the system is in here at all
         return $remote;
     }
 
@@ -170,11 +177,11 @@ final class Request
      * @return mixed
      */
     /**
-     * พารามิเตอร์จากเส้นทางเป็นสตริงเสมอ — ที่นี่บังคับให้เป็นสตริงด้วย
+     * Route parameters are always strings — this enforces that too
      *
-     * เพราะโค้ดที่เรียกใช้เองมักส่งตัวเลขมา (`withParams(['id' => $id])` ตอนที่
-     * store() ส่งงานต่อให้ update()) แล้ว param()/paramInt() ที่คาดว่าจะได้สตริง
-     * ก็ระเบิดเป็น TypeError กลางคำขอ
+     * Because calling code often passes a number itself (`withParams(['id' => $id])`
+     * when store() hands work off to update()), and param()/paramInt(), which expect
+     * a string, would otherwise blow up mid-request with a TypeError.
      */
     public function withParams(array $params): self
     {
@@ -237,7 +244,7 @@ final class Request
         return $value !== null && is_scalar($value) ? (string) $value : $default;
     }
 
-    /** ค่าจาก query string ที่ต้องเป็นตัวเลข — ใช้กับ page/per_page ของ REST API */
+    /** A query-string value that must be numeric — used for the REST API's page/per_page */
     public function queryInt(string $key, int $default = 0): int
     {
         $value = $this->get($key, (string) $default);
@@ -246,12 +253,12 @@ final class Request
     }
 
     /**
-     * เนื้อหา JSON ที่ส่งมาใน body — คืน array ว่างถ้าไม่ใช่ JSON
+     * The JSON body sent with the request — an empty array if it isn't JSON
      *
-     * จำเป็นสำหรับ REST API เพราะ PHP เติม `$_POST` ให้เฉพาะ form-encoded เท่านั้น
-     * คำขอ `PATCH`/`PUT` ที่ส่ง `application/json` มาจะได้ `$_POST` ว่างเปล่าเสมอ
+     * Needed for the REST API because PHP only populates `$_POST` for form-encoded
+     * bodies. A `PATCH`/`PUT` request sending `application/json` always gets an empty `$_POST`.
      *
-     * อ่าน `php://input` ครั้งเดียวแล้วจำไว้ — สตรีมนี้อ่านซ้ำไม่ได้ใน SAPI บางตัว
+     * `php://input` is read once and cached — that stream can't be read twice on some SAPIs.
      *
      * @return array<string,mixed>
      */
@@ -271,7 +278,7 @@ final class Request
         return $this->json = is_array($decoded) ? $decoded : [];
     }
 
-    /** true = ส่ง Content-Type: application/json มาแต่เนื้อหาแปลงไม่ได้ (400 BAD_REQUEST) */
+    /** true = Content-Type: application/json was sent but the body couldn't be parsed (400 BAD_REQUEST) */
     public function hasBrokenJson(): bool
     {
         if (!str_contains(strtolower($this->header('Content-Type')), 'application/json')) {
@@ -284,11 +291,12 @@ final class Request
     }
 
     /**
-     * ค่าที่ผู้เรียกส่งมา ไม่ว่าจะมาทาง JSON body หรือฟอร์ม
+     * A value the caller sent, whether through a JSON body or a form
      *
-     * REST API ใช้เมธอดนี้แทน input() เพื่อให้รองรับทั้ง SPA (JSON) และการทดสอบด้วย
-     * `curl -d` (form-encoded) โดยไม่ต้องเขียนสองทาง — ข้อกำหนดในเกณฑ์รับงานเฟส B
-     * คือ "เรียกได้ครบทุกทรัพยากรด้วย curl โดยไม่ต้องเปิดเบราว์เซอร์เลย"
+     * The REST API uses this instead of input() so both the SPA (JSON) and testing
+     * with `curl -d` (form-encoded) work without writing two code paths — phase B's
+     * acceptance criteria require "every resource callable entirely with curl,
+     * without ever opening a browser".
      */
     public function payload(string $key, mixed $default = null): mixed
     {
@@ -310,7 +318,7 @@ final class Request
         return is_scalar($value) ? (string) $value : $default;
     }
 
-    /** เส้นทางนี้อยู่ใต้ REST API v2 หรือไม่ — ใช้ตัดสินรูปแบบคำตอบใน middleware */
+    /** Is this path under REST API v2 — used by middleware to decide the response shape */
     public function isApiV2(): bool
     {
         return $this->path === '/api/v2' || str_starts_with($this->path, '/api/v2/');
@@ -350,11 +358,12 @@ final class Request
     }
 
     /**
-     * อ่านค่าจาก $_GET/$_POST โดยรองรับคีย์ที่มีจุด
+     * Reads a value from $_GET/$_POST, tolerating keys that contain a dot
      *
-     * PHP แปลง `.` และช่องว่างในชื่อพารามิเตอร์จากฟอร์มเป็น `_` ก่อนใส่ superglobal
-     * ดังนั้น name="notify.telegram.enabled" จะกลายเป็นคีย์ notify_telegram_enabled
-     * — ถ้าหาด้วยคีย์จุดไม่เจอ ให้ลองคีย์ที่ PHP แปลงแล้ว
+     * PHP turns `.` and spaces in a form field's name into `_` before placing it in
+     * the superglobal, so name="notify.telegram.enabled" arrives as the key
+     * notify_telegram_enabled — if the dotted key isn't found, the PHP-converted form
+     * is tried next.
      *
      * @param array<string,mixed> $bag
      */
@@ -374,11 +383,12 @@ final class Request
     }
 
     /**
-     * ไฟล์ที่อัปโหลดมาในช่องหนึ่ง ๆ — คืนรายการเสมอ ไม่ว่าจะส่งมาไฟล์เดียวหรือหลายไฟล์
+     * Files uploaded under one field — always returns a list, whether one file or several were sent
      *
-     * PHP จัดรูป $_FILES ต่างกันสองแบบ: ช่องเดี่ยวได้ค่าเป็นสเกลาร์ ส่วนช่องที่ชื่อ
-     * ลงท้ายด้วย [] ได้ค่าเป็นอาร์เรย์ขนานกัน การรวมสองรูปนี้ไว้ที่เดียวทำให้
-     * controller ไม่ต้องเขียนสองทางและพลาดทางใดทางหนึ่ง
+     * PHP shapes $_FILES two different ways: a single field gets scalar values,
+     * while a field named with a trailing [] gets parallel arrays. Combining both
+     * shapes into one here means a controller never has to write both paths and risk
+     * missing one.
      *
      * @return list<array{name:string,tmp_name:string,size:int,error:int}>
      */
@@ -398,7 +408,7 @@ final class Request
                 : ($entry[$field] ?? null);
 
             $result[] = [
-                // ชื่อจากเบราว์เซอร์ไม่น่าเชื่อถือ ผู้เรียกต้องตรวจก่อนใช้เสมอ
+                // A name from the browser isn't trustworthy — the caller must always validate it before use
                 'name' => (string) $pick('name'),
                 'tmp_name' => (string) $pick('tmp_name'),
                 'size' => (int) $pick('size'),
@@ -425,11 +435,11 @@ final class Request
      * @param string $default
      */
     /**
-     * header สองตัวที่ CGI ไม่ใส่คำนำหน้า `HTTP_` ให้
+     * The two headers CGI does not prefix with `HTTP_`
      *
-     * ตาม RFC 3875 (CGI) `Content-Type` และ `Content-Length` ถูกส่งต่อเป็นตัวแปร
-     * `CONTENT_TYPE` / `CONTENT_LENGTH` เฉย ๆ ไม่ใช่ `HTTP_CONTENT_TYPE` เหมือน header อื่น
-     * — PHP-FPM, mod_cgi และ FrankenPHP ทำตามนี้ทั้งหมด
+     * Per RFC 3875 (CGI), `Content-Type` and `Content-Length` are passed through as
+     * plain `CONTENT_TYPE` / `CONTENT_LENGTH` variables, not `HTTP_CONTENT_TYPE` like
+     * every other header — PHP-FPM, mod_cgi, and FrankenPHP all follow this.
      *
      * @var array<string,string>
      */
@@ -439,15 +449,18 @@ final class Request
     ];
 
     /**
-     * ค่า header ของคำขอ
+     * A request header's value
      *
-     * **เคยเป็นบั๊กที่ทำให้ REST API v2 ทั้งชุดใช้งานไม่ได้บนเซิร์ฟเวอร์จริง:** เมธอดนี้
-     * มองหา `HTTP_CONTENT_TYPE` อย่างเดียว ซึ่ง PHP-FPM ไม่เคยตั้งให้ · ผลคือ `json()`
-     * เห็น Content-Type เป็นค่าว่างแล้วไม่แปลง body ทุกคำขอที่ส่ง JSON มาจึงได้ payload
-     * ว่างเปล่าแบบเงียบ ๆ — ล็อกอินผ่าน API ไม่ได้ สร้างเว็บไม่ได้ ทั้งที่ไม่มี error ใด ๆ
+     * **This was once a bug that broke the entire REST API v2 on the real server:**
+     * this method looked only for `HTTP_CONTENT_TYPE`, which PHP-FPM never sets. The
+     * result was `json()` seeing an empty Content-Type and never parsing the body —
+     * every request sending JSON silently got an empty payload. Logging in through
+     * the API didn't work, creating a site didn't work, with no error anywhere to
+     * point at it.
      *
-     * เทสต์ contract 71 เคสผ่านหมดเพราะ `make()` เซ็ต `HTTP_CONTENT_TYPE` ให้เอง
-     * ตอนนี้ `make()` เซ็ตแบบเดียวกับ CGI แล้ว เทสต์จึงเดินเส้นทางเดียวกับของจริง
+     * All 71 contract tests passed anyway, because `make()` set `HTTP_CONTENT_TYPE`
+     * itself. `make()` now sets it the same way CGI does, so the tests walk the same
+     * path production does.
      */
     public function header(string $name, string $default = ''): string
     {
@@ -459,7 +472,7 @@ final class Request
         return is_scalar($value) ? (string) $value : $default;
     }
 
-    /** true = ฝั่ง client ต้องการ JSON (เรียกจาก fetch ใน JS) */
+    /** true = the client wants JSON (called from fetch in JS) */
     public function wantsJson(): bool
     {
         return str_contains($this->header('Accept'), 'application/json')
