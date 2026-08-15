@@ -9,17 +9,17 @@ use Phpcp\Security\Csrf;
 use Phpcp\Security\Permissions;
 
 /**
- * สถานะของคำขอหนึ่งครั้งที่ middleware ส่งต่อกันไปเรื่อย ๆ
+ * State for one request, passed along and filled in as middleware runs
  *
- * เป็น object ที่แก้ค่าได้ (ต่างจาก Request ที่ readonly) เพราะ middleware
- * ต้องเติมข้อมูลให้กันตามลำดับ — Session เติม user, Csrf เติม token, ฯลฯ
+ * A mutable object (unlike Request, which is readonly) because middleware has to add
+ * to it in sequence — Session fills in the user, Csrf fills in the token, and so on.
  */
 final class Ctx
 {
-    /** @var array<string,mixed>|null แถวจากตาราง sessions พร้อมข้อมูลผู้ใช้ */
+    /** @var array<string,mixed>|null the row from the sessions table, with user data */
     public ?array $session = null;
 
-    /** id ดิบของ session (ไม่ได้เก็บลง DB เก็บแต่ hash) */
+    /** The session's raw id (only its hash is stored in the DB) */
     public string $sessionId = '';
 
     public ?Route $route = null;
@@ -77,28 +77,31 @@ final class Ctx
     }
 
     /**
-     * ออก CSRF token ใหม่ให้ตรงกับ session id ปัจจุบัน
+     * Issues a fresh CSRF token matching the current session id
      *
-     * ต้องเรียกทุกครั้งที่ controller เปลี่ยน `sessionId` เอง (ล็อกอิน, ยืนยัน 2FA,
-     * เปลี่ยนรหัสผ่าน) — token ที่ middleware ออกไว้ตอนต้นคำขอผูกกับ session **เก่า**
-     * ถ้าไม่ออกใหม่ คำตอบจะพา token ที่ใช้ไม่ได้กลับไปให้ SPA แล้วคำขอถัดไปโดน 419 ทันที
+     * Must be called every time a controller changes `sessionId` itself (login, 2FA
+     * confirmation, password change) — the token middleware issued at the start of
+     * the request is bound to the **old** session. Skip this and the response hands
+     * the SPA a token that no longer works, and the very next request gets a 419.
      *
-     * ## `'guest'` เป็นการตัดสินใจ ไม่ใช่ของที่หลงเหลือ
+     * ## `'guest'` is a decision, not something left over
      *
-     * ผู้เยี่ยมชมที่ยังไม่มี session ทุกคนได้ token ก้อนเดียวกัน เพราะมันคือ
-     * `HMAC(secret, "guest|session")` ซึ่งคงที่ · **ไม่ใช่ช่องโหว่** เพราะสิ่งเดียวที่
-     * token นั้นใช้ได้คือคำขอ "เข้าสู่ระบบ" ซึ่งต้องมีชื่อผู้ใช้กับรหัสผ่านที่ถูกต้อง
-     * อยู่ในตัวคำขอเองอยู่แล้ว · CSRF มีไว้กันการยืมสิทธิ์ที่เบราว์เซอร์ถืออยู่ไปใช้
-     * — ก่อนล็อกอินยังไม่มีสิทธิ์อะไรให้ยืม
+     * Every visitor with no session yet gets the same token, because it's
+     * `HMAC(secret, "guest|session")`, which is constant. **This isn't a hole** —
+     * the only thing that token is good for is a "log in" request, and that already
+     * has to carry a valid username and password in the request body itself. CSRF
+     * exists to stop someone else from spending authority the browser is already
+     * holding — before login there's no authority yet to spend.
      *
-     * สิ่งที่มันกันได้จริงคือ **login CSRF** (ผู้โจมตีบังคับให้เหยื่อล็อกอินเข้าบัญชี
-     * *ของผู้โจมตี* เงียบ ๆ แล้วดักดูสิ่งที่เหยื่อทำต่อ) — ด่านนั้นยังทำงาน เพราะหน้า
-     * ที่ยิงข้ามเว็บมาไม่มีทางอ่านค่า token จากคำตอบของเราได้ (ไม่มี CORS ที่อนุญาต)
-     * ต่อให้ค่ามันจะเดาได้ก็ตาม
+     * What it does guard against for real is **login CSRF** (an attacker silently
+     * forcing a victim to log into an account *the attacker* controls, then watching
+     * what the victim does next) — that's still stopped, because a page firing the
+     * request cross-site has no way to read the token back out of our response (no
+     * CORS allows it), even though the value itself is guessable.
      *
-     * ทางเลือกคือออก session เปล่าให้ทุกคนที่เปิดหน้าเว็บเพื่อให้ token ต่างกันรายคน
-     * ซึ่งแลกมาด้วยแถวในฐานข้อมูลหนึ่งแถวต่อทุกการเปิดหน้า รวมถึงบอตทุกตัวที่แวะมา
-     * — ต้นทุนที่ไม่คุ้มกับสิ่งที่ได้เพิ่ม
+     * The alternative would be issuing an empty session to everyone who opens a page
+     * just so the token differs per visitor — a database row for every single page
+     * view, bots included, a cost that doesn't earn its keep.
      */
     public function refreshCsrfToken(): void
     {
@@ -108,7 +111,7 @@ final class Ctx
         );
     }
 
-    /** actor ที่จะส่งให้ agent — ระบบจะคำนวณ permission ใหม่จาก role ฝั่งนั้นอีกที */
+    /** The actor to send to the agent — permission is recomputed from the role on that side */
     public function actor(Request $request): Actor
     {
         return new Actor(

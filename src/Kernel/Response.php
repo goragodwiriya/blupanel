@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace Phpcp\Kernel;
 
 /**
- * คำตอบหนึ่งครั้ง — สะสม header/คุกกี้ไว้แล้วส่งทีเดียวตอนจบ
+ * One response — accumulates headers/cookies and sends them all at the end
  *
- * ทำเป็น object แทนการ echo ตรง ๆ เพื่อให้ middleware เติม header ความปลอดภัยทับได้
- * และเพื่อให้เขียนเทสต์โดยไม่ต้องมี output buffer
+ * Built as an object instead of echoing directly, so middleware can layer security
+ * headers on top of it, and so tests can be written without an output buffer.
  */
 final class Response
 {
@@ -19,9 +19,10 @@ final class Response
     private array $cookies = [];
 
     /**
-     * ตัวผลิตเนื้อคำตอบทีละก้อน — null = คำตอบธรรมดาที่เนื้อทั้งก้อนอยู่ใน `$body` แล้ว
+     * Produces the body in pieces — null means an ordinary response whose whole body
+     * already sits in `$body`
      *
-     * มีไว้เพื่อไฟล์ที่ใหญ่เกินกว่าจะถือไว้ในหน่วยความจำทั้งไฟล์ · ดู {@see stream()}
+     * Exists for files too large to hold in memory all at once — see {@see stream()}
      *
      * @var (callable(callable(string):void):void)|null
      */
@@ -46,16 +47,21 @@ final class Response
         $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
         /*
-         * คำตอบ JSON คือ**สถานะสด**ของเครื่อง ห้ามให้เบราว์เซอร์เก็บไว้ใช้ซ้ำ
+         * A JSON response is **live state** of the machine — the browser must never
+         * be allowed to reuse a cached copy.
          *
-         * GET ที่ไม่มี header กำกับ เบราว์เซอร์เก็บแคชเองได้ตามใจ (heuristic caching) ·
-         * URL ของเราคงที่ทุกครั้ง เช่น `/api/v2/metrics/history?range=24h` ที่หน้า
-         * เซิร์ฟเวอร์เรียกซ้ำทุกนาที — **กราฟจึงค้างอยู่ที่เวลาที่โหลดสำเร็จครั้งแรก
-         * ตลอดไป** ทั้งที่ตัวเก็บข้อมูลเขียนแถวใหม่ทุกนาทีและ API ตอบข้อมูลสด
-         * (เจอบนเซิร์ฟเวอร์จริง 2026-08-14 — กราฟค้างที่เวลาเดิมนานหลายชั่วโมง)
+         * A GET with no header saying otherwise can be cached by the browser on its
+         * own judgement (heuristic caching). Our URLs are constant on every call —
+         * `/api/v2/metrics/history?range=24h`, say, which the server page calls
+         * again every minute — so **the graph would freeze at whatever time the
+         * first successful load happened**, forever, even though the collector
+         * writes a new row every minute and the API answers with fresh data every
+         * time (found on the real server on 2026-08-14 — a graph stuck at the same
+         * time for hours).
          *
-         * ตั้งที่นี่ที่เดียวเพราะเป็นจริงกับทุก endpoint ของ API ไม่ใช่แค่ metrics ·
-         * ผู้เรียกที่อยากให้แคชได้จริง ๆ ใช้ `withHeader()` ทับได้
+         * Set here in one place because it's true of every API endpoint, not only
+         * metrics — a caller that genuinely wants caching can override it with
+         * `withHeader()`.
          */
         return (new self($json === false ? '{}' : $json, $status, 'application/json; charset=UTF-8'))
             ->withHeader('Cache-Control', 'no-store');
@@ -67,18 +73,19 @@ final class Response
     }
 
     /**
-     * คำตอบที่ทยอยส่งออกทีละก้อน — สำหรับไฟล์ที่ใหญ่เกินกว่าจะถือไว้ทั้งไฟล์
+     * A response sent out piece by piece — for a file too large to hold in memory whole
      *
-     * `$producer` รับฟังก์ชัน `emit(string $chunk)` แล้วเรียกมันกี่ครั้งก็ได้ ·
-     * ทุกก้อนถูกส่งออกทันทีและล้าง buffer ตาม เพื่อให้เบราว์เซอร์เริ่มบันทึกไฟล์
-     * ได้ตั้งแต่ก้อนแรก และหน่วยความจำของ PHP ไม่โตตามขนาดไฟล์
+     * `$producer` receives an `emit(string $chunk)` function and may call it as many
+     * times as it likes. Every piece is flushed out immediately, so the browser can
+     * start saving the file from the very first chunk, and PHP's memory use doesn't
+     * grow with the file's size.
      *
-     * **ไม่ส่ง `Content-Length`** เพราะผู้ผลิตอาจยังไม่รู้ขนาดรวมตอนเริ่ม ·
-     * ผู้เรียกที่รู้ขนาดแน่นอนใส่เองได้ด้วย `withHeader()` แล้วเบราว์เซอร์จะขึ้น
-     * แถบความคืบหน้าให้
+     * **Sends no `Content-Length`**, because the producer may not know the total
+     * size at the start — a caller that does know the exact size can set it with
+     * `withHeader()`, and the browser will then show a progress bar.
      *
-     * `body()` ยังคืนเนื้อทั้งก้อนได้ (ประกอบให้ตอนถาม) เพื่อให้เทสต์ที่ตรวจคำตอบ
-     * ไม่ต้องรู้ว่า endpoint ไหนสตรีมหรือไม่สตรีม
+     * `body()` can still return the whole thing (assembled on request), so a test
+     * inspecting a response never has to know whether that endpoint streams or not.
      *
      * @param callable(callable(string):void):void $producer
      */
@@ -94,7 +101,7 @@ final class Response
     {
         $response = new self('', $status, 'text/html; charset=UTF-8');
 
-        // ป้องกัน open redirect: ยอมเฉพาะ path ภายในระบบ
+        // Guards against an open redirect: only an in-system path is accepted
         $response->headers['Location'] = str_starts_with($location, '/') && !str_starts_with($location, '//')
             ? $location
             : '/';
@@ -133,7 +140,7 @@ final class Response
             return $this->body;
         }
 
-        // ประกอบทั้งก้อนเฉพาะตอนมีคนถาม (เทสต์) — ทางส่งจริงไม่เคยเดินทางนี้
+        // Only assembled whole when someone actually asks (tests) — the real send path never goes here
         $collected = '';
         ($this->producer)(static function (string $chunk) use (&$collected): void {
             $collected .= $chunk;
@@ -166,7 +173,7 @@ final class Response
             setcookie($cookie['name'], $cookie['value'], $cookie['options']);
         }
 
-        // ไม่ส่ง Content-Length เพราะอาจมีการบีบอัดที่ web server
+        // No Content-Length sent, since the web server may still compress the body
         if ($this->producer === null) {
             echo $this->body;
 
@@ -174,11 +181,12 @@ final class Response
         }
 
         /*
-         * ทยอยส่งทีละก้อนแล้วล้าง buffer ทุกก้อน
+         * Sends piece by piece, flushing after every one.
          *
-         * ไม่ล้าง = PHP สะสมทั้งไฟล์ไว้ในหน่วยความจำอยู่ดี ซึ่งลบล้างเหตุผลทั้งหมด
-         * ที่ทางนี้มีอยู่ · `ob_flush()` ถูกเรียกเฉพาะเมื่อมี buffer อยู่จริง เพราะ
-         * การเรียกตอนไม่มี buffer ทำให้ PHP ขึ้น notice ทุกก้อน
+         * Skip the flush and PHP buffers the whole file in memory anyway, which
+         * defeats the entire point of this path. `ob_flush()` is only called when a
+         * buffer actually exists — calling it with none raises a PHP notice on every
+         * single chunk.
          */
         ($this->producer)(static function (string $chunk): void {
             echo $chunk;

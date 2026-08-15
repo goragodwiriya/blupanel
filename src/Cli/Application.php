@@ -1522,8 +1522,6 @@ final class Application
         if (!$config->mode->isProduction()) {
             $this->out->item('Test prefix', $config->sandboxPrefix());
             $this->out->line();
-            // ไม่ใช้ Mode::bannerText() — ข้อความนั้นเป็นของแถบเตือนบนหน้าเว็บซึ่งเป็นภาษาไทย
-            // ส่วนบรรทัดนี้ออกทางเทอร์มินัลของเครื่องปลายทางที่แสดงภาษาไทยไม่ได้
             $this->out->warn('Commands in '.$config->mode->value.' mode do not affect the real server');
         }
 

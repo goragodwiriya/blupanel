@@ -253,7 +253,7 @@ final class SessionController extends ApiController
             'authenticated' => $this->ctx->isAuthenticated(),
             'csrf_token' => $this->ctx->csrfToken,
             'mode' => $config->mode->value,
-            'mode_label' => $config->mode->label(),
+            'mode_label' => $this->t($config->mode->label()),
             'agent_available' => $this->app->agent()->isAvailable(),
             'two_factor_pending' => $this->ctx->awaiting2fa(),
         ];

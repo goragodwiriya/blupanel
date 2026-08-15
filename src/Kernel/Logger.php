@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace Phpcp\Kernel;
 
 /**
- * บันทึก log แบบไฟล์ธรรมดา — ไม่มี dependency ภายนอก
+ * Plain file logging — no external dependency
  *
- * รูปแบบ: เวลา ระดับ ข้อความ {บริบทเป็น JSON}
- * อ่านด้วยตาได้ และ grep ได้ ซึ่งสำคัญกว่าความสวยงามสำหรับ log ของเซิร์ฟเวอร์
+ * Format: time level message {context as JSON}
+ * Readable by eye and grep-able, which matters more than looking nice for a server's logs.
  */
 final class Logger
 {

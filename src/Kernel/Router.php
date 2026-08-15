@@ -5,11 +5,12 @@ declare(strict_types=1);
 namespace Phpcp\Kernel;
 
 /**
- * ตารางเส้นทางแบบคงที่ — ARCHITECTURE §3.2
+ * A static route table — ARCHITECTURE §3.2
  *
- * ประกาศเป็น array ในโค้ด ไม่ scan directory ไม่ใช้ attribute reflection
- * ทำให้ opcache แคชได้ทั้งไฟล์ และทำให้ "ทุกเส้นทางที่มีในระบบ" อ่านจบได้ในหน้าจอเดียว
- * ซึ่งสำคัญกับการตรวจสอบว่า permission ถูกผูกครบทุกเส้นทางหรือยัง
+ * Declared as an array in code, not scanned from a directory or built from attribute
+ * reflection — that lets opcache cache the whole file, and lets "every route the
+ * system has" be read start to finish on one screen, which matters for checking that
+ * every route has a permission attached.
  */
 final class Router
 {
@@ -49,13 +50,13 @@ final class Router
     }
 
     /**
-     * จับคู่คำขอกับเส้นทาง
+     * Matches a request against the route table
      *
      * @return array{route:Route,params:array<string,string>}|null
      */
     public function match(string $method, string $path): ?array
     {
-        // HEAD ใช้ตารางเดียวกับ GET
+        // HEAD shares GET's table
         $method = $method === 'HEAD' ? 'GET' : $method;
 
         foreach ($this->compiled as $entry) {
@@ -78,7 +79,7 @@ final class Router
         return null;
     }
 
-    /** true = มี path นี้อยู่แต่คนละ method (ตอบ 405 แทน 404) */
+    /** true = this path exists under a different method (respond 405 instead of 404) */
     public function pathExists(string $path): bool
     {
         foreach ($this->compiled as $entry) {
@@ -91,7 +92,7 @@ final class Router
     }
 
     /**
-     * แปลง /sites/{id} เป็น regex
+     * Turns /sites/{id} into a regex
      *
      * @return array{0:string,1:list<string>}
      */
@@ -104,7 +105,7 @@ final class Router
             static function (array $m) use (&$keys): string {
                 $keys[] = $m[1];
 
-                // จำกัดให้ตรงกับหนึ่งส่วนของ path เท่านั้น ไม่ให้ข้าม / ได้
+                // Constrained to match one path segment only — never crosses a /
                 return '([^/]+)';
             },
             $path,
@@ -113,7 +114,7 @@ final class Router
         return ['#^' . $regex . '$#u', $keys];
     }
 
-    /** สร้าง URL จากชื่อเส้นทาง — ใช้ในเทมเพลตแทนการพิมพ์ path ตรง ๆ */
+    /** Builds a URL from a route name — used in templates instead of writing the path out directly */
     public function url(string $name, array $params = []): string
     {
         $route = $this->findByName($name);

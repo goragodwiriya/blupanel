@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Phpcp\Kernel;
 
-/** เส้นทางหนึ่งเส้น — ผูก path เข้ากับ controller และ permission ที่ต้องใช้ */
+/** One route — binds a path to a controller and the permission it requires */
 final readonly class Route
 {
     public function __construct(
