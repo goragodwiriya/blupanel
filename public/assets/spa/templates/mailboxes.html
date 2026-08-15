@@ -3,14 +3,6 @@
   <header data-component="topbar"></header>
   <div data-component="mode-banner"></div>
   <div data-component="rollback-bar"></div>
-  <!--
-    **ชั้นนอกโหลด /api/v2/session เพื่อให้ `permissions[...]` ใช้งานได้จริง** (แบบ sites.html)
-
-    `permissions` ไม่ใช่ของกลางของแอป — มันเป็นฟิลด์ในคำตอบของ `/api/v2/session` เท่านั้น ·
-    หน้านี้เคยโหลดแต่ `/api/v2/mailboxes` ด่านสิทธิ์ทุกด่านจึงตีความไม่ได้ แล้ว **ปุ่มถูก
-    แสดงให้ทุกคนเห็น** รวมถึงคนที่กดแล้วได้ 403 · คอมโพเนนต์ซ้อนสืบทอดขอบเขตของชั้นนอก
-    ด่านในการ์ดความพร้อมข้างล่างจึงใช้ได้ด้วย (ยืนยันด้วยการรันเฟรมเวิร์กจริงในเบราว์เซอร์)
-  -->
   <main class="content" data-component="api" data-endpoint="/api/v2/session">
     <div class="card-groups">
       <header>
@@ -19,20 +11,12 @@
           <p data-i18n>Email accounts for domains that have mail enabled</p>
         </div>
         <div class="header-actions" data-if="permissions['mail.manage']">
-          <!--
-            ฟอร์มอยู่คนละเทมเพลตตาม FRAMEWORK_GUIDE Pattern 3 — หน้านี้มีแต่ตาราง
-            สามช่องกรอกถือว่าน้อย จึงเปิดใน Modal ที่เซิร์ฟเวอร์เป็นคนสั่ง
-          -->
           <button type="button" class="btn btn-primary icon-plus" data-action="click.prevent:requestApi"
                   data-api-url="/api/v2/mailboxes/form" data-api-method="get" data-i18n>Add mailbox</button>
           <button type="button" class="btn icon-link" data-action="click.prevent:requestApi"
                   data-api-url="/api/v2/mail-aliases/form" data-api-method="get" data-i18n>Add forwarder</button>
         </div>
       </header>
-      <!--
-        ยังไม่มีโดเมนไหนเปิดเมล = สร้างกล่องไม่ได้เลย · บอกวิธีเปิดตรงนี้ ดีกว่าปล่อยให้
-        กดปุ่มแล้วเจอตัวเลือกโดเมนว่างเปล่าโดยไม่รู้ว่าต้องไปทำอะไรก่อน
-      -->
       <div class="content-body">
         <div class="tablebody">
           <table class="table border fullwidth" data-table="mailboxes" data-source="/api/v2/mailboxes" data-page-size="50" data-search-columns="address" data-row-actions='{
@@ -67,26 +51,12 @@
           </table>
         </div>
       </div>
-      <!--
-        ความพร้อมของเมล — PLAN-MAIL §7
-        สามข้อในนี้ panel แก้ให้ไม่ได้ (rDNS · พอร์ต 25 ขาออก · ชื่อเสียง IP) การบอก
-        ตรง ๆ ว่าข้อไหนต้องไปทำที่ไหน คือสิ่งที่ทำให้เมลโฮสติ้งนี้ใช้งานได้จริง
-      -->
       <div class="content-body" data-component="api" data-endpoint="/api/v2/mail/readiness" data-refresh-event="phpcp:reload">
         <p class="muted" data-show="domains.length === 0" data-i18n>No domain has mail enabled yet. Open a domain and turn mail on before creating mailboxes.</p>
         <div class="flex middle fullwidth">
           <h2 class="icon-shield" data-i18n>Mail readiness</h2>
           <span class="pill pill-ok" data-show="ready === true" data-i18n>Ready</span>
           <span class="pill pill-danger" data-show="ready === false" data-text="failed | number"></span>
-          <!--
-            ปุ่มนี้ไม่ได้ขอใบรับรอง — ใบขอจากหน้า SSL เหมือนใบของเว็บทุกใบ · ที่นี่คือ
-            ขั้นที่เหลือ: บอก Postfix กับ Dovecot ว่าให้ใช้ใบนั้น · งานตามเวลาทำให้เอง
-            ทุกวันอยู่แล้ว ปุ่มมีไว้ให้ไม่ต้องรอถึงพรุ่งนี้หลังเพิ่งขอใบมาสด ๆ
-
-            ด่านสิทธิ์ใช้ `permissions[...]` ได้เพราะชั้นนอกสุดโหลด /api/v2/session มาแล้ว
-            — คอมโพเนนต์ซ้อนสืบทอดขอบเขตของชั้นนอก · **ห้ามใช้ `meta.*` ที่นี่** เฟรมเวิร์ก
-            เข้าถึง `meta` จากด่านพวกนี้ไม่ได้เลย ปุ่มจะหายทั้งปุ่มโดยไม่มี error ให้เห็น
-          -->
           <button type="button" class="btn small icon-lock" data-if="permissions['settings.manage']"
                   data-action="click.prevent:apiRefresh" data-api-url="/api/v2/mail/certificate"
                   data-api-method="post" data-loading-text="Checking..." data-i18n>Use the certificate for the mail hostname</button>
@@ -106,12 +76,6 @@
           </table>
         </div>
       </div>
-      <!--
-        ไฟล์ตั้งค่าของระบบเมล — ตารางเดียวกับหน้าเว็บไซต์ เปิดทีละไฟล์ใน Modal
-
-        ใช้ endpoint กลางตัวเดียวกัน ต่างกันแค่ `scope=mail` · ไฟล์ที่ระบบสร้างเปิดดูได้
-        แต่แก้ไม่ได้ ส่วนไฟล์ของผู้ดูแลเปิดมาพร้อมคำอธิบายและตัวอย่างในตัวไฟล์เอง
-      -->
       <div class="content-body" data-if="permissions['settings.manage']">
         <h2 class="icon-code" data-i18n>Configuration files</h2>
         <p class="muted" data-i18n>Postfix and Dovecot settings the panel does not manage. Open a file to view it — the editable ones open with comments explaining what belongs there.</p>

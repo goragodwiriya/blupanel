@@ -1,23 +1,11 @@
-<!--
-  ฟอร์มที่อยู่ส่งต่อ — คนละเทมเพลตกับตารางตาม FRAMEWORK_GUIDE Pattern 3
-
-  ชื่อว่าง = catch-all ของโดเมนนั้น ซึ่งรับทุกชื่อที่ไม่ตรงกับกล่องหรือรายการอื่น
-  · สะดวกแต่เป็นดาบสองคม คำอธิบายใต้ช่องจึงบอกไว้ตรง ๆ
--->
-<form data-form="mailAlias"
-      action="/api/v2/mail-aliases"
-      method="post"
-      data-ajax-submit="true"
-      data-reload-table="mailAliases"
-      data-validate="true">
+<form data-form="mailAlias" action="/api/v2/mail-aliases" method="post" data-ajax-submit="true" data-reload-table="mailAliases" data-validate="true">
   <fieldset>
     <div>
       <label for="ma_source" data-i18n>Address</label>
       <div class="form-group">
         <div class="width50">
           <span class="form-control icon-email">
-            <input type="text" id="ma_source" name="source" maxlength="64"
-                   autocomplete="off" placeholder="sales" data-attr="value:source">
+            <input type="text" id="ma_source" name="source" maxlength="64" autocomplete="off" placeholder="sales" data-attr="value:source">
           </span>
         </div>
         <div class="width50">
@@ -35,8 +23,7 @@
     <div>
       <label for="ma_dest" data-i18n>Forwards to</label>
       <span class="form-control icon-forward">
-        <input type="text" id="ma_dest" name="destination" required maxlength="1024"
-               autocomplete="off" placeholder="someone@example.com" data-attr="value:destination">
+        <input type="text" id="ma_dest" name="destination" required maxlength="1024" autocomplete="off" placeholder="someone@example.com" data-attr="value:destination">
       </span>
       <div class="comment" data-i18n>Several addresses separated by commas are allowed</div>
     </div>

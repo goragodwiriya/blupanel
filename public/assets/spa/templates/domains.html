@@ -10,26 +10,14 @@
           <h1 class="icon-link" data-i18n>Domains</h1>
           <p data-i18n>All domains on this server and their DNS records</p>
         </div>
-        <!--
-          สิทธิ์ระดับเครื่อง (dns.manage) แยกจาก domain.manage ที่ใช้แก้เรกคอร์ดทีละโดเมน
-          โดยตั้งใจ — ปุ่มนี้เขียนทับ named.conf.local ทั้งไฟล์และกระทบ zone ของลูกค้า
-          ทุกรายพร้อมกัน (PLAN-V2 เฟส E3)
-        -->
         <div class="header-actions" data-if="permissions['dns.manage']">
-          <button type="button" class="btn icon-refresh" data-action="click.prevent:requestApi"
-                  data-api-url="/api/v2/dns/reload" data-api-method="post"
-                  data-confirm="Rewrite every domain's zone file and reload BIND9 now?"
-                  data-notify-success="true" data-i18n>Resync all zones</button>
+          <button type="button" class="btn icon-refresh" data-action="click.prevent:requestApi" data-api-url="/api/v2/dns/reload" data-api-method="post"
+                  data-confirm="Rewrite every domain's zone file and reload BIND9 now?" data-notify-success="true" data-i18n>Resync all zones</button>
         </div>
       </header>
       <div class="content-body">
         <div class="tablebody">
-          <table class="table border fullwidth"
-                 data-table="domains"
-                 data-source="/api/v2/domains"
-                 data-default-sort="domain asc"
-                 data-search-columns="domain"
-                 data-page-size="25"
+          <table class="table border fullwidth" data-table="domains" data-source="/api/v2/domains" data-default-sort="domain asc" data-search-columns="domain" data-page-size="25"
                  data-row-actions='{
                     "link": {
                      "title": "Open",
@@ -57,18 +45,11 @@
           </table>
         </div>
       </div>
-      <!--
-        ไฟล์ตั้งค่าของ BIND9 — ใช้ endpoint กลางตัวเดียวกับของเว็บไซต์และเมล ต่างแค่ `scope=dns`
-
-        อยู่หน้ารายชื่อโดเมนเพราะเป็นไฟล์ระดับเครื่องที่กระทบทุกโดเมนพร้อมกัน ไม่ใช่ของ
-        โดเมนใดโดเมนหนึ่ง · zone ของแต่ละโดเมนดูได้ในหน้าของโดเมนนั้นอยู่แล้ว
-      -->
       <div class="content-body" data-if="permissions['settings.manage']">
         <h2 class="icon-code" data-i18n>Configuration files</h2>
         <p class="muted" data-i18n>BIND9 settings the panel does not manage. Open a file to view it — the editable one opens with comments explaining what belongs there.</p>
         <div class="tablebody">
-          <table class="table border fullwidth" data-table="configFiles"
-                 data-source="/api/v2/config-files?scope=dns" data-row-actions='{
+          <table class="table border fullwidth" data-table="configFiles" data-source="/api/v2/config-files?scope=dns" data-row-actions='{
                    "open": {
                      "title": "Open",
                      "className": "btn small icon-search",
@@ -80,8 +61,8 @@
             <thead>
               <tr>
                 <th data-field="path" data-cell-class="mono" data-i18n>{LNG_File}</th>
-                <th data-field="kind_label" class="center" data-cell-class="center"
-                    data-template="<span class=\'pill pill-${kind_tone}\'>${kind_label}</span>" data-i18n>{LNG_Access}</th>
+                <th data-field="kind_label" class="center" data-cell-class="center" data-template="<span class=\'pill pill-${kind_tone}\'>${kind_label}</span>" data-i18n>
+                  {LNG_Access}</th>
                 <th data-field="state" class="center" data-cell-class="center" data-i18n>{LNG_Status}</th>
                 <th data-field="size" class="center" data-cell-class="center right" data-format="bytes" data-i18n>{LNG_Size}</th>
               </tr>

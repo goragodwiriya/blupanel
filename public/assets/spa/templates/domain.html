@@ -3,11 +3,6 @@
   <header data-component="topbar"></header>
   <div data-component="mode-banner"></div>
   <div data-component="rollback-bar"></div>
-  <!--
-    permissions[...] มาจาก /api/v2/session — ฟอร์มเพิ่มเรกคอร์ดไม่ใช่แถวของตาราง
-    จึงอ่านเงื่อนไข data-row-actions ไม่ได้ ต้องพึ่งค่านี้แทน (ตารางเองใช้ can_manage
-    ต่อแถวจาก /api/v2/domains/{id}/dns-records)
-  -->
   <main class="content" data-script="pageDetail" data-fallback="/domains">
     <div class="card-groups" data-component="api" data-endpoint="/api/v2/session">
       <header>
@@ -17,19 +12,10 @@
         </div>
         <div class="header-actions">
           <a class="btn icon-arrow-left" href="/app/domains" data-route="/domains" data-i18n>Domains</a>
-          <!--
-            ฟอร์มอยู่คนละเทมเพลตตาม FRAMEWORK_GUIDE Pattern 3 — สี่ช่องกรอกถือว่าน้อย
-            จึงเปิดใน Modal · `{id}` ตรงนี้ถูกแทนด้วย id ของโดเมนโดย RouterManager
-          -->
           <button type="button" class="btn btn-primary icon-plus" data-if="permissions['domain.manage']"
                   data-action="click.prevent:requestApi"
                   data-api-url="/api/v2/domains/{id}/dns-records/form" data-api-method="get"
                   data-i18n>Add DNS record</button>
-          <!--
-            สองปุ่มแยกกันโดยตั้งใจ — "ดูไฟล์" คือความจริงบนดิสก์ทั้งไฟล์ (มี SOA/serial
-            ที่ระบบเป็นเจ้าของ) ส่วน "แก้ทั้งชุด" คือเรกคอร์ดที่ผู้ใช้เป็นเจ้าของเท่านั้น ·
-            รวมเป็นปุ่มเดียวจะได้ช่องแก้ไขที่มีบรรทัดซึ่งแก้ไปก็ไม่มีผล
-          -->
           <button type="button" class="btn icon-document" data-action="click.prevent:apiRefresh"
                   data-api-url="/api/v2/domains/{id}/zone-file" data-api-method="get"
                   data-i18n>Zone file</button>
@@ -40,12 +26,6 @@
         </div>
       </header>
       <div class="content-body">
-        <!--
-          data-row-actions ใช้ {row_id} ไม่ใช่ {id} โดยตั้งใจ — URL ของหน้านี้เองมี
-          ?id= (id ของโดเมน) RouterManager.render (js/ui.js) แทนค่า {id} ทุกจุดในหน้า
-          ด้วย id ของหน้าก่อนที่ TableManager จะได้เห็นเทมเพลตด้วยซ้ำ ถ้าใช้ {id} ตรงนี้
-          ปุ่มลบทุกแถวจะยิงไปที่เรกคอร์ดเดียวกันหมด (เรกคอร์ดที่ id ตรงกับโดเมน)
-        -->
         <div class="tablebody">
           <table class="table border fullwidth" data-table="dnsRecords" data-source="/api/v2/domains/{id}/dns-records" data-page-size="100" data-row-actions='{
                    "delete": {

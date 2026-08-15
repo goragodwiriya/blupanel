@@ -3,11 +3,6 @@
   <header data-component="topbar"></header>
   <div data-component="mode-banner"></div>
   <div data-component="rollback-bar"></div>
-  <!--
-    คะแนนรวมอยู่ใน `meta` ของคำตอบ ซึ่ง **ไม่มี directive ใดของ Now.js ผูกถึงได้**
-    (ApiComponent ส่งเฉพาะ data เข้า context ของเทมเพลต) จึงต้องมีสคริปต์สั้น ๆ
-    อ่านมาเติมเอง · ส่วนตารางรายการตรวจเป็นการประกาศล้วนตามปกติ
-  -->
   <main class="content" data-script="pageSecurityScore">
     <div class="card-groups">
       <header>
@@ -16,7 +11,6 @@
           <p data-i18n>Security posture measured from the real system state</p>
         </div>
       </header>
-
       <div class="ggrid">
         <div class="block4 large6 stat-card">
           <div class="stat-header icon-shield"><span data-i18n>Score</span></div>
@@ -24,56 +18,40 @@
           <div class="meter" data-score-meter><span></span></div>
         </div>
       </div>
-
-      <!--
-        ภาพรวมการป้องกัน — สวิตช์ใหญ่ ทุก jail และ IP ที่ถูกแบนทั้งเครื่องในที่เดียว
-        คำถามคือ "เครื่องนี้กำลังแบนใครอยู่บ้าง" ซึ่งเป็นคำถามระดับเครื่อง ไม่ใช่ระดับเว็บ
-      -->
       <div class="content-body" data-component="api" data-endpoint="/api/v2/security/protection">
         <h2 class="icon-shield" data-i18n>Protection</h2>
-
         <div class="alert alert-danger" data-if="drifted" data-i18n>fail2ban is switched on here but the service is not running — nothing is being enforced right now.</div>
-
         <form data-form="fail2banMaster" action="/api/v2/security/fail2ban" method="post" data-method="PUT" data-ajax-submit="true">
           <fieldset>
             <div>
               <input type="checkbox" class="switch" id="fail2ban_enabled" name="enabled" data-checked="fail2ban_enabled">
               <label for="fail2ban_enabled" data-i18n>Use fail2ban on this server</label>
             </div>
-            <!--
-              ตัวเลขจากเครื่องตัวเอง ไม่ใช่ตัวเลขที่เขียนไว้ในคู่มือ — "ปิดแล้วได้อะไรกลับมา"
-              เป็นคำถามที่ผู้ดูแลเครื่องเล็กถามจริง
-            -->
             <div class="comment">
               <span data-i18n>Currently using</span>
-              <strong data-text="memory_mb"></strong> <span data-i18n>MB of memory</span>.
-              <span data-i18n>Turning this off removes every jail the panel manages. The service itself keeps running because the SSH jail comes from the distro, not from the panel — stop it yourself only if you accept losing SSH brute-force protection too.</span>
+              <strong data-text="memory_mb"></strong> <span data-i18n>MB of memory</span>. <span data-i18n>Turning this off removes every jail the panel manages. The service itself
+                keeps running because the SSH jail comes from the distro, not from the panel — stop it yourself only if you accept losing SSH brute-force protection too.</span>
             </div>
           </fieldset>
           <fieldset class="submit">
             <button type="submit" class="btn icon-save" data-i18n>Save</button>
           </fieldset>
         </form>
-
         <h3 data-i18n>Jails managed by the panel</h3>
         <div class="tablebody">
           <table class="table border fullwidth" data-table="protectionJails" data-attr="data:jails">
             <thead>
               <tr>
                 <th data-field="label" data-i18n>{LNG_Protection}</th>
-                <th data-field="mode_label" class="center" data-cell-class="center"
-                    data-template="<span class='pill pill-${mode_tone}'>{mode_label}</span>" data-i18n>{LNG_Mode}</th>
+                <th data-field="mode_label" class="center" data-cell-class="center" data-template="<span class='pill pill-${mode_tone}'>{mode_label}</span>" data-i18n>{LNG_Mode}
+                </th>
                 <th data-field="failed" class="center" data-cell-class="center" data-i18n>{LNG_Currently failed}</th>
-                <!-- ป้ายมาจากเซิร์ฟเวอร์เพราะความหมายเปลี่ยนตามโหมด: โหมดแจ้งเตือน
-                     ก็มีตัวเลขนี้ แต่ไม่มีใครถูกกันจริง -->
-                <th data-field="banned" class="center" data-cell-class="center"
-                    data-template="{banned} <small>{count_label}</small>" data-i18n>{LNG_Hits}</th>
+                <th data-field="banned" class="center" data-cell-class="center" data-template="{banned} <small>{count_label}</small>" data-i18n>{LNG_Hits}</th>
               </tr>
             </thead>
             <tbody></tbody>
           </table>
         </div>
-
         <h3 data-i18n>Everyone banned right now</h3>
         <div class="tablebody">
           <table class="table border fullwidth" data-table="allBans" data-source="/api/v2/security/protection/bans">
@@ -93,15 +71,10 @@
           </table>
         </div>
       </div>
-
       <div class="content-body">
         <h2 class="icon-ban" data-i18n>Login brute-force protection</h2>
-        <div class="alert alert-warning" data-i18n>A ban blocks every port, including this control panel. Put your own IP in the exempt list, and remember you can always unban from SSH.</div>
-
-        <!--
-          รายการห้ามแบนอยู่ในฟอร์มของตัวเองโดยตั้งใจ — มีผลกับ jail รายเว็บด้วย
-          จึงต้องบันทึกได้แม้ jail หน้าเข้าสู่ระบบจะปิดอยู่
-        -->
+        <div class="alert alert-warning" data-i18n>A ban blocks every port, including this control panel. Put your own IP in the exempt list, and remember you can always unban from
+          SSH.</div>
         <div data-component="api" data-endpoint="/api/v2/security/panel-jail">
           <form data-form="neverBan" action="/api/v2/security/never-ban" method="post" data-method="PUT" data-ajax-submit="true">
             <fieldset>
@@ -110,7 +83,8 @@
                 <span class="form-control icon-shield">
                   <input type="text" id="never_ban_ips" name="ips" maxlength="2000" placeholder="203.0.113.5 198.51.100.0/24" data-attr="value:never_ban_ips">
                 </span>
-                <div class="comment" data-i18n>Applies to every jail, including ones created later. Put customers here whose whole organisation shares one IP — a school or an office where one infected machine would otherwise get everyone banned from every site on this server.</div>
+                <div class="comment" data-i18n>Applies to every jail, including ones created later. Put customers here whose whole organisation shares one IP — a school or an
+                  office where one infected machine would otherwise get everyone banned from every site on this server.</div>
               </div>
             </fieldset>
             <fieldset class="submit">
@@ -118,20 +92,11 @@
             </fieldset>
           </form>
         </div>
-
         <div data-component="api" data-endpoint="/api/v2/security/panel-jail">
-          <!--
-            ตั้งไว้ว่าเปิดแต่ fail2ban ไม่รู้จัก jail = การป้องกันที่หน้าจอโฆษณาไว้
-            ไม่มีอยู่จริง · ต้องเด่นกว่าสถานะปกติ ไม่ใช่ซ่อนอยู่ในตารางคะแนน
-          -->
-          <div class="alert alert-danger" data-if="drifted" data-i18n>Set to on, but fail2ban has not loaded this jail — nothing is protecting the login page right now. Save the form again to rewrite the file.</div>
-
+          <div class="alert alert-danger" data-if="drifted" data-i18n>Set to on, but fail2ban has not loaded this jail — nothing is protecting the login page right now. Save the
+            form again to rewrite the file.</div>
           <form data-form="panelJail" action="/api/v2/security/panel-jail" method="post" data-method="PUT" data-ajax-submit="true">
             <fieldset>
-              <!--
-                สามสถานะ ไม่ใช่เปิด/ปิด — "แจ้งเตือน" คือของที่ผู้ดูแลส่วนใหญ่ต้องการจริง
-                ตอนเริ่มต้น: เห็นว่าระบบจับอะไรได้บ้างก่อนมอบอำนาจตัดคนออกจากเครื่องให้มัน
-              -->
               <div>
                 <label for="panel_jail_mode" data-i18n>When someone keeps failing to sign in</label>
                 <span class="form-control icon-shield">
@@ -149,11 +114,8 @@
                   <span class="form-control icon-number">
                     <input type="number" id="panel_jail_max_retry" name="max_retry" min="3" max="100" required data-attr="value:max_retry">
                   </span>
-                  <!--
-                    เพดานมาจากโควตาของหน้าล็อกอิน ไม่ใช่ตัวเลขที่ตั้งใจเลือก — บอกไว้
-                    ตรงนี้ ผู้ใช้จะได้ไม่กรอกเกินแล้วโดนปฏิเสธตอนกดบันทึก
-                  -->
-                  <div class="comment"><span data-i18n>At most</span> <span data-text="max_retry_ceiling"></span> <span data-i18n>are even possible in this window — the rate limiter drops the rest before they are checked</span></div>
+                  <div class="comment"><span data-i18n>At most</span> <span data-text="max_retry_ceiling"></span> <span data-i18n>are even possible in this window — the rate
+                      limiter drops the rest before they are checked</span></div>
                 </div>
                 <div class="width30">
                   <label for="panel_jail_find_seconds" data-i18n>Within (seconds)</label>
@@ -173,7 +135,8 @@
                 <span class="form-control icon-shield">
                   <input type="text" id="panel_jail_ignore_ips" name="ignore_ips" maxlength="2000" placeholder="203.0.113.5 198.51.100.0/24" data-attr="value:ignore_ips">
                 </span>
-                <div class="comment" data-i18n>Separate with spaces. CIDR ranges are allowed. Add the IP you administer from — locking yourself out is the most common way this feature goes wrong.</div>
+                <div class="comment" data-i18n>Separate with spaces. CIDR ranges are allowed. Add the IP you administer from — locking yourself out is the most common way this
+                  feature goes wrong.</div>
               </div>
             </fieldset>
             <fieldset class="submit">
@@ -181,7 +144,6 @@
             </fieldset>
           </form>
         </div>
-
         <div data-component="api" data-endpoint="/api/v2/security/panel-jail" data-if="active">
           <h3 data-i18n>Currently banned</h3>
           <div class="tablebody">
@@ -201,19 +163,15 @@
           </div>
         </div>
       </div>
-
       <div class="content-body">
         <h2 data-i18n>Checks</h2>
         <div class="tablebody">
-          <table class="table border fullwidth"
-                 data-table="securityChecks"
-                 data-source="/api/v2/security/scan">
+          <table class="table border fullwidth" data-table="securityChecks" data-source="/api/v2/security/scan">
             <thead>
               <tr>
                 <th data-field="title" data-i18n>{LNG_Check}</th>
-                <th data-field="status" class="center" data-cell-class="center"
-                    data-template="<span class='pill pill-${status_tone}'>{LNG_${status}}</span>"
-                    data-i18n>{LNG_Status}</th>
+                <th data-field="status" class="center" data-cell-class="center" data-template="<span class='pill pill-${status_tone}'>{LNG_${status}}</span>" data-i18n>{LNG_Status}
+                </th>
                 <th data-field="detail" data-empty-text="—" data-i18n>{LNG_Detail}</th>
               </tr>
             </thead>

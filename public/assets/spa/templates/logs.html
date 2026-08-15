@@ -10,11 +10,6 @@
           <h1 class="icon-list" data-i18n>Logs</h1>
           <p data-i18n>Read the tail of any log source this account may see</p>
         </div>
-        <!--
-          Sits outside `data-table-filter` on purpose: TableManager registers every
-          input inside that form as a filter, keyed by name *or id*, and would send
-          this control's value to /api/v2/logs as a query parameter.
-        -->
         <div class="table_nav">
           <label for="log_refresh" data-i18n>Auto refresh</label>
           <span class="form-control icon-refresh">

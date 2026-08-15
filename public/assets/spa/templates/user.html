@@ -55,10 +55,6 @@
         </section>
         <section class="block6">
           <h2 class="icon-meter" data-i18n>Quota</h2>
-          <!--
-            โควตาเป็น object ที่คีย์คือชนิดของทรัพยากร — `data-for` วนบนรายการที่
-            API ส่งมาโดยตรง จึงเพิ่มชนิดใหม่ฝั่งเซิร์ฟเวอร์ได้โดยไม่ต้องแก้หน้านี้
-          -->
           <table class="table border fullwidth">
             <thead>
               <tr>
@@ -67,20 +63,10 @@
                 <th data-i18n>Limit</th>
               </tr>
             </thead>
-            <!--
-              `item.toggle` = ชนิดที่ตัวเลขไม่มีความหมาย มีแค่ "ได้/ไม่ได้" (เช่น SFTP ที่
-              หนึ่งบัญชีโฮสติ้งมีได้บัญชีเดียวเสมอตั้งแต่เฟส E4) — แสดง "เปิด/ปิด" แทน
-              "0 / 5" ซึ่งสื่อผิด · เซิร์ฟเวอร์เป็นคนบอกว่าชนิดไหนเป็นสวิตช์ ไม่ใช่หน้าจอเดาเอง
-            -->
             <tbody data-for="item in quota">
               <template>
                 <tr>
                   <td data-text="item.label"></td>
-                  <!--
-                    แยกเป็นหลาย <span> + data-i18n แทนการใส่ข้อความในนิพจน์ ternary —
-                    ข้อความที่เขียนตรง ๆ ในนิพจน์ไม่ผ่านตัวแปลภาษา จึงค้างเป็นภาษาเดียว
-                    แม้ผู้ใช้สลับเป็นอังกฤษ (ระบบแปลใช้ข้อความอังกฤษเป็นคีย์)
-                  -->
                   <td class="center">
                     <span data-if="item.toggle && item.in_use" data-i18n>In use</span>
                     <span data-if="item.toggle && !item.in_use">—</span>
@@ -94,10 +80,6 @@
                 </tr>
               </template>
             </tbody>
-            <!--
-              พื้นที่ดิสก์วัดเป็น MB ไม่ใช่จำนวนชิ้น จึงไม่ได้มาจาก `quota` object ข้างบน
-              (PLAN-V2 เฟส E2) — เขียนแถวนี้ตรง ๆ แทนการยัดเข้าไปใน data-for เดียวกัน
-            -->
             <tbody>
               <tr>
                 <th data-i18n>Disk space</th>
@@ -111,10 +93,6 @@
           </table>
         </section>
       </div>
-      <!--
-        เว็บไซต์ที่ผูกกับบัญชีนี้ — มีเฉพาะบัญชีโฮสติ้ง (API ส่ง `sites` มาเฉพาะ webadmin)
-        การเชื่อมเดินผ่าน capability `customer.site_attach` ซึ่งตรวจโควตาให้ด้วย
-      -->
       <div class="content-body" data-if="sites && permissions['customer.manage']">
         <h2 class="icon-link" data-i18n>Websites</h2>
         <div class="tablebody">
@@ -208,9 +186,6 @@
       </div>
       <div class="content-body" data-if="permissions['customer.manage']">
         <h2 class="icon-meter" data-i18n>Quota</h2>
-        <!--
-          โควตาส่งเป็นชุดเดียวทั้งหมดจึงเป็น PUT ไม่ใช่ PATCH (§4.1) · -1 = ไม่จำกัด
-        -->
         <form data-form="userQuota" action="/api/v2/users/{id}/quota" method="post" data-method="PUT" data-ajax-submit="true" data-emit-event="phpcp:reload">
           <fieldset>
             <div class="form-group">
@@ -248,15 +223,6 @@
               </div>
             </div>
             <div class="comment" data-i18n>-1 means unlimited</div>
-            <!--
-              SFTP เป็นสวิตช์ ไม่ใช่จำนวน — หนึ่งบัญชีโฮสติ้งมีได้บัญชีเดียวเสมอ (เฟส E4)
-              ช่องนี้คุม "สิทธิ์ตามแพ็กเกจ" ส่วนการเปิดใช้งานจริงพร้อมรหัสผ่านอยู่ในส่วน
-              "SFTP access" ด้านล่าง
-
-              **ใช้ select ไม่ใช่ checkbox โดยเจตนา** — FormManager ส่ง checkbox ที่ไม่ติ๊ก
-              เป็นสตริงว่าง ซึ่ง `setQuota()` ข้ามไป (กฎ "ไม่ส่งมา = ไม่เปลี่ยน") ผลคือ
-              **ปิดสิทธิ์ไม่ได้เลย** · select ส่งค่าเสมอจึงไม่มีกรณีกำกวม
-            -->
             <div class="form-group">
               <div class="width33">
                 <label for="uq_ftp" data-i18n>SFTP</label>
@@ -275,16 +241,6 @@
           </fieldset>
         </form>
       </div>
-      <!--
-        SFTP — PLAN-V2 เฟส E4 · หนึ่งบัญชีโฮสติ้ง = หนึ่ง login (ไม่มีบัญชีย่อยต่อเว็บ)
-
-        **ไม่มีตารางสถานะ** — ตารางเดิมมีสามแถว (สถานะ/ชื่อผู้ใช้/เปิดเมื่อไหร่) ซึ่งสอง
-        แถวหลังบอกสิ่งที่ผู้ดูแลรู้อยู่แล้วหรือหาได้จากที่อื่น และแถวที่ผูกด้วย `data-if`
-        ทำให้ตารางเปลี่ยนความสูงไปมาจนดูเหมือนบางทีแสดงบางทีไม่แสดง
-
-        สิ่งที่ต้องตอบมีข้อเดียว: เปิดอยู่ไหม · แล้วปุ่มสองปุ่มสำหรับสิ่งที่ทำได้จริง
-        · ชื่อผู้ใช้ SFTP คือชื่อบัญชีเสมอ จึงอยู่ในหัวข้อไปเลย
-      -->
       <div class="content-body" data-if="sites && permissions['customer.manage']">
         <div class="flex middle gap-4">
           <h2 class="icon-folder" data-i18n>SFTP access</h2>
@@ -294,13 +250,11 @@
             <span class="mono" data-show="sftp_enabled === true" data-text="username"></span>
           </div>
         </div>
-        <!-- แพ็กเกจไม่รวม SFTP — ต่างจาก "รวมแต่ยังไม่ได้เปิด" จึงต้องบอกคนละแบบ -->
         <fieldset class="notice notice-warning" data-if="!sftp_available">
           <legend class="icon-warning" data-i18n>Not included in this package</legend>
           <p data-i18n>The FTP/SFTP quota for this account is 0. Change it above to allow SFTP.</p>
         </fieldset>
         <div data-if="sftp_available">
-          <!-- เปิดครั้งแรกต้องตั้งรหัสผ่านไปพร้อมกัน จึงเป็นปุ่มเดียวกับเปลี่ยนรหัส -->
           <button type="button" class="btn btn-primary icon-lock" data-show="sftp_enabled === false" data-action="click.prevent:requestApi"
                   data-api-url="/api/v2/users/{id}/sftp/form" data-api-method="get" data-i18n>Enable SFTP</button>
           <button type="button" class="btn icon-lock" data-show="sftp_enabled === true" data-action="click.prevent:requestApi" data-api-url="/api/v2/users/{id}/sftp/form"

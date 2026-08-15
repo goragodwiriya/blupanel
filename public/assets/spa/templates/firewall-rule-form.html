@@ -1,12 +1,3 @@
-<!--
-  ฟอร์มเพิ่มกฎไฟร์วอลล์ — คนละเทมเพลตกับตารางตาม FRAMEWORK_GUIDE Pattern 3
-
-  สี่ช่องกรอกถือว่าน้อย จึงเปิดใน Modal ตามคำสั่งที่มากับคำตอบของ API
-  (`actions: [{type:'modal', template:'firewall-rule-form.html'}]`)
-
-  ไม่มีฟอร์มแก้ไขคู่กัน เพราะกฎของ ufw แก้ไม่ได้ — หมายเลขกฎเลื่อนเมื่อลบตัวก่อนหน้า
-  การ "แก้" จึงเป็นการลบแล้วเพิ่มใหม่เสมอ
--->
 <form data-form="firewallRule"
       action="/api/v2/firewall/rules"
       method="post"
