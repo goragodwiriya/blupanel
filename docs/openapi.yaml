@@ -2668,34 +2668,6 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
 
-  /security/panel-jail/bans:
-    get:
-      tags: [server]
-      summary: IP ที่การกันเดารหัสผ่านแบนอยู่ตอนนี้
-      description: |
-        เนื้อหาเดียวกับ `banned_ips` ใน `GET /security/panel-jail` แต่จัดเป็นแถว
-        เพื่อให้ตารางที่มีแหล่งข้อมูลของตัวเองสั่งโหลดใหม่หลังปลดแบนได้ตรง ๆ
-
-        อ่านจาก fail2ban ทุกครั้ง ไม่ใช่จากค่าที่ panel จำไว้ — ผู้ดูแลสั่ง
-        `fail2ban-client unban` เองจากบรรทัดคำสั่งได้ตลอดเวลา
-      responses:
-        "200":
-          description: รายการ IP ที่ถูกแบนอยู่
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok: { type: boolean, const: true }
-                  data:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        ip: { type: string }
-        "403": { $ref: "#/components/responses/Error" }
-        "503": { $ref: "#/components/responses/Error" }
-
   /security/panel-jail/unban:
     post:
       tags: [server]

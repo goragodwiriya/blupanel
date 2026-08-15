@@ -75,27 +75,36 @@
         <h2 class="icon-ban" data-i18n>Login brute-force protection</h2>
         <div class="alert alert-warning" data-i18n>A ban blocks every port, including this control panel. Put your own IP in the exempt list, and remember you can always unban from
           SSH.</div>
-        <div data-component="api" data-endpoint="/api/v2/security/panel-jail">
-          <form data-form="neverBan" action="/api/v2/security/never-ban" method="post" data-method="PUT" data-ajax-submit="true">
+        <!--
+          `data-load-api` ทำให้ฟอร์มโหลดค่าเดิมเองได้ · ไม่ต้องมี `data-component="api"`
+          ครอบ ซึ่งจะยิงคำขอของตัวเองเพิ่มอีกหนึ่งครั้งทั้งที่ฟอร์มขอเองได้อยู่แล้ว
+        -->
+        <form data-form="neverBan" action="/api/v2/security/never-ban" method="post" data-method="PUT" data-ajax-submit="true"
+              data-load-api="/api/v2/security/panel-jail">
             <div class="form-group bottom">
-              <div>
+              <div class="width90">
                 <label for="never_ban_ips" data-i18n>Never ban these IPs (whole server)</label>
                 <span class="form-control icon-shield">
                   <input type="text" id="never_ban_ips" name="ips" maxlength="2000" placeholder="203.0.113.5 198.51.100.0/24" data-attr="value:never_ban_ips">
                 </span>
-                <div class="comment" data-i18n>Applies to every jail, including ones created later. Put customers here whose whole organisation shares one IP — a school or an
-                  office where one infected machine would otherwise get everyone banned from every site on this server.</div>
               </div>
               <div>
                 <button type="submit" class="btn fullwidth icon-save" data-i18n>Save exempt list</button>
               </div>
             </div>
-          </form>
-        </div>
-        <div data-component="api" data-endpoint="/api/v2/security/panel-jail">
-          <div class="alert alert-danger" data-if="drifted" data-i18n>Set to on, but fail2ban has not loaded this jail — nothing is protecting the login page right now. Save the
-            form again to rewrite the file.</div>
-          <form data-form="panelJail" action="/api/v2/security/panel-jail" method="post" data-method="PUT" data-ajax-submit="true">
+            <div class="comment" data-i18n>Applies to every jail, including ones created later. Put customers here whose whole organisation shares one IP — a school or an office
+              where one infected machine would otherwise get everyone banned from every site on this server.</div>
+        </form>
+
+        <form data-form="panelJail" action="/api/v2/security/panel-jail" method="post" data-method="PUT" data-ajax-submit="true"
+              data-load-api="/api/v2/security/panel-jail">
+            <!--
+              คำเตือนอยู่ **ในฟอร์ม** เพราะ `data-if` ต้องเห็นข้อมูลที่ฟอร์มโหลดมา ·
+              ตั้งไว้ว่าเปิดแต่ fail2ban ไม่รู้จัก jail = การป้องกันที่หน้าจอโฆษณาไว้
+              ไม่มีอยู่จริง ต้องเด่นกว่าสถานะปกติ ไม่ใช่ซ่อนอยู่ในตารางคะแนน
+            -->
+            <div class="alert alert-danger" data-if="drifted" data-i18n>Set to on, but fail2ban has not loaded this jail — nothing is protecting the login page right now. Save the
+              form again to rewrite the file.</div>
             <fieldset>
               <div>
                 <label for="panel_jail_mode" data-i18n>When someone keeps failing to sign in</label>
@@ -142,26 +151,12 @@
             <fieldset class="submit">
               <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
             </fieldset>
-          </form>
-        </div>
-        <div data-component="api" data-endpoint="/api/v2/security/panel-jail" data-if="active">
-          <h3 data-i18n>Currently banned</h3>
-          <div class="tablebody">
-            <table class="table border fullwidth" data-table="panelJailBans" data-source="/api/v2/security/panel-jail/bans">
-              <thead>
-                <tr>
-                  <th data-field="ip" data-i18n>{LNG_IP address}</th>
-                  <th class="center" data-row-actions="
-                        <button type='button' class='btn small icon-refresh' data-action='click.prevent:apiRefresh'
-                                data-api-url='/api/v2/security/panel-jail/unban' data-refresh-table='panelJailBans'
-                                data-api-method='post' data-param-ip='{ip}'>
-                    {LNG_Unban}</button>" data-i18n>{LNG_Action}</th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
-          </div>
-        </div>
+        </form>
+        <!--
+          **ไม่มีตาราง "ถูกแบนอยู่" ของ jail นี้แยกอีกแล้ว** — หัวข้อ "การป้องกัน"
+          ข้างบนรวม IP ที่ถูกแบนของทุก jail ไว้ที่เดียว รวมถึงของ jail นี้ด้วย ·
+          ตารางสองตัวที่ตอบคำถามเดียวกันแปลว่าวันหนึ่งจะมีตัวหนึ่งที่ไม่ตรงความจริง
+        -->
       </div>
       <div class="content-body">
         <h2 data-i18n>Checks</h2>

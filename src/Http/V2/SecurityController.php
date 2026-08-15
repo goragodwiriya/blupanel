@@ -85,23 +85,6 @@ final class SecurityController extends ApiController
     }
 
     /**
-     * IP ที่ jail นี้แบนอยู่ตอนนี้ — รูปแบบตารางเพื่อให้ปุ่มปลดแบนผูกกับแถวได้
-     *
-     * แยกเป็นเส้นทางของตัวเองแทนที่จะใช้ `banned_ips` จากสถานะ เพราะตารางที่มี
-     * `data-source` ของตัวเองสั่งโหลดใหม่หลังปลดแบนได้ตรง ๆ (`data-refresh-table`)
-     * ซึ่งเป็นรูปเดียวกับหน้าเว็บไซต์ใช้อยู่แล้ว
-     */
-    public function panelJailBans(Request $request): Response
-    {
-        $data = $this->agent()->data('security.panel_jail', [], $this->ctx->actor($request));
-
-        return $this->ok(array_map(
-            static fn (string $ip): array => ['ip' => $ip],
-            $data['banned_ips'] ?? [],
-        ));
-    }
-
-    /**
      * เปิด/ปิดการกันเดารหัสผ่าน
      *
      * **ไม่ใช้ `saved()`** — ฟอร์มนี้ไม่ได้อยู่ใน Modal และหน้าจอต้องแสดงสถานะจริงจาก
