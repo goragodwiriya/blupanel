@@ -11,11 +11,12 @@ use Phpcp\Security\AuditLog;
 use Phpcp\Support\Translator;
 
 /**
- * ที่รวมของทุกบริการในระบบ สร้างแบบ lazy
+ * Where every service in the system comes from, built lazily
  *
- * จงใจใช้คลาสที่มีเมธอดระบุชนิดชัดเจน แทน DI container แบบทั่วไปที่ผูกด้วยสตริง
- * โปรเจกต์ขนาดนี้ไม่ได้ประโยชน์จาก container แบบนั้น แต่เสียความชัดเจนไปมาก
- * และ IDE ตามชนิดข้อมูลไม่ได้ ซึ่งสำคัญกับโค้ดที่ต้องตรวจสอบด้านความปลอดภัย
+ * Deliberately a class with plainly typed methods rather than a general string-keyed
+ * DI container — a project this size gains nothing from that kind of container, but
+ * loses a lot of clarity, and the IDE can no longer follow the types, which matters
+ * for code that has to be checked for security.
  */
 final class App
 {
@@ -25,10 +26,12 @@ final class App
     private ?AuditLog $audit = null;
 
     /**
-     * ภาษาของคำขอที่กำลังทำงานอยู่ — ตั้งโดย HttpKernel จากคุกกี้ที่หน้าเว็บเขียนไว้
+     * The language of the request currently running — set by HttpKernel from the
+     * cookie the SPA writes
      *
-     * ค่าตั้งต้นเป็นภาษาของเครื่อง (config `locale`) เพราะงานที่ไม่ได้มาจากเบราว์เซอร์
-     * — อีเมลแจ้งเตือน คำสั่งบรรทัดคำสั่ง งานตามเวลา — ไม่มีผู้ใช้ให้ถาม
+     * Defaults to the machine's own language (config `locale`) because work that
+     * doesn't come from a browser — notification emails, CLI commands, scheduled
+     * jobs — has no user to ask.
      */
     private ?string $locale = null;
 
@@ -36,34 +39,37 @@ final class App
     {
     }
 
-    /** ภาษาที่ใช้ตอบคำขอนี้ */
+    /** The language used to answer this request */
     public function locale(): string
     {
         return $this->locale ?? $this->config->string('locale', 'en');
     }
 
     /**
-     * ตั้งภาษาของคำขอ — ค่าที่ไม่รู้จักกลับไปใช้ภาษาของเครื่อง ไม่ใช่ทำให้คำขอล้ม
+     * Sets the request's language — an unrecognised value falls back to the
+     * machine's language rather than failing the request
      *
-     * ค่านี้มาจากคุกกี้ที่ผู้ใช้เป็นคนกำหนดได้ จึงต้องผ่านตัวกรองรูปแบบก่อนเสมอ
-     * ก่อนถูกเอาไปประกอบเป็นชื่อไฟล์คลังคำ
+     * This value comes from a cookie the user controls, so it always has to pass a
+     * format filter before being turned into a catalogue filename.
      *
-     * **เขียนทับทุกครั้งแม้ค่าจะใช้ไม่ได้** — ในโปรเซสที่รับหลายคำขอ (ชุดทดสอบ หรือ
-     * worker ในอนาคต) การเงียบ ๆ ไม่เขียนทับแปลว่าคำขอถัดไปได้ภาษาของคำขอก่อนหน้า
+     * **Always overwritten, even when the value is invalid** — in a process handling
+     * more than one request (the test suite, or a future worker), quietly not
+     * overwriting it would mean the next request inherits the previous one's
+     * language.
      */
     public function setLocale(string $locale): void
     {
         $this->locale = preg_match('/^[a-z]{2}$/', $locale) === 1 ? $locale : null;
     }
 
-    /** คลังคำของภาษาที่ใช้อยู่ — ไฟล์เดียวกับที่หน้าเว็บใช้ */
+    /** The catalogue for the current language — the same file the SPA uses */
     public function translator(): Translator
     {
         return Translator::load($this->locale(), $this->config->paths->spa() . '/lang');
     }
 
     /**
-     * แปลข้อความที่จะส่งออกไปให้คนอ่าน
+     * Translates a message headed out to a reader
      *
      * @param array<string,string|int|float> $params
      */
@@ -77,8 +83,9 @@ final class App
         $config = Config::load($root);
         $app = new self($config);
 
-        // layout แบบ portable วางไฟล์ของ panel ไว้ในโฟลเดอร์โปรเจกต์
-        // ต้องบอก SelfProtection ด้วย ไม่อย่างนั้น file manager จะเข้าไปแก้ไฟล์ของ panel เองได้
+        // The portable layout keeps the panel's own files inside the project
+        // directory — SelfProtection has to be told, or the file manager could edit
+        // the panel's own files
         SelfProtection::protectAlso(
             $config->paths->etc,
             $config->paths->data,
@@ -91,12 +98,14 @@ final class App
         );
 
         /*
-         * ไม่มีข้อยกเว้นให้ `/var/lib/phpcp/backups` อีกแล้ว
+         * No exception for `/var/lib/phpcp/backups` anymore.
          *
-         * ไฟล์สำรองย้ายไปอยู่ `<บ้าน>/backup` ของลูกค้าตั้งแต่ PLAN-BACKUP-V2 §4.1 ·
-         * ที่นี่เหลือเป็นแค่ **ที่พักชั่วคราวของไฟล์ที่ดึงมาจากปลายทางนอกเครื่อง**
-         * ก่อนรู้ว่าเป็นของบ้านไหน (ดู `BackupImport`) ซึ่ง agent เข้าถึงได้อยู่แล้ว
-         * โดยไม่ต้องเปิดให้ตัวจัดการไฟล์เห็น — การกันของ panel จึงกลับไปไม่มีเงื่อนไข
+         * Backup files moved to the customer's own `<home>/backup` as of
+         * PLAN-BACKUP-V2 §4.1 — what's left here is only a **temporary resting place
+         * for files pulled in from an offsite destination** before it's known which
+         * home they belong to (see `BackupImport`), which the agent can already reach
+         * without exposing it to the file manager — so the panel's own protection
+         * goes back to having no exception at all.
          */
 
         return $app;
@@ -107,15 +116,16 @@ final class App
         if ($this->db === null) {
             $this->db = new Db($this->config->paths->database());
 
-            // ค่าที่ตั้งจากหน้าจอต้องทับค่าใน config.php — ทำตรงนี้เพราะเป็นจุดแรกสุด
-            // ที่ฐานข้อมูลพร้อมใช้ · ตารางยังไม่มี (ก่อน migrate) ก็ข้ามไปเงียบ ๆ
-            // แล้วใช้ค่าจากไฟล์ตามเดิม ไม่ใช่ล้มทั้งระบบ
+            // A value set from the screen must override the one in config.php — done
+            // here because this is the very first point the database is ready. If
+            // the table doesn't exist yet (before migration), skip quietly and use
+            // the file's value as before rather than failing the whole system.
             try {
                 Config::useStoredSettings(
                     (new \Phpcp\Domain\SettingsRepository($this->db))->all(),
                 );
             } catch (\Throwable) {
-                // ยังไม่มีตาราง settings — ปกติสำหรับเครื่องที่เพิ่งติดตั้ง
+                // The settings table doesn't exist yet — normal on a freshly installed machine
             }
         }
 
@@ -146,7 +156,7 @@ final class App
         );
     }
 
-    /** ผู้สั่งงานภายในระบบ ใช้ตอน CLI หรือ cron ที่ไม่มีผู้ใช้ล็อกอิน */
+    /** The internal actor used for CLI or cron work with no user logged in */
     public function systemActor(string $reason): Actor
     {
         return Actor::system($reason);

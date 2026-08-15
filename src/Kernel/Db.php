@@ -8,24 +8,27 @@ use PDO;
 use PDOStatement;
 
 /**
- * SQLite ของ panel — ตัดสินใจ D4: ไม่พึ่ง MariaDB เพราะ panel เป็นคนคุม MariaDB
+ * The panel's SQLite database — decision D4: no dependency on MariaDB, because the
+ * panel is the one that controls MariaDB.
  *
- * ตั้ง WAL เพื่อให้อ่านขณะเขียนได้ (SSE ที่ poll อยู่ต้องไม่ถูกบล็อกโดยการเขียน audit)
+ * WAL is enabled so reads work while a write is in progress (an SSE stream that's
+ * polling must not be blocked by an audit-log write).
  */
 final class Db
 {
     private PDO $pdo;
 
-    /** @var array<string,PDOStatement> แคช prepared statement ต่อ process */
+    /** @var array<string,PDOStatement> prepared-statement cache, per process */
     private array $statements = [];
 
     private bool $walAvailable = true;
 
     /**
-     * true ระหว่างที่ transaction() ของเราเปิดอยู่
+     * true while one of our own transaction() calls is open
      *
-     * ต้องจำเอง เพราะ `PDO::inTransaction()` ไม่รู้จัก transaction ที่เปิดด้วย
-     * `exec('BEGIN IMMEDIATE')` — PDO เห็นแค่คำสั่งที่มันเปิดให้เองผ่าน beginTransaction()
+     * Tracked by hand because `PDO::inTransaction()` has no idea about a transaction
+     * opened with `exec('BEGIN IMMEDIATE')` — PDO only sees transactions it opened
+     * itself through beginTransaction().
      */
     private bool $inTransaction = false;
 
@@ -33,7 +36,7 @@ final class Db
     {
         $dir = dirname($file);
         if (!is_dir($dir) && !@mkdir($dir, 0750, true) && !is_dir($dir)) {
-            throw new \RuntimeException("สร้างไดเรกทอรีฐานข้อมูลไม่สำเร็จ: {$dir}");
+            throw new \RuntimeException("Failed to create the database directory: {$dir}");
         }
 
         $isNew = !is_file($file);
@@ -44,19 +47,21 @@ final class Db
             PDO::ATTR_EMULATE_PREPARES => false,
         ]);
 
-        // ไฟล์ฐานข้อมูลมี hash รหัสผ่านและ session — ห้าม world-readable
+        // The database file holds password hashes and sessions — must never be world-readable
         if ($isNew) {
             @chmod($file, 0600);
         }
 
-        // ลำดับสำคัญ: busy_timeout ต้องมาก่อนทุกอย่าง
+        // Order matters: busy_timeout has to be set before anything else.
         //
-        // การเปลี่ยน journal_mode ต้องใช้ล็อกระดับ exclusive ถ้ายังไม่ได้ตั้ง busy_timeout
-        // การเชื่อมต่อที่เข้ามาพร้อมกัน (เช่น SSE ที่ค้างอยู่ + worker หลายตัว) จะล้มทันที
-        // ด้วย "database is locked" แทนที่จะรอคิว
-        // 15 วินาที ไม่ใช่ 5 — ระบบมีผู้เขียนพร้อมกันหลายโปรเซส (เว็บ + agent ที่ fork ลูก
-        // ต่อคำขอ + CLI) และบน filesystem ที่ล็อกไม่เต็มรูปแบบอย่าง FUSE/NFS
-        // การรอนานขึ้นดีกว่าล้มกลางคันแล้วทิ้งงานค้างไว้ครึ่งทาง
+        // Changing journal_mode needs an exclusive lock if busy_timeout isn't set
+        // yet — concurrent connections (an SSE stream held open, plus several
+        // workers) would fail immediately with "database is locked" instead of
+        // waiting their turn.
+        // 15 seconds, not 5 — several processes write concurrently (the web tier,
+        // the agent forking a child per request, the CLI), and on a filesystem
+        // without full locking, like FUSE/NFS, waiting longer beats failing partway
+        // through and leaving work half-done.
         $this->pdo->exec('PRAGMA busy_timeout = 15000');
         $this->pdo->exec('PRAGMA foreign_keys = ON');
 
@@ -66,13 +71,14 @@ final class Db
     }
 
     /**
-     * เปิดโหมด WAL ถ้าทำได้ — ให้อ่านขณะมีการเขียนได้โดยไม่บล็อกกัน
+     * Turns on WAL mode where possible — lets reads happen alongside a write without blocking
      *
-     * ตรวจก่อนว่าอยู่ในโหมดนี้แล้วหรือยัง เพราะการสั่งซ้ำทุกการเชื่อมต่อ
-     * ต้องขอล็อกที่แรงกว่าเดิมโดยไม่จำเป็น
+     * Checked first whether it's already in this mode, because re-issuing it on
+     * every connection would request a stronger lock than necessary.
      *
-     * WAL ต้องใช้ shared memory ซึ่ง filesystem บางชนิด (FUSE, NFS, NTFS ที่ mount ผ่าน FUSE)
-     * รองรับไม่ครบ กรณีนั้นให้ถอยไปใช้โหมดปกติแทนที่จะทำให้ทั้งระบบใช้งานไม่ได้
+     * WAL needs shared memory, which some filesystems (FUSE, NFS, NTFS mounted
+     * through FUSE) don't fully support. In that case it falls back to the normal
+     * mode instead of taking the whole system down.
      */
     private function enableWal(): void
     {
@@ -85,7 +91,7 @@ final class Db
 
             $this->pdo->exec('PRAGMA journal_mode = WAL');
         } catch (\PDOException) {
-            // ใช้โหมดเริ่มต้นต่อไป — ช้ากว่าแต่ยังทำงานได้ถูกต้อง
+            // Keeps using the default mode — slower, but still correct
             $this->walAvailable = false;
         }
     }
@@ -123,7 +129,7 @@ final class Db
         $statement = $this->run($sql, $params);
         $row = $statement->fetch();
 
-        // ต้องปิด cursor เอง — ดูเหตุผลเต็มใน value()
+        // The cursor must be closed by hand — see value() for the full reasoning
         $statement->closeCursor();
 
         return $row === false ? null : $row;
@@ -139,16 +145,19 @@ final class Db
     }
 
     /**
-     * ค่าเดียวจากคอลัมน์แรกของแถวแรก
+     * A single value from the first column of the first row
      *
-     * ต้องปิด cursor ทุกครั้ง ไม่ใช่ปล่อยให้ statement ค้างไว้ — เคยเป็นบั๊กจริง:
-     * `fetch()`/`fetchColumn()` ที่ยังไม่ step จนจบทิ้ง read transaction ไว้บนการเชื่อมต่อนี้
-     * พอมีอีกโปรเซสถือ write lock อยู่ (agent เขียน audit log ในลูกที่ fork ออกไป)
-     * การเขียนครั้งถัดไปของเราจะได้ SQLITE_BUSY กลับมา**ทันที** โดยไม่รอตาม busy_timeout เลย
-     * เพราะ SQLite ถือว่าเป็น deadlock ของการยกระดับล็อก ไม่ใช่การรอคิวธรรมดา
+     * The cursor has to be closed every time, never left standing — this was a real
+     * bug once: a `fetch()`/`fetchColumn()` that hadn't stepped to the end left a
+     * read transaction open on this connection. When another process was holding a
+     * write lock (the agent writing the audit log in a forked child), our very next
+     * write got `SQLITE_BUSY` **immediately**, never waiting out `busy_timeout` at
+     * all, because SQLite treats that as a lock-upgrade deadlock, not an ordinary
+     * queue wait.
      *
-     * อาการที่เห็นคือ "database is locked" หรือ "bad parameter or other API misuse"
-     * แบบสุ่ม ๆ เฉพาะตอนที่สองโปรเซสทำงานพร้อมกัน ซึ่งตามหาต้นตอยากมาก
+     * What showed up was "database is locked" or "bad parameter or other API
+     * misuse", at random, only when two processes happened to run at once — very
+     * hard to trace back to the cause.
      *
      * @param array<string,mixed> $params
      */
@@ -197,24 +206,30 @@ final class Db
     }
 
     /**
-     * ห่อการทำงานไว้ใน transaction แบบ **IMMEDIATE** เสมอ
+     * Wraps work in a transaction that is **always IMMEDIATE**
      *
-     * **ทำไมต้อง IMMEDIATE ไม่ใช่ `beginTransaction()` ธรรมดา:** PDO เริ่มด้วย
-     * `BEGIN DEFERRED` ซึ่งยังไม่จองล็อกอะไรเลย พอคำสั่งแรกในบล็อกเป็นการ**อ่าน**
-     * การเชื่อมต่อจะได้ล็อกอ่าน แล้วเมื่อจะ**เขียน**ต้องยกระดับล็อก — ถ้าตอนนั้นมี
-     * การเชื่อมต่ออื่นถือล็อกเขียนอยู่ SQLite จะคืน `SQLITE_BUSY` **ทันที** โดย
-     * **ไม่รอตาม `busy_timeout` เลย** เพราะการรอในสถานะนั้นคือ deadlock
+     * **Why IMMEDIATE, not a plain `beginTransaction()`:** PDO starts with `BEGIN
+     * DEFERRED`, which reserves no lock at all yet. If the first statement in the
+     * block is a **read**, the connection acquires a read lock, and when it later
+     * needs to **write** it has to upgrade that lock — if another connection is
+     * already holding a write lock at that moment, SQLite returns `SQLITE_BUSY`
+     * **immediately**, **never honouring `busy_timeout` at all**, because waiting in
+     * that state is a deadlock.
      *
-     * `BEGIN IMMEDIATE` จองล็อกเขียนตั้งแต่ต้น การรอจึงเกิดที่จุดเดียวที่รอได้
-     * และ `busy_timeout` ทำงานตามที่ตั้งไว้จริง
+     * `BEGIN IMMEDIATE` reserves the write lock from the start, so waiting only ever
+     * happens at the one point where waiting is safe, and `busy_timeout` behaves as
+     * configured.
      *
-     * **อาการก่อนแก้:** `RateLimiter::allow()` และ `AuditLog::write()` ใช้ transaction
-     * และทำงานทุกคำขอ ทั้งคู่อ่านก่อนเขียน · ยิงพร้อมกัน 8 คำขอแล้วล้ม 7 ด้วย
-     * "database is locked" ทั้งบน ext4 และ FUSE · UI แบบ HTML เดิมยิงคำขอเดียวต่อหน้า
-     * จึงไม่มีใครเจอ แต่ SPA ยิงหลายก้อนพร้อมกันต่อหน้า อาการจึงโผล่ทันที
+     * **The symptom before this was fixed:** `RateLimiter::allow()` and
+     * `AuditLog::write()` both use a transaction and run on every request, both
+     * reading before writing. Eight concurrent requests failed seven of them with
+     * "database is locked", on both ext4 and FUSE. The old HTML UI fired one request
+     * per page, so nobody ever hit it — the SPA fires several requests per page at
+     * once, so the symptom appeared right away.
      *
-     * รองรับการซ้อน: บล็อกชั้นในใช้ transaction ของชั้นนอก ไม่เปิดใหม่
-     * (SQLite ไม่มี nested transaction จริง และ savepoint ไม่จำเป็นสำหรับที่นี่)
+     * Supports nesting: an inner block reuses the outer transaction rather than
+     * opening a new one (SQLite has no real nested transactions, and a savepoint
+     * isn't needed here).
      */
     public function transaction(callable $work): mixed
     {
@@ -222,7 +237,7 @@ final class Db
             return $work($this);
         }
 
-        // ใช้ exec ตรง ๆ เพราะ PDO ไม่มีทางระบุชนิดของ transaction ให้ SQLite
+        // Uses exec directly, since PDO has no way to tell SQLite which kind of transaction to open
         $this->pdo->exec('BEGIN IMMEDIATE');
         $this->inTransaction = true;
 
@@ -238,8 +253,8 @@ final class Db
             try {
                 $this->pdo->exec('ROLLBACK');
             } catch (\PDOException) {
-                // transaction ถูกยกเลิกไปแล้วโดย SQLite เอง — ไม่มีอะไรต้องทำต่อ
-                // และห้ามให้ข้อผิดพลาดตรงนี้บังข้อผิดพลาดจริงที่กำลังจะโยนต่อ
+                // The transaction was already cancelled by SQLite itself — nothing
+                // more to do, and this must never mask the real error about to be thrown
             }
 
             throw $e;
@@ -247,9 +262,9 @@ final class Db
     }
 
     /**
-     * รัน migration ที่ยังไม่เคยรัน เรียงตามชื่อไฟล์
+     * Runs migrations that haven't run yet, in filename order
      *
-     * @return list<string> รายชื่อไฟล์ที่เพิ่งรันไป
+     * @return list<string> the filenames just run
      */
     public function migrate(string $directory): array
     {
@@ -273,7 +288,7 @@ final class Db
 
             $sql = file_get_contents($file);
             if ($sql === false) {
-                throw new \RuntimeException("อ่านไฟล์ migration ไม่ได้: {$file}");
+                throw new \RuntimeException("Could not read migration file: {$file}");
             }
 
             $this->runMigration($version, $sql);
@@ -285,25 +300,27 @@ final class Db
     }
 
     /**
-     * ทำเครื่องหมายว่า migration นี้ต้องสร้างตารางใหม่ทั้งตาราง
+     * Marks that this migration needs to rebuild a table from scratch
      *
-     * ใส่เป็นบรรทัดใดก็ได้ในไฟล์ .sql
+     * Placed as any line at all inside the .sql file
      */
     private const REBUILD_DIRECTIVE = '-- phpcp:rebuild-tables';
 
     /**
-     * รัน migration หนึ่งไฟล์
+     * Runs one migration file
      *
-     * ปกติห่อด้วย transaction เฉย ๆ · แต่ migration ที่ต้อง**สร้างตารางใหม่ทั้งตาราง**
-     * (เช่นเอาข้อจำกัด UNIQUE ที่ประกาศไว้ตอน CREATE ออก ซึ่ง `ALTER TABLE DROP COLUMN`
-     * ทำไม่ได้) ต้องปิด foreign_keys ก่อน ไม่งั้น `DROP TABLE` ของตารางแม่จะไป
-     * ยิง `ON DELETE CASCADE`/`SET NULL` ของตารางลูกจนข้อมูลหายจริง — และ SQLite
-     * ห้ามสั่ง `PRAGMA foreign_keys` กลาง transaction จึงต้องสั่งจากตรงนี้แทน
+     * Normally just wrapped in a transaction — but a migration that needs to
+     * **rebuild a table from scratch** (dropping a UNIQUE constraint declared at
+     * CREATE time, say, which `ALTER TABLE DROP COLUMN` can't do) has to turn off
+     * foreign_keys first, or `DROP TABLE` on the parent table would fire the child
+     * tables' `ON DELETE CASCADE`/`SET NULL` and genuinely lose data — and SQLite
+     * forbids `PRAGMA foreign_keys` in the middle of a transaction, so it has to be
+     * issued here instead.
      *
-     * ขั้นตอนนี้เป็นวิธีมาตรฐานของ SQLite เอง (คู่มือหัวข้อ "Making Other Kinds Of
-     * Table Schema Changes") · ความเป็นอะตอมยังอยู่ครบเพราะ transaction ยังห่ออยู่
-     * ข้างใน และ `foreign_key_check` ที่รันก่อน commit จะจับความสัมพันธ์ที่ขาด
-     * ระหว่างทางได้ทั้งหมด
+     * This sequence is SQLite's own documented approach (manual section "Making
+     * Other Kinds Of Table Schema Changes") — atomicity still holds because the
+     * transaction still wraps everything inside, and the `foreign_key_check` run
+     * before commit catches any relationship left broken along the way.
      */
     private function runMigration(string $version, string $sql): void
     {
@@ -313,7 +330,7 @@ final class Db
             $this->pdo->exec('PRAGMA foreign_keys = OFF');
         }
 
-        // SQLite รันหลายคำสั่งใน exec เดียวได้ แต่ห่อ transaction เองเพื่อให้ล้มแล้วไม่ค้างครึ่งทาง
+        // SQLite can run several statements in one exec, but the transaction is wrapped by hand so a failure never leaves it half-done
         $this->pdo->beginTransaction();
 
         try {
@@ -324,8 +341,8 @@ final class Db
 
                 if ($broken !== []) {
                     throw new \RuntimeException(
-                        'สร้างตารางใหม่แล้วเหลือความสัมพันธ์ที่ชี้ไปยังแถวที่ไม่มีอยู่ '
-                        .count($broken).' จุด',
+                        'Rebuilding the table left '.count($broken)
+                        .' relationship(s) pointing at rows that no longer exist',
                     );
                 }
             }
@@ -336,10 +353,11 @@ final class Db
         } catch (\Throwable $e) {
             $this->pdo->rollBack();
 
-            throw new \RuntimeException("migration ล้มเหลวที่ {$version}: ".$e->getMessage(), 0, $e);
+            throw new \RuntimeException("Migration failed at {$version}: ".$e->getMessage(), 0, $e);
         } finally {
-            // ต้องเปิดคืนเสมอ แม้ migration จะล้ม ไม่งั้นทั้ง process จะทำงานต่อโดยไม่มี
-            // foreign key คุ้มกันเลย ซึ่งอันตรายกว่าตัว migration ที่ล้มเสียอีก
+            // Always turned back on, even if the migration failed — otherwise the
+            // whole process keeps running with no foreign key protection at all,
+            // more dangerous than the failed migration itself
             if ($rebuild) {
                 $this->pdo->exec('PRAGMA foreign_keys = ON');
             }
