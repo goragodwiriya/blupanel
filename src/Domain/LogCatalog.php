@@ -5,22 +5,26 @@ declare(strict_types=1);
 namespace Phpcp\Domain;
 
 /**
- * แหล่ง log ที่ระบบยอมให้อ่าน — allowlist แบบระบุเส้นทางเต็มตายตัว
+ * Log sources the panel is willing to read — an allowlist of exact paths.
  *
- * ครอบคลุมทุกชนิดที่ PROMPT.md กำหนด: Access, Error, PHP, System, Login, Audit
+ * Covers every kind PROMPT.md asks for: Access, Error, PHP, System, Login, Audit.
  *
- * ความปลอดภัย: ไม่มีทางระบุ path เองได้เลย ผู้ใช้เลือกได้แค่ "คีย์" จากรายการนี้
- * ซึ่งตัดทั้ง path traversal และการอ่านไฟล์ตามใจชอบออกตั้งแต่ต้นทาง
- * ต่างจากการรับ path แล้วมาตรวจทีหลัง ซึ่งเป็นรูปแบบที่พลาดกันบ่อย
+ * Security: a caller can never name a path. All they pick is a *key* from this list,
+ * which removes path traversal and arbitrary file reads at the source rather than
+ * accepting a path and validating it afterwards — the shape people get wrong.
  *
- * **แหล่งมีสองชุด** — `all()` คือ log ระดับเครื่องซึ่งเป็นเส้นทางคงที่ ส่วน log ของ
- * แต่ละเว็บไซต์อยู่ในบ้านของเจ้าของ เส้นทางจึงคำนวณจาก {@see \Phpcp\Domain\Site}
- * ตอนใช้งาน ไม่ใช่เขียนตายตัวไว้ที่นี่ · สิ่งที่คงเดิมคือหลักการ: ผู้ใช้ส่ง "คีย์"
- * มาเสมอ (`site:<id>:<ชนิด>`) ไม่เคยส่งเส้นทาง
+ * **There are two sets of sources.** `all()` holds machine-level logs, which live at
+ * fixed paths. Per-website logs live inside the owner's home, so their paths are
+ * derived from {@see \Phpcp\Domain\Site} at call time instead of being written down
+ * here. The principle is unchanged: the caller always sends a key (`site:<id>:<kind>`),
+ * never a path.
+ *
+ * Labels and groups are English keys translated by the caller — see
+ * {@see \Phpcp\Http\V2\LogsController::availableSources()}.
  */
 final class LogCatalog
 {
-    /** สิทธิ์ที่ต้องมีจึงจะอ่าน log ของเว็บไซต์ได้ — ขอบเขตว่า "เว็บไหนบ้าง" แยกต่างหาก */
+    /** Permission needed to read a website's logs. *Which* websites is a separate question. */
     public const SITE_PERMISSION = 'log.view';
 
     /**
@@ -30,25 +34,26 @@ final class LogCatalog
     {
         return [
             /*
-             * **สองรายการนี้ไม่ใช่ทราฟฟิกของลูกค้า** — vhost ทุกตัวที่ panel สร้างเขียน
-             * `CustomLog`/`ErrorLog` ลงบ้านของเจ้าของเว็บ (ดู `Site::accessLog()`)
-             * ไฟล์ระดับเครื่องจึงเหลือแต่คำขอที่ไม่ตรง vhost ไหนเลยกับข้อความระดับ
-             * เซิร์ฟเวอร์ · ป้ายเคยเขียนว่า "Access Log (Apache)" เฉย ๆ ซึ่งอ่านแล้ว
-             * เข้าใจว่าเป็นทราฟฟิกทั้งเครื่อง แล้วสรุปผิดว่า "ไม่มีใครเข้าเว็บเลย"
+             * **These two are not customer traffic.** Every vhost the panel writes sends
+             * `CustomLog`/`ErrorLog` into the site owner's home (see `Site::accessLog()`),
+             * so the machine-level files hold only requests that matched no vhost, plus
+             * server-level messages. The label used to read plain "Access Log (Apache)",
+             * which people read as whole-machine traffic and then concluded, wrongly,
+             * that nobody was visiting their sites at all.
              */
             'access' => [
-                'label' => 'Access Log (คำขอที่ไม่เข้าเว็บไซต์ใด)',
+                'label' => 'Access Log (requests that reached no website)',
                 'path' => '/var/log/apache2/access.log',
                 'permission' => 'log.view',
                 'format' => 'access',
-                'group' => 'เว็บเซิร์ฟเวอร์',
+                'group' => 'Web server',
             ],
             'error' => [
-                'label' => 'Error Log (ระดับเซิร์ฟเวอร์)',
+                'label' => 'Error Log (server level)',
                 'path' => '/var/log/apache2/error.log',
                 'permission' => 'log.view',
                 'format' => 'apache',
-                'group' => 'เว็บเซิร์ฟเวอร์',
+                'group' => 'Web server',
             ],
             'php' => [
                 'label' => 'PHP-FPM Log',
@@ -62,29 +67,30 @@ final class LogCatalog
                 'path' => '/var/log/mysql/error.log',
                 'permission' => 'log.view',
                 'format' => 'syslog',
-                'group' => 'ฐานข้อมูล',
+                'group' => 'Database',
             ],
             'system' => [
                 'label' => 'System Log',
                 'path' => '/var/log/syslog',
                 'permission' => 'log.view',
                 'format' => 'syslog',
-                'group' => 'ระบบ',
+                'group' => 'System',
             ],
             'auth' => [
                 'label' => 'Login Log (SSH / sudo)',
                 'path' => '/var/log/auth.log',
                 'permission' => 'log.view',
                 'format' => 'syslog',
-                'group' => 'ระบบ',
+                'group' => 'System',
             ],
 
-            // log ของ panel เอง — อ่านได้ แก้ไม่ได้
-            // ไม่ขัดกับ SelfProtection เพราะที่นั่นห้าม "แก้ไข" ส่วนที่นี่เป็น allowlist
-            // แบบระบุไฟล์เจาะจง อ่านอย่างเดียว และยังต้องผ่าน permission อีกชั้น
+            // The panel's own logs — readable, never writable.
+            // No conflict with SelfProtection: that forbids *changes*, while this is a
+            // read-only allowlist of named files that still has to clear a permission.
             //
-            // panel_log บอกให้ LogTail หาเส้นทางจริงจาก Paths แทนค่าคงที่ด้านล่าง
-            // เพราะ layout แบบ portable วาง log ไว้ในโฟลเดอร์โปรเจกต์ ไม่ใช่ /var/log
+            // `panel_log` tells LogTail to ask Paths for the real location instead of
+            // using the constant below, because the portable layout keeps logs inside
+            // the project directory rather than /var/log.
             'panel' => [
                 'label' => 'Control Panel Log',
                 'path' => '/var/log/phpcp/panel.log',
@@ -118,11 +124,12 @@ final class LogCatalog
     }
 
     /**
-     * log ที่แต่ละเว็บไซต์มีเป็นของตัวเอง — คีย์ → ป้ายและรูปแบบ
+     * Logs each website owns — kind => label and format.
      *
-     * `php` เป็นของ **บัญชี × เวอร์ชัน PHP** ไม่ใช่ของเว็บเดียว (pool ใช้ร่วมกันตั้งแต่
-     * migration 0006) เว็บพี่น้องของเจ้าของคนเดียวกันที่ใช้ PHP รุ่นเดียวกันจึงชี้ไป
-     * ไฟล์เดียวกัน · ป้ายบอกไว้ตรง ๆ ดีกว่าปล่อยให้งงว่าทำไม log ของเว็บ ก. มีของเว็บ ข.
+     * `php` belongs to an **account × PHP version**, not to one website: pools have been
+     * shared since migration 0006, so sibling sites of the same owner on the same PHP
+     * version point at one file. The label says so outright rather than leaving someone
+     * puzzled that site A's log contains site B's errors.
      *
      * @return array<string,array{label:string,format:string}>
      */
@@ -131,24 +138,25 @@ final class LogCatalog
         return [
             'access' => ['label' => 'Access Log', 'format' => 'access'],
             'error' => ['label' => 'Error Log', 'format' => 'apache'],
-            'php' => ['label' => 'PHP Error Log (ทั้งบัญชี)', 'format' => 'syslog'],
+            'php' => ['label' => 'PHP Error Log (whole account)', 'format' => 'syslog'],
         ];
     }
 
-    /** คีย์ของ log รายเว็บ — รูปแบบเดียวที่ {@see self::parseSiteKey()} ยอมรับ */
+    /** Key for a per-site log — the only shape {@see self::parseSiteKey()} accepts. */
     public static function siteKey(int $siteId, string $kind): string
     {
         return 'site:'.$siteId.':'.$kind;
     }
 
     /**
-     * แกะคีย์ของ log รายเว็บ — คืน null ถ้าไม่ใช่รูปแบบนี้
+     * Parse a per-site log key, or null when the key is not one.
      *
-     * ชนกับคีย์ระดับเครื่องไม่ได้เลยเพราะคีย์เหล่านั้นถูกบังคับเป็น `^[a-z][a-z0-9_]+$`
-     * ซึ่งไม่มี `:` (มีเทสต์เฝ้าอยู่ใน tests/security/ServerBoundaryTest.php)
+     * These can never collide with machine-level keys, which are constrained to
+     * `^[a-z][a-z0-9_]+$` and so contain no `:` (guarded by
+     * tests/security/ServerBoundaryTest.php).
      *
-     * **การแกะได้ไม่ได้แปลว่ามีเว็บนั้นอยู่จริงหรืออ่านได้** — ที่นี่ตรวจแค่รูปทรง
-     * ส่วนตัวตนกับสิทธิ์เป็นเรื่องของผู้เรียกซึ่งมีฐานข้อมูลอยู่ในมือ
+     * **Parsing does not mean the website exists or may be read.** This checks shape
+     * only; identity and permission belong to the caller, which has the database.
      *
      * @return array{site_id:int,kind:string}|null
      */
@@ -178,7 +186,7 @@ final class LogCatalog
     }
 
     /**
-     * แหล่ง log ที่บทบาทนี้เปิดดูได้
+     * Log sources this role may open.
      *
      * @return array<string,array{label:string,path:string,permission:string,format:string,group:string}>
      */
@@ -191,8 +199,8 @@ final class LogCatalog
     }
 
     /**
-     * ระดับความรุนแรงของบรรทัด log — ใช้ระบายสีใน viewer
-     * ตรวจจากคำที่ปรากฏจริงในรูปแบบ log ของแต่ละบริการ
+     * Severity of one log line — used to colour it in the viewer.
+     * Judged from words that actually appear in each service's log format.
      */
     public static function levelOf(string $line): string
     {
@@ -217,20 +225,9 @@ final class LogCatalog
         };
     }
 
-    /** @return list<string> ระดับที่ให้เลือกกรองใน UI */
+    /** @return list<string> levels offered as a filter in the UI */
     public static function levels(): array
     {
         return ['error', 'warn', 'info', 'ok'];
-    }
-
-    public static function levelLabel(string $level): string
-    {
-        return match ($level) {
-            'error' => 'ข้อผิดพลาด',
-            'warn' => 'คำเตือน',
-            'info' => 'ข้อมูล',
-            'ok' => 'สำเร็จ',
-            default => 'ทั้งหมด',
-        };
     }
 }

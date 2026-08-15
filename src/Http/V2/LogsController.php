@@ -15,12 +15,13 @@ use Phpcp\Security\Permissions;
 /**
  * Log viewer — `/api/v2/logs`
  *
- * ผู้ใช้เลือก **"แหล่ง" จากรายการ** ไม่ได้ระบุเส้นทางไฟล์เอง — เส้นทางจริงอยู่ใน
- * `LogCatalog` ฝั่งเซิร์ฟเวอร์เท่านั้น · นี่คือเหตุผลที่ API นี้อ่านไฟล์ใดก็ได้บนเครื่อง
- * ไม่ได้แม้จะพยายาม: ค่าที่ส่งมาเป็นคีย์ ไม่ใช่เส้นทาง
+ * A caller picks **a "source" from a list**, never names a file path directly — the
+ * real paths live only in `LogCatalog` on the server. This is why the API can't read
+ * any file on the machine no matter what's attempted: what's sent is a key, not a path.
  *
- * รายการมีทั้ง log ระดับเครื่องและ log ของแต่ละเว็บไซต์ · ทั้งสองชุดถูกกรองด้วย
- * สิทธิ์และความเป็นเจ้าของก่อนถึงหน้าจอ แล้วถูกตรวจซ้ำอีกครั้งที่ agent
+ * The list holds both machine-level logs and each website's own logs. Both sets are
+ * filtered by permission and ownership before reaching the screen, then re-checked
+ * again on the agent side.
  */
 final class LogsController extends ApiController
 {
@@ -28,7 +29,7 @@ final class LogsController extends ApiController
     private const MIN_LINES = 10;
     private const MAX_LINES = 2000;
 
-    /** แหล่ง log ที่ผู้เรียกอ่านได้ */
+    /** Log sources the caller may read */
     public function sources(Request $request): Response
     {
         $sources = [];
@@ -44,7 +45,7 @@ final class LogsController extends ApiController
         ]);
     }
 
-    /** อ่านบรรทัดท้าย ๆ ของแหล่งที่เลือก พร้อมกรองข้อความและระดับ */
+    /** Reads the last lines of the chosen source, with text and level filtering */
     public function tail(Request $request): Response
     {
         $available = $this->availableSources();
@@ -55,8 +56,8 @@ final class LogsController extends ApiController
         }
 
         if (!isset($available[$source])) {
-            // 403 ไม่ใช่ 404 — คีย์ของแหล่ง log ไม่ใช่ความลับ (อยู่ในเอกสาร)
-            // สิ่งที่ต่างกันคือสิทธิ์ ผู้ดูแลจึงควรรู้ว่าต้องไปแก้ที่สิทธิ์ ไม่ใช่ที่ URL
+            // 403, not 404 — a log source key isn't a secret (it's in the docs). What
+            // differs is permission, so the admin should know to go fix that, not the URL
             return $this->problem(ApiProblem::Forbidden, 'Unknown log source, or you may not read it');
         }
 
@@ -69,7 +70,7 @@ final class LogsController extends ApiController
             'level' => $request->get('level')
         ], $this->ctx->actor($request));
 
-        // สีของป้ายมาจากฝั่งเซิร์ฟเวอร์ เทมเพลตจึงเขียน `pill-${level_tone}` ได้ตรง ๆ
+        // Pill colour comes from the server, so the template can write `pill-${level_tone}` directly
         $data['lines'] = array_map(static function (array $line): array {
             $level = (string) ($line['level'] ?? '');
 
@@ -94,13 +95,15 @@ final class LogsController extends ApiController
     }
 
     /**
-     * แหล่งทั้งหมดที่ผู้เรียกอ่านได้ — ระดับเครื่องก่อน แล้วตามด้วยรายเว็บ
+     * Every source the caller may read — machine level first, then per-site
      *
-     * **เป็นทั้งรายการที่แสดงและ allowlist ตอนอ่าน** — สองอย่างนี้ต้องมาจากที่เดียว
-     * ไม่งั้นวันหนึ่งจะมีแหล่งที่ไม่โผล่ในรายการแต่ยังเรียกตรง ๆ ได้อยู่
+     * **This is both the displayed list and the read-time allowlist** — the two have
+     * to come from the same place, or one day a source stops showing up in the list
+     * while still being callable directly.
      *
-     * ระดับเครื่องมาก่อนโดยตั้งใจ: `tail()` ใช้ตัวแรกเป็นค่าเริ่มต้นเมื่อไม่ได้ระบุแหล่ง
-     * ซึ่งต้องเป็นค่าที่คงที่ ไม่ใช่เว็บของลูกค้ารายไหนก็ไม่รู้ที่บังเอิญมาเป็นตัวแรก
+     * Machine level comes first on purpose: `tail()` uses the first entry as the
+     * default when no source is specified, and that has to be a stable value, not
+     * whichever customer's site happened to land first.
      *
      * @return array<string,array{label:string,group:string,format:string}>
      */
@@ -110,8 +113,8 @@ final class LogsController extends ApiController
 
         foreach (LogCatalog::forRole($this->ctx->role()) as $key => $source) {
             $sources[$key] = [
-                'label' => $source['label'] ?? $key,
-                'group' => $source['group'] ?? '',
+                'label' => $this->t((string) ($source['label'] ?? $key)),
+                'group' => $this->t((string) ($source['group'] ?? '')),
                 'format' => $source['format'] ?? ''
             ];
         }
@@ -120,23 +123,30 @@ final class LogsController extends ApiController
             return $sources;
         }
 
-        // ผู้ที่ไม่ได้เห็นเว็บของทุกคนได้เฉพาะของตัวเอง — ตัวกรองเดียวกับที่ LogTail
-        // ตรวจซ้ำฝั่ง agent · ที่นี่ทำเพื่อไม่ให้รายการโชว์สิ่งที่กดแล้วโดนปฏิเสธ
+        // Anyone who doesn't see everyone's sites only sees their own — the same
+        // filter LogTail re-checks on the agent side; done here too so the list never
+        // shows something that would just be rejected on click
         $ownerId = Permissions::seesAllSites($this->ctx->role()) ? null : $this->ctx->userId();
 
         foreach ((new SiteRepository($this->app->db()))->listBrief($ownerId) as $site) {
             foreach (LogCatalog::siteKinds() as $kind => $meta) {
                 $sources[LogCatalog::siteKey($site['id'], $kind)] = [
                     /*
-                     * ชื่อเจ้าของอยู่ใน**ป้าย** ไม่ใช่แค่ใน `group` เพราะ `<select>` ของหน้า
-                     * log ยังเป็นรายการแบน — ค่าใน `group` จึงไม่ถูกวาดออกมาเลย · รายการ
-                     * เรียงตามเจ้าของอยู่แล้ว คำนำหน้าที่ซ้ำกันจึงกลายเป็นบล็อกที่มองเห็น
-                     * ได้ ซึ่งเป็นสิ่งที่ใกล้เคียง optgroup ที่สุดเท่าที่ทำได้ตอนนี้
+                     * The owner's name lives in the **label**, not only in `group`,
+                     * because the log page's `<select>` is still a flat list — a
+                     * value in `group` is never rendered at all. The list is already
+                     * sorted by owner, so a repeated prefix reads as a visible block,
+                     * about as close to an optgroup as is possible right now.
                      */
-                    'label' => $site['owner'].' · '.$site['domain'].' · '.$meta['label'],
-                    // เก็บไว้ให้หน้าจอที่จัดกลุ่มได้ใช้ — คำถามที่หน้านี้ต้องตอบคือ
-                    // "เว็บของลูกค้ารายนี้เจออะไร" ไม่ใช่ "เครื่องทั้งเครื่องเจออะไร"
-                    'group' => 'เว็บไซต์ของ '.$site['owner'],
+                    'label' => $this->t('{owner} · {domain} · {kind}', [
+                        'owner' => $site['owner'],
+                        'domain' => $site['domain'],
+                        'kind' => $this->t($meta['label']),
+                    ]),
+                    // Kept for a future screen that can group properly — the
+                    // question this page answers is "what is this customer's site
+                    // seeing", not "what is the whole machine seeing"
+                    'group' => $this->t('Websites of {owner}', ['owner' => $site['owner']]),
                     'format' => $meta['format']
                 ];
             }

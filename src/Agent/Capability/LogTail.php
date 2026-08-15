@@ -15,18 +15,20 @@ use Phpcp\Security\Permissions;
 use Phpcp\Support\Validator;
 
 /**
- * อ่านบรรทัดท้ายของไฟล์ log — อ่านอย่างเดียว
+ * Reads the tail of a log file — read-only
  *
- * ความปลอดภัยที่สำคัญที่สุดของ capability นี้: ผู้ใช้ระบุ "คีย์" ไม่ใช่ "เส้นทางไฟล์"
- * เส้นทางจริงมาจาก LogCatalog ซึ่งเป็น allowlist ตายตัวในโค้ด
- * จึงไม่มีทางอ่านไฟล์นอกรายการได้เลย ไม่ว่าจะพยายาม traversal แบบไหน
+ * The most important safety property of this capability: the caller names a "key",
+ * never a "file path". The real path comes from LogCatalog, a fixed allowlist in
+ * code, so there is no way to read a file outside that list no matter what kind of
+ * traversal is attempted.
  *
- * คีย์รูป `site:<id>:<ชนิด>` อ่าน log ของเว็บไซต์หนึ่งแห่ง เส้นทางมาจาก `Site` ซึ่ง
- * คำนวณจากบ้านของเจ้าของ ผู้เรียกจึงยังระบุเส้นทางเองไม่ได้อยู่ดี — สิ่งเดียวที่เขา
- * เลือกได้คือ **เลขเว็บ** ซึ่งถูกตรวจความเป็นเจ้าของซ้ำที่นี่อีกชั้น
+ * A key shaped `site:<id>:<kind>` reads one website's log. The path comes from
+ * `Site`, which derives it from the owner's home, so the caller still can't name a
+ * path directly — the only thing they choose is **the site id**, and ownership of
+ * that is re-checked here.
  *
- * อ่านจากท้ายไฟล์ถอยขึ้นมา ไม่โหลดทั้งไฟล์เข้าหน่วยความจำ —
- * log ขนาดหลายกิกะไบต์จึงเปิดดูได้โดยไม่ทำให้เครื่องล่ม
+ * Reads backward from the end of the file rather than loading the whole thing into
+ * memory — a multi-gigabyte log can be opened without bringing the machine down.
  */
 final class LogTail implements Capability
 {
@@ -34,7 +36,7 @@ final class LogTail implements Capability
     private const MAX_LINES = 2000;
     private const CHUNK = 8192;
 
-    /** อ่านย้อนหลังไม่เกินเท่านี้ กันกรณีไฟล์เป็นบรรทัดเดียวยาวมาก */
+    /** Never scans further back than this — guards against a file that's one enormous line */
     private const MAX_SCAN_BYTES = 4_194_304;
 
     public static function name(): string
@@ -44,7 +46,7 @@ final class LogTail implements Capability
 
     public function permission(): string
     {
-        // permission ละเอียดต่อแหล่ง log ตรวจซ้ำใน validate() อีกชั้น
+        // Per-source permission is re-checked more precisely in validate()
         return 'log.view';
     }
 
@@ -55,30 +57,31 @@ final class LogTail implements Capability
 
     public function summary(): string
     {
-        return 'อ่านบรรทัดท้ายของไฟล์ log';
+        return 'Read the tail of a log file';
     }
 
     public function validate(array $args): array
     {
         $source = Validator::requireString($args, 'source', 32);
 
-        // ตรวจได้แค่ "รูปทรงของคีย์" ที่นี่ — ชั้นนี้ไม่มีฐานข้อมูลให้ถามว่าเว็บมีจริงไหม
-        // และใครเป็นเจ้าของ · สองข้อนั้นตรวจใน run() ซึ่งมี Context
+        // Only the *shape* of the key can be checked here — this layer has no
+        // database to ask whether the site exists or who owns it. Both happen in
+        // run(), which has a Context.
         if (!LogCatalog::has($source) && LogCatalog::parseSiteKey($source) === null) {
-            throw new ValidationError("ไม่รู้จักแหล่ง log: {$source}");
+            throw new ValidationError("Unknown log source: {$source}");
         }
 
         $lines = isset($args['lines'])
             ? Validator::requireInt($args, 'lines', 10, self::MAX_LINES)
             : self::DEFAULT_LINES;
 
-        // คำค้นเป็นข้อความธรรมดา ไม่ใช่ regex — ผู้ใช้จึงทำให้ระบบค้างด้วย catastrophic
-        // backtracking ไม่ได้ และไม่ต้องกังวลเรื่อง pattern ที่เป็นอันตราย
+        // The search term is plain text, not a regex — a user can't hang the system
+        // with catastrophic backtracking, and there's no dangerous pattern to worry about
         $search = Validator::optionalString($args, 'search', max: 200);
 
         $level = Validator::optionalString($args, 'level', max: 16);
         if ($level !== '' && !in_array($level, LogCatalog::levels(), true)) {
-            throw new ValidationError('ระดับ log ไม่ถูกต้อง');
+            throw new ValidationError('Invalid log level');
         }
 
         return [
@@ -103,7 +106,7 @@ final class LogTail implements Capability
                 'lines' => [],
                 'total' => 0,
                 'size_bytes' => 0,
-                'message' => 'ยังไม่มีไฟล์ log นี้บนเครื่อง',
+                'message' => 'This log file does not exist on the machine yet',
             ];
         }
 
@@ -125,10 +128,11 @@ final class LogTail implements Capability
     }
 
     /**
-     * แปลงคีย์เป็นเส้นทางไฟล์จริง พร้อมตรวจสิทธิ์ของแหล่งนั้น
+     * Turns a key into a real file path, checking that source's permission on the way
      *
-     * ทางเดียวที่คีย์กลายเป็นเส้นทางได้ — ทุกกรณีจบที่ค่าคงที่ในโค้ดหรือที่เส้นทาง
-     * ซึ่ง `Site` คำนวณจากโดเมนที่ผ่าน validator มาแล้ว ไม่มีสายไหนรับ path จากผู้เรียก
+     * The only place a key becomes a path — every branch ends at a constant in code,
+     * or at a path `Site` derives from a domain that already passed the validator. No
+     * branch ever accepts a path from the caller.
      *
      * @return array{label:string,format:string,path:string}
      */
@@ -141,14 +145,15 @@ final class LogTail implements Capability
         }
 
         $source = LogCatalog::get($key);
-        // ตรวจ permission ของแหล่ง log ที่ละเอียดกว่าระดับ capability
-        // (audit log ต้องใช้ audit.view ไม่ใช่แค่ log.view)
+        // A finer-grained permission than the capability's own — the audit log needs
+        // audit.view, not just log.view
         if (!$context->actor->can($source['permission'])) {
-            throw new PermissionDenied('คุณไม่มีสิทธิ์อ่าน log นี้');
+            throw new PermissionDenied('You do not have permission to read this log');
         }
 
-        // log ของ panel เองอยู่คนละที่ตาม layout จึงถามจาก Paths ไม่ใช่ใช้ค่าคงที่
-        // ส่วน log ของระบบใช้เส้นทางจาก catalog แล้วให้ executor แมปตามโหมด
+        // The panel's own logs live somewhere else depending on the layout, so ask
+        // Paths rather than use a constant. System logs use the catalog path and let
+        // the executor map it for the current mode.
         return [
             'label' => $source['label'],
             'format' => $source['format'],
@@ -159,11 +164,12 @@ final class LogTail implements Capability
     }
 
     /**
-     * log ของเว็บไซต์หนึ่งแห่ง
+     * One website's log
      *
-     * ตรวจความเป็นเจ้าของซ้ำที่ชั้นนี้แม้ web tier กรองรายการมาให้แล้ว — agent ต้อง
-     * ไม่เชื่อผู้เรียก · ถ้าข้ามด่านนี้ได้ ผู้ดูแลเว็บไซต์คนหนึ่งจะเดาเลข id แล้วอ่าน
-     * access log ของลูกค้ารายอื่นได้ทั้งเครื่อง ซึ่งมีทั้ง IP ผู้เข้าชมและ URL ที่เรียก
+     * Ownership is re-checked at this layer even though the web tier already
+     * filtered the list — the agent must not trust its caller. Skip this and a
+     * website admin could guess an id and read another customer's access log on the
+     * whole machine, visitor IPs and requested URLs included.
      *
      * @return array{label:string,format:string,path:string}
      */
@@ -172,7 +178,7 @@ final class LogTail implements Capability
         $actor = $context->actor;
 
         if (!$actor->can(LogCatalog::SITE_PERMISSION)) {
-            throw new PermissionDenied('คุณไม่มีสิทธิ์อ่าน log นี้');
+            throw new PermissionDenied('You do not have permission to read this log');
         }
 
         $sites = new SiteRepository($context->db);
@@ -180,13 +186,13 @@ final class LogTail implements Capability
         if ($actor->userId !== 0
             && !Permissions::seesAllSites($actor->role)
             && !$sites->isOwnedBy($siteId, $actor->userId)) {
-            throw new PermissionDenied('คุณไม่มีสิทธิ์อ่าน log ของเว็บไซต์นี้');
+            throw new PermissionDenied('You do not have permission to read this website\'s logs');
         }
 
         $site = $sites->load($siteId);
 
         if ($site === null) {
-            throw new ValidationError('ไม่พบเว็บไซต์ที่ระบุ');
+            throw new ValidationError('Website not found');
         }
 
         $meta = LogCatalog::siteKinds()[$kind];
@@ -195,20 +201,20 @@ final class LogTail implements Capability
             'access' => $site->accessLog(),
             'error' => $site->errorLog(),
             'php' => $site->phpErrorLog(),
-            // ชนิดใหม่ใน siteKinds() ที่ยังไม่มีเส้นทางรองรับ — ล้มดังกว่าเงียบ
-            default => throw new ValidationError("ยังไม่รองรับ log ชนิด {$kind}"),
+            // A kind newly added to siteKinds() with no path wired up yet — fail loudly, not quietly
+            default => throw new ValidationError("Log kind not supported yet: {$kind}"),
         };
 
         return [
             'label' => $site->domain.' · '.$meta['label'],
             'format' => $meta['format'],
-            // เส้นทางเป็นแบบ logical เสมอ — ให้ executor แมปเข้า prefix ของโหมด sandbox
+            // The path is always logical — the executor maps it into the current sandbox mode's prefix
             'path' => $executor->path($path),
         ];
     }
 
     /**
-     * อ่าน n บรรทัดสุดท้ายโดยไล่จากท้ายไฟล์ถอยขึ้น
+     * Reads the last n lines by walking backward from the end of the file
      *
      * @return list<string>
      */
@@ -246,7 +252,7 @@ final class LogTail implements Capability
 
         $lines = preg_split('/\R/', rtrim($buffer, "\r\n")) ?: [];
 
-        // ตัดบรรทัดแรกทิ้งถ้าอ่านมาไม่ครบบรรทัด (เริ่มกลางบรรทัดพอดี)
+        // Drop the first line if the read landed mid-line (started partway through one)
         if ($position > 0 && count($lines) > 1) {
             array_shift($lines);
         }
@@ -283,7 +289,8 @@ final class LogTail implements Capability
             $out[] = [
                 'n' => $number,
                 'level' => $lineLevel,
-                // ตัดบรรทัดที่ยาวผิดปกติ กันหน้าเว็บค้างเพราะ log บรรทัดเดียวยาวเป็นเมกะไบต์
+                // Trim abnormally long lines so the page doesn't freeze because one
+                // log line is megabytes long
                 'text' => mb_substr($line, 0, 2000),
             ];
         }
