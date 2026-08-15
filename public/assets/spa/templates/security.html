@@ -25,6 +25,71 @@
         </div>
       </div>
 
+      <!--
+        ภาพรวมการป้องกัน — สวิตช์ใหญ่ ทุก jail และ IP ที่ถูกแบนทั้งเครื่องในที่เดียว
+        คำถามคือ "เครื่องนี้กำลังแบนใครอยู่บ้าง" ซึ่งเป็นคำถามระดับเครื่อง ไม่ใช่ระดับเว็บ
+      -->
+      <div class="content-body" data-component="api" data-endpoint="/api/v2/security/protection">
+        <h2 class="icon-shield" data-i18n>Protection</h2>
+
+        <div class="alert alert-danger" data-if="drifted" data-i18n>fail2ban is switched on here but the service is not running — nothing is being enforced right now.</div>
+
+        <form data-form="fail2banMaster" action="/api/v2/security/fail2ban" method="post" data-method="PUT" data-ajax-submit="true">
+          <fieldset>
+            <div>
+              <input type="checkbox" class="switch" id="fail2ban_enabled" name="enabled" data-checked="fail2ban_enabled">
+              <label for="fail2ban_enabled" data-i18n>Use fail2ban on this server</label>
+            </div>
+            <!--
+              ตัวเลขจากเครื่องตัวเอง ไม่ใช่ตัวเลขที่เขียนไว้ในคู่มือ — "ปิดแล้วได้อะไรกลับมา"
+              เป็นคำถามที่ผู้ดูแลเครื่องเล็กถามจริง
+            -->
+            <div class="comment">
+              <span data-i18n>Currently using</span>
+              <strong data-text="memory_mb"></strong> <span data-i18n>MB of memory</span>.
+              <span data-i18n>Turning this off removes every jail the panel manages. The service itself keeps running because the SSH jail comes from the distro, not from the panel — stop it yourself only if you accept losing SSH brute-force protection too.</span>
+            </div>
+          </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn icon-save" data-i18n>Save</button>
+          </fieldset>
+        </form>
+
+        <h3 data-i18n>Jails managed by the panel</h3>
+        <div class="tablebody">
+          <table class="table border fullwidth" data-table="protectionJails" data-attr="data:jails">
+            <thead>
+              <tr>
+                <th data-field="label" data-i18n>{LNG_Protection}</th>
+                <th data-field="mode_label" class="center" data-cell-class="center"
+                    data-template="<span class='pill pill-${mode_tone}'>{mode_label}</span>" data-i18n>{LNG_Mode}</th>
+                <th data-field="failed" class="center" data-cell-class="center" data-i18n>{LNG_Currently failed}</th>
+                <th data-field="banned" class="center" data-cell-class="center" data-i18n>{LNG_Currently banned}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <h3 data-i18n>Everyone banned right now</h3>
+        <div class="tablebody">
+          <table class="table border fullwidth" data-table="allBans" data-source="/api/v2/security/protection/bans">
+            <thead>
+              <tr>
+                <th data-field="ip" data-i18n>{LNG_IP address}</th>
+                <th data-field="jail_label" data-i18n>{LNG_Blocked by}</th>
+                <th class="center" data-row-actions="
+                      <button type='button' class='btn small icon-refresh' data-action='click.prevent:apiRefresh'
+                              data-api-url='/api/v2/security/panel-jail/unban' data-refresh-table='allBans'
+                              data-api-method='post' data-param-ip='{ip}' data-param-jail='{jail}'>
+                  {LNG_Unban}</button>" data-i18n>{LNG_Action}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
       <div class="content-body">
         <h2 class="icon-ban" data-i18n>Login brute-force protection</h2>
         <div class="alert alert-warning" data-i18n>A ban blocks every port, including this control panel. Put your own IP in the exempt list, and remember you can always unban from SSH.</div>
@@ -59,9 +124,20 @@
 
           <form data-form="panelJail" action="/api/v2/security/panel-jail" method="post" data-method="PUT" data-ajax-submit="true">
             <fieldset>
+              <!--
+                สามสถานะ ไม่ใช่เปิด/ปิด — "แจ้งเตือน" คือของที่ผู้ดูแลส่วนใหญ่ต้องการจริง
+                ตอนเริ่มต้น: เห็นว่าระบบจับอะไรได้บ้างก่อนมอบอำนาจตัดคนออกจากเครื่องให้มัน
+              -->
               <div>
-                <input type="checkbox" class="switch" id="panel_jail_enabled" name="enabled" data-checked="enabled">
-                <label for="panel_jail_enabled" data-i18n>Ban IPs that keep failing to sign in</label>
+                <label for="panel_jail_mode" data-i18n>When someone keeps failing to sign in</label>
+                <span class="form-control icon-shield">
+                  <select id="panel_jail_mode" name="mode" data-attr="value:mode">
+                    <option value="off" data-i18n>Do nothing</option>
+                    <option value="notify" data-i18n>Notify me, do not ban</option>
+                    <option value="ban" data-i18n>Ban at the firewall</option>
+                  </select>
+                </span>
+                <div class="comment" data-i18n>Notify sends to whichever channels you set up under Settings, and never touches the firewall — you decide whether to ban.</div>
               </div>
               <div class="form-group">
                 <div class="width30">

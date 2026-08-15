@@ -69,7 +69,9 @@ use Phpcp\Agent\Capability\ServiceReload;
 use Phpcp\Agent\Capability\ServiceRestart;
 use Phpcp\Agent\Capability\ServiceStart;
 use Phpcp\Agent\Capability\SecurityScan;
+use Phpcp\Agent\Capability\Fail2banSet;
 use Phpcp\Agent\Capability\NeverBanSet;
+use Phpcp\Agent\Capability\ProtectionOverview;
 use Phpcp\Agent\Capability\PanelJailSet;
 use Phpcp\Agent\Capability\PanelJailStatus;
 use Phpcp\Agent\Capability\PanelJailUnban;
@@ -163,6 +165,7 @@ final class CapabilityRegistry
             SslList::class,
             SecurityScan::class,
             PanelJailStatus::class,
+            ProtectionOverview::class,
             SettingsGet::class,
 
             // งานวัดผลตามเวลาของ scheduler — ไม่แตะเครื่อง เขียนแค่ตารางแคชของ panel
@@ -179,6 +182,7 @@ final class CapabilityRegistry
             ServiceReload::class,
             PanelJailSet::class,
             NeverBanSet::class,
+            Fail2banSet::class,
             PanelJailUnban::class,
 
             // Hosting — สร้างและจัดการเว็บไซต์

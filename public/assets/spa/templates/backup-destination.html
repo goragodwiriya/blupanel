@@ -3,16 +3,6 @@
   <header data-component="topbar"></header>
   <div data-component="mode-banner"></div>
   <div data-component="rollback-bar"></div>
-  <!--
-    ฟอร์มปลายทางนอกเครื่อง — **หน้าเว็บของตัวเอง ไม่ใช่ Modal**
-
-    FRAMEWORK_GUIDE ให้ใช้ Modal เมื่อช่องกรอกไม่เยอะ · ฟอร์มนี้มีสิบกว่าช่องรวม
-    textarea ของกุญแจลับ จึงเข้าเกณฑ์ "หน้าเว็บ" ตามกฎเดียวกัน
-
-    ไฟล์เดียวทำทั้งเพิ่มและแก้ไข — `id` ที่ซ่อนอยู่ท้ายฟอร์มเป็นตัวบอก และเซิร์ฟเวอร์
-    เป็นคนตัดสิน (`POST /api/v2/backup-destinations` ส่งต่อให้ update() เองเมื่อ id > 0)
-    ปลายทางเดียวเสมอ จึงไม่ต้องผูก action หรือ method ตามเงื่อนไขในเทมเพลต
-  -->
   <main class="content" data-script="pageDetail" data-fallback="/backups">
     <div class="card-groups" data-component="api" data-endpoint="/api/v2/backup-destinations/{id}">
       <header>
@@ -42,11 +32,6 @@
               </div>
             </div>
             <div>
-              <!--
-                  ชนิดของปลายทางเปลี่ยนทีหลังไม่ได้ — ค่าที่ตั้งไว้ผูกกับรูปแบบของ config
-                  ที่เก็บไว้แล้ว · ตอนแก้ไขจึงแสดงเป็นข้อความ ไม่ใช่ตัวเลือกที่กดได้แล้ว
-                  ไม่มีผล
-                -->
               <label for="nd_driver" data-i18n>Type</label>
               <span class="form-control icon-menus" data-show="id === 0">
                 <select id="nd_driver" name="driver" data-value="driver">
@@ -81,8 +66,6 @@
               </span>
               <div class="comment" data-i18n>Required for local/sftp/rsync. Optional key prefix for s3</div>
             </div>
-            <!-- ฟิลด์เฉพาะ s3 — ฟอร์มเดียวกันแสดงทุกช่องตลอด ไม่มี JS สลับตามชนิดที่เลือก
-                 เหมือนช่อง host/port/user ด้านบนที่ก็ไม่ผูกกับ driver เหมือนกัน -->
             <div class="form-group">
               <div class="width50">
                 <label for="nd_bucket" data-i18n>Bucket</label>
@@ -120,47 +103,21 @@
               <div class="comment" data-i18n>Turn on for services without wildcard DNS per bucket, such as self-hosted MinIO</div>
             </div>
             <div>
-              <!--
-                กุญแจลับไม่เคยถูกส่งกลับมาแสดง — เก็บแบบเข้ารหัสและอ่านคืนไม่ได้
-                ตอนแก้ไขจึงเว้นว่างไว้ได้ เซิร์ฟเวอร์จะเปลี่ยนก็ต่อเมื่อกรอกค่าใหม่มา
-              -->
               <label for="nd_secret" data-i18n>Private key / secret key</label>
               <span class="form-control">
-                <textarea id="nd_secret" name="secret" rows="4" class="mono" autocomplete="off" placeholder="{LNG_Needed for sftp, rsync and s3 (secret access key). Stored encrypted and never shown again. Leave blank to keep the current one. Password authentication is not supported for sftp/rsync}"></textarea>
+                <textarea id="nd_secret" name="secret" rows="4" class="mono" autocomplete="off"
+                          placeholder="{LNG_Needed for sftp, rsync and s3 (secret access key). Stored encrypted and never shown again. Leave blank to keep the current one. Password authentication is not supported for sftp/rsync}"></textarea>
               </span>
             </div>
             <div>
-              <!--
-                Host key ของเครื่องปลายทาง (sftp/rsync) — เนื้อหา ไม่ใช่เส้นทางไฟล์
-
-                StrictHostKeyChecking เปิดไว้เสมอโดยตั้งใจ (ดู SshDestination) การส่งไฟล์
-                สำรองครั้งแรกจึงล้มด้วย "Host key verification failed" จนกว่าจะใส่ค่านี้ ·
-                เก็บเป็นเนื้อหาไม่ใช่เส้นทาง เพราะผู้ดูแลวางไฟล์บนเครื่อง panel เองไม่ได้
-                (systemd hardening) · เป็นกุญแจสาธารณะ ไม่ใช่ความลับ จึงไม่เข้ารหัส
-              -->
               <div class="flex middle fullwidth">
                 <label for="nd_known_hosts" data-i18n>Known host key</label>
-                <!--
-                  อ่าน host key จาก **เครื่องนี้** ซึ่งเป็นเครื่องที่จะส่งไฟล์สำรองจริง
-                  ไม่ใช่จากเครื่องที่ผู้ดูแลนั่งอยู่ ซึ่งอาจมองเห็นคนละ IP (NAT / DNS แยกวง)
-
-                  ใช้ `readHostKey` ที่เขียนไว้ใน js/ui.js ไม่ใช่ `requestApi` — ค่าที่ส่ง
-                  มาจากช่องที่ผู้ใช้เพิ่งพิมพ์ และผลต้องไปลงอีกช่องหนึ่ง ซึ่งประกาศด้วย
-                  แอตทริบิวต์ไม่ได้ (`requestApi` ทิ้งคำสั่งจากเซิร์ฟเวอร์ทั้งหมด)
-                -->
-                <button type="button" class="btn small icon-download" data-action="click.prevent:readHostKey"
-                        data-i18n>Read from the destination</button>
+                <button type="button" class="btn small icon-download" data-action="click.prevent:readHostKey" data-i18n>Read from the destination</button>
               </div>
               <span class="form-control">
-                <textarea id="nd_known_hosts" name="known_hosts" rows="3" class="mono" autocomplete="off"
-                          data-attr="value:config.known_hosts"
+                <textarea id="nd_known_hosts" name="known_hosts" rows="3" class="mono" autocomplete="off" data-attr="value:config.known_hosts"
                           placeholder="{LNG_sftp/rsync only. Fill in host and port above, then press Read from the destination}"></textarea>
               </span>
-              <!--
-                ลายนิ้วมือของกุญแจที่เพิ่งอ่านมา — ต้องค้างอยู่ให้เทียบได้ ไม่ใช่แถบที่หายเอง
-                ปุ่มด้านบนยืนยันตัวตนของเครื่องปลายทางแทนไม่ได้ (ssh-keyscan เชื่อสิ่งที่
-                ปลายสายตอบมา) การเทียบด้วยตาคือสิ่งเดียวที่ผู้ดูแลทำได้จริง
-              -->
               <pre class="mono selectable" data-host-key-fingerprint hidden></pre>
               <div class="comment" data-i18n>Compare the fingerprint with ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub on the destination machine</div>
               <div class="comment" data-i18n>Leave blank for local and s3</div>

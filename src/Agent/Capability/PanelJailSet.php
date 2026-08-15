@@ -48,11 +48,27 @@ final class PanelJailSet implements Capability
 
     public function validate(array $args): array
     {
-        $enabled = Validator::requireBool($args, 'enabled');
+        /*
+         * `mode` แทน `enabled` แบบเปิด/ปิด — สามสถานะ off | notify | ban
+         *
+         * ยังรับ `enabled` แบบเดิมด้วยเพื่อไม่ให้ผู้เรียกเก่าพัง: true = ban เพราะ
+         * นั่นคือความหมายเดียวที่ "เปิด" เคยมี
+         */
+        $mode = Validator::optionalString($args, 'mode', '', 16);
+
+        if ($mode === '') {
+            $mode = Validator::requireBool($args, 'enabled')
+                ? Fail2banManager::MODE_BAN
+                : Fail2banManager::MODE_OFF;
+        }
+
+        if (!in_array($mode, Fail2banManager::modes(), true)) {
+            throw new ValidationError('โหมดของ jail ไม่ถูกต้อง — ต้องเป็น off, notify หรือ ban');
+        }
 
         // ปิดแล้วไม่ต้องกรอกค่าที่กำลังจะไม่ถูกใช้
-        if (!$enabled) {
-            return ['enabled' => false];
+        if ($mode === Fail2banManager::MODE_OFF) {
+            return ['mode' => Fail2banManager::MODE_OFF, 'enabled' => false];
         }
 
         $findSeconds = Validator::requireInt($args, 'find_seconds', 60, 86_400);
@@ -90,6 +106,7 @@ final class PanelJailSet implements Capability
         }
 
         return [
+            'mode' => $mode,
             'enabled' => true,
             'max_retry' => $maxRetry,
             'find_seconds' => $findSeconds,
@@ -106,15 +123,29 @@ final class PanelJailSet implements Capability
         $manager = (new Fail2banManager($executor))
             ->withNeverBan($settings->get('security.never_ban_ips'));
 
-        if (!$args['enabled']) {
+        if ($args['mode'] === Fail2banManager::MODE_OFF) {
             $manager->removePanelLogin();
-            $settings->save(['security.panel_jail.enabled' => '0']);
+            $settings->save([
+                'security.panel_jail.enabled' => '0',
+                'security.panel_jail.mode' => Fail2banManager::MODE_OFF,
+            ]);
 
             return [
+                'mode' => Fail2banManager::MODE_OFF,
                 'enabled' => false,
                 'active' => false,
                 'message' => 'ปิดการกันเดารหัสผ่านหน้าเข้าสู่ระบบแล้ว',
             ];
+        }
+
+        /*
+         * สวิตช์ใหญ่ปิดอยู่ = ผู้ดูแลเลือกไว้ว่าเครื่องนี้ไม่ใช้ fail2ban (เช่นเพราะ RAM น้อย)
+         * · เขียน jail ทับความตั้งใจนั้นไม่ได้ ต้องบอกให้ชัดว่าติดที่ไหน
+         */
+        if (!$settings->bool('security.fail2ban.enabled')) {
+            throw new ValidationError(
+                'เครื่องนี้ปิดการใช้ fail2ban ไว้ — เปิดสวิตช์ "ใช้ fail2ban" ในหน้าความปลอดภัยก่อน',
+            );
         }
 
         // สำเนา audit log แบบข้อความคือแหล่งเดียวที่ fail2ban อ่านได้ — ตาราง audit_log
@@ -122,6 +153,7 @@ final class PanelJailSet implements Capability
         $auditLog = $context->config->paths->logFile('audit');
 
         $settingsToWrite = [
+            'mode' => $args['mode'],
             'max_retry' => $args['max_retry'],
             'find_seconds' => $args['find_seconds'],
             'ban_seconds' => $args['ban_seconds'],
@@ -133,6 +165,7 @@ final class PanelJailSet implements Capability
 
         $settings->save([
             'security.panel_jail.enabled' => '1',
+            'security.panel_jail.mode' => $args['mode'],
             'security.panel_jail.max_retry' => (string) $args['max_retry'],
             'security.panel_jail.find_seconds' => (string) $args['find_seconds'],
             'security.panel_jail.ban_seconds' => (string) $args['ban_seconds'],
@@ -140,16 +173,23 @@ final class PanelJailSet implements Capability
         ]);
 
         return [
+            'mode' => $args['mode'],
             'enabled' => true,
             'jail' => Fail2banManager::PANEL_LOGIN_JAIL,
             'log_path' => $auditLog,
             'status' => $manager->statusOf(Fail2banManager::PANEL_LOGIN_JAIL),
-            'message' => sprintf(
-                'เปิดแล้ว — ล็อกอินผิด %d ครั้งใน %d นาที จะถูกแบน %d นาที',
-                $args['max_retry'],
-                (int) round($args['find_seconds'] / 60),
-                (int) round($args['ban_seconds'] / 60),
-            ),
+            'message' => $args['mode'] === Fail2banManager::MODE_NOTIFY
+                ? sprintf(
+                    'เปิดโหมดแจ้งเตือนแล้ว — ล็อกอินผิด %d ครั้งใน %d นาที จะส่งข้อความหาคุณ **โดยไม่แบน**',
+                    $args['max_retry'],
+                    (int) round($args['find_seconds'] / 60),
+                )
+                : sprintf(
+                    'เปิดโหมดแบนแล้ว — ล็อกอินผิด %d ครั้งใน %d นาที จะถูกแบน %d นาที',
+                    $args['max_retry'],
+                    (int) round($args['find_seconds'] / 60),
+                    (int) round($args['ban_seconds'] / 60),
+                ),
         ];
     }
 }

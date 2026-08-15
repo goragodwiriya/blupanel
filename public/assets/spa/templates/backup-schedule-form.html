@@ -1,16 +1,4 @@
-<!--
-  รอบสำรองอัตโนมัติ — **ตัวเดียวทั้งเครื่อง** (PLAN-BACKUP-V2 ข้อ B10)
-
-  ไม่มีช่อง "ชนิด" กับ "เว็บไซต์" อีกแล้ว: คำถามนั้นย้ายไปอยู่ที่สวิตช์รายบัญชีในหน้า
-  Backups ส่วนที่นี่ตอบแค่ "รอบเดินตอนไหน และเก็บย้อนหลังแค่ไหน"
-
-  PATCH ไม่ใช่ POST — งานนี้มีอยู่ตลอด ผู้ใช้แก้ค่าของมันได้อย่างเดียว สร้างใหม่ไม่ได้
--->
-<form data-form="scheduleSave"
-      action="/api/v2/backup-schedule"
-      method="patch"
-      data-ajax-submit="true"
-      data-validate="true">
+<form data-form="scheduleSave" action="/api/v2/backup-schedule" method="patch" data-ajax-submit="true" data-validate="true">
   <fieldset>
     <div>
       <label for="ns_schedule" data-i18n>Schedule</label>
@@ -26,26 +14,17 @@
       </span>
     </div>
     <div class="form-group">
-      <!--
-        นโยบายเก็บไฟล์อยู่ตรงนี้เพราะมันเป็นเรื่องเดียวกับรอบ: ทุกรอบสร้างไฟล์ใหม่
-        ถ้าไม่มีใครเก็บกวาด โควตาของลูกค้าจะเต็มด้วยสำเนาของตัวเองภายในไม่กี่สัปดาห์
-
-        `keep` มาก่อน `days` เพราะมันคือกฎที่กันข้อมูลหาย — บัญชีที่ไม่ได้สำรองมานาน
-        ต้องไม่ตื่นมาแล้วพบว่าไฟล์ถูกลบเกลี้ยงเพราะทุกไฟล์ "เก่าเกินกำหนด"
-      -->
       <div class="width50">
         <label for="ns_keep" data-i18n>Always keep the latest</label>
         <span class="form-control icon-stack">
-          <input type="number" id="ns_keep" name="keep" min="0" max="365" required
-                 data-attr="value:keep">
+          <input type="number" id="ns_keep" name="keep" min="0" max="365" required data-attr="value:keep">
         </span>
         <div class="comment" data-i18n>copies of each website, whatever their age</div>
       </div>
       <div class="width50">
         <label for="ns_days" data-i18n>Delete files older than</label>
         <span class="form-control icon-clock">
-          <input type="number" id="ns_days" name="days" min="0" max="3650" required
-                 data-attr="value:days">
+          <input type="number" id="ns_days" name="days" min="0" max="3650" required data-attr="value:days">
         </span>
         <div class="comment" data-i18n>days · 0 = never delete by age</div>
       </div>

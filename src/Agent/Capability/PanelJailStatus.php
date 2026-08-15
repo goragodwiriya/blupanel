@@ -56,6 +56,10 @@ final class PanelJailStatus implements Capability
 
         return [
             'enabled' => $enabled,
+            // โหมดคือสิ่งที่หน้าจอเลือก ส่วน enabled เหลือไว้ให้ผู้เรียกเก่าที่รู้จักแค่เปิด/ปิด
+            'mode' => $enabled
+                ? $settings->get('security.panel_jail.mode', Fail2banManager::MODE_BAN)
+                : Fail2banManager::MODE_OFF,
             'jail' => Fail2banManager::PANEL_LOGIN_JAIL,
             'max_retry' => $settings->int('security.panel_jail.max_retry'),
             'find_seconds' => $settings->int('security.panel_jail.find_seconds'),

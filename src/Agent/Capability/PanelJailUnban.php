@@ -49,18 +49,37 @@ final class PanelJailUnban implements Capability
             throw new ValidationError('รูปแบบ IP ไม่ถูกต้อง');
         }
 
-        return ['ip' => $ip];
+        /*
+         * ชื่อ jail มาจากหน้ารวมซึ่งมีหลาย jail · ว่าง = jail หน้าเข้าสู่ระบบตามเดิม
+         *
+         * **ต้องขึ้นต้นด้วยคำนำหน้าของ panel เท่านั้น** — ค่านี้กลายเป็นอาร์กิวเมนต์ของ
+         * `fail2ban-client` · ถ้ารับชื่ออะไรก็ได้ ผู้ที่มีสิทธิ์ security.manage จะปลดแบน
+         * jail ที่ผู้ดูแลเขียนเอง (เช่น sshd ของดิสโทร) ได้จากหน้าเว็บ ซึ่งอยู่นอก
+         * ขอบเขตของ panel และเป็นการยกเลิกการป้องกันที่ panel ไม่ได้เป็นคนตั้ง
+         */
+        $jail = Validator::optionalString($args, 'jail', '', 64);
+
+        if ($jail === '') {
+            $jail = Fail2banManager::PANEL_LOGIN_JAIL;
+        }
+
+        if (!Fail2banManager::isOwnJail($jail)) {
+            throw new ValidationError('ปลดแบนได้เฉพาะ jail ที่ panel เป็นผู้ดูแลเท่านั้น');
+        }
+
+        return ['ip' => $ip, 'jail' => $jail];
     }
 
     public function run(array $args, Executor $executor, Context $context): array
     {
         $manager = new Fail2banManager($executor);
 
-        $manager->unbanFrom(Fail2banManager::PANEL_LOGIN_JAIL, $args['ip']);
+        $manager->unbanFrom($args['jail'], $args['ip']);
 
         return [
             'ip' => $args['ip'],
-            'status' => $manager->statusOf(Fail2banManager::PANEL_LOGIN_JAIL),
+            'jail' => $args['jail'],
+            'status' => $manager->statusOf($args['jail']),
             'message' => sprintf('ปลดแบน %s แล้ว', $args['ip']),
         ];
     }

@@ -44,15 +44,27 @@ final class SiteRateLimitSet extends SiteCapability
 
     public function validate(array $args): array
     {
-        $enabled = Validator::requireBool($args, 'enabled');
+        // `mode` (off|notify|ban) แทน enabled แบบสองสถานะ · ยังรับของเดิมเพื่อความเข้ากันได้
+        $mode = Validator::optionalString($args, 'mode', '', 16);
+
+        if ($mode === '') {
+            $mode = Validator::requireBool($args, 'enabled')
+                ? Fail2banManager::MODE_BAN
+                : Fail2banManager::MODE_OFF;
+        }
+
+        if (!in_array($mode, Fail2banManager::modes(), true)) {
+            throw new \Phpcp\Agent\ValidationError('โหมดของ jail ไม่ถูกต้อง — ต้องเป็น off, notify หรือ ban');
+        }
 
         // ค่าตัวเลขตรวจเฉพาะตอนเปิด — คนที่กดปิดไม่ควรถูกบังคับให้กรอกค่าที่กำลังจะไม่ถูกใช้
-        if (!$enabled) {
-            return ['site_id' => Validator::requireInt($args, 'site_id', 1), 'enabled' => false];
+        if ($mode === Fail2banManager::MODE_OFF) {
+            return ['site_id' => Validator::requireInt($args, 'site_id', 1), 'mode' => $mode, 'enabled' => false];
         }
 
         return [
             'site_id' => Validator::requireInt($args, 'site_id', 1),
+            'mode' => $mode,
             'enabled' => true,
             // ขอบเขตตรงกับ CHECK ใน migration 0016 — ตรวจสองชั้นเพราะฐานข้อมูลเป็นด่านสุดท้าย
             // ที่ไม่มีข้อความอธิบายให้ผู้ใช้ ส่วนด่านนี้บอกได้ว่าผิดตรงไหนและช่วงที่ยอมรับคืออะไร
@@ -76,7 +88,7 @@ final class SiteRateLimitSet extends SiteCapability
             ->withNeverBan((new SettingsRepository($context->db))->get('security.never_ban_ips'));
         $now = time();
 
-        if (!$args['enabled']) {
+        if ($args['mode'] === Fail2banManager::MODE_OFF) {
             $manager->remove($site);
 
             $context->db->run(
@@ -92,6 +104,7 @@ final class SiteRateLimitSet extends SiteCapability
         }
 
         $settings = [
+            'mode' => $args['mode'],
             'max_requests' => $args['max_requests'],
             'window_seconds' => $args['window_seconds'],
             'ban_seconds' => $args['ban_seconds'],
@@ -103,13 +116,14 @@ final class SiteRateLimitSet extends SiteCapability
 
         $context->db->run(
             'INSERT INTO site_rate_limits
-                (site_id, enabled, max_requests, window_seconds, ban_seconds, ignore_ips, created_at, updated_at)
-             VALUES (:id, 1, :max, :window, :ban, :ignore, :t, :t)
+                (site_id, enabled, mode, max_requests, window_seconds, ban_seconds, ignore_ips, created_at, updated_at)
+             VALUES (:id, 1, :mode, :max, :window, :ban, :ignore, :t, :t)
              ON CONFLICT(site_id) DO UPDATE SET
-                enabled = 1, max_requests = :max, window_seconds = :window,
+                enabled = 1, mode = :mode, max_requests = :max, window_seconds = :window,
                 ban_seconds = :ban, ignore_ips = :ignore, updated_at = :t',
             [
                 'id' => $args['site_id'],
+                'mode' => $settings['mode'],
                 'max' => $settings['max_requests'],
                 'window' => $settings['window_seconds'],
                 'ban' => $settings['ban_seconds'],

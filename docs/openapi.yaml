@@ -2543,6 +2543,104 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
 
+  /security/protection:
+    get:
+      tags: [server]
+      summary: ภาพรวมการป้องกันทั้งเครื่อง
+      description: |
+        ตอบคำถาม **"เครื่องนี้กำลังแบนใครอยู่บ้าง"** ในคำขอเดียว — สวิตช์ใหญ่ ทุก jail
+        ที่ panel ดูแล พร้อมโหมดของแต่ละตัวและรายการ IP ที่ถูกแบน
+
+        `memory_mb` คือหน่วยความจำที่ fail2ban ใช้อยู่จริงบนเครื่องนี้ · แสดงคู่กับสวิตช์ปิด
+        เพราะ "ปิดแล้วได้อะไรกลับมา" เป็นคำถามที่ผู้ดูแลเครื่องเล็กถามจริง
+
+        `drifted` = เปิดสวิตช์ไว้แต่บริการไม่ทำงาน — การป้องกันที่หน้าจอโฆษณาไม่มีอยู่จริง
+        (ปิดสวิตช์แล้วบริการยังรันอยู่ **ไม่ใช่** drift เพราะ jail ของ SSH มาจากดิสโทร)
+      responses:
+        "200":
+          description: สถานะรวม รายการ jail และรายการ IP ที่ถูกแบน
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      fail2ban_enabled: { type: boolean }
+                      fail2ban_running: { type: boolean }
+                      drifted: { type: boolean }
+                      memory_mb: { type: integer }
+                      never_ban_ips: { type: string }
+                      banned_total: { type: integer }
+                      jails:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            jail: { type: string }
+                            label: { type: string }
+                            mode: { type: string, enum: [off, notify, ban] }
+                            active: { type: boolean }
+                            banned: { type: integer }
+                            failed: { type: integer }
+                            drifted: { type: boolean }
+                      bans:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            ip: { type: string }
+                            jail: { type: string }
+                            jail_label: { type: string }
+        "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /security/protection/bans:
+    get:
+      tags: [server]
+      summary: IP ที่ถูกแบนของทุก jail รวมกัน
+      description: |
+        เนื้อหาเดียวกับ `bans` ใน `GET /security/protection` แต่แยกเส้นทางเพื่อให้ตาราง
+        ที่มีแหล่งข้อมูลของตัวเองสั่งโหลดใหม่หลังปลดแบนได้ตรง ๆ
+      responses:
+        "200":
+          description: รายการ IP ที่ถูกแบนพร้อมชื่อ jail ที่แบนอยู่
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: array, items: { type: object } }
+        "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /security/fail2ban:
+    put:
+      tags: [server]
+      summary: สวิตช์ใหญ่ — panel ใช้ fail2ban หรือไม่
+      description: |
+        **ปิดแล้วลบ jail ของ panel ทั้งหมดทันที** ไม่ใช่แค่บันทึกค่า — jail ที่ยังอยู่
+        ก็ยังทำงานและยังกินหน่วยความจำต่อไปโดยที่หน้าจอบอกว่าปิดแล้ว
+
+        **ไม่หยุดบริการ fail2ban ให้เอง** เพราะ jail ของ SSH มาจากแพ็กเกจของดิสโทร
+        ไม่ใช่ของ panel · คำตอบมี `stop_command` ให้ผู้ดูแลสั่งเองพร้อมคำเตือนว่าจะเสียอะไร
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200": { $ref: "#/components/responses/Done" }
+        "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
   /security/never-ban:
     put:
       tags: [server]

@@ -4,12 +4,6 @@
   <div data-component="mode-banner"></div>
   <div data-component="rollback-bar"></div>
   <main class="content">
-    <!--
-      ทั้งหน้าผูกกับ GET /api/v2/dashboard ผ่าน ApiComponent — ไม่มี JS ประจำหน้าเลย
-      · `data-text` อ่านจาก data ของคำตอบโดยตรง · `| ชื่อ` คือไปป์จัดรูปแบบที่
-      ลงทะเบียนไว้ใน js/formatters.js · `data-refresh-event` ทำให้ปุ่มโหลดใหม่
-      สั่งดึงข้อมูลรอบใหม่ได้โดยไม่ต้องผูก handler เอง
-    -->
     <div class="card-groups" data-component="api" data-endpoint="/api/v2/dashboard" data-refresh-event="phpcp:reload">
       <header>
         <div>
@@ -20,7 +14,6 @@
           <button type="button" class="btn is-loading icon-refresh" data-action="click.prevent:emit" data-emit-event="phpcp:reload" data-i18n>Refresh</button>
         </div>
       </header>
-      <!-- ทรัพยากรของเครื่อง — ความกว้างแถบตั้งผ่าน data-style (CSSOM ไม่ใช่ style= ที่ CSP บล็อก) -->
       <div class="ggrid">
         <div class="block3 large6 stat-card">
           <div class="stat-header icon-meter"><span data-i18n>CPU</span></div>
@@ -50,7 +43,6 @@
           </div>
         </div>
       </div>
-      <!-- จำนวนทรัพยากร — การ์ดแต่ละใบเป็นลิงก์ไปหน้าของมันเอง -->
       <div class="ggrid">
         <a class="block3 large6 stat-card" href="/app/sites" data-route="/sites">
           <div class="stat-header icon-website"><span data-i18n>Websites</span></div>
@@ -78,7 +70,6 @@
         </a>
       </div>
       <div class="ggrid">
-        <!-- ลูกค้าไม่มีสิทธิ์ service.view — API ส่ง services เป็นรายการว่าง ส่วนนี้จึงหายไปเอง -->
         <section class="block6" data-if="services.length > 0">
           <h2 class="icon-stats" data-i18n>Services</h2>
           <div class="service-cards" data-for="service in services">

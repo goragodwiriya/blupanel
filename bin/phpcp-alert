@@ -102,8 +102,59 @@ try {
         exit($sent ? 0 : 1);
     }
 
+    /*
+     * fail2ban ในโหมด "แจ้งเตือนแต่ไม่แบน" เรียกคำสั่งนี้แทนการสั่ง firewall
+     *
+     * **ทำไมต้องเป็นโปรแกรมนี้** — fail2ban รันเป็น root แต่เรียก capability ของ agent
+     * ไม่ได้ (ไม่รู้จัก socket และไม่ควรรู้จัก) · โปรแกรมนี้ทำสิ่งที่ต้องการพอดี:
+     * ส่งข้อความแล้วจบ ไม่แตะระบบอะไรเลย ซึ่งเป็นเจตนาเดิมของมันอยู่แล้ว
+     *
+     * ผู้ดูแลเป็นคนตัดสินใจเองว่าจะแบนหรือไม่ ข้อความจึงต้องมีคำสั่งแบนติดไปด้วย
+     * — คนที่เพิ่งอ่านการแจ้งเตือนตอนตีสองไม่ควรต้องไปเปิดคู่มือหาไวยากรณ์
+     */
+    if ($action === 'jail-hit') {
+        $jail = trim((string) ($argv[2] ?? ''));
+        $ip = trim((string) ($argv[3] ?? ''));
+        $failures = (int) ($argv[4] ?? 0);
+
+        if ($jail === '' || filter_var($ip, FILTER_VALIDATE_IP) === false) {
+            fwrite(STDERR, "ใช้: phpcp-alert jail-hit <jail> <ip> [จำนวนครั้ง]\n");
+            exit(2);
+        }
+
+        // กันสแปมด้วยกลไกเดียวกับเกณฑ์อื่น — IP ที่ยิงต่อเนื่องจะชนเกณฑ์ซ้ำ ๆ
+        // ถ้าไม่กันไว้ การแจ้งเตือนจะกลายเป็นสิ่งที่คนปิดทิ้งภายในคืนเดียว
+        $decision = (new AlertRules($db))->evaluate('jail:' . $jail . ':' . $ip, 'warning', (float) $failures);
+
+        if (!$decision['notify']) {
+            exit(0);
+        }
+
+        $sent = $notifier->send(
+            'security',
+            sprintf('พบการโจมตีจาก %s', $ip),
+            sprintf(
+                "jail: %s\nที่อยู่: %s\nจำนวนครั้งที่เข้าเกณฑ์: %d\nเครื่อง: %s\n\n"
+                . "**ยังไม่มีการแบน** — jail นี้ตั้งเป็นโหมดแจ้งเตือนอย่างเดียว\n\n"
+                . "ถ้าต้องการแบนเดี๋ยวนี้:\n"
+                . "  sudo fail2ban-client set %s banip %s\n\n"
+                . 'ถ้านี่เป็นผู้ใช้จริง (เช่นทั้งองค์กรออกเน็ตผ่าน IP เดียว) '
+                . 'ให้ใส่ที่อยู่นี้ในช่อง "ที่อยู่ที่ห้ามแบนเด็ดขาด" ในหน้าความปลอดภัย',
+                $jail,
+                $ip,
+                $failures,
+                gethostname() ?: 'ไม่ทราบชื่อ',
+                $jail,
+                $ip,
+            ),
+            'warning',
+        );
+
+        exit($sent ? 0 : 0);   // ส่งไม่ได้ก็ไม่ใช่ความล้มเหลวของ fail2ban
+    }
+
     if ($action !== 'unit-failed' || $unit === '') {
-        fwrite(STDERR, "ใช้: phpcp-alert unit-failed <ชื่อ unit>  |  phpcp-alert test\n");
+        fwrite(STDERR, "ใช้: phpcp-alert unit-failed <ชื่อ unit>  |  phpcp-alert jail-hit <jail> <ip> [ครั้ง]  |  phpcp-alert test\n");
         exit(2);
     }
 

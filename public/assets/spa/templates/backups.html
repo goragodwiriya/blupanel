@@ -11,92 +11,44 @@
           <p data-i18n>Backup files live in each account's own home folder</p>
         </div>
         <div class="header-actions" data-if="permissions['backup.offsite']">
-          <!--
-            ฟอร์มอยู่คนละเทมเพลตตาม FRAMEWORK_GUIDE Pattern 3 — หน้านี้มีแต่ตาราง
-            สามช่องกรอกถือว่าน้อย จึงเปิดใน Modal ที่เซิร์ฟเวอร์เป็นคนสั่ง
-          -->
-          <button type="button" class="btn btn-primary icon-plus"
-                  data-action="click.prevent:requestApi"
-                  data-api-url="/api/v2/backups/form" data-api-method="get"
-                  data-i18n>Create backup</button>
+          <button type="button" class="btn btn-primary icon-plus" data-action="click.prevent:requestApi" data-api-url="/api/v2/backups/form" data-api-method="get" data-i18n>Create
+            backup</button>
         </div>
       </header>
-
-      <!--
-        สำรองอัตโนมัติ — **รอบเดียวทั้งเครื่อง** (PLAN-BACKUP-V2 ข้อ B6, B10)
-
-        ของเดิมเป็นตารางเวลาหลายชุด หนึ่งแถวต่อหนึ่งเว็บหนึ่งชนิด ซึ่งแปลว่าเว็บที่
-        สร้างใหม่จะไม่ถูกสำรองเลยจนกว่าจะมีใครนึกได้ว่าต้องไปเพิ่มตารางเวลาให้มัน
-        · ตอนนี้เหลือคำถามเดียวตรงนี้ว่า "รอบเดินตอนไหน" ส่วน "สำรองของใครบ้าง"
-        อยู่ที่ตารางบัญชีข้างล่าง
-      -->
       <div class="content-body" data-if="permissions['backup.offsite']">
         <div class="flex middle fullwidth">
           <h2 class="icon-clock" data-i18n>Automatic backups</h2>
           <div class="header-actions">
-            <button type="button" class="btn icon-clock" data-action="click.prevent:requestApi"
-                    data-api-url="/api/v2/backup-schedule/form" data-api-method="get" data-i18n>Schedule</button>
-            <!--
-              เดินรอบเดี๋ยวนี้ — ผู้ดูแลต้องพิสูจน์ได้ว่าค่าที่ตั้งไว้ทำงานจริงก่อนถึงคืนแรก
-              `apiRefresh` เพราะคำตอบมี action ให้หน้าจอทำตาม (requestApi ทิ้งคำสั่งพวกนั้น)
-            -->
-            <button type="button" class="btn icon-play" data-action="click.prevent:apiRefresh"
-                    data-api-url="/api/v2/backup-schedule/runs" data-api-method="post"
-                    data-confirm="Run a full backup round now?" data-notify-success="true"
-                    data-target="backups" data-i18n>Run now</button>
-            <!--
-              ปลายทางมีได้ชุดเดียว (§4.2) — ปุ่มเดียวที่พาไปหน้าฟอร์มของมัน
-              ฟอร์มมีสิบกว่าช่องจึงเป็นหน้าเว็บของตัวเอง ไม่ใช่ Modal
-            -->
-            <a class="btn icon-cloud" href="/app/backup-destination?id=0"
-               data-route="/backup-destination?id=0" data-i18n>Offsite destination</a>
+            <button type="button" class="btn icon-clock" data-action="click.prevent:requestApi" data-api-url="/api/v2/backup-schedule/form" data-api-method="get"
+                    data-i18n>Schedule</button>
+            <button type="button" class="btn icon-play" data-action="click.prevent:apiRefresh" data-api-url="/api/v2/backup-schedule/runs" data-api-method="post"
+                    data-confirm="Run a full backup round now?" data-notify-success="true" data-target="backups" data-i18n>Run now</button>
+            <a class="btn icon-cloud" href="/app/backup-destination?id=0" data-route="/backup-destination?id=0" data-i18n>Offsite destination</a>
           </div>
         </div>
-        <div class="flex middle fullwidth" data-component="api" data-endpoint="/api/v2/backup-schedule"
-             data-refresh-event="phpcp:reload">
+        <div class="flex middle fullwidth" data-component="api" data-endpoint="/api/v2/backup-schedule" data-refresh-event="phpcp:reload">
           <p class="comment">
             <span data-show="enabled" data-i18n>Runs</span>
             <span data-show="!enabled" class="pill pill-muted" data-i18n>Off</span>
-            <strong data-text="schedule_label"></strong>
-            —
-            <span data-i18n>keeps</span> <span data-text="keep"></span> <span data-i18n>copies</span>,
-            <span data-i18n>deletes after</span> <span data-text="days"></span> <span data-i18n>days</span>
-            ·
-            <span data-i18n>Last run</span>
+            <strong data-text="schedule_label"></strong> — <span data-i18n>keeps</span> <span data-text="keep"></span> <span data-i18n>copies</span>, <span data-i18n>deletes
+              after</span> <span data-text="days"></span> <span data-i18n>days</span> · <span data-i18n>Last run</span>
             <span data-attr="class:'pill pill-' + run_tone" data-text="run_status"></span>
             <span data-show="last_run_at" data-text="last_run_at | datetime"></span>
           </p>
         </div>
         <p class="comment" data-i18n>Files are written into each account's own folder and count against that account's disk quota.</p>
       </div>
-
-      <!--
-        บัญชีไหนถูกสำรองบ้าง — **สวิตช์อยู่ที่บัญชี ไม่ใช่ที่เว็บ** (ข้อ B3)
-
-        ไฟล์สำรองอยู่ในบ้านของบัญชีและนับในโควตาของบัญชี · เปิดที่บัญชีแล้วเว็บใหม่
-        ของบัญชีนั้นเข้ารอบเองทันที ไม่ต้องมีใครกลับมาตั้งค่าใหม่ทุกครั้งที่ลูกค้า
-        เพิ่มเว็บ — ซึ่งเป็นจังหวะที่คนลืมได้ง่ายที่สุดและผลของการลืมคือเว็บที่ไม่มี
-        สำเนาเลยโดยไม่มีอะไรฟ้อง
-      -->
       <div class="content-body" data-if="permissions['backup.offsite']">
         <h2 class="icon-users" data-i18n>Accounts included</h2>
         <div class="tablebody">
-          <table class="table border fullwidth" data-table="backup-targets"
-                 data-source="/api/v2/backup-targets" data-page-size="25">
+          <table class="table border fullwidth" data-table="backup-targets" data-source="/api/v2/backup-targets" data-page-size="25">
             <thead>
               <tr>
                 <th data-field="username" data-i18n>{LNG_Account}</th>
                 <th data-field="sites" class="center" data-cell-class="center" data-i18n>{LNG_Websites}</th>
                 <th data-field="databases" class="center" data-cell-class="center" data-i18n>{LNG_Databases}</th>
-                <!--
-                  ช่องติ๊กต้องเป็นตัวจัดรูปแบบจริง ไม่ใช่ data-template — ตัวจัดรูปแบบ
-                  ได้ทั้งแถวเป็นอาร์กิวเมนต์ที่สาม จึงรู้ทั้งรหัสบัญชีและสถานะปัจจุบัน
-                  และผูกเหตุการณ์ change ได้ (data-template ประกอบได้แค่ข้อความ)
-                -->
-                <th data-field="backup_files" class="center" data-cell-class="center"
-                    data-formatter="formatBackupFilesToggle" data-i18n>{LNG_Back up files}</th>
-                <th data-field="backup_database" class="center" data-cell-class="center"
-                    data-formatter="formatBackupDatabaseToggle" data-i18n>{LNG_Back up databases}</th>
+                <th data-field="backup_files" class="center" data-cell-class="center" data-formatter="formatBackupFilesToggle" data-i18n>{LNG_Back up files}</th>
+                <th data-field="backup_database" class="center" data-cell-class="center" data-formatter="formatBackupDatabaseToggle" data-i18n>{LNG_Back up databases}</th>
                 <th data-field="backup_dir" data-cell-class="mono" data-i18n>{LNG_Folder}</th>
               </tr>
             </thead>
@@ -104,26 +56,11 @@
           </table>
         </div>
       </div>
-
       <div class="content-body">
-        <!--
-          ไฟล์สำรองเก็บไว้ที่ไหน — ตอนนี้คำตอบมีความหมายกับลูกค้าโดยตรง
-
-          เป็นเส้นทางที่เขา cd เข้าไปได้จริงผ่าน SFTP แล้วดาวน์โหลดสำเนาของตัวเอง
-          ออกมา · ไม่ต้องมีขอบเขตพิเศษของตัวจัดการไฟล์อีกแล้ว เพราะโฟลเดอร์นี้อยู่ใน
-          บ้านของเขาซึ่งเขาเปิดดูได้อยู่แล้ว
-
-          **คอมโพเนนต์ของตัวเอง ไม่ใช่ `meta` ของตาราง** — `meta.*` ผูกกับ `data-text`
-          ไม่ได้ (คอมโพเนนต์เห็นเฉพาะชั้น `data`) ป้ายที่ผูกกับ meta จะไม่ขึ้นเลย
-        -->
-        <div class="flex middle fullwidth" data-component="api" data-endpoint="/api/v2/backups/storage"
-             data-refresh-event="phpcp:reload">
+        <div class="flex middle fullwidth" data-component="api" data-endpoint="/api/v2/backups/storage" data-refresh-event="phpcp:reload">
           <p class="comment">
             <span data-i18n>Kept in the account's home folder at</span>
-            <code class="mono" data-text="path"></code>
-            —
-            <span data-text="files | number"></span> <span data-i18n>files</span>,
-            <span data-text="bytes | bytes"></span>
+            <code class="mono" data-text="path"></code> — <span data-text="files | number"></span> <span data-i18n>files</span>, <span data-text="bytes | bytes"></span>
           </p>
         </div>
         <div class="tablebody">
@@ -140,14 +77,6 @@
               </span>
             </div>
           </form>
-          <!--
-            ไฟล์ถูกอ้างด้วย **บัญชี + ชื่อไฟล์** ไม่ใช่รหัสแถว — รายการอ่านจากโฟลเดอร์
-            จริงของลูกค้า ไม่มีรหัสแถวให้อ้างอีกแล้ว (ข้อ B4)
-
-            ปุ่มกู้คืนขึ้นเฉพาะไฟล์ที่ `restorable` — ไฟล์ฐานข้อมูลกับไฟล์ที่จับคู่กับ
-            เว็บไม่ได้ (ลูกค้าคัดลอกมาเอง) ยังแสดงในรายการเพราะกินโควตาของเขาจริง
-            แต่กู้คืนอัตโนมัติไม่ได้
-          -->
           <table class="table border fullwidth" data-table="backups" data-source="/api/v2/backups" data-default-sort="modified_at desc" data-page-size="25" data-row-actions='{
                    "restore": {
                      "title": "Restore",
@@ -171,7 +100,8 @@
               <tr>
                 <th data-field="name" data-cell-class="mono" data-i18n>{LNG_File}</th>
                 <th data-field="domain" data-empty-text="—" data-i18n>{LNG_Website}</th>
-                <th data-field="type_label" class="center" data-cell-class="center" data-template="<span class='pill pill-${type_tone}'>${type_label}</span>" data-i18n>{LNG_Type}</th>
+                <th data-field="type_label" class="center" data-cell-class="center" data-template="<span class='pill pill-${type_tone}'>${type_label}</span>" data-i18n>{LNG_Type}
+                </th>
                 <th data-field="username" class="center" data-cell-class="center" data-i18n>{LNG_Account}</th>
                 <th data-field="size_bytes" data-format="bytes" class="center" data-cell-class="center" data-i18n>{LNG_Size}</th>
                 <th data-field="modified_at" data-format="datetime" class="center" data-cell-class="center" data-i18n>{LNG_Created}</th>

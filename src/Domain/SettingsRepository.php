@@ -111,7 +111,19 @@ final class SettingsRepository
          * ได้ ค่าจะเปลี่ยนโดยไฟล์บนเครื่องไม่เปลี่ยนตาม แล้วหน้าจอจะรายงานการป้องกัน
          * ที่ไม่มีอยู่จริง · เขียนได้ที่ `security.panel_jail_set` เท่านั้น
          */
+        /*
+         * สวิตช์ใหญ่ — panel ใช้ fail2ban หรือไม่
+         *
+         * ปิดแล้ว panel ลบ jail ของตัวเองทั้งหมด · **ไม่หยุดบริการ fail2ban ให้เอง**
+         * เพราะ jail ของ SSH มาจากแพ็กเกจของดิสโทร ไม่ใช่ของ panel — หยุดบริการ
+         * แล้วการกันเดารหัส SSH หายไปด้วยโดยที่ผู้ดูแลไม่ได้ขอ · หน้าจอบอกวิธี
+         * หยุดบริการเองพร้อมคำเตือนนั้นแทน
+         */
+        'security.fail2ban.enabled' => 'bool',
+
         'security.panel_jail.enabled' => 'bool',
+        // off | notify | ban — ดู Fail2banManager::modes()
+        'security.panel_jail.mode' => 'string',
         'security.panel_jail.max_retry' => 'int',
         'security.panel_jail.find_seconds' => 'int',
         'security.panel_jail.ban_seconds' => 'int',
@@ -142,7 +154,11 @@ final class SettingsRepository
          * ใน 10 นาที แล้วแบนครึ่งชั่วโมง — คนพิมพ์ผิดเองแทบไม่มีทางถึง ส่วนเครื่องมือ
          * ไล่เดาถึงภายในไม่กี่วินาที
          */
+        'security.fail2ban.enabled' => '1',
         'security.panel_jail.enabled' => '0',
+        // ค่าเริ่มต้นเป็น "แจ้งเตือน" ไม่ใช่ "แบน" — ผู้ดูแลควรได้เห็นว่าระบบจับอะไรได้บ้าง
+        // ก่อนที่จะมอบอำนาจตัดคนออกจากเครื่องให้มันทำเอง
+        'security.panel_jail.mode' => 'notify',
         'security.panel_jail.max_retry' => '10',
         'security.panel_jail.find_seconds' => '600',
         'security.panel_jail.ban_seconds' => '1800',
@@ -204,6 +220,7 @@ final class SettingsRepository
                 // เข้าตารางได้เมื่อไร ค่าจะเปลี่ยนโดยไฟล์บนเครื่องไม่เปลี่ยนตาม แล้วหน้าจอ
                 // จะรายงานการป้องกันที่ไม่มีอยู่จริง — ต้องผ่าน `security.panel_jail_set`
                 && !str_starts_with($key, 'security.panel_jail.')
+                && !str_starts_with($key, 'security.fail2ban.')
                 && $key !== 'security.never_ban_ips'
                 && $key !== 'panel.cert_domain',
             ARRAY_FILTER_USE_KEY,

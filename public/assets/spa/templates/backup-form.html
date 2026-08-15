@@ -1,18 +1,4 @@
-<!--
-  ฟอร์มสร้างไฟล์สำรอง — คนละเทมเพลตกับตารางตาม FRAMEWORK_GUIDE Pattern 3
-
-  สามช่องกรอกถือว่าน้อย จึงเปิดใน Modal ตามคำสั่งที่มากับคำตอบของ API
-  ไม่มีฟอร์มแก้ไขคู่กัน เพราะไฟล์สำรองแก้ไม่ได้ — สร้าง กู้คืน หรือลบเท่านั้น
-
-  ไฟล์ไปอยู่ใน `<บ้านของเจ้าของเว็บ>/backup/` เสมอ และนับในโควตาของเขา
-  (PLAN-BACKUP-V2 ข้อ B1) — ผู้เลือกจึงต้องเลือก **เว็บ** ก่อนเสมอ ไม่มีชนิดที่
-  ไม่ผูกกับเว็บอีกแล้ว (`config`/`full` ถูกตัดทิ้งตามข้อ B2)
--->
-<form data-form="backupCreate"
-      action="/api/v2/backups"
-      method="post"
-      data-ajax-submit="true"
-      data-validate="true">
+<form data-form="backupCreate" action="/api/v2/backups" method="post" data-ajax-submit="true" data-validate="true">
   <fieldset>
     <div>
       <label for="nb_type" data-i18n>Type</label>
@@ -23,10 +9,6 @@
         </select>
       </span>
     </div>
-    <!--
-      เลือกเว็บไซต์จากรายการจริง ไม่ใช่ให้กรอกเลข id เอง — รายการมาจาก endpoint
-      ของมันเอง ผ่าน ApiComponent ที่ครอบ <select> ไว้
-    -->
     <div data-component="api" data-endpoint="/api/v2/sites">
       <label for="nb_site" data-i18n>Website</label>
       <div class="comment" data-i18n>The file goes into this website owner's backup folder</div>
@@ -38,15 +20,10 @@
         </select>
       </span>
     </div>
-    <!--
-      เว็บที่มีฐานข้อมูลเดียวไม่ต้องกรอก — เซิร์ฟเวอร์หาให้เอง · เว็บที่มีหลายฐาน
-      ถูกปฏิเสธพร้อมบอกรายชื่อ แทนที่จะเดาแล้วสำรองผิดฐานโดยรายงานว่าสำเร็จ
-    -->
     <div>
       <label for="nb_db" data-i18n>Database name</label>
       <span class="form-control icon-database">
-        <input type="text" id="nb_db" name="database" maxlength="64"
-               autocomplete="off" data-attr="value:database">
+        <input type="text" id="nb_db" name="database" maxlength="64" autocomplete="off" data-attr="value:database">
       </span>
       <div class="comment" data-i18n>Leave empty when the website has only one database</div>
     </div>

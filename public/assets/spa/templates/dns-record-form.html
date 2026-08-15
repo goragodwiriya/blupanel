@@ -1,12 +1,3 @@
-<!--
-  ฟอร์มเพิ่มเรกคอร์ด DNS — คนละเทมเพลตกับตารางตาม FRAMEWORK_GUIDE Pattern 3
-
-  ปลายทางมาจากคำตอบของ API (`form_action`) ไม่ใช่เขียนตายไว้ในไฟล์ เพราะขึ้นกับว่า
-  กำลังดูโดเมนไหนอยู่ · เทมเพลตนี้ถูกโหลดตอนกดปุ่ม จึงไม่ผ่านการแทนค่า `{id}` ของ
-  RouterManager ที่ทำให้ HTML ของหน้าใช้ `{id}` ได้
-
-  ไม่มีฟอร์มแก้ไขคู่กัน เพราะเรกคอร์ดแก้ไม่ได้ — ลบแล้วเพิ่มใหม่เสมอ
--->
 <form data-form="dnsRecord"
       data-attr="action:form_action"
       method="post"
@@ -16,26 +7,21 @@
     <div class="form-group">
       <div class="width50">
         <label for="rec_type" data-i18n>Type</label>
-        <!--
-          **ช่องพิมพ์ได้ ไม่ใช่รายการปิด** — รายการที่เลือกไว้ล่วงหน้าตกหล่นเสมอ (TLSA,
-          SSHFP, DS, HTTPS/SVCB) และคนที่เจอชนิดที่ขาดต้องรอโค้ดใหม่ · ตัวเลือกยังมีให้
-          เลือกตามปกติ แต่พิมพ์ชนิดอื่นได้ด้วย และ `named-checkzone` เป็นคนตัดสินว่าใช้ได้ไหม
-        -->
         <span class="form-control">
           <input type="text" id="rec_type" name="type" required list="rec_types" maxlength="15"
                  autocomplete="off" spellcheck="false" class="mono" data-attr="value:type">
           <datalist id="rec_types">
-            <option value="A"></option>
-            <option value="AAAA"></option>
-            <option value="CNAME"></option>
-            <option value="MX"></option>
-            <option value="TXT"></option>
-            <option value="SRV"></option>
-            <option value="NS"></option>
-            <option value="CAA"></option>
-            <option value="TLSA"></option>
-            <option value="SSHFP"></option>
-            <option value="HTTPS"></option>
+            <option value="A">A</option>
+            <option value="AAAA">AAAA</option>
+            <option value="CNAME">CNAME</option>
+            <option value="MX">MX</option>
+            <option value="TXT">TXT</option>
+            <option value="SRV">SRV</option>
+            <option value="NS">NS</option>
+            <option value="CAA">CAA</option>
+            <option value="TLSA">TLSA</option>
+            <option value="SSHFP">SSHFP</option>
+            <option value="HTTPS">HTTPS</option>
           </datalist>
         </span>
       </div>

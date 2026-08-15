@@ -431,3 +431,148 @@ test('เปลี่ยนรายการห้ามแบนต้อง�
         'ต้องไล่เฉพาะเว็บที่เปิดการจำกัดอัตราอยู่',
     );
 });
+
+// --- 6. โหมด: ปิด / แจ้งเตือน / แบน ------------------------------------------
+
+test('โหมดแจ้งเตือนต้องไม่มีคำสั่งแตะ firewall เลย', static function (): void {
+    /*
+     * **หัวใจของโหมดนี้** · ถ้า action ยังเป็นตัวมาตรฐานของ fail2ban อยู่ ผู้ดูแลที่
+     * เลือก "แจ้งเตือน" จะถูกแบนคนให้โดยไม่รู้ตัว ซึ่งตรงข้ามกับสิ่งที่เขาเลือก
+     */
+    $manager = new Fail2banManager(new Phpcp\Agent\Executor\DryRunExecutor());
+
+    $jail = new ReflectionMethod($manager, 'panelLoginJail');
+    $jail->setAccessible(true);
+
+    $base = ['max_retry' => 10, 'find_seconds' => 600, 'ban_seconds' => 1800, 'ignore_ips' => ''];
+
+    $notify = (string) $jail->invoke($manager, '/var/log/phpcp/audit.log', $base + ['mode' => Fail2banManager::MODE_NOTIFY]);
+    $ban = (string) $jail->invoke($manager, '/var/log/phpcp/audit.log', $base + ['mode' => Fail2banManager::MODE_BAN]);
+
+    assertTrue(str_contains($notify, 'action   = phpcp-notify'), 'โหมดแจ้งเตือนต้องใช้ action ของเรา');
+    assertTrue(!str_contains($notify, 'action_'), 'โหมดแจ้งเตือนต้องไม่อ้าง action มาตรฐานที่สั่ง firewall');
+
+    assertTrue(str_contains($ban, 'action   = %(action_)s'), 'โหมดแบนต้องใช้ action มาตรฐาน');
+    /*
+     * เปอร์เซ็นต์ต้องมีตัวเดียว — `%%(action_)s` ถูก configparser ของ fail2ban อ่านเป็น
+     * ข้อความตรงตัว ไม่ใช่ชื่อ action ทำให้ jail ใช้ไม่ได้ · พลาดมาแล้วตอนย้ายบรรทัดนี้
+     * ออกมาเป็นเมธอด เพราะในรูปแบบของ sprintf ต้องเขียนสองตัว แต่ตอนเป็นอาร์กิวเมนต์ไม่ต้อง
+     */
+    assertTrue(!str_contains($ban, '%%(action_)s'), 'ต้องไม่เหลือเปอร์เซ็นต์คู่ในไฟล์จริง');
+});
+
+test('ไฟล์ action ของโหมดแจ้งเตือนต้องไม่มีคำสั่งของ firewall', static function (): void {
+    $manager = new Fail2banManager(new Phpcp\Agent\Executor\DryRunExecutor());
+
+    $method = new ReflectionMethod($manager, 'notifyActionContent');
+    $method->setAccessible(true);
+
+    $content = (string) $method->invoke($manager);
+
+    foreach (['iptables', 'nftables', 'nft ', 'ufw', 'ip6tables', 'route'] as $forbidden) {
+        assertTrue(
+            !str_contains($content, $forbidden),
+            "action แจ้งเตือนต้องไม่มีคำสั่ง {$forbidden}",
+        );
+    }
+
+    assertTrue(str_contains($content, 'phpcp-alert jail-hit'), 'ต้องเรียกตัวส่งข้อความ');
+    assertTrue(str_contains($content, 'actionunban ='), 'ต้องประกาศ actionunban ไว้ว่าง ไม่ใช่ไม่มี');
+});
+
+test('โหมดที่ไม่รู้จักต้องถูกปฏิเสธ', static function (): void {
+    $capability = (new CapabilityRegistry())->resolve('security.panel_jail_set');
+
+    foreach (['block', 'BAN', 'ban;', '', ' notify'] as $bad) {
+        if ($bad === '') {
+            continue;   // ว่าง = ถอยไปใช้ enabled ตามของเดิม ไม่ใช่ค่าผิด
+        }
+
+        assertRejects(
+            ValidationError::class,
+            static fn () => $capability->validate([
+                'mode' => $bad,
+                'enabled' => true,
+                'max_retry' => 10,
+                'find_seconds' => 600,
+                'ban_seconds' => 1800,
+            ]),
+            "โหมด '{$bad}' ต้องถูกปฏิเสธ",
+        );
+    }
+});
+
+test('ผู้เรียกเก่าที่รู้จักแค่ enabled ต้องยังใช้ได้', static function (): void {
+    // เปลี่ยนสัญญาแล้วทำให้ของเดิมพังเงียบ ๆ เป็นราคาที่ไม่จำเป็นต้องจ่าย
+    $capability = (new CapabilityRegistry())->resolve('security.panel_jail_set');
+
+    $on = $capability->validate([
+        'enabled' => true,
+        'max_retry' => 10,
+        'find_seconds' => 600,
+        'ban_seconds' => 1800,
+    ]);
+    assertSame(Fail2banManager::MODE_BAN, $on['mode'], 'enabled=true ต้องหมายถึงแบน ซึ่งเป็นความหมายเดิม');
+
+    $off = $capability->validate(['enabled' => false]);
+    assertSame(Fail2banManager::MODE_OFF, $off['mode'], 'enabled=false ต้องหมายถึงปิด');
+});
+
+// --- 7. สวิตช์ใหญ่และขอบเขตของ jail ------------------------------------------
+
+test('ปิดสวิตช์ใหญ่ต้องลบ jail จริง ไม่ใช่แค่บันทึกค่า', static function (): void {
+    // jail ที่ยังอยู่ก็ยังทำงานและยังกินหน่วยความจำต่อไป โดยที่หน้าจอบอกว่าปิดแล้ว
+    $source = (string) file_get_contents(PHPCP_ROOT . '/src/Agent/Capability/Fail2banSet.php');
+
+    assertTrue(str_contains($source, 'removePanelLogin()'), 'ต้องลบ jail หน้าล็อกอิน');
+    assertTrue(str_contains($source, '$manager->remove($site)'), 'ต้องลบ jail รายเว็บด้วย');
+    assertTrue(
+        str_contains($source, 'UPDATE site_rate_limits SET enabled = 0'),
+        'สถานะรายเว็บต้องถูกปิดตาม ไม่งั้นเปิดสวิตช์กลับมาแล้วหน้าจอจะบอกว่ายังเปิดอยู่',
+    );
+
+    // ต้องไม่หยุดบริการให้เอง — jail ของ SSH มาจากดิสโทร ไม่ใช่ของ panel
+    assertTrue(
+        !str_contains($source, "'systemctl'") && !str_contains($source, 'systemctl stop'),
+        'ต้องไม่สั่งหยุดบริการเอง เพราะจะทำให้การกันเดารหัส SSH หายไปโดยผู้ดูแลไม่ได้ขอ',
+    );
+    assertTrue(str_contains($source, 'stop_command'), 'ต้องส่งคำสั่งหยุดบริการกลับไปให้ผู้ดูแลสั่งเอง');
+});
+
+test('เปิด jail ทั้งที่สวิตช์ใหญ่ปิดอยู่ต้องถูกปฏิเสธ', static function (): void {
+    // เขียน jail ทับความตั้งใจของผู้ดูแลที่เลือกไว้ว่าเครื่องนี้ไม่ใช้ fail2ban ไม่ได้
+    $source = (string) file_get_contents(PHPCP_ROOT . '/src/Agent/Capability/PanelJailSet.php');
+
+    assertTrue(
+        str_contains($source, "security.fail2ban.enabled"),
+        'ต้องตรวจสวิตช์ใหญ่ก่อนเขียน jail',
+    );
+});
+
+test('ปลดแบนต้องแตะได้เฉพาะ jail ของ panel', static function (): void {
+    /*
+     * ชื่อ jail กลายเป็นอาร์กิวเมนต์ของ fail2ban-client · รับชื่ออะไรก็ได้แปลว่า
+     * ผู้ที่มีสิทธิ์ security.manage ปลดแบน jail ที่ผู้ดูแลเขียนเองได้จากหน้าเว็บ
+     * รวมถึง `sshd` ของดิสโทร ซึ่งอยู่นอกขอบเขตของ panel
+     */
+    assertTrue(Fail2banManager::isOwnJail('phpcp-panel-login'), 'jail ของ panel ต้องผ่าน');
+    assertTrue(Fail2banManager::isOwnJail('phpcp-somecustomer'), 'jail รายเว็บต้องผ่าน');
+
+    foreach (['sshd', 'phpcp-', '', 'nginx-botsearch', '../phpcp-x', 'phpcp-x;rm -rf /', 'phpcp x'] as $bad) {
+        assertTrue(!Fail2banManager::isOwnJail($bad), "ชื่อ '{$bad}' ต้องไม่ถูกนับเป็น jail ของ panel");
+    }
+
+    $capability = (new CapabilityRegistry())->resolve('security.panel_jail_unban');
+
+    assertRejects(
+        ValidationError::class,
+        static fn () => $capability->validate(['ip' => '203.0.113.5', 'jail' => 'sshd']),
+        'ปลดแบน jail ของดิสโทรจากหน้าเว็บต้องถูกปฏิเสธ',
+    );
+
+    assertSame(
+        Fail2banManager::PANEL_LOGIN_JAIL,
+        $capability->validate(['ip' => '203.0.113.5'])['jail'],
+        'ไม่ระบุ jail = jail หน้าเข้าสู่ระบบตามเดิม',
+    );
+});

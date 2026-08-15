@@ -33,6 +33,40 @@ final class SecurityController extends ApiController
         return $this->ok($checks, $data);
     }
 
+    /**
+     * ภาพรวมการป้องกันทั้งเครื่อง — สวิตช์ใหญ่ ทุก jail และ IP ที่ถูกแบนทั้งหมด
+     *
+     * คำถามที่หน้านี้ตอบคือ "เครื่องนี้กำลังแบนใครอยู่บ้าง" ซึ่งเป็นคำถามระดับเครื่อง
+     * ไม่ใช่ระดับเว็บ · ก่อนหน้านี้ต้องไล่เปิดหน้าของแต่ละเว็บเพื่อหาคำตอบ
+     */
+    public function protection(Request $request): Response
+    {
+        return $this->ok(
+            $this->agent()->data('security.protection', [], $this->ctx->actor($request)),
+        );
+    }
+
+    /** รายการ IP ที่ถูกแบนของทุก jail รวมกัน — แยกเส้นทางเพื่อให้ตารางโหลดใหม่เองได้ */
+    public function protectionBans(Request $request): Response
+    {
+        $data = $this->agent()->data('security.protection', [], $this->ctx->actor($request));
+
+        return $this->ok($data['bans'] ?? []);
+    }
+
+    /** เปิด/ปิดการใช้ fail2ban ทั้งตัว */
+    public function fail2banSet(Request $request): Response
+    {
+        $data = $this->agent()->data('security.fail2ban_set', [
+            'enabled' => $request->payload('enabled'),
+        ], $this->ctx->actor($request));
+
+        return $this->refreshed(
+            (string) ($data['message'] ?? 'Saved'),
+            extra: is_array($data) ? $data : [],
+        );
+    }
+
     /** สถานะการกันเดารหัสผ่านหน้าเข้าสู่ระบบ */
     public function panelJail(Request $request): Response
     {
@@ -76,7 +110,8 @@ final class SecurityController extends ApiController
     public function panelJailSet(Request $request): Response
     {
         $data = $this->agent()->data('security.panel_jail_set', [
-            'enabled' => $request->payload('enabled'),
+            'mode' => $request->payloadString('mode'),
+            'enabled' => $request->payload('enabled', false),
             'max_retry' => $request->payload('max_retry'),
             'find_seconds' => $request->payload('find_seconds'),
             'ban_seconds' => $request->payload('ban_seconds'),
@@ -117,6 +152,8 @@ final class SecurityController extends ApiController
     {
         $data = $this->agent()->data('security.panel_jail_unban', [
             'ip' => $request->payloadString('ip'),
+            // หน้ารวมส่งชื่อ jail มาด้วยเพราะมีหลายตัว · หน้าเดิมไม่ส่ง = jail หน้าล็อกอิน
+            'jail' => $request->payloadString('jail'),
         ], $this->ctx->actor($request));
 
         return $this->refreshed(

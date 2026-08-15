@@ -47,6 +47,44 @@ final class Fail2banManager
      */
     public const PANEL_LOGIN_JAIL = self::PREFIX . 'panel-login';
 
+    /**
+     * โหมดของ jail — สิ่งที่จะเกิดขึ้นเมื่อมีคนเข้าเกณฑ์
+     *
+     *   off     ไม่มี jail อยู่บนเครื่องเลย ไม่ตรวจ ไม่กินทรัพยากร
+     *   notify  ตรวจแล้วส่งข้อความ **ไม่แตะ firewall** — ผู้ดูแลตัดสินใจเอง
+     *   ban     ตรวจแล้วสั่ง firewall แบนทันที
+     *
+     * `notify` มีไว้เพราะการแบนอัตโนมัติไม่เหมาะกับทุกเครื่อง · ลูกค้าที่คนทั้งองค์กร
+     * ออกเน็ตผ่าน IP เดียวกันทำให้การแบนหนึ่งครั้งกลายเป็นการตัดคนทั้งองค์กร ·
+     * โหมดนี้ให้ข้อมูลเท่ากันโดยไม่ตัดสินใจแทนคน
+     */
+    public const MODE_OFF = 'off';
+    public const MODE_NOTIFY = 'notify';
+    public const MODE_BAN = 'ban';
+
+    /**
+     * jail นี้เป็นของ panel หรือไม่ — ตัดสินจากคำนำหน้าที่ panel เป็นคนตั้งเท่านั้น
+     *
+     * ใช้กันไม่ให้คำสั่งจากหน้าเว็บไปแตะ jail ที่ผู้ดูแลเขียนเอง (`sshd` ของดิสโทร
+     * เป็นตัวอย่างที่สำคัญที่สุด) · panel ไม่ได้เป็นคนตั้ง จึงไม่ควรเป็นคนยกเลิก
+     */
+    public static function isOwnJail(string $jail): bool
+    {
+        return $jail !== self::PREFIX
+            && str_starts_with($jail, self::PREFIX)
+            && preg_match('/^[a-z0-9._-]+$/i', $jail) === 1;
+    }
+
+    /** @return list<string> */
+    public static function modes(): array
+    {
+        return [self::MODE_OFF, self::MODE_NOTIFY, self::MODE_BAN];
+    }
+
+    /** ไฟล์ action ที่ส่งข้อความอย่างเดียว — เขียนคู่กับ jail ทุกครั้งที่ใช้โหมด notify */
+    private const NOTIFY_ACTION = self::PREFIX . 'notify';
+    private const ACTION_DIR = '/etc/fail2ban/action.d';
+
     /** ยกเว้นเสมอ ไม่ว่าผู้ใช้จะกรอกอะไร — เหตุผลอยู่ที่ {@see jailContent()} */
     private const LOCAL_IPS = '127.0.0.1/8 ::1';
 
@@ -84,6 +122,66 @@ final class Fail2banManager
     }
 
     /**
+     * บรรทัด `action` ของ jail ตามโหมดที่เลือก
+     *
+     * `%(action_)s` คือ action มาตรฐานของ fail2ban ที่สั่ง firewall · ส่วนโหมดแจ้งเตือน
+     * ใช้ action ของเราเองที่ไม่มีคำสั่งแตะ firewall เลยแม้แต่บรรทัดเดียว
+     *
+     * **เปอร์เซ็นต์เดียว ไม่ใช่สองตัว** — ค่านี้ถูกส่งเข้า `sprintf` เป็น *อาร์กิวเมนต์*
+     * ไม่ใช่ส่วนหนึ่งของรูปแบบ จึงไม่มีการลดรูป `%%` เป็น `%` ให้ · เขียนสองตัวแล้ว
+     * ไฟล์จะได้ `%%(action_)s` ซึ่ง configparser ของ fail2ban อ่านเป็นข้อความตรงตัว
+     * ไม่ใช่ชื่อ action ทำให้ jail นั้นใช้ไม่ได้ (ตอนอยู่ในรูปแบบของ sprintf ต้องเขียน
+     * สองตัว — นี่คือความต่างที่ทำให้พลาดง่ายตอนย้ายบรรทัดนี้ออกมา)
+     */
+    private function actionLine(string $mode): string
+    {
+        return $mode === self::MODE_NOTIFY
+            ? 'action   = ' . self::NOTIFY_ACTION
+            : 'action   = %(action_)s';
+    }
+
+    /**
+     * เนื้อไฟล์ action ที่ "แจ้งเตือนอย่างเดียว"
+     *
+     * ไม่มี `actionstart`/`actionstop`/`actionunban` เพราะไม่มีอะไรต้องเตรียมหรือคืน —
+     * ไม่ได้สร้าง chain ไม่ได้แก้ firewall · `actionban` อย่างเดียวคือทั้งหมดที่ทำ
+     *
+     * เรียก `phpcp-alert` ซึ่งเป็นโปรแกรมที่ตั้งใจให้แคบอยู่แล้ว: ส่งข้อความแล้วจบ
+     * ไม่แตะระบบ · fail2ban รันเป็น root จึงเรียกได้ตรง ๆ
+     */
+    private function notifyActionContent(): string
+    {
+        return <<<'CONF'
+            # สร้างโดย phpcp — ห้ามแก้ด้วยมือ ไฟล์นี้ถูกเขียนทับทุกครั้งที่บันทึกค่าจากหน้าเว็บ
+            #
+            # action ที่ **ไม่แตะ firewall เลย** — มีไว้ให้ jail โหมด "แจ้งเตือนอย่างเดียว"
+            # ผู้ดูแลอ่านข้อความแล้วตัดสินใจเองว่าจะแบนหรือไม่
+            [Definition]
+            actionstart =
+            actionstop =
+            actioncheck =
+            actionban = /usr/local/bin/phpcp-alert jail-hit "<name>" "<ip>" "<failures>"
+            actionunban =
+
+            [Init]
+            name = default
+            CONF . "\n";
+    }
+
+    /**
+     * เขียนไฟล์ action ของโหมดแจ้งเตือน — เขียนเสมอ ไม่ใช่เฉพาะตอนใช้โหมดนั้น
+     *
+     * **ทำไมเขียนเสมอ:** ไฟล์ jail กับไฟล์ action ถูก commit พร้อมกัน · ถ้าเขียนเฉพาะ
+     * ตอนโหมด notify แล้วผู้ดูแลสลับ jail หนึ่งกลับไป ban ไฟล์ action อาจถูกทิ้งไว้
+     * หรือถูกลบทั้งที่ jail อื่นยังใช้อยู่ · ไฟล์ที่ไม่มีใครอ้างถึงไม่ทำอะไรเลย
+     * ส่วนไฟล์ที่หายตอนมีคนอ้างถึงทำให้ fail2ban ทั้งตัวสตาร์ตไม่ขึ้น
+     */
+    private function writeNotifyAction(ConfigTransaction $tx, string $mode): void
+    {
+        $tx->write(self::ACTION_DIR . '/' . self::NOTIFY_ACTION . '.conf', $this->notifyActionContent(), 0644);
+    }
+
+    /**
      * รวมรายการยกเว้นทั้งหมดของ jail หนึ่ง
      *
      * เรียงจาก "ห้ามแบนเด็ดขาด" ไปหา "ผู้ดูแลระบุเอง" — localhost มาก่อนเสมอ
@@ -109,6 +207,7 @@ final class Fail2banManager
         $name = $this->jailName($site);
 
         $tx = new ConfigTransaction($this->executor);
+        $this->writeNotifyAction($tx, (string) ($settings['mode'] ?? self::MODE_BAN));
         $tx->write($this->filterPath($name), $this->filterContent(), 0644);
         $tx->write($this->jailPath($name), $this->jailContent($name, $site, $settings), 0644);
 
@@ -172,6 +271,7 @@ final class Fail2banManager
         $this->assertRunning();
 
         $tx = new ConfigTransaction($this->executor);
+        $this->writeNotifyAction($tx, (string) ($settings['mode'] ?? self::MODE_BAN));
         $tx->write($this->filterPath(self::PANEL_LOGIN_JAIL), $this->panelLoginFilter(), 0644);
         $tx->write($this->jailPath(self::PANEL_LOGIN_JAIL), $this->panelLoginJail($auditLogPath, $settings), 0644);
 
@@ -371,7 +471,7 @@ final class Fail2banManager
                 findtime = %d
                 bantime  = %d
                 # ไม่ระบุ port เพื่อให้แบนทุกพอร์ต — คนที่ยิงจนโดนแบนไม่ควรคุยกับเครื่องนี้ได้เลย
-                action   = %%(action_)s
+                %s
                 %s
                 CONF,
             $site->domain,
@@ -383,6 +483,7 @@ final class Fail2banManager
             $settings['max_requests'],
             $settings['window_seconds'],
             $settings['ban_seconds'],
+            $this->actionLine((string) ($settings['mode'] ?? self::MODE_BAN)),
             $ignore === '' ? '' : 'ignoreip = ' . $ignore,
         ) . "\n";
     }
@@ -454,7 +555,7 @@ final class Fail2banManager
                 maxretry = %d
                 findtime = %d
                 bantime  = %d
-                action   = %%(action_)s
+                %s
                 %s
                 CONF,
             self::PANEL_LOGIN_JAIL,
@@ -466,6 +567,7 @@ final class Fail2banManager
             $settings['max_retry'],
             $settings['find_seconds'],
             $settings['ban_seconds'],
+            $this->actionLine((string) ($settings['mode'] ?? self::MODE_BAN)),
             $ignore === '' ? '' : 'ignoreip = ' . $ignore,
         ) . "\n";
     }
@@ -522,6 +624,34 @@ final class Fail2banManager
                 . "\n\nไฟล์บนดิสก์ถูกต้องแล้ว — สั่งเองด้วย `sudo fail2ban-client reload`",
             );
         }
+    }
+
+    /** บริการ fail2ban ตอบอยู่หรือไม่ — ใช้ตอบหน้าจอ ไม่ใช่ด่านกันเหมือน assertRunning() */
+    public function isRunning(): bool
+    {
+        return $this->executor->exec([$this->client(), 'ping'], timeout: 10)->ok();
+    }
+
+    /**
+     * หน่วยความจำที่ fail2ban ใช้อยู่จริง (MB) — 0 เมื่อไม่ได้รัน
+     *
+     * แสดงบนหน้าจอคู่กับสวิตช์ปิด เพราะ "ปิดแล้วได้อะไรกลับมา" เป็นคำถามที่ผู้ดูแล
+     * เครื่องเล็กถามจริง · ตัวเลขจากเครื่องตัวเองน่าเชื่อกว่าตัวเลขที่เราเขียนไว้ในคู่มือ
+     */
+    public function memoryUsageMb(): int
+    {
+        $result = $this->executor->exec(['/bin/ps', '-o', 'rss=', '-C', 'fail2ban-server'], timeout: 10);
+
+        if (!$result->ok()) {
+            return 0;
+        }
+
+        $kb = 0;
+        foreach (preg_split('/\R/', trim($result->output())) ?: [] as $line) {
+            $kb += (int) trim($line);
+        }
+
+        return (int) round($kb / 1024);
     }
 
     /** ดึงตัวเลขจากผลของ `fail2ban-client status` ซึ่งเป็นข้อความล้วน */

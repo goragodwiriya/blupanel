@@ -230,6 +230,9 @@ final class Routes
          * การปลดแบนเป็น security.manage เหมือนการตั้งค่า เพราะมันคือการยกเลิกผลของ
          * มาตรการความปลอดภัย ไม่ใช่แค่การดู
          */
+        $router->add(new Route('GET', '/api/v2/security/protection', V2SecurityController::class, 'protection', 'security.view', 'api.v2.security.protection'));
+        $router->add(new Route('GET', '/api/v2/security/protection/bans', V2SecurityController::class, 'protectionBans', 'security.view', 'api.v2.security.protection_bans'));
+        $router->add(new Route('PUT', '/api/v2/security/fail2ban', V2SecurityController::class, 'fail2banSet', 'security.manage', 'api.v2.security.fail2ban_set'));
         $router->add(new Route('GET', '/api/v2/security/panel-jail', V2SecurityController::class, 'panelJail', 'security.view', 'api.v2.security.panel_jail'));
         $router->add(new Route('PUT', '/api/v2/security/panel-jail', V2SecurityController::class, 'panelJailSet', 'security.manage', 'api.v2.security.panel_jail_set'));
         $router->add(new Route('PUT', '/api/v2/security/never-ban', V2SecurityController::class, 'neverBanSet', 'security.manage', 'api.v2.security.never_ban_set'));

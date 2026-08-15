@@ -11,24 +11,13 @@
           <p data-i18n>Scheduled commands per website</p>
         </div>
         <div class="header-actions" data-if="permissions['cron.manage']">
-          <!--
-            ฟอร์มอยู่คนละเทมเพลตตาม FRAMEWORK_GUIDE Pattern 3 — หน้านี้มีแต่ตาราง
-            สี่ช่องกรอกถือว่าน้อย จึงเปิดใน Modal ไม่ต้องเปลี่ยนหน้า
-          -->
-          <button type="button" class="btn btn-primary icon-plus"
-                  data-action="click.prevent:requestApi"
-                  data-api-url="/api/v2/cron-jobs/0" data-api-method="get"
-                  data-i18n>Add cron job</button>
+          <button type="button" class="btn btn-primary icon-plus" data-action="click.prevent:requestApi" data-api-url="/api/v2/cron-jobs/0" data-api-method="get" data-i18n>Add cron
+            job</button>
         </div>
       </header>
       <div class="content-body">
         <div class="tablebody">
-          <table class="table border fullwidth"
-                 data-table="cronJobs"
-                 data-source="/api/v2/cron-jobs"
-                 data-default-sort="name asc"
-                 data-page-size="25"
-                 data-row-actions='{
+          <table class="table border fullwidth" data-table="cronJobs" data-source="/api/v2/cron-jobs" data-default-sort="name asc" data-page-size="25" data-row-actions='{
                    "edit": {
                      "title": "Edit",
                      "className": "btn small btn-success icon-edit",
@@ -68,10 +57,9 @@
                 <th data-field="site_domain" data-empty-text="—" data-i18n>{LNG_Website}</th>
                 <th data-field="schedule_label" data-i18n>{LNG_Schedule}</th>
                 <th data-field="command" data-cell-class="mono" data-i18n>{LNG_Command}</th>
-                <th data-field="enabled" class="center" data-cell-class="center"
-                    data-format="boolean" data-true-text="{LNG_Yes}" data-false-text="{LNG_No}" data-i18n>{LNG_Enabled}</th>
-                <th data-field="last_run_at" class="center" data-cell-class="center"
-                    data-format="datetime" data-empty-text="—" data-i18n>{LNG_Last run}</th>
+                <th data-field="enabled" class="center" data-cell-class="center" data-format="boolean" data-true-text="{LNG_Yes}" data-false-text="{LNG_No}" data-i18n>{LNG_Enabled}
+                </th>
+                <th data-field="last_run_at" class="center" data-cell-class="center" data-format="datetime" data-empty-text="—" data-i18n>{LNG_Last run}</th>
               </tr>
             </thead>
             <tbody></tbody>
