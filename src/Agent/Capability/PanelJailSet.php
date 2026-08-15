@@ -121,7 +121,8 @@ final class PanelJailSet implements Capability
     {
         $settings = new SettingsRepository($context->db);
         $manager = (new Fail2banManager($executor))
-            ->withNeverBan($settings->get('security.never_ban_ips'));
+            ->withNeverBan($settings->get('security.never_ban_ips'))
+            ->withAlertBinary($context->config->paths->binary('phpcp-alert'));
 
         if ($args['mode'] === Fail2banManager::MODE_OFF) {
             $manager->removePanelLogin();

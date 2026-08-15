@@ -104,6 +104,14 @@ final class Fail2banManager
      */
     private string $neverBan = '';
 
+    /**
+     * คำสั่งที่ action โหมดแจ้งเตือนเรียก — ผู้เรียกส่งเส้นทางจริงมาให้
+     *
+     * ค่าเริ่มต้นเป็นเส้นทางมาตรฐานของการติดตั้งปกติ แต่ผู้เรียกที่มี `Paths` อยู่ในมือ
+     * ควรส่งค่าที่ถูกต้องของเครื่องนั้นมาเสมอ ({@see \Phpcp\Kernel\Paths::binary()})
+     */
+    private string $alertBinary = '/usr/share/phpcp/bin/phpcp-alert';
+
     public function __construct(private readonly Executor $executor)
     {
     }
@@ -117,6 +125,16 @@ final class Fail2banManager
     public function withNeverBan(string $ips): self
     {
         $this->neverBan = trim($ips);
+
+        return $this;
+    }
+
+    /** เส้นทางจริงของ `phpcp-alert` บนเครื่องนี้ — ใช้โดย action โหมดแจ้งเตือน */
+    public function withAlertBinary(string $path): self
+    {
+        if (trim($path) !== '') {
+            $this->alertBinary = trim($path);
+        }
 
         return $this;
     }
@@ -151,7 +169,7 @@ final class Fail2banManager
      */
     private function notifyActionContent(): string
     {
-        return <<<'CONF'
+        return sprintf(<<<'CONF'
             # สร้างโดย phpcp — ห้ามแก้ด้วยมือ ไฟล์นี้ถูกเขียนทับทุกครั้งที่บันทึกค่าจากหน้าเว็บ
             #
             # action ที่ **ไม่แตะ firewall เลย** — มีไว้ให้ jail โหมด "แจ้งเตือนอย่างเดียว"
@@ -160,12 +178,12 @@ final class Fail2banManager
             actionstart =
             actionstop =
             actioncheck =
-            actionban = /usr/local/bin/phpcp-alert jail-hit "<name>" "<ip>" "<failures>"
+            actionban = %s jail-hit "<name>" "<ip>" "<failures>"
             actionunban =
 
             [Init]
             name = default
-            CONF . "\n";
+            CONF, $this->alertBinary) . "\n";
     }
 
     /**

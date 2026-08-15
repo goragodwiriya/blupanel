@@ -74,8 +74,14 @@ final class ProtectionOverview implements Capability
             '/server/security',
         );
 
+        $panelBlocks = $settings->bool('security.panel_jail.enabled') && $panelMode === Fail2banManager::MODE_BAN;
+
         foreach ($this->bansOf($manager, Fail2banManager::PANEL_LOGIN_JAIL, $panelStatus) as $ban) {
-            $bans[] = $ban + ['jail_label' => 'หน้าเข้าสู่ระบบของ panel'];
+            $bans[] = $ban + [
+                'jail_label' => 'หน้าเข้าสู่ระบบของ panel',
+                'blocks' => $panelBlocks,
+                'state_label' => $panelBlocks ? 'ถูกกันจริง' : 'ตรวจพบ ไม่ได้กัน',
+            ];
         }
 
         // --- jail รายเว็บ ---------------------------------------------------------
@@ -99,8 +105,14 @@ final class ProtectionOverview implements Capability
                 '/site?id=' . $site->id,
             );
 
+            $blocks = (string) ($rateLimit['mode'] ?? Fail2banManager::MODE_BAN) === Fail2banManager::MODE_BAN;
+
             foreach ($this->bansOf($manager, $name, $status) as $ban) {
-                $bans[] = $ban + ['jail_label' => $site->domain];
+                $bans[] = $ban + [
+                    'jail_label' => $site->domain,
+                    'blocks' => $blocks,
+                    'state_label' => $blocks ? 'ถูกกันจริง' : 'ตรวจพบ ไม่ได้กัน',
+                ];
             }
         }
 
@@ -141,6 +153,17 @@ final class ProtectionOverview implements Capability
             'active' => $status['active'],
             'banned' => $status['banned'],
             'failed' => $status['failed'],
+            /*
+             * **โหมดแจ้งเตือนก็ยังนับ "banned" ใน fail2ban** — วัดบนเครื่องจริงแล้ว:
+             * สั่ง banip ตอนอยู่โหมด notify แล้ว `Currently banned: 1` แต่ firewall
+             * ว่างเปล่าเพราะ action ไม่มีคำสั่งแตะมันเลย
+             *
+             * แสดงเลขนั้นว่า "ถูกแบน" จึงเป็นการโกหก — คนอ่านจะเข้าใจว่ามีคนถูกตัด
+             * ออกจากเครื่องแล้วทั้งที่ไม่มีใครถูกตัดเลย · หน้าจอต้องเรียกตามสิ่งที่
+             * เกิดขึ้นจริงในโหมดนั้น
+             */
+            'blocks' => $mode === Fail2banManager::MODE_BAN,
+            'count_label' => $mode === Fail2banManager::MODE_BAN ? 'ถูกแบนอยู่' : 'ตรวจพบ',
             // ตั้งโหมดไว้แต่ fail2ban ไม่รู้จัก jail = สิ่งที่หน้าจอโฆษณาไม่มีอยู่จริง
             'drifted' => $mode !== Fail2banManager::MODE_OFF && !$status['active'],
             'manage_url' => $manageUrl,

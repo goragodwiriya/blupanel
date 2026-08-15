@@ -576,3 +576,50 @@ test('ปลดแบนต้องแตะได้เฉพาะ jail ข�
         'ไม่ระบุ jail = jail หน้าเข้าสู่ระบบตามเดิม',
     );
 });
+
+test('แก้รายการห้ามแบนต้องไม่เปลี่ยนโหมดของ jail', static function (): void {
+    /*
+     * `applyPanelLogin()`/`apply()` ตกไปที่โหมด ban เมื่อไม่ได้ส่ง mode มา · การเขียน
+     * ไฟล์ใหม่เพื่ออัปเดตรายการยกเว้นจึงเปลี่ยน jail ที่ตั้งเป็น "แจ้งเตือน" ให้เริ่ม
+     * แบนคนจริง ๆ ได้ โดยที่ผู้ดูแลไม่ได้สั่งและไม่มีอะไรบอกเลย
+     */
+    $source = (string) file_get_contents(PHPCP_ROOT . '/src/Agent/Capability/NeverBanSet.php');
+
+    assertTrue(
+        str_contains($source, "'mode' => \$settings->get('security.panel_jail.mode'"),
+        'ต้องส่งโหมดเดิมของ jail หน้าล็อกอินไปด้วยตอนเขียนใหม่',
+    );
+    assertTrue(
+        str_contains($source, "'mode' => (string) (\$row['mode']"),
+        'ต้องส่งโหมดเดิมของแต่ละเว็บไปด้วยตอนเขียนใหม่',
+    );
+});
+
+test('เส้นทางของตัวส่งข้อความต้องเป็นของจริงบนเครื่อง', static function (): void {
+    /*
+     * **บั๊กที่เจอบนเครื่องจริง** — เขียน `/usr/local/bin/phpcp-alert` ตายตัวไว้ แต่
+     * ตัวติดตั้งทำ symlink ที่นั่นให้แค่ `phpcp` ตัวเดียว · ผลคือ action ของโหมด
+     * แจ้งเตือนเรียกไฟล์ที่ไม่มีอยู่ fail2ban บันทึกลง log ของตัวเองแล้วเดินต่อ
+     * ผู้ดูแลจึงไม่มีทางรู้เลยว่าการแจ้งเตือนไม่เคยถูกส่งสักครั้ง
+     */
+    $manager = (new Fail2banManager(new Phpcp\Agent\Executor\DryRunExecutor()))
+        ->withAlertBinary('/opt/phpcp/bin/phpcp-alert');
+
+    $method = new ReflectionMethod($manager, 'notifyActionContent');
+    $method->setAccessible(true);
+
+    $content = (string) $method->invoke($manager);
+
+    assertTrue(str_contains($content, '/opt/phpcp/bin/phpcp-alert'), 'ต้องใช้เส้นทางที่ผู้เรียกส่งมา');
+    assertTrue(!str_contains($content, '/usr/local/bin/'), 'ต้องไม่เดาว่าอยู่ใน /usr/local/bin');
+
+    // ผู้เรียกทุกรายต้องส่งเส้นทางจริงมา ไม่ใช่ปล่อยให้ใช้ค่าเริ่มต้น
+    foreach (['PanelJailSet', 'SiteRateLimitSet', 'NeverBanSet'] as $capability) {
+        $source = (string) file_get_contents(PHPCP_ROOT . "/src/Agent/Capability/{$capability}.php");
+
+        assertTrue(
+            str_contains($source, "withAlertBinary(\$context->config->paths->binary('phpcp-alert'))"),
+            "{$capability} ต้องส่งเส้นทางจริงของเครื่องนั้นมา",
+        );
+    }
+});

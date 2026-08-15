@@ -64,7 +64,10 @@
                 <th data-field="mode_label" class="center" data-cell-class="center"
                     data-template="<span class='pill pill-${mode_tone}'>{mode_label}</span>" data-i18n>{LNG_Mode}</th>
                 <th data-field="failed" class="center" data-cell-class="center" data-i18n>{LNG_Currently failed}</th>
-                <th data-field="banned" class="center" data-cell-class="center" data-i18n>{LNG_Currently banned}</th>
+                <!-- ป้ายมาจากเซิร์ฟเวอร์เพราะความหมายเปลี่ยนตามโหมด: โหมดแจ้งเตือน
+                     ก็มีตัวเลขนี้ แต่ไม่มีใครถูกกันจริง -->
+                <th data-field="banned" class="center" data-cell-class="center"
+                    data-template="{banned} <small>{count_label}</small>" data-i18n>{LNG_Hits}</th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -78,6 +81,7 @@
               <tr>
                 <th data-field="ip" data-i18n>{LNG_IP address}</th>
                 <th data-field="jail_label" data-i18n>{LNG_Blocked by}</th>
+                <th data-field="state_label" class="center" data-cell-class="center" data-i18n>{LNG_State}</th>
                 <th class="center" data-row-actions="
                       <button type='button' class='btn small icon-refresh' data-action='click.prevent:apiRefresh'
                               data-api-url='/api/v2/security/panel-jail/unban' data-refresh-table='allBans'

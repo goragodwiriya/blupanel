@@ -63,13 +63,19 @@ final class NeverBanSet implements Capability
 
         $settings->save(['security.never_ban_ips' => $args['ips']]);
 
-        $manager = (new Fail2banManager($executor))->withNeverBan($args['ips']);
+        $manager = (new Fail2banManager($executor))
+            ->withNeverBan($args['ips'])
+            ->withAlertBinary($context->config->paths->binary('phpcp-alert'));
         $rewritten = [];
 
         // jail หน้าเข้าสู่ระบบ — เขียนใหม่เฉพาะเมื่อเปิดอยู่ เพราะการเขียนตอนปิดอยู่
         // เท่ากับเปิดให้เองโดยที่ผู้ดูแลไม่ได้สั่ง
         if ($settings->bool('security.panel_jail.enabled')) {
             $manager->applyPanelLogin($context->config->paths->logFile('audit'), [
+                // **ต้องส่งโหมดเดิมไปด้วย** — ไม่ส่งแล้วมันตกไปที่ค่าเริ่มต้น (ban)
+                // การแก้รายการยกเว้นจะกลายเป็นการเปลี่ยน jail ที่ตั้งเป็น "แจ้งเตือน"
+                // ให้เริ่มแบนคนจริง ๆ โดยที่ผู้ดูแลไม่ได้สั่งและไม่มีอะไรบอก
+                'mode' => $settings->get('security.panel_jail.mode', Fail2banManager::MODE_BAN),
                 'max_retry' => $settings->int('security.panel_jail.max_retry'),
                 'find_seconds' => $settings->int('security.panel_jail.find_seconds'),
                 'ban_seconds' => $settings->int('security.panel_jail.ban_seconds'),
@@ -90,6 +96,7 @@ final class NeverBanSet implements Capability
             }
 
             $manager->apply($site, [
+                'mode' => (string) ($row['mode'] ?? Fail2banManager::MODE_BAN),
                 'max_requests' => (int) $row['max_requests'],
                 'window_seconds' => (int) $row['window_seconds'],
                 'ban_seconds' => (int) $row['ban_seconds'],

@@ -85,7 +85,8 @@ final class SiteRateLimitSet extends SiteCapability
         // รายการห้ามแบนระดับเครื่องต้องถูกฉีดเข้าทุก jail ที่เขียน ไม่งั้นลูกค้าที่เป็น
         // โรงเรียน (คนทั้งโรงเรียนออกเน็ตผ่าน IP เดียว) จะถูกแบนยกองค์กรจากเว็บเดียว
         $manager = (new Fail2banManager($executor))
-            ->withNeverBan((new SettingsRepository($context->db))->get('security.never_ban_ips'));
+            ->withNeverBan((new SettingsRepository($context->db))->get('security.never_ban_ips'))
+            ->withAlertBinary($context->config->paths->binary('phpcp-alert'));
         $now = time();
 
         if ($args['mode'] === Fail2banManager::MODE_OFF) {
