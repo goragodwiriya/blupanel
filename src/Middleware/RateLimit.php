@@ -32,6 +32,28 @@ final class RateLimit implements Middleware
     private const LOGIN_PATHS = ['/api/v2/session', '/api/v2/session/2fa'];
 
     /**
+     * โควตาของหน้าล็อกอิน — กดรัวได้กี่ครั้ง และเติมกลับเร็วแค่ไหน
+     *
+     * **เป็น public เพราะมีคนอื่นต้องคำนวณตาม ไม่ใช่แค่ใช้ที่นี่** — คำขอที่ถูกปฏิเสธ
+     * ด้วย 429 ถูกตัดตั้งแต่ชั้นนี้ จึงไม่มีบรรทัดใน audit log · jail ที่นับบรรทัด
+     * เหล่านั้น ({@see \Phpcp\Driver\Security\Fail2banManager::PANEL_LOGIN_JAIL})
+     * จึงมีเพดานว่าในหนึ่งช่วงเวลาจะเห็นได้มากที่สุดกี่บรรทัด · ตั้ง maxretry เกิน
+     * เพดานนั้นเมื่อไร jail จะไม่มีวันทำงานเลยโดยไม่มีอะไรฟ้อง
+     */
+    public const LOGIN_BURST = 5.0;
+    public const LOGIN_REFILL_PER_SECOND = 1 / 60;
+
+    /**
+     * จำนวนการล็อกอินที่ล้มเหลวมากที่สุดที่ IP เดียวทำได้ในช่วงเวลาหนึ่ง
+     *
+     * = ที่กดรัวได้ตอนแรก + ที่เติมกลับระหว่างนั้น · ใช้เป็นเพดานของ `maxretry`
+     */
+    public static function maxLoginFailuresWithin(int $seconds): int
+    {
+        return (int) floor(self::LOGIN_BURST + $seconds * self::LOGIN_REFILL_PER_SECOND);
+    }
+
+    /**
      * @param Request $request
      * @param Ctx $ctx
      * @param $next
@@ -50,8 +72,8 @@ final class RateLimit implements Middleware
         if ($isLogin) {
             // 5 ครั้งรัว แล้วเติมกลับ 1 ครั้งต่อ 60 วินาที
             $bucket = 'login:'.$request->ip;
-            if (!$limiter->allow($bucket, 5.0, 1 / 60)) {
-                return $this->tooMany($request, $limiter->retryAfter($bucket, 1 / 60));
+            if (!$limiter->allow($bucket, self::LOGIN_BURST, self::LOGIN_REFILL_PER_SECOND)) {
+                return $this->tooMany($request, $limiter->retryAfter($bucket, self::LOGIN_REFILL_PER_SECOND));
             }
 
             return $next($request);

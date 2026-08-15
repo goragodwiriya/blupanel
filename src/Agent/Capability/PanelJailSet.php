@@ -7,8 +7,10 @@ namespace Phpcp\Agent\Capability;
 use Phpcp\Agent\Capability;
 use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
+use Phpcp\Agent\ValidationError;
 use Phpcp\Domain\SettingsRepository;
 use Phpcp\Driver\Security\Fail2banManager;
+use Phpcp\Middleware\RateLimit;
 use Phpcp\Support\Validator;
 
 /**
@@ -53,15 +55,44 @@ final class PanelJailSet implements Capability
             return ['enabled' => false];
         }
 
+        $findSeconds = Validator::requireInt($args, 'find_seconds', 60, 86_400);
+
+        /*
+         * ขั้นต่ำ 3 ครั้ง — ต่ำกว่านั้นคนที่พิมพ์รหัสผิดสองครั้งแล้วเปิด Caps Lock
+         * ค้างไว้จะโดนตัดขาดจากหน้าจัดการของตัวเอง ซึ่งเป็นการล็อกเจ้าของออกจากบ้าน
+         * เพื่อกันขโมยที่ยังไม่มา
+         */
+        $maxRetry = Validator::requireInt($args, 'max_retry', 3, 100);
+
+        /*
+         * **เพดานบนมาจากตัวจำกัดอัตราของหน้าล็อกอิน ไม่ใช่ตัวเลขที่ตั้งใจเลือก**
+         *
+         * คำขอที่โดน 429 ถูกตัดที่ middleware ก่อนถึง controller จึงไม่มีบรรทัดใน
+         * audit log · IP เดียวจึงสร้างบรรทัด "denied" ได้มากที่สุดเท่าที่โควตายอมให้
+         * (กดรัวได้ 5 ครั้ง แล้วเติมกลับนาทีละครั้ง) — วัดบนเครื่องจริงแล้วว่ายิงรัว
+         * 10 ครั้งได้บรรทัดเดียว ที่เหลือเป็น 429 ล้วน
+         *
+         * ตั้ง maxretry เกินเพดานนั้น = jail ที่เปิดอยู่แต่ไม่มีวันทำงาน ซึ่งแย่กว่า
+         * ปิดไว้ เพราะหน้าจอจะบอกว่ากันอยู่ · ปฏิเสธไปเลยพร้อมบอกเพดานที่แท้จริง
+         */
+        $ceiling = RateLimit::maxLoginFailuresWithin($findSeconds);
+
+        if ($maxRetry > $ceiling) {
+            throw new ValidationError(sprintf(
+                'ใน %d วินาที ระบบปล่อยให้ล็อกอินผิดได้มากที่สุด %d ครั้ง (ตัวจำกัดอัตราตัด'
+                . 'ที่เหลือทิ้งก่อนถึงการตรวจรหัสผ่าน) — ตั้งเกณฑ์ %d ครั้งจึงไม่มีวันถึง '
+                . 'ให้ลดเกณฑ์ลงเหลือไม่เกิน %d หรือขยายช่วงเวลาให้ยาวขึ้น',
+                $findSeconds,
+                $ceiling,
+                $maxRetry,
+                $ceiling,
+            ));
+        }
+
         return [
             'enabled' => true,
-            /*
-             * ขั้นต่ำ 3 ครั้ง — ต่ำกว่านั้นคนที่พิมพ์รหัสผิดสองครั้งแล้วเปิด Caps Lock
-             * ค้างไว้จะโดนตัดขาดจากหน้าจัดการของตัวเอง ซึ่งเป็นการล็อกเจ้าของออกจากบ้าน
-             * เพื่อกันขโมยที่ยังไม่มา · เพดาน 100 ไว้ให้เครื่องที่มีคนใช้หลายคนจริง ๆ
-             */
-            'max_retry' => Validator::requireInt($args, 'max_retry', 3, 100),
-            'find_seconds' => Validator::requireInt($args, 'find_seconds', 60, 86_400),
+            'max_retry' => $maxRetry,
+            'find_seconds' => $findSeconds,
             'ban_seconds' => Validator::requireInt($args, 'ban_seconds', 60, 604_800),
             'ignore_ips' => Fail2banManager::normalizeIgnoreList(
                 Validator::optionalString($args, 'ignore_ips', '', 2000),

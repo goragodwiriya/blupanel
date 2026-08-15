@@ -22,6 +22,7 @@ use Phpcp\Agent\CapabilityRegistry;
 use Phpcp\Agent\ValidationError;
 use Phpcp\Domain\SettingsRepository;
 use Phpcp\Driver\Security\Fail2banManager;
+use Phpcp\Middleware\RateLimit;
 use Phpcp\Security\AuditLog;
 
 group('PanelJail — กันเดารหัสผ่านหน้าเข้าสู่ระบบ');
@@ -213,6 +214,68 @@ test('ค่าที่ทำให้ผู้ดูแลล็อกตั�
 
     assertSame(10, $clean['max_retry'], 'ค่าที่ถูกต้องต้องผ่าน');
     assertSame('203.0.113.5', $clean['ignore_ips'], 'รายการยกเว้นต้องถูกทำให้เป็นรูปแบบมาตรฐาน');
+});
+
+test('เกณฑ์ที่ตัวจำกัดอัตราทำให้ไม่มีวันถึงต้องถูกปฏิเสธ', static function (): void {
+    /*
+     * **เจอจากการวัดบนเครื่องจริง** — ยิงรหัสผิดรัว 10 ครั้งได้บรรทัดใน audit log
+     * แค่บรรทัดเดียว ที่เหลือถูก `RateLimit` ตอบ 429 ตัดทิ้งก่อนถึง controller
+     * จึงไม่มีอะไรให้ fail2ban นับ
+     *
+     * แปลว่า maxretry มีเพดานที่คำนวณได้ · ตั้งเกินเพดาน = jail ที่เปิดอยู่แต่
+     * ไม่มีวันแบนใครเลย ซึ่งแย่กว่าปิดไว้เพราะหน้าจอจะบอกว่ากันอยู่
+     */
+    $capability = (new CapabilityRegistry())->resolve('security.panel_jail_set');
+
+    // ใน 600 วินาที: กดรัวได้ 5 + เติมกลับนาทีละครั้งอีก 10 = 15 ครั้ง
+    assertSame(15, RateLimit::maxLoginFailuresWithin(600), 'เพดานต้องคำนวณจากโควตาจริงของหน้าล็อกอิน');
+
+    assertRejects(
+        ValidationError::class,
+        static fn () => $capability->validate([
+            'enabled' => true,
+            'max_retry' => 16,
+            'find_seconds' => 600,
+            'ban_seconds' => 1800,
+        ]),
+        'เกณฑ์ที่เกินเพดานต้องถูกปฏิเสธ ไม่ใช่รับไว้แล้วเงียบ',
+    );
+
+    // ที่เพดานพอดีต้องผ่าน — ไม่ใช่ปฏิเสธเผื่อไว้จนใช้ค่าที่ถูกต้องไม่ได้
+    $clean = $capability->validate([
+        'enabled' => true,
+        'max_retry' => 15,
+        'find_seconds' => 600,
+        'ban_seconds' => 1800,
+    ]);
+    assertSame(15, $clean['max_retry'], 'ค่าที่เพดานพอดีต้องผ่าน');
+
+    // ขยายช่วงเวลาแล้วเพดานต้องขยายตาม
+    $wider = $capability->validate([
+        'enabled' => true,
+        'max_retry' => 16,
+        'find_seconds' => 1200,
+        'ban_seconds' => 1800,
+    ]);
+    assertSame(16, $wider['max_retry'], 'ช่วงเวลายาวขึ้นต้องรับเกณฑ์ที่สูงขึ้นได้');
+});
+
+test('ค่าเริ่มต้นที่ระบบตั้งมาต้องอยู่ใต้เพดานของตัวเอง', static function (): void {
+    // ค่าเริ่มต้นที่ตั้งเกินเพดาน = ทุกเครื่องที่กดเปิดโดยไม่แก้อะไรจะได้ jail ที่ไม่ทำงาน
+    $defaults = SettingsRepository::defaults();
+
+    $maxRetry = (int) $defaults['security.panel_jail.max_retry'];
+    $findSeconds = (int) $defaults['security.panel_jail.find_seconds'];
+
+    assertTrue(
+        $maxRetry <= RateLimit::maxLoginFailuresWithin($findSeconds),
+        sprintf(
+            'ค่าเริ่มต้น maxretry=%d ใน %d วินาที เกินเพดาน %d',
+            $maxRetry,
+            $findSeconds,
+            RateLimit::maxLoginFailuresWithin($findSeconds),
+        ),
+    );
 });
 
 test('ปิดแล้วไม่ต้องกรอกค่าที่กำลังจะไม่ถูกใช้', static function (): void {
