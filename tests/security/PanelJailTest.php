@@ -623,3 +623,31 @@ test('เส้นทางของตัวส่งข้อความต�
         );
     }
 });
+
+test('สลับโหมดต้องหยุด jail ก่อน reload ไม่งั้น action ไม่เปลี่ยน', static function (): void {
+    /*
+     * **วัดบนเครื่องจริงแล้ว** — สลับโหมดแล้วสั่ง `reload` เฉย ๆ (ทั้งแบบทั้งเครื่อง
+     * และแบบระบุชื่อ jail) ผลคือ `fail2ban-client get <jail> actions` ตอบว่า
+     * "No actions for jail" · jail ยังนับคนอยู่แต่ไม่มีอะไรทำงานเลยสักอย่าง
+     *
+     * ผู้ดูแลที่สลับจาก "แจ้งเตือน" มาเป็น "แบน" จึงเชื่อว่าเครื่องกันให้แล้วทั้งที่
+     * ไม่มีใครถูกแบนเลย · `stop <jail>` แล้วค่อย `reload` แก้ได้ และกระทบแค่ jail นั้น
+     * ต่างจาก `restart` ทั้งบริการซึ่งล้างรายการแบนของทุก jail รวมถึงของ SSH
+     */
+    $source = (string) file_get_contents(PHPCP_ROOT . '/src/Driver/Security/Fail2banManager.php');
+
+    assertTrue(str_contains($source, "'stop', \$name"), 'ต้องมีคำสั่งหยุด jail');
+
+    // ทุกที่ที่ reload ต้องหยุด jail ก่อน — ไม่งั้นจะมีเส้นทางที่สลับโหมดแล้วเงียบ
+    assertSame(
+        4,
+        preg_match_all('/\$this->stopJail\(/', $source),
+        'ต้องหยุด jail ก่อน reload ในทั้งสี่เส้นทาง (เปิด/ปิด × jail หน้าล็อกอิน/รายเว็บ)',
+    );
+
+    // ห้ามใช้ restart ทั้งบริการ — ล้างรายการแบนของ jail อื่นรวมถึง SSH
+    assertTrue(
+        !str_contains($source, "'restart'"),
+        'ต้องไม่ restart ทั้งบริการ เพราะจะล้างรายการแบนของ jail ที่ panel ไม่ได้ดูแล',
+    );
+});

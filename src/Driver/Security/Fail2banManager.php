@@ -251,6 +251,7 @@ final class Fail2banManager
             ];
         });
 
+        $this->stopJail($name);
         $this->reload();
     }
 
@@ -270,6 +271,7 @@ final class Fail2banManager
         $tx->delete($this->filterPath($name));
         $tx->commitWithoutValidation();
 
+        $this->stopJail($name);
         $this->reload();
     }
 
@@ -303,6 +305,7 @@ final class Fail2banManager
             ];
         });
 
+        $this->stopJail(self::PANEL_LOGIN_JAIL);
         $this->reload();
     }
 
@@ -320,6 +323,7 @@ final class Fail2banManager
         $tx->delete($this->filterPath(self::PANEL_LOGIN_JAIL));
         $tx->commitWithoutValidation();
 
+        $this->stopJail(self::PANEL_LOGIN_JAIL);
         $this->reload();
     }
 
@@ -622,6 +626,27 @@ final class Fail2banManager
                 . 'ถ้ายังไม่ได้ติดตั้ง: `sudo apt install fail2ban`',
             );
         }
+    }
+
+    /**
+     * หยุด jail หนึ่งตัวก่อนให้ fail2ban อ่าน config ใหม่
+     *
+     * **`reload` เพียงอย่างเดียวไม่เปลี่ยน action ของ jail ที่ทำงานอยู่** — วัดบนเครื่อง
+     * จริงแล้ว: สลับโหมดจาก notify เป็น ban แล้วสั่ง `reload` (ทั้งแบบทั้งเครื่องและ
+     * แบบระบุชื่อ jail) ผลคือ `fail2ban-client get <jail> actions` ตอบว่า
+     * "No actions for jail" — jail ยังนับคนอยู่แต่ไม่มีอะไรทำงานเลยสักอย่าง
+     *
+     * นั่นแปลว่าผู้ดูแลที่สลับจาก "แจ้งเตือน" มาเป็น "แบน" จะเชื่อว่าเครื่องกันให้แล้ว
+     * ทั้งที่ไม่มีใครถูกแบนเลย — ความปลอดภัยหลอกแบบเดียวกับที่ระบบนี้ไล่ปิดมาตลอด
+     *
+     * `stop <jail>` แล้วค่อย `reload` แก้ได้ และกระทบแค่ jail นั้นตัวเดียว ต่างจาก
+     * `restart` ทั้งบริการซึ่งล้างรายการแบนของทุก jail รวมถึงของ SSH ที่ไม่ใช่ของเรา
+     *
+     * ล้มเหลวได้โดยไม่เป็นไร — jail ที่ยังไม่เคยมีอยู่ก็หยุดไม่ได้เป็นธรรมดา
+     */
+    private function stopJail(string $name): void
+    {
+        $this->executor->exec([$this->client(), 'stop', $name], timeout: 15);
     }
 
     /**

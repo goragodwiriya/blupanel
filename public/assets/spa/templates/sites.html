@@ -3,10 +3,6 @@
   <header data-component="topbar"></header>
   <div data-component="mode-banner"></div>
   <div data-component="rollback-bar"></div>
-  <!--
-    รายการเว็บไซต์ — ไฟล์นี้มีแต่ตาราง ฟอร์มสร้างอยู่ที่ site-create.html
-    ApiComponent ชั้นนอกโหลด /api/v2/session มาให้ `permissions[...]` ใช้งานได้
-  -->
   <main class="content" data-component="api" data-endpoint="/api/v2/session">
     <div class="card-groups">
       <header>
@@ -67,7 +63,6 @@
                 <th data-field="php_version" data-sort="php_version" class="center" data-cell-class="center" data-i18n>{LNG_PHP version}</th>
                 <th data-field="system_user" data-cell-class="mono" data-i18n>{LNG_Owner}</th>
                 <th data-field="domain_count" class="center" data-cell-class="center" data-i18n>{LNG_Domains}</th>
-                <!-- API คืนไบต์ ตัวจัดรูปแบบมาตรฐานจึงใช้ได้ตรง ๆ ไม่ต้องมีตัวแปลงฝั่ง JS -->
                 <th data-field="disk_used" data-sort="disk_used" class="center" data-cell-class="center" data-format="bytes" data-i18n>{LNG_Disk used}</th>
                 <th data-field="status" data-sort="status" class="center" data-cell-class="center" data-filter="true" data-type="select" data-show-all="true" data-all-value=""
                     data-template="<span class='pill pill-${status_tone}'>{LNG_${status}}</span>" data-i18n>{LNG_Status}</th>

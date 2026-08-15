@@ -11,38 +11,27 @@
           <p data-i18n>sshd settings — changes roll back automatically unless confirmed</p>
         </div>
       </header>
-
       <div class="content-body">
-        <!--
-          ค่าที่แก้ได้ของ sshd เป็นชุดคงที่ (SshManager::keys()) จึงเขียนช่องกรอกไว้ตรง ๆ
-          ได้เลย ไม่ต้องสร้างจาก JS · data-confirm ทำให้ต้องกดยืนยันก่อนส่งเสมอ
-          ซึ่งจำเป็นเพราะแก้ผิดแล้วเข้าเครื่องไม่ได้
-        -->
-        <form data-form="sshConfig"
-              action="/api/v2/ssh-config"
-              method="post"
-              data-method="PATCH"
-              data-ajax-submit="true"
-              data-load-api="/api/v2/ssh-config"
+        <form data-form="sshConfig" action="/api/v2/ssh-config" method="post" data-method="PATCH" data-ajax-submit="true" data-load-api="/api/v2/ssh-config"
               data-confirm="Changing sshd settings can lock you out. The change rolls back automatically unless you confirm it.">
           <fieldset class="notice notice-warning" data-if="warnings.length > 0">
             <legend class="icon-warning" data-i18n>Warnings</legend>
             <ul data-for="warning in warnings">
-              <template><li data-text="warning"></li></template>
+              <template>
+                <li data-text="warning"></li>
+              </template>
             </ul>
           </fieldset>
-
           <fieldset>
             <div class="form-group">
               <div class="width50">
                 <label for="ssh_port" data-i18n>Port</label>
                 <span class="form-control icon-number">
-                  <input type="number" id="ssh_port" name="Port" min="1" max="65535"
-                         autocomplete="off" data-attr="value:values.Port.value">
+                  <input type="number" id="ssh_port" name="Port" min="1" max="65535" autocomplete="off" data-attr="value:values.Port.value">
                 </span>
               </div>
               <div class="width50">
-                <label for="ssh_permit_root" >PermitRootLogin</label>
+                <label for="ssh_permit_root">PermitRootLogin</label>
                 <span class="form-control icon-shield">
                   <select id="ssh_permit_root" name="PermitRootLogin" data-attr="value:values.PermitRootLogin.value">
                     <option value="no">no</option>
@@ -54,7 +43,7 @@
             </div>
             <div class="form-group">
               <div class="width50">
-                <label for="ssh_password_auth" >PasswordAuthentication</label>
+                <label for="ssh_password_auth">PasswordAuthentication</label>
                 <span class="form-control icon-password">
                   <select id="ssh_password_auth" name="PasswordAuthentication" data-attr="value:values.PasswordAuthentication.value">
                     <option value="no">no</option>
@@ -63,7 +52,7 @@
                 </span>
               </div>
               <div class="width50">
-                <label for="ssh_pubkey_auth" >PubkeyAuthentication</label>
+                <label for="ssh_pubkey_auth">PubkeyAuthentication</label>
                 <span class="form-control icon-shield">
                   <select id="ssh_pubkey_auth" name="PubkeyAuthentication" data-attr="value:values.PubkeyAuthentication.value">
                     <option value="yes">yes</option>
@@ -73,7 +62,6 @@
               </div>
             </div>
           </fieldset>
-
           <fieldset class="submit" data-if="can['manage']">
             <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
           </fieldset>
