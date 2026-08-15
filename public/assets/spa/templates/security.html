@@ -29,6 +29,27 @@
         <h2 class="icon-ban" data-i18n>Login brute-force protection</h2>
         <div class="alert alert-warning" data-i18n>A ban blocks every port, including this control panel. Put your own IP in the exempt list, and remember you can always unban from SSH.</div>
 
+        <!--
+          รายการห้ามแบนอยู่ในฟอร์มของตัวเองโดยตั้งใจ — มีผลกับ jail รายเว็บด้วย
+          จึงต้องบันทึกได้แม้ jail หน้าเข้าสู่ระบบจะปิดอยู่
+        -->
+        <div data-component="api" data-endpoint="/api/v2/security/panel-jail">
+          <form data-form="neverBan" action="/api/v2/security/never-ban" method="post" data-method="PUT" data-ajax-submit="true">
+            <fieldset>
+              <div>
+                <label for="never_ban_ips" data-i18n>Never ban these IPs (whole server)</label>
+                <span class="form-control icon-shield">
+                  <input type="text" id="never_ban_ips" name="ips" maxlength="2000" placeholder="203.0.113.5 198.51.100.0/24" data-attr="value:never_ban_ips">
+                </span>
+                <div class="comment" data-i18n>Applies to every jail, including ones created later. Put customers here whose whole organisation shares one IP — a school or an office where one infected machine would otherwise get everyone banned from every site on this server.</div>
+              </div>
+            </fieldset>
+            <fieldset class="submit">
+              <button type="submit" class="btn icon-save" data-i18n>Save exempt list</button>
+            </fieldset>
+          </form>
+        </div>
+
         <div data-component="api" data-endpoint="/api/v2/security/panel-jail">
           <!--
             ตั้งไว้ว่าเปิดแต่ fail2ban ไม่รู้จัก jail = การป้องกันที่หน้าจอโฆษณาไว้

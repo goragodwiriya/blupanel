@@ -21,6 +21,8 @@
         Require all denied
     </DirectoryMatch>
 
+{{PROBE_DENY}}
+
     ErrorLog {{ERROR_LOG}}
     CustomLog {{ACCESS_LOG}} combined
 

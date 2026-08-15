@@ -6,6 +6,7 @@ namespace Phpcp\Agent\Capability;
 
 use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
+use Phpcp\Domain\SettingsRepository;
 use Phpcp\Driver\Security\Fail2banManager;
 use Phpcp\Support\Validator;
 
@@ -69,7 +70,10 @@ final class SiteRateLimitSet extends SiteCapability
         $this->assertSiteAccess($context, $args['site_id']);
 
         $site = $this->loadSite($context, $args['site_id']);
-        $manager = new Fail2banManager($executor);
+        // รายการห้ามแบนระดับเครื่องต้องถูกฉีดเข้าทุก jail ที่เขียน ไม่งั้นลูกค้าที่เป็น
+        // โรงเรียน (คนทั้งโรงเรียนออกเน็ตผ่าน IP เดียว) จะถูกแบนยกองค์กรจากเว็บเดียว
+        $manager = (new Fail2banManager($executor))
+            ->withNeverBan((new SettingsRepository($context->db))->get('security.never_ban_ips'));
         $now = time();
 
         if (!$args['enabled']) {

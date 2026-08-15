@@ -50,8 +50,51 @@ final class Fail2banManager
     /** ยกเว้นเสมอ ไม่ว่าผู้ใช้จะกรอกอะไร — เหตุผลอยู่ที่ {@see jailContent()} */
     private const LOCAL_IPS = '127.0.0.1/8 ::1';
 
+    /**
+     * ที่อยู่ที่ห้ามแบนไม่ว่า jail ไหน — รายการเดียวของทั้งเครื่อง
+     *
+     * **มีไว้เพราะ IP หนึ่งอันไม่ได้แทนคนคนเดียวเสมอไป** · ลูกค้าที่เป็นโรงเรียนออกเน็ต
+     * ผ่าน IP เดียวกันทั้งโรงเรียน — นักเรียนคนเดียวที่เครื่องติดมัลแวร์แล้วสแกน
+     * อัตโนมัติจะทำให้ทั้งโรงเรียนเข้าเว็บตัวเองไม่ได้ และเข้าเว็บของลูกค้ารายอื่น
+     * บนเครื่องเดียวกันไม่ได้ด้วย เพราะ fail2ban สั่ง firewall ซึ่งไม่รู้จัก vhost
+     *
+     * **ทำไมต้องเป็นรายการกลาง ไม่ใช่กรอกซ้ำในแต่ละ jail** — ก่อนหน้านี้ที่ยกเว้น
+     * มีสองที่แยกกัน (ตาราง `site_rate_limits` รายเว็บ กับค่าตั้งของ jail หน้าล็อกอิน)
+     * ลงทะเบียนโรงเรียนหนึ่งแห่งจึงต้องไล่ใส่ทุกที่ และ **jail ที่สร้างใหม่ในอนาคต
+     * จะไม่รู้จักรายการนั้นเลย** · ที่นี่ถูกฉีดเข้าไปในทุกไฟล์ที่คลาสนี้เขียน
+     * ลงครั้งเดียวจึงปลอดภัยตลอดไปทุก jail รวมถึงที่ยังไม่ได้เขียน
+     */
+    private string $neverBan = '';
+
     public function __construct(private readonly Executor $executor)
     {
+    }
+
+    /**
+     * ตั้งรายการห้ามแบนระดับเครื่อง — ค่ามาจาก `security.never_ban_ips`
+     *
+     * แยกจาก constructor เพราะผู้เรียกบางรายไม่มีฐานข้อมูลในมือ (เช่นตอนเรนเดอร์
+     * เนื้อไฟล์เพื่อเทียบ drift) · ไม่ตั้งก็ยังทำงานได้ แค่ไม่มีรายการยกเว้นเพิ่ม
+     */
+    public function withNeverBan(string $ips): self
+    {
+        $this->neverBan = trim($ips);
+
+        return $this;
+    }
+
+    /**
+     * รวมรายการยกเว้นทั้งหมดของ jail หนึ่ง
+     *
+     * เรียงจาก "ห้ามแบนเด็ดขาด" ไปหา "ผู้ดูแลระบุเอง" — localhost มาก่อนเสมอ
+     */
+    private function ignoreList(string $extra): string
+    {
+        return trim(preg_replace(
+            '/\s+/',
+            ' ',
+            self::LOCAL_IPS . ' ' . $this->neverBan . ' ' . trim($extra),
+        ) ?? self::LOCAL_IPS);
     }
 
     /**
@@ -306,7 +349,7 @@ final class Fail2banManager
         //
         // จำเป็นต้องใส่เองเพราะ `jail.conf` ของ Debian **comment `ignoreip` ไว้**
         // (`#ignoreip = 127.0.0.1/8 ::1`) — ไม่มีการยกเว้นค่าเริ่มต้นให้เลย
-        $ignore = trim(self::LOCAL_IPS . ' ' . trim($settings['ignore_ips']));
+        $ignore = $this->ignoreList($settings['ignore_ips']);
 
         return sprintf(
             <<<'CONF'
@@ -388,7 +431,7 @@ final class Fail2banManager
      */
     private function panelLoginJail(string $auditLogPath, array $settings): string
     {
-        $ignore = trim(self::LOCAL_IPS . ' ' . trim($settings['ignore_ips']));
+        $ignore = $this->ignoreList($settings['ignore_ips']);
 
         return sprintf(
             <<<'CONF'

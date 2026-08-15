@@ -2543,6 +2543,33 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
 
+  /security/never-ban:
+    put:
+      tags: [server]
+      summary: ที่อยู่ที่ห้ามแบนเด็ดขาด — รายการเดียวของทั้งเครื่อง
+      description: |
+        มีผลกับ **ทุก jail ที่ panel เขียน** รวมถึง jail ที่สร้างขึ้นทีหลัง · มีไว้สำหรับ
+        ลูกค้าที่คนทั้งองค์กรออกเน็ตผ่าน IP เดียวกัน (โรงเรียน สำนักงาน) ซึ่งการแบน
+        หนึ่งครั้งตัดคนทั้งองค์กรออกจากทุกเว็บบนเครื่อง เพราะ fail2ban สั่ง firewall
+        ซึ่งไม่รู้จัก vhost
+
+        **เขียนไฟล์ jail ที่เปิดอยู่ใหม่ให้ทันที** ไม่ใช่บันทึกค่าไว้เฉย ๆ — `ignoreip`
+        ถูกอบเข้าไปในไฟล์ตอน jail ถูกเขียน ถ้าไม่เขียนใหม่ รายการจะมีผลกับ jail ที่
+        สร้างหลังจากนี้เท่านั้น ส่วนที่เปิดอยู่แล้วยังแบนต่อไปโดยที่หน้าจอบอกว่ายกเว้นแล้ว
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ips: { type: string, description: IP หรือ CIDR คั่นด้วยช่องว่าง · ว่าง = ไม่ยกเว้นใครเพิ่ม }
+      responses:
+        "200": { $ref: "#/components/responses/Done" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
   /security/panel-jail/bans:
     get:
       tags: [server]

@@ -277,6 +277,7 @@ final class NginxProxyDriver implements WebServerDriver
 
         return new SafeBlock($this->templates->render('nginx/proxy-body.conf.tpl', [
             'BACKEND' => self::BACKEND,
+            'PROBE_DENY' => new SafeBlock(ProbeBlocklist::nginx()),
             'SCHEME' => $scheme,
             'FORCE_PROXY_DIRS' => $this->forceProxyDirs($scan['proxy_dirs']),
             'STATIC_SECTION' => $scan['static_ok']
@@ -396,6 +397,7 @@ final class NginxProxyDriver implements WebServerDriver
 
         $body = new SafeBlock($this->templates->render('apache/vhost-body.conf.tpl', [
             // ไดเรกทอรีของผู้ดูแล — vhost อ่านเป็นอันสุดท้าย ค่าที่นั่นจึงชนะค่าเริ่มต้น
+            'PROBE_DENY' => new SafeBlock(ProbeBlocklist::apache()),
             'CUSTOM_DIR' => $executor->path(CustomConfig::siteDirectory('apache', $site->domain)),
             'DOCROOT' => $executor->path($site->docroot()),
             'FPM_SOCKET' => $executor->path($site->fpmSocket()),

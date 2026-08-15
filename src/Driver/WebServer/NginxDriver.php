@@ -149,6 +149,7 @@ final class NginxDriver implements WebServerDriver
         }
 
         $body = new SafeBlock($this->templates->render('nginx/vhost-body.conf.tpl', [
+            'PROBE_DENY' => new SafeBlock(ProbeBlocklist::nginx()),
             // ไดเรกทอรีของผู้ดูแล — vhost อ่านเป็นอันสุดท้าย ค่าที่นั่นจึงชนะค่าเริ่มต้น
             'CUSTOM_DIR' => $executor->path(CustomConfig::siteDirectory('nginx', $site->domain)),
             'DOCROOT' => $executor->path($site->docroot()),

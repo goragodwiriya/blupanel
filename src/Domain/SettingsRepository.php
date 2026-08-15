@@ -116,6 +116,17 @@ final class SettingsRepository
         'security.panel_jail.find_seconds' => 'int',
         'security.panel_jail.ban_seconds' => 'int',
         'security.panel_jail.ignore_ips' => 'string',
+
+        /*
+         * ที่อยู่ที่ห้ามแบนไม่ว่า jail ไหน — ลงทะเบียนครั้งเดียว ใช้กับทุก jail
+         *
+         * มีไว้สำหรับลูกค้าที่คนจำนวนมากออกเน็ตผ่าน IP เดียวกัน (โรงเรียน สำนักงาน)
+         * ซึ่งการแบนหนึ่งครั้งตัดคนทั้งองค์กรออกจากทุกเว็บบนเครื่อง
+         *
+         * แก้ผ่านฟอร์มตั้งค่าทั่วไปไม่ได้ด้วยเหตุผลเดียวกับ `security.panel_jail.*` —
+         * ค่าต้องเดินทางคู่กับไฟล์ jail ที่เขียนใหม่แล้วผ่านตัวตรวจของ fail2ban
+         */
+        'security.never_ban_ips' => 'string',
     ];
 
     /** ค่าเริ่มต้นเมื่อยังไม่เคยตั้ง */
@@ -136,6 +147,7 @@ final class SettingsRepository
         'security.panel_jail.find_seconds' => '600',
         'security.panel_jail.ban_seconds' => '1800',
         'security.panel_jail.ignore_ips' => '',
+        'security.never_ban_ips' => '',
 
         'notify.telegram.enabled' => '0',
         'notify.telegram.token' => '',
@@ -192,6 +204,7 @@ final class SettingsRepository
                 // เข้าตารางได้เมื่อไร ค่าจะเปลี่ยนโดยไฟล์บนเครื่องไม่เปลี่ยนตาม แล้วหน้าจอ
                 // จะรายงานการป้องกันที่ไม่มีอยู่จริง — ต้องผ่าน `security.panel_jail_set`
                 && !str_starts_with($key, 'security.panel_jail.')
+                && $key !== 'security.never_ban_ips'
                 && $key !== 'panel.cert_domain',
             ARRAY_FILTER_USE_KEY,
         );

@@ -90,6 +90,24 @@ final class SecurityController extends ApiController
     }
 
     /**
+     * ตั้งรายการที่อยู่ที่ห้ามแบน — ระดับเครื่อง ใช้กับทุก jail
+     *
+     * แยกจากฟอร์มของ jail หน้าเข้าสู่ระบบโดยตั้งใจ: รายการนี้มีผลกับ jail รายเว็บด้วย
+     * จึงต้องบันทึกได้แม้ jail หน้าเข้าสู่ระบบจะปิดอยู่
+     */
+    public function neverBanSet(Request $request): Response
+    {
+        $data = $this->agent()->data('security.never_ban_set', [
+            'ips' => $request->payloadString('ips'),
+        ], $this->ctx->actor($request));
+
+        return $this->refreshed(
+            (string) ($data['message'] ?? 'Saved'),
+            extra: is_array($data) ? $data : [],
+        );
+    }
+
+    /**
      * ปลดแบน IP หนึ่งออกจาก jail ของหน้าเข้าสู่ระบบ
      *
      * ต้องมี เพราะการแบนพลาดเกิดขึ้นจริงและตัดขาดทุกพอร์ต — ผู้ดูแลที่แบนตัวเองจาก

@@ -108,6 +108,7 @@ test('vhost ที่ระบบสร้างต้องอ่านไฟ�
     $templates = new Template(PHPCP_ROOT . '/templates');
 
     $apache = $templates->render('apache/vhost-body.conf.tpl', [
+        'PROBE_DENY' => new Phpcp\Driver\SafeBlock(Phpcp\Driver\WebServer\ProbeBlocklist::apache()),
         'DOCROOT' => '/srv/phpcp/sites/example.com/public',
         'FPM_SOCKET' => '/run/phpcp/example.com-8.4.sock',
         'ERROR_LOG' => '/var/log/phpcp/example.com-error.log',
@@ -128,6 +129,7 @@ test('vhost ที่ระบบสร้างต้องอ่านไฟ�
     assertTrue($deny !== false && $include !== false && $include > $deny, 'ไฟล์ของผู้ดูแลต้องถูกอ่านหลังค่าเริ่มต้น');
 
     $nginx = $templates->render('nginx/vhost-body.conf.tpl', [
+        'PROBE_DENY' => new Phpcp\Driver\SafeBlock(Phpcp\Driver\WebServer\ProbeBlocklist::nginx()),
         'DOCROOT' => '/srv/phpcp/sites/example.com/public',
         'FPM_SOCKET' => '/run/phpcp/example.com-8.4.sock',
         'ERROR_LOG' => '/var/log/phpcp/example.com-error.log',

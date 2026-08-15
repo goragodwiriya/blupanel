@@ -103,7 +103,8 @@ final class PanelJailSet implements Capability
     public function run(array $args, Executor $executor, Context $context): array
     {
         $settings = new SettingsRepository($context->db);
-        $manager = new Fail2banManager($executor);
+        $manager = (new Fail2banManager($executor))
+            ->withNeverBan($settings->get('security.never_ban_ips'));
 
         if (!$args['enabled']) {
             $manager->removePanelLogin();

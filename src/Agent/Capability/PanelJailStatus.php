@@ -61,6 +61,8 @@ final class PanelJailStatus implements Capability
             'find_seconds' => $settings->int('security.panel_jail.find_seconds'),
             'ban_seconds' => $settings->int('security.panel_jail.ban_seconds'),
             'ignore_ips' => $settings->get('security.panel_jail.ignore_ips'),
+            // รายการระดับเครื่อง — ฟอร์มของมันอยู่หน้าเดียวกัน จึงส่งมาด้วยกัน
+            'never_ban_ips' => $settings->get('security.never_ban_ips'),
             'active' => $status['active'],
             'banned' => $status['banned'],
             'total_banned' => $status['total_banned'],

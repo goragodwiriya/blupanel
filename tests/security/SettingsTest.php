@@ -108,7 +108,7 @@ test('คีย์ที่ไม่อยู่ในรายการต้�
      * หน้าจอจะบอกว่ากันเดารหัสผ่านอยู่ทั้งที่ไม่มีอะไรกันเลย
      */
     foreach (array_keys($keys) as $key) {
-        if (str_starts_with($key, 'security.panel_jail.')) {
+        if (str_starts_with($key, 'security.panel_jail.') || $key === 'security.never_ban_ips') {
             $allowedKeys[] = $key;
 
             assertTrue(

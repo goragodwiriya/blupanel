@@ -366,3 +366,68 @@ test('AuditLog ต้องเขียนสำเนาเป็นไฟล�
     );
     assertSame('203.0.113.77', $m[1], 'ต้องดึง IP ของผู้ยิงออกมาได้');
 });
+
+// --- 5. รายการห้ามแบนระดับเครื่อง (เคสโรงเรียนออกเน็ตผ่าน IP เดียว) ------------
+
+test('รายการห้ามแบนระดับเครื่องต้องถูกฉีดเข้าไปในไฟล์ jail จริง', static function (): void {
+    /*
+     * โจทย์: ลูกค้าที่เป็นโรงเรียนออกเน็ตผ่าน IP เดียวกันทั้งโรงเรียน · นักเรียนคนเดียว
+     * ที่เครื่องติดมัลแวร์แล้วสแกนอัตโนมัติจะทำให้ทั้งโรงเรียนถูกตัดขาดจากทุกเว็บ
+     * บนเครื่อง เพราะ fail2ban สั่ง firewall ซึ่งไม่รู้จัก vhost
+     *
+     * รายการนี้ต้องไปโผล่ในไฟล์จริง ไม่ใช่แค่ถูกเก็บลงตาราง
+     */
+    $manager = (new Fail2banManager(new Phpcp\Agent\Executor\DryRunExecutor()))
+        ->withNeverBan('203.0.113.0/24 198.51.100.7');
+
+    $method = new ReflectionMethod($manager, 'panelLoginJail');
+    $method->setAccessible(true);
+
+    $content = (string) $method->invoke($manager, '/var/log/phpcp/audit.log', [
+        'max_retry' => 10,
+        'find_seconds' => 600,
+        'ban_seconds' => 1800,
+        'ignore_ips' => '192.0.2.9',
+    ]);
+
+    assertTrue(str_contains($content, '203.0.113.0/24'), 'ที่อยู่ของโรงเรียนต้องอยู่ในไฟล์ jail');
+    assertTrue(str_contains($content, '198.51.100.7'), 'ที่อยู่ที่สองต้องอยู่ด้วย');
+    assertTrue(str_contains($content, '192.0.2.9'), 'รายการเฉพาะของ jail นี้ต้องยังอยู่');
+    assertTrue(str_contains($content, '127.0.0.1/8'), 'localhost ต้องยังถูกยกเว้นเสมอ');
+});
+
+test('ทุก jail ที่ panel เขียนต้องได้รายการห้ามแบนชุดเดียวกัน', static function (): void {
+    /*
+     * ก่อนหน้านี้ที่ยกเว้นมีสองที่แยกกัน (ตารางรายเว็บ กับค่าตั้งของ jail หน้าล็อกอิน)
+     * ลงทะเบียนโรงเรียนหนึ่งแห่งจึงต้องไล่ใส่ทุกที่ และ jail ที่สร้างใหม่จะลืม
+     *
+     * เทสต์นี้ตรึงว่าทั้งสองตัวเขียนไฟล์ผ่านตัวรวมรายการตัวเดียวกัน
+     */
+    $source = (string) file_get_contents(PHPCP_ROOT . '/src/Driver/Security/Fail2banManager.php');
+
+    assertSame(
+        2,
+        preg_match_all('/\$ignore = \$this->ignoreList\(/', $source),
+        'ทั้ง jail รายเว็บและ jail หน้าล็อกอินต้องรวมรายการผ่านเมธอดเดียวกัน',
+    );
+    assertTrue(
+        !str_contains($source, "trim(self::LOCAL_IPS . ' '"),
+        'ต้องไม่เหลือการต่อรายการยกเว้นเองนอก ignoreList()',
+    );
+});
+
+test('เปลี่ยนรายการห้ามแบนต้องเขียนไฟล์ jail ที่เปิดอยู่ใหม่ ไม่ใช่แค่บันทึกค่า', static function (): void {
+    /*
+     * `ignoreip` ถูกอบเข้าไปในไฟล์ตอน jail ถูกเขียน · บันทึกแค่ค่าแล้วจบ = รายการใหม่
+     * มีผลกับ jail ที่เขียนหลังจากนี้เท่านั้น ส่วนที่เปิดอยู่แล้วยังแบนโรงเรียนต่อไป
+     * โดยที่หน้าจอบอกว่าลงทะเบียนยกเว้นแล้ว
+     */
+    $source = (string) file_get_contents(PHPCP_ROOT . '/src/Agent/Capability/NeverBanSet.php');
+
+    assertTrue(str_contains($source, 'applyPanelLogin('), 'ต้องเขียน jail หน้าล็อกอินใหม่');
+    assertTrue(str_contains($source, '$manager->apply($site'), 'ต้องเขียน jail รายเว็บใหม่ด้วย');
+    assertTrue(
+        str_contains($source, 'site_rate_limits WHERE enabled = 1'),
+        'ต้องไล่เฉพาะเว็บที่เปิดการจำกัดอัตราอยู่',
+    );
+});

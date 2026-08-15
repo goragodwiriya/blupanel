@@ -1,3 +1,4 @@
+{{PROBE_DENY}}
 {{FORCE_PROXY_DIRS}}{{STATIC_SECTION}}
     # คำขอที่เหลือทั้งหมดส่งให้ Apache — ที่นั่นคือที่เดียวที่อ่าน `.htaccess` ได้
     location / {

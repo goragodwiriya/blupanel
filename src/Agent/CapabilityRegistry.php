@@ -69,6 +69,7 @@ use Phpcp\Agent\Capability\ServiceReload;
 use Phpcp\Agent\Capability\ServiceRestart;
 use Phpcp\Agent\Capability\ServiceStart;
 use Phpcp\Agent\Capability\SecurityScan;
+use Phpcp\Agent\Capability\NeverBanSet;
 use Phpcp\Agent\Capability\PanelJailSet;
 use Phpcp\Agent\Capability\PanelJailStatus;
 use Phpcp\Agent\Capability\PanelJailUnban;
@@ -177,6 +178,7 @@ final class CapabilityRegistry
             ServiceRestart::class,
             ServiceReload::class,
             PanelJailSet::class,
+            NeverBanSet::class,
             PanelJailUnban::class,
 
             // Hosting — สร้างและจัดการเว็บไซต์
