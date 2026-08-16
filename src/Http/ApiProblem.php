@@ -15,15 +15,16 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * รหัสข้อผิดพลาดของ REST API v2 — PLAN-V2 §4.2
+ * REST API v2's error codes — PLAN-V2 §4.2
  *
- * เป็น enum ไม่ใช่สตริงลอย ๆ เพราะฝั่ง SPA ต้อง "ตัดสินใจ" จากรหัสนี้ ไม่ใช่จากข้อความ:
- * 401 UNAUTHENTICATED ให้เด้งหน้าล็อกอิน · 419 CSRF_INVALID ให้ขอ token ใหม่แล้วลองใหม่ ·
- * 422 VALIDATION_ERROR ให้ทาสีช่องกรอกที่ผิด — ถ้าเทียบข้อความไทยแทน การแก้คำในข้อความ
- * จะทำให้หน้าเว็บพังโดยไม่มีใครรู้ตัว
+ * An enum, not a loose string, because the SPA must "decide" from this code,
+ * never from the message text: 401 UNAUTHENTICATED sends it to the login page
+ * · 419 CSRF_INVALID asks for a new token and retries · 422 VALIDATION_ERROR
+ * highlights the wrong field — comparing against message text instead would
+ * mean editing a word in the message quietly breaks the frontend, with nobody noticing
  *
- * status code ผูกกับรหัสตายตัวที่นี่ที่เดียว จึงเป็นไปไม่ได้ที่ endpoint สองตัว
- * จะตอบ status ต่างกันด้วยรหัสเดียวกัน
+ * The status code is bound to a fixed code in this one place, so it's
+ * impossible for two endpoints to answer with different statuses under the same code
  */
 enum ApiProblem: string
 {
@@ -44,7 +45,7 @@ enum ApiProblem: string
     case MethodNotAllowed = 'METHOD_NOT_ALLOWED';
     case InternalError = 'INTERNAL_ERROR';
 
-    /** เส้นทางที่ถือว่าเป็น REST API v2 — ทุกอย่างใต้เส้นทางนี้ตอบ JSON เสมอ */
+    /** The path prefix counted as REST API v2 — everything under it always answers JSON */
     public const PREFIX = '/api/v2';
 
     public function status(): int
@@ -65,10 +66,11 @@ enum ApiProblem: string
     }
 
     /**
-     * คำขอนี้ต้องได้คำตอบเป็น JSON ตามสัญญา v2 หรือไม่
+     * Whether this request must be answered as JSON per v2's contract
      *
-     * เทียบจาก path อย่างเดียว ไม่ดู header `Accept` — สัญญาของ v2 คือ "ไม่มี HTML
-     * หลุดออกไปแม้แต่ไบต์เดียว" ซึ่งต้องเป็นจริงแม้ผู้เรียกจะเปิด URL ในเบราว์เซอร์ตรง ๆ
+     * Compared from the path alone, never the `Accept` header — v2's contract
+     * is "not one byte of HTML ever leaks out," which must hold true even when
+     * a caller opens the URL directly in a browser
      */
     public static function handles(Request $request): bool
     {
@@ -76,9 +78,9 @@ enum ApiProblem: string
     }
 
     /**
-     * แปลงเป็นคำตอบ JSON ตามรูปแบบใน §4.2
+     * Convert to a JSON response in §4.2's shape
      *
-     * @param array<string,string> $fields ชื่อฟิลด์ => เหตุผลที่ค่านั้นไม่ผ่าน
+     * @param array<string,string> $fields field name => the reason that value failed
      */
     public function response(string $message, array $fields = []): Response
     {
@@ -92,11 +94,13 @@ enum ApiProblem: string
     }
 
     /**
-     * แปลงข้อผิดพลาดจาก agent เป็นรหัสของ API
+     * Convert an agent error into an API code
      *
-     * ชนิดของ exception คือสัญญาที่ชั้น agent ให้ไว้อยู่แล้ว การแปลงจึงเป็นแค่การ
-     * เปลี่ยนภาษา ไม่ใช่การเดา — ที่สำคัญคือ TransportError ต้องเป็น 503 ไม่ใช่ 500
-     * เพราะ "agent ไม่ตอบ" คือปัญหาชั่วคราวที่ลองใหม่แล้วหายได้ ต่างจากคำสั่งที่ล้มจริง
+     * The exception's type is already the contract the agent layer provides —
+     * this conversion is just translating vocabulary, not guessing · the
+     * important part is that TransportError must be 503, not 500, because
+     * "the agent isn't answering" is a temporary problem that a retry can fix,
+     * unlike a command that genuinely failed
      */
     public static function fromAgentException(AgentException $e): self
     {
@@ -105,7 +109,7 @@ enum ApiProblem: string
             $e instanceof PermissionDenied => self::Forbidden,
             $e instanceof ProtectedResource => self::ProtectedResource,
             $e instanceof TransportError => self::AgentUnavailable,
-            // 500 ไม่ใช่ 503 — "ลองใหม่" ไม่ช่วยอะไรเมื่อโค้ดใน agent เป็นฝ่ายพัง
+            // 500, not 503 — "retry" doesn't help when it's the agent's own code that's broken
             $e instanceof InternalError => self::InternalError,
             $e instanceof ExecutionFailed => self::ExecutionFailed,
             default => self::InternalError,
