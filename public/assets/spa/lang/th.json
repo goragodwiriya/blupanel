@@ -821,6 +821,7 @@
     "Security": "ความปลอดภัย",
     "Security posture measured from the real system state": "ระดับความปลอดภัยที่วัดจากสภาพจริงของระบบ",
     "Security — a risk was found that needs fixing": "ความปลอดภัย — พบความเสี่ยงที่ต้องแก้",
+    "See GET /api/v2/settings for the list of editable keys": "ดูรายการคีย์ที่แก้ได้จาก GET /api/v2/settings",
     "Select a file or folder to compress first": "เลือกไฟล์หรือโฟลเดอร์ที่จะบีบอัดก่อน",
     "Select a website": "เลือกเว็บไซต์",
     "Self-signed": "ใบที่เซ็นเอง",
