@@ -7,11 +7,12 @@ namespace Phpcp\Http\Resource;
 use Phpcp\Security\Permissions;
 
 /**
- * ผู้ใช้ panel หนึ่งคน
+ * One panel user
  *
- * ไม่มี `password_hash` และ `totp_secret` อยู่ในผลลัพธ์เด็ดขาด — การเลือกฟิลด์แบบระบุชื่อ
- * ทีละตัว (ไม่ใช่ `...$row` แล้วค่อย unset) คือเหตุผลหลักที่ชั้น Resource มีอยู่:
- * คอลัมน์ที่เพิ่มเข้ามาในอนาคตจะไม่หลุดออก API เองโดยไม่มีใครตั้งใจ
+ * `password_hash` and `totp_secret` are never in the result — picking fields
+ * by name one at a time (not `...$row` followed by unset) is the main reason
+ * the Resource layer exists at all: a column added in the future never leaks
+ * out through the API by nobody's intention
  */
 final class UserResource extends Resource
 {
@@ -23,15 +24,20 @@ final class UserResource extends Resource
             'id' => (int) ($row['id'] ?? 0),
             'username' => self::string($row['username'] ?? ''),
             'role' => $role,
-            // ชื่อบทบาทภาษาไทยยังส่งไปด้วยเพื่อไม่ให้ SPA ต้องรู้จักตารางแปลงของฝั่ง PHP
-            // เมื่อ i18n ของเฟส C เสร็จ ฝั่งหน้าเว็บจะแปลจาก `role` เองแล้วเลิกใช้ค่านี้
+            // The role's display name is also sent, so the SPA doesn't need to
+            // know the PHP-side lookup table · once phase C's i18n work is done,
+            // the frontend will translate from `role` itself and this field
+            // gets dropped — for now this still returns Thai text directly,
+            // since src/Security's Permissions::roleLabel() hasn't been
+            // converted to English source yet
             'role_label' => Permissions::roleLabel($role),
-            // สองแกนที่ตั้งใจให้แยกกัน: status คุมสิทธิ์ล็อกอิน · service_status คุมบริการโฮสติ้ง
-            // ก่อน migration 0005 สองอย่างนี้อยู่คนละตารางและขัดกันเองได้จริง
+            // Two axes deliberately kept separate: status controls login
+            // privileges · service_status controls the hosting service · before
+            // migration 0005 these lived in different tables and could genuinely disagree
             'status' => self::string($row['status'] ?? 'active'),
             'service_status' => self::string($row['service_status'] ?? 'active'),
-            // สีของป้ายสถานะ — ส่งมาจากที่นี่เพื่อให้เทมเพลตเขียน
-            // `pill-${service_tone}` ได้ตรง ๆ โดยไม่ต้องมีตารางแปลงฝั่ง JS
+            // The status pill's color — sent from here so the template can
+            // write `pill-${service_tone}` directly, with no lookup table needed on the JS side
             'service_tone' => match (self::string($row['service_status'] ?? 'active')) {
                 'active' => 'ok',
                 'suspended' => 'warn',
@@ -49,10 +55,11 @@ final class UserResource extends Resource
     }
 
     /**
-     * ผู้ใช้พร้อมข้อมูลโฮสติ้ง — โควตาที่ตั้งไว้ จำนวนที่ใช้ไป และจำนวนเว็บ
+     * A user with hosting data — the configured quota, how much is used, and website count
      *
-     * แยกจาก one() เพราะบัญชีผู้ดูแลไม่มีความหมายของโควตา การยัดคีย์ที่เป็น 0 ทั้งแถว
-     * ให้ทุกคนจะทำให้หน้าจอแยกไม่ออกว่า "ไม่จำกัด" กับ "ไม่เกี่ยวข้อง" ต่างกันอย่างไร
+     * Separate from one() because an admin account has no meaning for a quota
+     * — stuffing every row with a 0 for everyone would leave the screen unable
+     * to tell "unlimited" apart from "doesn't apply"
      *
      * @param array<string,mixed> $row
      * @param array<string,array{used:int,limit:int,label:string,unlimited:bool,disabled:bool}> $quota
@@ -67,33 +74,35 @@ final class UserResource extends Resource
         return self::one($row) + [
             'quota' => $quota,
             'site_count' => $siteCount,
-            // MB ไม่ใช่ item count จึงไม่อยู่ใน `quota` ร่วมกับโดเมน/ฐานข้อมูล — PLAN-V2 เฟส E2
+            // MB, not an item count, so it doesn't live in `quota` alongside domains/databases — PLAN-V2 phase E2
             'disk_quota_mb' => $diskQuotaMb,
             'disk_used_mb' => $diskUsedMb,
             'disk_quota_unlimited' => $diskQuotaMb === -1,
             'disk_quota_percent' => $diskPercent,
-            // สีป้ายตามเกณฑ์เดียวกับที่ quota.disk_check ใช้แจ้งเตือน (80/90/100%)
+            // The pill's color follows the same thresholds quota.disk_check uses for alerts (80/90/100%)
             'disk_quota_tone' => match (true) {
                 $diskQuotaMb === -1 => 'muted',
                 $diskPercent >= 100 => 'danger',
                 $diskPercent >= 80 => 'warn',
                 default => 'ok',
             },
-            // SFTP — PLAN-V2 เฟส E4 · `sftp_available` แยกจาก `sftp_enabled` เพราะหน้าจอ
-            // ต้องบอกต่างกันระหว่าง "แพ็กเกจไม่รวม" (โควตา 0) กับ "รวมแต่ยังไม่ได้เปิด"
+            // SFTP — PLAN-V2 phase E4 · `sftp_available` is separate from
+            // `sftp_enabled` because the screen must state the difference
+            // between "not included in the plan" (quota 0) and "included but not turned on yet"
             'sftp_enabled' => self::bool($row['sftp_enabled'] ?? 0),
             'sftp_available' => (int) ($row['quota_ftp_users'] ?? 0) !== 0,
             'sftp_enabled_at' => self::intOrNull($row['sftp_enabled_at'] ?? null),
 
             /*
-             * รูปทรงไฟล์ — ส่งสามค่าเพราะหน้าจอต้องบอกสามเรื่องที่ต่างกัน
+             * The file layout — three values sent because the screen must state three different things
              *
-             *   site_layout        ค่าที่บัญชีนี้เลือกไว้ (ว่าง = ยังไม่เคยเลือก) → ใช้ตั้งค่า select
-             *   site_layout_actual ค่าที่ใช้จริงหลังเติมค่าเริ่มต้นของระบบ → ใช้บอกผู้ดูแลว่าตอนนี้เป็นอะไร
-             *   site_layout_docroot ตัวอย่างเส้นทางจริงของบัญชีนี้ → คำตอบที่ผู้ดูแลอยากรู้ที่สุด
+             *   site_layout         this account's own chosen value (empty = never chosen) → sets the select
+             *   site_layout_actual  the value genuinely in effect after filling in the system default → tells the admin what it currently is
+             *   site_layout_docroot a real example path for this account → the answer an admin wants most
              *
-             * ถ้าส่งแค่ค่าแรก หน้าจอจะแสดงช่องว่างให้บัญชีที่ยังไม่เคยเลือก โดยไม่บอกว่า
-             * "ว่าง" หมายถึงอะไร ซึ่งเป็นคำถามแรกที่ผู้ดูแลจะถาม
+             * Sending only the first value would show an empty field for an
+             * account that's never chosen one, without saying what "empty"
+             * means — which is the first question an admin would ask
              */
             'site_layout' => (string) ($row['site_layout'] ?? ''),
             'site_layout_actual' => self::account($row)->layout()->value,
@@ -105,10 +114,11 @@ final class UserResource extends Resource
     }
 
     /**
-     * บัญชีระบบของแถวนี้ — คืน null ไม่ได้เพราะหน้าจอต้องแสดงเส้นทางเสมอ
+     * This row's system account — can never return null, because the screen must always show a path
      *
-     * ผู้ใช้ที่ยังไม่มีบัญชีระบบ (`system_user` ว่าง) ใช้ชื่อผู้ใช้แทน ซึ่งเป็นชื่อเดียวกับ
-     * ที่จะถูกใช้ตอน provision จริง — เส้นทางที่แสดงจึงเป็นเส้นทางที่จะได้จริง ไม่ใช่ค่าหลอก
+     * A user with no system account yet (`system_user` empty) uses their
+     * username instead, which is the same name that will be used at real
+     * provisioning time — so the path shown is the path they'll actually get, not a fake placeholder
      *
      * @param array<string,mixed> $row
      */
@@ -118,11 +128,13 @@ final class UserResource extends Resource
     }
 
     /**
-     * ผู้ใช้ที่กำลังล็อกอินอยู่ในมุมมองของ SPA
+     * The currently logged-in user, from the SPA's point of view
      *
-     * ต่างจาก one() ตรงที่แนบ `permissions` มาด้วย — SPA ใช้ซ่อน/แสดงเมนูเท่านั้น
-     * **การบังคับสิทธิ์จริงยังอยู่ที่ middleware และ agent เหมือนเดิม** (PLAN-V2 §4.4)
-     * รายการนี้จึงเป็นเรื่องของ UX ล้วน ๆ ต่อให้ผู้ใช้แก้ค่าในเบราว์เซอร์ก็ไม่ได้สิทธิ์เพิ่ม
+     * Different from one() in that it attaches `permissions` too — the SPA
+     * only uses this to show/hide menus · **real permission enforcement still
+     * lives at the middleware and agent, exactly as before** (PLAN-V2 §4.4),
+     * so this list is purely a UX concern — even if a user edits the value in
+     * their browser, they gain no actual privilege
      *
      * @param array<string,mixed> $row
      * @return array<string,mixed>
