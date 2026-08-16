@@ -7,12 +7,14 @@ namespace Phpcp\Domain;
 use Phpcp\Kernel\Db;
 
 /**
- * บัญชี MariaDB ประจำผู้ใช้ — ตัวที่ทำให้เข้า phpMyAdmin ได้โดยไม่ต้องพิมพ์รหัส
+ * A user's own MariaDB account — the thing that lets phpMyAdmin be reached without typing a password
  *
- * ที่นี่เก็บและอ่าน **ciphertext เท่านั้น** ไม่มีเมธอดถอดรหัสเลยแม้แต่ตัวเดียว
- * การถอดรหัสอยู่ที่ชั้น agent จุดเดียว (`DbAccountCredentials`) ซึ่งเป็นชั้นที่ถือคีย์อยู่แล้ว
- * — ถ้าใส่ `decrypt()` ไว้ที่นี่ ชั้นเว็บจะเรียกได้ทันทีโดยไม่มีอะไรขวาง แล้วความลับ
- * จะไหลไปอยู่ในกระบวนการที่ผู้ใช้เข้าถึงได้โดยตรงแทนที่จะอยู่แต่ในกระบวนการที่รันด้วย root
+ * This class stores and reads **ciphertext only** — there isn't a single decryption
+ * method here. Decryption lives in exactly one place at the agent layer
+ * (`DbAccountCredentials`), which is the layer that already holds the key — if
+ * `decrypt()` were added here, the web tier could call it immediately with nothing
+ * standing in the way, and the secret would end up flowing into a process the user
+ * can reach directly, instead of staying confined to a process that runs as root.
  */
 final class DbAccountRepository
 {
@@ -62,11 +64,12 @@ final class DbAccountRepository
     }
 
     /**
-     * คำนำหน้าชื่อฐานข้อมูลของผู้ใช้คนนี้
+     * This user's database name prefix
      *
-     * ทำให้ลูกค้าคนละรายตั้งชื่อ `shop` ได้พร้อมกันโดยไม่ชนกัน (MariaDB มี namespace เดียว
-     * ทั้งเครื่อง) และทำให้เห็นได้ทันทีว่าฐานข้อมูลไหนเป็นของใครโดยไม่ต้องเปิดตาราง grant
-     * — แบบเดียวกับที่ cPanel ทำมาตลอด
+     * Lets two different customers both name a database `shop` at the same time
+     * without colliding (MariaDB has a single machine-wide namespace), and makes it
+     * immediately obvious which database belongs to whom without opening the grant
+     * table — the same approach cPanel has always used.
      */
     public static function prefixFor(string $username): string
     {
@@ -74,10 +77,11 @@ final class DbAccountRepository
     }
 
     /**
-     * ชื่อฐานข้อมูลที่ผู้ใช้คนนี้ตั้งได้จริง
+     * The database name this user actually ends up creating
      *
-     * รับได้ทั้งชื่อที่ใส่คำนำหน้ามาแล้วและชื่อเปล่า — ผู้ใช้ที่พิมพ์ `customer_a_shop`
-     * กับที่พิมพ์ `shop` ต้องได้ผลเหมือนกัน ไม่ใช่กลายเป็น `customer_a_customer_a_shop`
+     * Accepts both an already-prefixed name and a bare one — a user who types
+     * `customer_a_shop` and one who types `shop` must get the same result, not
+     * turn into `customer_a_customer_a_shop`.
      */
     public static function qualify(string $username, string $name): string
     {
