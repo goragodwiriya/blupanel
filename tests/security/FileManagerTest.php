@@ -437,3 +437,143 @@ test('บันทึกไฟล์ต้องไม่เปลี่ยน�
         'ไฟล์ใหม่ต้องรับเจ้าของจากโฟลเดอร์แม่',
     );
 });
+
+group('FileManager scope — เจ้าของเว็บไซต์ต้องเห็นไฟล์เว็บจริง ไม่ใช่แค่โฟลเดอร์ tmp');
+
+test('ขอบเขตไฟล์ของเว็บไซต์ layout cpanel (ค่าเริ่มต้น) ต้องมี scope ที่ชี้ไป public_html จริง', static function (): void {
+    /*
+     * เจอจากรายงานจริง (2026-08-16): ลูกค้าเปิดตัวจัดการไฟล์แล้วเห็นแค่โฟลเดอร์
+     * "tmp" — เพราะ scope "site-{id}" ของเว็บไซต์ชี้ไปที่ state dir
+     * (<home>/.phpcp/<domain>, ที่เก็บ logs/backups/tmp) ไม่ใช่ไฟล์เว็บจริง
+     * ส่วน public_html เป็นโฟลเดอร์**พี่น้อง**ของ state dir ในเลย์เอาต์ cpanel
+     * (ค่าเริ่มต้นของระบบ) ไม่ได้ซ้อนอยู่ข้างในแบบเลย์เอาต์ phpcp
+     *
+     * FileScope::forSiteDocroot() เดิมคืน null ทันทีถ้าไม่มี docroot_override
+     * ตั้งใจไว้ (ไม่ได้ผ่าน Domain Pointer) ทำให้ไม่มี scope ไหนชี้ไปที่
+     * public_html เลยสำหรับเว็บไซต์ทั่วไปที่ไม่ได้ตั้งค่าอะไรพิเศษ
+     */
+    $db = migratedDb();
+    $users = new Phpcp\Domain\UserRepository($db);
+    $now = time();
+
+    $ownerId = $users->createHostingAccount('filescopeowner', 'File-Scope-Owner-Password-11', 'owner@example.com');
+    $db->update(
+        'users',
+        ['system_user' => 'filescopeowner', 'main_domain' => 'filescope.example.com'],
+        ['id' => $ownerId],
+    );
+
+    $siteId = $db->insert('sites', [
+        'primary_domain' => 'filescope.example.com',
+        'docroot' => '',
+        'php_version' => '8.4',
+        'owner_user_id' => $ownerId,
+        'docroot_override' => '',
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+
+    $actor = new Phpcp\Agent\Actor(
+        $ownerId,
+        'filescopeowner',
+        Phpcp\Security\Permissions::WEBADMIN,
+        '127.0.0.1',
+        'test',
+    );
+    $scopes = Phpcp\Domain\FileRoots::forActor($actor, $db);
+
+    $docrootKey = 'site-'.$siteId.'-docroot';
+    assertTrue(
+        isset($scopes[$docrootKey]),
+        "ต้องมี scope {$docrootKey} ชี้ไปไฟล์เว็บจริง — ได้ scope: " . implode(', ', array_keys($scopes)),
+    );
+
+    assertTrue(
+        str_ends_with($scopes[$docrootKey]->root, '/filescopeowner/public_html'),
+        'scope ไฟล์เว็บต้องชี้ไป public_html จริง ไม่ใช่ state dir — ได้ ' . $scopes[$docrootKey]->root,
+    );
+
+    $stateKey = 'site-'.$siteId;
+    assertTrue(
+        isset($scopes[$stateKey]),
+        "ต้องยังมี scope {$stateKey} สำหรับ logs/backup/tmp ด้วย ไม่ใช่แทนที่กัน",
+    );
+    assertTrue(
+        $scopes[$stateKey]->root !== $scopes[$docrootKey]->root,
+        'scope ไฟล์เว็บกับ scope state dir ต้องเป็นคนละที่กัน',
+    );
+});
+
+test('layout phpcp ไม่ต้องมี scope ไฟล์เว็บซ้ำ เพราะ docroot ซ้อนอยู่ใน state dir อยู่แล้ว', static function (): void {
+    /*
+     * เลย์เอาต์ phpcp: docroot = <home>/domains/<domain>/public ซึ่งซ้อนอยู่
+     * ข้างใน state dir (<home>/domains/<domain>) อยู่แล้ว — เปิดจาก scope
+     * ของ state dir ตรง ๆ ก็เจอไฟล์เว็บอยู่แล้ว ไม่ควรมี scope ซ้ำสอง
+     */
+    $db = migratedDb();
+    $users = new Phpcp\Domain\UserRepository($db);
+    $now = time();
+
+    $ownerId = $users->createHostingAccount('phpcplayoutowner', 'Phpcp-Layout-Owner-Password-11', 'owner@example.com');
+    $db->update(
+        'users',
+        ['system_user' => 'phpcplayoutowner', 'main_domain' => 'phpcplayout.example.com', 'site_layout' => 'phpcp'],
+        ['id' => $ownerId],
+    );
+
+    $siteId = $db->insert('sites', [
+        'primary_domain' => 'phpcplayout.example.com',
+        'docroot' => '',
+        'php_version' => '8.4',
+        'owner_user_id' => $ownerId,
+        'docroot_override' => '',
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+
+    $actor = new Phpcp\Agent\Actor(
+        $ownerId,
+        'phpcplayoutowner',
+        Phpcp\Security\Permissions::WEBADMIN,
+        '127.0.0.1',
+        'test',
+    );
+    $scopes = Phpcp\Domain\FileRoots::forActor($actor, $db);
+
+    assertTrue(
+        !isset($scopes['site-'.$siteId.'-docroot']),
+        'เลย์เอาต์ phpcp ไม่ควรมี scope ไฟล์เว็บแยก เพราะซ้อนอยู่ใน state dir scope เดียวกันแล้ว',
+    );
+    assertTrue(isset($scopes['site-'.$siteId]), 'ต้องยังมี scope ของเว็บไซต์เอง');
+});
+
+test('เว็บไซต์ที่ตั้ง docroot_override (Domain Pointer) ต้องยังใช้ค่านั้น ไม่ใช่ layout คำนวณเอง', static function (): void {
+    $db = migratedDb();
+    $users = new Phpcp\Domain\UserRepository($db);
+    $now = time();
+
+    $ownerId = $users->createHostingAccount('pointerowner', 'Pointer-Owner-Password-11', 'owner@example.com');
+    $db->update(
+        'users',
+        ['system_user' => 'pointerowner', 'main_domain' => 'pointer.example.com'],
+        ['id' => $ownerId],
+    );
+
+    $override = '/srv/existing-project';
+    $siteId = $db->insert('sites', [
+        'primary_domain' => 'pointer.example.com',
+        'docroot' => '',
+        'php_version' => '8.4',
+        'owner_user_id' => $ownerId,
+        'docroot_override' => $override,
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+
+    $actor = new Phpcp\Agent\Actor($ownerId, 'pointerowner', Phpcp\Security\Permissions::WEBADMIN, '127.0.0.1', 'test');
+    $scopes = Phpcp\Domain\FileRoots::forActor($actor, $db);
+
+    $docrootKey = 'site-'.$siteId.'-docroot';
+    assertTrue(isset($scopes[$docrootKey]), "ต้องมี scope {$docrootKey}");
+    assertSame($override, $scopes[$docrootKey]->root, 'ต้องใช้ docroot_override ตรง ๆ ไม่คำนวณจาก layout เอง');
+});

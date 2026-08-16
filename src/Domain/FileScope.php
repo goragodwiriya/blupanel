@@ -99,23 +99,36 @@ final readonly class FileScope
     }
 
     /**
-     * The scope for a site's "real files" when it uses a Domain Pointer
+     * The scope for a site's actual served files
      *
-     * A site with `docroot_override` set stores its files outside its own home
-     * (e.g. pointing at an existing project that predates being brought into the
-     * panel). Without this scope, the file manager could only open the home
-     * itself, which only has backups/logs/tmp and `__suspended.html` — the site's
-     * own files would be completely unreachable.
+     * `site()`'s own scope (`siteRoot()`, above) is the state dir — logs,
+     * backups, `tmp`, `__suspended.html` — **not** the files the web server
+     * serves. Under the `phpcp` layout the docroot happens to live nested
+     * inside the state dir, so it's already reachable there; under `cpanel`,
+     * the system default, `public_html` is a *sibling* of the state dir, not
+     * a child of it — without this scope, a site's owner opening the file
+     * manager would only ever see the one thing that gets created inside the
+     * state dir (`tmp/`), never their actual site files at all.
      *
-     * Returns null when no pointer is set, or the docroot is already under the
-     * home anyway — the latter case can already be opened directly from the home
-     * scope, so there's no need for a duplicate entry to cause confusion.
+     * A site with `docroot_override` set (a Domain Pointer) stores its files
+     * somewhere else entirely (e.g. an existing project that predates being
+     * brought into the panel) — that value wins when present; otherwise the
+     * layout's own computed docroot is used, so every site gets a real
+     * "site files" scope, override or not.
+     *
+     * Returns null only when the docroot is already under the state dir
+     * anyway (the `phpcp` case) — opening it a second time here would just
+     * be a duplicate entry pointing at the same place the home scope does.
      *
      * @param array $site
      */
     public static function forSiteDocroot(array $site): ?self
     {
         $docroot = rtrim((string) ($site['docroot_override'] ?? ''), '/');
+
+        if ($docroot === '') {
+            $docroot = rtrim(self::owner($site)->siteDocroot((string) $site['primary_domain']), '/');
+        }
 
         if ($docroot === '') {
             return null;
