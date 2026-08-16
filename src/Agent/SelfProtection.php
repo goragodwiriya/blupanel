@@ -5,28 +5,30 @@ declare(strict_types=1);
 namespace Phpcp\Agent;
 
 /**
- * กันไม่ให้ Control Panel จัดการตัวเอง — ARCHITECTURE §5.3
+ * Stops the control panel from managing itself — ARCHITECTURE §5.3
  *
- * เหตุผล: panel รันบน stack ของตัวเองที่แยกจากระบบที่มันบริหาร (§5.2)
- * ถ้าปล่อยให้สั่งหยุดบริการของตัวเองได้ ผู้ใช้จะล็อกตัวเองออกโดยไม่มีทางกลับ
+ * Why: the panel runs on its own stack, separate from the system it administers
+ * (§5.2). Allowed to stop its own services, a user could lock themselves out with
+ * no way back.
  *
- * ตรวจที่ชั้น 2 ไม่ใช่ที่ UI — ต่อให้ยิง API ตรงหรือ UI มีบั๊กจนเรนเดอร์ปุ่มออกมา
- * คำสั่งก็ถูกปฏิเสธที่นี่
+ * Checked at tier 2, not the UI — even hitting the API directly, or a UI bug that
+ * renders the button anyway, the command still gets rejected here.
  */
 final class SelfProtection
 {
-    /** systemd unit ของ panel เอง (ไม่ต้องใส่ .service) */
+    /** The panel's own systemd units (no need for .service) */
     private const UNITS = [
         'phpcp-agentd',
         'phpcp-web',
         'phpcp-fpm',
-        // ตัวจับเวลาและงานของมัน — ถ้าหยุดได้จากหน้าเว็บ กลไกคืนค่าอัตโนมัติจะเงียบไป
-        // โดยที่ผู้ดูแลยังเห็นหน้าจอปกติทุกอย่าง ซึ่งเป็นสภาพที่อันตรายที่สุด
+        // The scheduler and its jobs — if this could be stopped from the web UI,
+        // the auto-recovery mechanism would go silent while the admin still saw an
+        // entirely normal-looking screen, which is the most dangerous state of all
         'phpcp-scheduler',
         'phpcp-scheduler.timer',
     ];
 
-    /** ไดเรกทอรีของ panel เอง */
+    /** The panel's own directories */
     private const PATHS = [
         '/etc/phpcp',
         '/var/lib/phpcp',
@@ -35,7 +37,7 @@ final class SelfProtection
         '/run/phpcp',
     ];
 
-    /** system user ที่ห้ามแตะ */
+    /** System users that must never be touched */
     private const USERS = [
         'phpcp-web',
         'root',
@@ -46,21 +48,24 @@ final class SelfProtection
     ];
 
     /*
-     * **ไม่มีข้อยกเว้น** — เคยมี `allowAlso()` ที่เจาะรูให้ `/var/lib/phpcp/backups`
-     * เปิดผ่านตัวจัดการไฟล์ได้ (commit dc4425e) เพราะไฟล์สำรองไปกองอยู่ในพื้นที่ของ
-     * panel · ข้อยกเว้นนั้นเกือบกลายเป็นทางเข้าถึง `panel.db` ผ่าน `..` และต้องมี
-     * เทสต์เฝ้าไว้ตลอดว่ามันแคบพอ
+     * **No exceptions** — there used to be an `allowAlso()` that poked a hole
+     * opening `/var/lib/phpcp/backups` up to the file manager (commit dc4425e),
+     * because backup files piled up inside the panel's own space · that exception
+     * nearly became a path to `panel.db` via `..`, and needed a permanent test
+     * watching that it stayed narrow enough.
      *
-     * ตั้งแต่ไฟล์สำรองย้ายไปอยู่ `<บ้าน>/backup` ของลูกค้า (PLAN-BACKUP-V2 §4.1)
-     * ไม่มีอะไรของผู้ใช้เหลืออยู่ใต้ไดเรกทอรีของ panel อีกแล้ว · รูนั้นจึงถูกถมกลับ
-     * **การกันจึงกลับไปเป็นกฎที่ไม่มีเงื่อนไข** ซึ่งเป็นรูปแบบเดียวที่ตรวจสอบได้ง่ายจริง
-     * · ถ้าวันหนึ่งมีของที่ต้องเปิด ให้ย้ายของนั้นออกจากพื้นที่ของ panel ไม่ใช่เจาะรูใหม่
+     * Ever since backup files moved to the customer's own `<home>/backup`
+     * (PLAN-BACKUP-V2 §4.1), nothing belonging to a user is left under the
+     * panel's own directory anymore · so that hole was filled back in.
+     * **Protection is back to being an unconditional rule**, the only shape that
+     * is actually easy to verify · if something ever needs opening up again, move
+     * that thing out of the panel's space instead of poking a new hole.
      */
 
-    /** @var list<string> path เพิ่มเติมที่ตั้งค่าตอน bootstrap (เช่น layout แบบ portable) */
+    /** @var list<string> extra paths registered at bootstrap (e.g. the portable layout) */
     private static array $extraPaths = [];
 
-    /** ลงทะเบียน path ของ panel เพิ่ม ใช้ตอน layout เป็น portable ซึ่ง path ไม่ได้อยู่ที่ /etc */
+    /** Registers an additional panel path — used when the layout is portable, where the path isn't under /etc */
     public static function protectAlso(string ...$paths): void
     {
         foreach ($paths as $path) {
@@ -94,7 +99,7 @@ final class SelfProtection
     {
         if (self::isProtectedUnit($unit)) {
             throw new ProtectedResource(
-                'ไม่สามารถจัดการบริการของ Control Panel เองได้ — ใช้คำสั่ง `phpcp self:restart` ที่หน้าเครื่องแทน'
+                'Cannot manage the control panel\'s own service — use the `phpcp self:restart` command on the machine instead'
             );
         }
     }
@@ -105,7 +110,7 @@ final class SelfProtection
             return false;
         }
 
-        // ต้องเทียบหลัง resolve symlink เพราะ /tmp/x -> /etc/phpcp ต้องถูกจับได้ด้วย
+        // Must compare after resolving symlinks too, so /tmp/x -> /etc/phpcp gets caught as well
         $resolved = realpath($path);
         $candidates = $resolved === false ? [$path] : [$path, $resolved];
 
@@ -125,7 +130,7 @@ final class SelfProtection
     public static function assertPath(string $path): void
     {
         if (self::isProtectedPath($path)) {
-            throw new ProtectedResource('เส้นทางนี้เป็นของ Control Panel ไม่อนุญาตให้แก้ไข');
+            throw new ProtectedResource('This path belongs to the control panel and cannot be modified');
         }
     }
 
@@ -137,13 +142,14 @@ final class SelfProtection
     public static function assertUser(string $user): void
     {
         if (self::isProtectedUser($user)) {
-            throw new ProtectedResource("ไม่อนุญาตให้จัดการผู้ใช้ระบบ: {$user}");
+            throw new ProtectedResource("Managing this system user is not allowed: {$user}");
         }
     }
 
     /**
-     * กรอง service ของ panel ออกจากรายการก่อนส่งไปแสดงผล
-     * บริการของ panel จึงไม่ปรากฏในหน้า Services เลย ไม่ใช่แค่ซ่อนปุ่ม
+     * Filters the panel's own services out of a list before it's sent for display
+     * — so the panel's own services never appear on the Services page at all, not
+     * just have their button hidden
      *
      * @param list<string> $units
      * @return list<string>

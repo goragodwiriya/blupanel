@@ -5,11 +5,12 @@ declare(strict_types=1);
 namespace Phpcp\Agent;
 
 /**
- * ฝั่งชั้นที่ 1 ใช้เรียก agent
+ * The tier-1 side's way of calling the agent
  *
- * นี่คือ "ทางเดียว" ที่โค้ดฝั่งเว็บติดต่อกับระบบปฏิบัติการได้
- * ตัว panel ปิด exec/proc_open ของตัวเองไว้ใน php-fpm pool แล้ว (ARCHITECTURE §3.1)
- * จึงไม่มีทางอื่นให้เลือกใช้แม้จะมีช่องโหว่ RCE ในโค้ด PHP ของ panel
+ * This is the "only path" the web-side code has to reach the operating system.
+ * The panel disables its own exec/proc_open inside the php-fpm pool (ARCHITECTURE
+ * §3.1), so there's no other route to use even if an RCE hole turned up in the
+ * panel's own PHP code.
  */
 final class Client
 {
@@ -40,7 +41,7 @@ final class Client
     }
 
     /**
-     * เรียก capability หนึ่งครั้ง
+     * Calls a capability once
      *
      * @param array<string,mixed> $args
      * @return array{data:array<string,mixed>,meta:array<string,mixed>}
@@ -56,7 +57,7 @@ final class Client
 
         if ($stream === false) {
             throw new TransportError(
-                'ติดต่อ agent ไม่ได้ — ตรวจว่าบริการ phpcp-agentd ทำงานอยู่หรือไม่'
+                'Could not reach the agent — check whether the phpcp-agentd service is running'
                 . ($errstr !== '' ? " ({$errstr})" : '')
             );
         }
@@ -66,18 +67,18 @@ final class Client
 
             $request = Protocol::encodeRequest($capability, $args, $actor);
             if (@fwrite($stream, $request) === false) {
-                throw new TransportError('ส่งคำสั่งไปยัง agent ไม่สำเร็จ');
+                throw new TransportError('Failed to send the command to the agent');
             }
 
             $line = @fgets($stream, Protocol::MAX_FRAME);
             $meta = stream_get_meta_data($stream);
 
             if ($meta['timed_out'] ?? false) {
-                throw new TransportError("agent ไม่ตอบกลับภายใน {$this->timeout} วินาที");
+                throw new TransportError("The agent did not respond within {$this->timeout} seconds");
             }
 
             if ($line === false || $line === '') {
-                throw new TransportError('agent ปิดการเชื่อมต่อโดยไม่ตอบกลับ');
+                throw new TransportError('The agent closed the connection without responding');
             }
 
             $response = Protocol::decodeResponse($line);
@@ -86,7 +87,7 @@ final class Client
         }
 
         if (!$response['ok']) {
-            $error = $response['error'] ?? ['code' => 'error', 'message' => 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ'];
+            $error = $response['error'] ?? ['code' => 'error', 'message' => 'An unknown error occurred'];
 
             throw self::exceptionFor($error['code'], $error['message']);
         }
@@ -95,7 +96,7 @@ final class Client
     }
 
     /**
-     * เรียกแล้วคืนเฉพาะ data ใช้เมื่อไม่สนใจ meta
+     * Calls and returns only data — use when meta doesn't matter
      *
      * @param array<string,mixed> $args
      * @return array<string,mixed>
@@ -105,7 +106,7 @@ final class Client
         return $this->call($capability, $args, $actor)['data'];
     }
 
-    /** แปลง error code จาก agent กลับเป็น exception ชนิดเดิม เพื่อให้ฝั่งเว็บ catch ได้ตรงชนิด */
+    /** Turns an error code from the agent back into the matching exception type, so the web side can catch it by its real type */
     private static function exceptionFor(string $code, string $message): AgentException
     {
         return match ($code) {
@@ -114,7 +115,7 @@ final class Client
             'permission_denied' => new PermissionDenied($message),
             'unknown_capability' => new UnknownCapability($message),
             'execution_failed' => new ExecutionFailed($message),
-            // agent รับคำสั่งแล้วโค้ดข้างในพัง — คนละเรื่องกับ "ติดต่อ agent ไม่ได้"
+            // The agent received the command and code inside it broke — a different thing from "couldn't reach the agent"
             'internal_error' => new InternalError($message),
             default => new TransportError($message),
         };

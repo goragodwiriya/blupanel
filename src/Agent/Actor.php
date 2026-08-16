@@ -7,10 +7,11 @@ namespace Phpcp\Agent;
 use Phpcp\Security\Permissions;
 
 /**
- * ผู้สั่งงาน — ส่งมาจากชั้นที่ 1 พร้อมทุก request
+ * The one giving the order — sent by tier 1 with every request
  *
- * agent ไม่เชื่อ permission ที่ส่งมา แต่คำนวณใหม่จาก role เองเสมอ
- * เพื่อลดสิ่งที่ต้องเชื่อจากฝั่งเว็บให้เหลือน้อยที่สุด
+ * The agent never trusts a permission sent to it; it always recomputes permission
+ * from the role itself, to keep what has to be trusted from the web side to the
+ * bare minimum.
  */
 final readonly class Actor
 {
@@ -33,25 +34,26 @@ final readonly class Actor
     {
         $role = (string) ($data['role'] ?? '');
         if (!Permissions::isValidRole($role)) {
-            throw new ValidationError('บทบาทผู้ใช้ไม่ถูกต้อง');
+            throw new ValidationError('Invalid user role');
         }
 
         $userId = (int) ($data['user_id'] ?? 0);
 
         /*
-         * **รหัสผู้ใช้ 0 คือ "ระบบเอง" ไม่ใช่ "ไม่ได้ระบุ"**
+         * **User id 0 means "the system itself", not "unspecified"**
          *
-         * capability หลายตัวใช้ `userId === 0` เป็นเครื่องหมายว่าผู้สั่งงานคือระบบ
-         * แล้วข้ามการตรวจความเป็นเจ้าของทั้งหมด · ค่านั้นมาจาก {@see self::system()}
-         * ซึ่งเป็น SUPERADMIN เสมอ · การยอมรับ "รหัส 0 + บทบาทลูกค้า" จาก payload
-         * จึงเท่ากับเปิดทางให้ actor ที่ประกอบขึ้นเองเดินผ่านด่านเจ้าของทุกด่าน
-         * ทั้งที่ไม่มีสิทธิ์ของผู้ดูแลเลย
+         * Many capabilities use `userId === 0` as the marker that the actor is the
+         * system, and skip every ownership check as a result · that value comes
+         * from {@see self::system()}, which is always SUPERADMIN · accepting "id 0
+         * + a customer role" from a payload would therefore let a hand-built actor
+         * walk through every ownership gate while holding no admin permission at all.
          *
-         * ค่าติดลบไม่มีความหมายในระบบนี้เลย — ปฏิเสธไว้ก่อนดีกว่าปล่อยให้ไปโผล่
-         * เป็นเงื่อนไข SQL ที่ไม่ตรงกับอะไรแล้วตีความว่า "ไม่พบ"
+         * A negative value has no meaning anywhere in this system — better to
+         * reject it here than let it surface as an SQL condition that matches
+         * nothing and gets read as "not found".
          */
         if ($userId < 0 || ($userId === 0 && $role !== Permissions::SUPERADMIN)) {
-            throw new ValidationError('รหัสผู้ใช้ของผู้สั่งงานไม่ถูกต้อง');
+            throw new ValidationError('Invalid actor user id');
         }
 
         return new self(

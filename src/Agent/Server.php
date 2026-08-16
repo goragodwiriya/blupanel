@@ -11,17 +11,19 @@ use Phpcp\Kernel\Logger;
 use Phpcp\Security\AuditLog;
 
 /**
- * phpcp-agentd — โปรเซสเดียวในระบบที่ทำงานด้วยสิทธิ์สูง
+ * phpcp-agentd — the one process in the system that runs with elevated privileges
  *
- * รูปแบบ: ฟัง unix socket → fork ลูกหนึ่งตัวต่อ connection → ลูกจัดการ request เดียวแล้วตาย
- * เลือกแบบนี้เพราะสถานะไม่ค้างข้าม request ต่อให้ capability ตัวใดรั่วหน่วยความจำ
- * หรือทำ state พัง ผลกระทบจบที่ลูกตัวนั้น
+ * Shape: listen on a unix socket → fork one child per connection → the child
+ * handles a single request, then dies. Chosen this way because no state carries
+ * over between requests — even if some capability leaks memory or corrupts its own
+ * state, the damage stops at that one child.
  *
- * ชั้นการป้องกันของตัว daemon เอง:
- *   - socket 0660 เจ้าของ root กลุ่ม phpcp → user ของเว็บไซต์ที่โฮสต์ต่อไม่ได้เลย
- *   - ตรวจ uid ของ peer ด้วย SO_PEERCRED เป็นชั้นที่สอง
- *   - จำกัดจำนวนลูกพร้อมกัน กัน fork bomb
- *   - systemd ตัด capability ที่ไม่จำเป็นทิ้งหมด (ARCHITECTURE §13)
+ * The daemon's own layers of protection:
+ *   - the socket is 0660, owned by root:phpcp → a hosted website's own user can
+ *     never connect to it at all
+ *   - the peer's uid is checked with SO_PEERCRED as a second layer
+ *   - the number of concurrent children is capped, against a fork bomb
+ *   - systemd strips every capability that isn't needed (ARCHITECTURE §13)
  */
 final class Server
 {
@@ -53,7 +55,7 @@ final class Server
         pcntl_signal(SIGCHLD, $this->reap(...));
 
         $this->running = true;
-        $this->logger->info('agent เริ่มทำงาน', [
+        $this->logger->info('agent started', [
             'socket' => $path,
             'mode' => $this->config->mode->value,
             'uid' => posix_geteuid(),
@@ -61,11 +63,12 @@ final class Server
         ]);
 
         while ($this->running) {
-            // ต้องรอด้วย select ที่มี timeout ไม่ใช่ accept ที่บล็อกไม่มีกำหนด
+            // Must wait with a timed select, not an accept that blocks forever
             //
-            // เหตุผล: pcntl_async_signals ส่งสัญญาณให้ handler ได้เฉพาะตอนที่ VM
-            // กลับมาอยู่ระหว่างคำสั่ง PHP ถ้าค้างอยู่ใน syscall ที่บล็อกตลอดกาล
-            // handler จะไม่ถูกเรียกเลย ทำให้ `systemctl stop` ค้างจนโดน SIGKILL
+            // Why: pcntl_async_signals can only deliver a signal to its handler
+            // while the VM is between PHP instructions. Stuck inside a syscall that
+            // blocks forever, the handler never runs at all, and `systemctl stop`
+            // hangs until it gets SIGKILL.
             $read = [$this->socket];
             $write = null;
             $except = null;
@@ -73,11 +76,11 @@ final class Server
             $ready = @socket_select($read, $write, $except, 1);
 
             if ($ready === false) {
-                continue;   // ถูกขัดจังหวะด้วยสัญญาณ วนกลับไปเช็ค running
+                continue;   // Interrupted by a signal — loop back and check running
             }
 
             if ($ready === 0) {
-                continue;   // ไม่มีใครต่อเข้ามาใน 1 วินาที กลับไปเช็ค running
+                continue;   // Nobody connected within 1 second — loop back and check running
             }
 
             $connection = @socket_accept($this->socket);
@@ -86,14 +89,15 @@ final class Server
                 continue;
             }
 
-            // socket แม่เป็น non-blocking ลูกที่ accept มาจึงต้องตั้งกลับเป็น blocking
-            // ไม่อย่างนั้น SO_RCVTIMEO จะไม่มีผลและ socket_read จะคืนค่าว่างทันที
+            // The parent socket is non-blocking, so the accepted child connection
+            // has to be set back to blocking — otherwise SO_RCVTIMEO has no effect
+            // and socket_read returns empty immediately
             socket_set_block($connection);
 
             if ($this->children >= self::MAX_CHILDREN) {
                 $this->respond($connection, Protocol::encodeError(
                     'busy',
-                    'agent กำลังทำงานเต็มความจุ กรุณาลองใหม่อีกครั้ง',
+                    'The agent is at full capacity, please try again',
                 ));
                 socket_close($connection);
                 continue;
@@ -102,7 +106,7 @@ final class Server
             if (!$this->peerAllowed($connection)) {
                 $this->respond($connection, Protocol::encodeError(
                     'permission_denied',
-                    'ไม่อนุญาตให้เชื่อมต่อจากผู้ใช้นี้',
+                    'Connections from this user are not allowed',
                 ));
                 socket_close($connection);
                 continue;
@@ -111,23 +115,27 @@ final class Server
             $pid = pcntl_fork();
 
             if ($pid === -1) {
-                $this->logger->error('fork ไม่สำเร็จ');
+                $this->logger->error('fork failed');
                 socket_close($connection);
                 continue;
             }
 
             if ($pid === 0) {
-                // --- ลูก ---
+                // --- Child ---
                 //
-                // ต้องคืน SIGCHLD เป็นค่าเริ่มต้นก่อนทำอย่างอื่น
+                // Signal handlers have to be reset to their defaults before anything else.
                 //
-                // ลูกสืบทอด handler ของพ่อมาด้วย ซึ่ง handler นั้นเรียก pcntl_waitpid(-1)
-                // เพื่อเก็บศพลูก ๆ ของพ่อ ผลคือเมื่อโปรเซสที่ proc_open สร้างจบลง
-                // handler จะไปเก็บสถานะออกของมันก่อน แล้ว proc_close() จะคืน -1
-                // ทำให้ระบบเข้าใจผิดว่าทุกคำสั่งล้มเหลว ทั้งที่คำสั่งสำเร็จและพิมพ์ผลลัพธ์ถูกต้อง
+                // The child inherits the parent's handlers, and the parent's
+                // SIGCHLD handler calls pcntl_waitpid(-1) to reap the parent's own
+                // children. Left in place, when a process started by proc_open
+                // finished, this handler would reap its exit status first, and
+                // proc_close() would then return -1 — making the system believe
+                // every command had failed, even when it had actually succeeded and
+                // printed the right output.
                 //
-                // อาการนี้ไม่โผล่จนกว่าจะมี capability ตัวแรกที่รันโปรเซสจริงผ่าน agent
-                // เพราะก่อนหน้านั้นคำสั่งทั้งหมดถูกจำลองหรือเป็นการอ่านไฟล์
+                // This symptom doesn't surface until the first capability that runs
+                // a real process through the agent, since before that every command
+                // was either simulated or just read a file.
                 pcntl_signal(SIGCHLD, SIG_DFL);
                 pcntl_signal(SIGTERM, SIG_DFL);
                 pcntl_signal(SIGINT, SIG_DFL);
@@ -138,13 +146,13 @@ final class Server
                 exit(0);
             }
 
-            // --- พ่อ ---
+            // --- Parent ---
             $this->children++;
             socket_close($connection);
         }
 
         $this->cleanup($path);
-        $this->logger->info('agent หยุดทำงาน');
+        $this->logger->info('agent stopped');
 
         return 0;
     }
@@ -153,33 +161,33 @@ final class Server
     {
         $dir = dirname($path);
         if (!is_dir($dir) && !@mkdir($dir, 0750, true) && !is_dir($dir)) {
-            throw new \RuntimeException("สร้างไดเรกทอรี socket ไม่ได้: {$dir}");
+            throw new \RuntimeException("Could not create the socket directory: {$dir}");
         }
 
-        // socket เก่าค้างจากการปิดไม่สะอาดต้องเอาออกก่อน bind
+        // A stale socket left over from an unclean shutdown must be removed before binding
         if (file_exists($path)) {
             if ($this->isSocketAlive($path)) {
-                throw new \RuntimeException("มี agent ทำงานอยู่แล้วที่ {$path}");
+                throw new \RuntimeException("An agent is already running at {$path}");
             }
             @unlink($path);
         }
 
         $socket = socket_create(AF_UNIX, SOCK_STREAM, 0);
         if ($socket === false) {
-            throw new \RuntimeException('สร้าง socket ไม่สำเร็จ: ' . socket_strerror(socket_last_error()));
+            throw new \RuntimeException('Failed to create the socket: ' . socket_strerror(socket_last_error()));
         }
 
-        // ตั้ง umask ให้ไฟล์ socket ไม่หลุดเป็น world-accessible ระหว่าง bind กับ chmod
+        // Set umask so the socket file can never end up world-accessible between bind and chmod
         $previousUmask = umask(0o177);
         $bound = @socket_bind($socket, $path);
         umask($previousUmask);
 
         if ($bound === false) {
-            throw new \RuntimeException("bind socket ไม่สำเร็จที่ {$path}: " . socket_strerror(socket_last_error($socket)));
+            throw new \RuntimeException("Failed to bind the socket at {$path}: " . socket_strerror(socket_last_error($socket)));
         }
 
         if (@socket_listen($socket, self::BACKLOG) === false) {
-            throw new \RuntimeException('listen ไม่สำเร็จ: ' . socket_strerror(socket_last_error($socket)));
+            throw new \RuntimeException('Failed to listen: ' . socket_strerror(socket_last_error($socket)));
         }
 
         socket_set_nonblock($socket);
@@ -189,8 +197,8 @@ final class Server
     }
 
     /**
-     * socket ต้องเป็น 0660 กลุ่ม phpcp — user ของเว็บไซต์ที่โฮสต์จึงต่อไม่ได้
-     * ถ้ารันแบบไม่ใช่ root (โหมดพัฒนา) จะตั้ง group ไม่ได้ ให้ใช้ 0600 แทนซึ่งเข้มกว่า
+     * The socket must be 0660 group phpcp — so a hosted website's own user can never connect to it
+     * Running as non-root (development mode), the group can't be set, so 0600 is used instead, which is stricter still
      */
     private function applySocketPermissions(string $path): void
     {
@@ -216,10 +224,10 @@ final class Server
     }
 
     /**
-     * ตรวจว่าใครเป็นคนต่อเข้ามา — ชั้นที่สองถัดจากสิทธิ์ไฟล์ของ socket
+     * Checks who is connecting — the second layer, after the socket's own file permissions
      *
-     * SO_PEERCRED บน Linux คืน struct ucred ซึ่ง PHP อ่านได้เฉพาะฟิลด์แรกคือ pid
-     * จึงต้องไปอ่าน uid ต่อจาก /proc/<pid>/status
+     * SO_PEERCRED on Linux returns a `ucred` struct, of which PHP can only read the
+     * first field, pid — so the uid has to be read separately from /proc/<pid>/status.
      *
      * @param resource|\Socket $connection
      */
@@ -228,7 +236,7 @@ final class Server
         $uid = $this->peerUid($connection);
 
         if ($uid === null) {
-            $this->logger->warn('ตรวจ uid ของผู้เชื่อมต่อไม่ได้ จึงปฏิเสธไว้ก่อน');
+            $this->logger->warn('Could not determine the connecting peer\'s uid — rejecting as a precaution');
 
             return false;
         }
@@ -237,36 +245,41 @@ final class Server
             return true;
         }
 
-        $this->logger->warn('ปฏิเสธการเชื่อมต่อจาก uid ที่ไม่อยู่ในรายการ', ['uid' => $uid]);
+        $this->logger->warn('Rejected a connection from a uid not on the allowed list', ['uid' => $uid]);
 
         return false;
     }
 
     /**
-     * uid ที่ยอมให้ต่อ socket ได้ — **ปิดไว้ก่อนเป็นค่าเริ่มต้น ไม่ใช่เปิด**
+     * uids allowed to connect to the socket — **closed by default, not open**
      *
-     * เดิมรายการว่างแปลว่า "ไม่ต้องตรวจ" ซึ่งเป็นค่าเริ่มต้นของทุกเครื่อง · ด่านชั้นที่สอง
-     * นี้จึงไม่เคยทำงานเลยในทางปฏิบัติ เหลือแต่สิทธิ์ไฟล์ของ socket (0660 root:phpcp)
-     * เป็นด่านเดียว — แปลว่าอะไรก็ตามที่เข้าไปอยู่ในกลุ่ม `phpcp` ได้ ส่ง
-     * `role=superadmin, user_id=0` เข้ามาแล้วสั่งอะไรก็ได้ทั้งเครื่อง
+     * An empty list used to mean "skip the check", which was every machine's
+     * default · this second layer therefore never actually did anything in
+     * practice, leaving the socket's own file permissions (0660 root:phpcp) as the
+     * only layer — meaning anything that could get into the `phpcp` group could
+     * send `role=superadmin, user_id=0` and command anything on the whole machine.
      *
-     * สามชุดที่อยู่ในรายการเสมอ และเหตุผลของแต่ละชุด:
+     * Three entries are always on the list, and why each one is there:
      *
-     *   - **root** — `phpcp` CLI และงานตามเวลารันด้วยสิทธิ์นี้
-     *   - **uid ของ agent เอง** — โหมด portable ไม่มี root เลย ทั้งชั้นเว็บและ agent
-     *     เป็นผู้ใช้คนเดียวกัน · ถ้าไม่มีข้อนี้ การติดตั้งแบบนั้นจะต่อ socket ตัวเอง
-     *     ไม่ได้ตั้งแต่วินาทีแรก
-     *   - **`agent.allowed_users`** — ชื่อผู้ใช้ของชั้นเว็บ (ค่าเริ่มต้น `phpcp-web`)
-     *     แปลงเป็น uid ตอนตรวจ ไม่ใช่ตอนติดตั้ง เพราะ uid ของบัญชีระบบต่างกันไปในแต่ละ
-     *     เครื่อง และเปลี่ยนได้เมื่อย้ายเครื่อง — เลขที่ฝังไว้ในไฟล์ตั้งค่าจะกลายเป็น
-     *     เลขของผู้ใช้คนอื่นเงียบ ๆ
+     *   - **root** — the `phpcp` CLI and scheduled jobs run with this identity
+     *   - **the agent's own uid** — in portable mode there's no root at all; the
+     *     web tier and the agent are the same user · without this entry, that kind
+     *     of install could never connect to its own socket, from the very first
+     *     second
+     *   - **`agent.allowed_users`** — the web tier's username (default
+     *     `phpcp-web`), turned into a uid at check time, not at install time,
+     *     because a system account's uid differs from machine to machine and can
+     *     change on a move — a number baked into a config file would silently
+     *     become someone else's number
      *
-     * **ข้อจำกัดที่ต้องรู้:** ด่านนี้กัน "โปรเซสอื่นที่บังเอิญอยู่ในกลุ่มเดียวกัน" ได้
-     * แต่กัน "ชั้นเว็บที่ถูกเจาะแล้ว" ไม่ได้ — โปรเซสนั้น**คือ** `phpcp-web` จริง ๆ
-     * และไม่มีความลับใดที่มันไม่มี (config.php เป็น 0640 root:phpcp) · การผูก HMAC
-     * เพิ่มจึงไม่ช่วยอะไรกับกรณีนั้นเลย · agent ยืนหยัดต่อชั้นเว็บที่ถูกเจาะได้ด้วย
-     * `permission()` ของแต่ละ capability กับด่านความเป็นเจ้าของเท่านั้น — ซึ่งเป็น
-     * เหตุผลที่ {@see Actor::fromArray()} ต้องไม่ยอมรับ "รหัสผู้ใช้ 0 + บทบาทลูกค้า"
+     * **A limit worth knowing:** this layer stops "some other process that
+     * happens to be in the same group", but it cannot stop "a web tier that has
+     * already been compromised" — that process genuinely **is** `phpcp-web`, and
+     * holds no secret it doesn't already have (config.php is 0640 root:phpcp) ·
+     * adding an HMAC on top of this would do nothing for that case at all · the
+     * agent's only real defense against a compromised web tier is each
+     * capability's own `permission()` plus its ownership checks — which is exactly
+     * why {@see Actor::fromArray()} must never accept "user id 0 + a customer role".
      *
      * @return list<int>
      */
@@ -292,7 +305,7 @@ final class Server
     /** @param resource|\Socket $connection */
     private function peerUid(mixed $connection): ?int
     {
-        // 17 = SO_PEERCRED บน Linux (PHP ไม่ได้ประกาศค่าคงที่นี้ไว้)
+        // 17 = SO_PEERCRED on Linux (PHP doesn't declare a constant for this)
         $pid = @socket_get_option($connection, SOL_SOCKET, 17);
         if (!is_int($pid) || $pid <= 0) {
             return null;
@@ -303,7 +316,7 @@ final class Server
             return null;
         }
 
-        // บรรทัดรูปแบบ: Uid:\t<real>\t<effective>\t<saved>\t<fs>
+        // Line format: Uid:\t<real>\t<effective>\t<saved>\t<fs>
         if (preg_match('/^Uid:\s+(\d+)\s+(\d+)/m', $status, $m) !== 1) {
             return null;
         }
@@ -323,35 +336,40 @@ final class Server
             $request = Protocol::decodeRequest($line);
             $actor = $request['actor'];
 
-            // สร้างการเชื่อมต่อ DB ในลูกเท่านั้น — PDO handle ใช้ข้าม fork ไม่ได้
+            // The DB connection is only ever created inside the child — a PDO handle can't survive a fork
             $db = new Db($this->config->paths->database());
 
             /*
-             * **ค่าที่ผู้ดูแลตั้งจากหน้าจอต้องมาถึง capability ด้วย**
+             * **A value the admin set from the screen has to actually reach the capability**
              *
-             * `Config::useStoredSettings()` เดิมถูกเรียกจาก `App::db()` ที่เดียว ซึ่งเป็น
-             * เส้นทางของ **ชั้นเว็บ** เท่านั้น · agent ไม่ได้ผ่าน `App` มันสร้าง `Db` เอง
-             * ตรงนี้เพื่อให้ handle อยู่ในโปรเซสลูก ผลคือ **agent ไม่เคยเห็นตาราง
-             * `settings` เลย** ทุก capability จึงอ่านได้แต่ค่าใน `config.php`
+             * `Config::useStoredSettings()` used to be called from only one place,
+             * `App::db()`, which is a **web-tier-only** path · the agent doesn't go
+             * through `App` — it builds its own `Db` right here, inside the child
+             * process. The result was that **the agent never saw the `settings`
+             * table at all**, and every capability could only read values from
+             * `config.php`.
              *
-             * อาการที่เกิดจริง (เจอบนเซิร์ฟเวอร์ 2026-08-14): ผู้ดูแลเปิดสวิตช์ DNS
-             * ในหน้าตั้งค่า ค่า `dns.enabled = 1` ถูกบันทึกลงฐานข้อมูลเรียบร้อย หน้าจอ
-             * ตอบว่าสำเร็จ แต่ `BindZoneManager` ที่รันในตัว agent อ่าน `dnsEnabled()`
-             * ได้ `false` จาก config.php แล้ว **คืน no-op อย่างเงียบ ๆ** ทุกครั้ง
-             * — เรกคอร์ดถูกบันทึกลงฐานข้อมูลแต่ไม่มี zone file เกิดขึ้นเลยแม้แต่ไฟล์เดียว
-             * และไม่มีข้อความผิดพลาดใดบอกว่าเพราะอะไร
+             * The real-world symptom (found on the server on 2026-08-14): an admin
+             * flipped the DNS switch on the settings page, `dns.enabled = 1` was
+             * saved to the database cleanly, the screen reported success — but
+             * `BindZoneManager`, running inside the agent, read `dnsEnabled()` as
+             * `false` from config.php and **silently returned a no-op** every
+             * single time. The record was saved to the database, but not one zone
+             * file was ever written, with no error message explaining why.
              *
-             * กระทบทุกค่าที่ถูกอ่านผ่าน `Config` ภายใน capability ไม่ใช่แค่ DNS —
-             * `sites.layout` ก็เดินทางมาทางเดียวกัน
+             * This affects every value read through `Config` inside a capability,
+             * not just DNS — `sites.layout` travels the exact same path.
              *
-             * โหลดใหม่ทุกคำขอโดยตั้งใจ ไม่แคชข้ามคำขอ: agent เป็นโปรเซสที่รันยาว
-             * การแคชแปลว่าเปลี่ยนค่าจากหน้าเว็บแล้วต้องรีสตาร์ต agent ถึงจะมีผล
-             * ซึ่งเป็นกับดักเดียวกันในรูปแบบใหม่ · คิวรีเดียวต่อคำขอถูกกว่านั้นมาก
+             * Reloaded on every request on purpose, never cached across requests:
+             * the agent is a long-running process, and caching would mean a value
+             * changed from the web page needs an agent restart to take effect —
+             * the same trap in a new shape. One query per request is far cheaper
+             * than that.
              */
             try {
                 Config::useStoredSettings((new SettingsRepository($db))->all());
             } catch (\Throwable) {
-                // ยังไม่มีตาราง settings — ปกติสำหรับเครื่องที่เพิ่งติดตั้ง ใช้ค่าจากไฟล์ต่อไป
+                // The settings table doesn't exist yet — normal on a freshly installed machine; keep using the file's values
             }
 
             $audit = new AuditLog($db, $this->config->paths->logFile('audit'));
@@ -361,23 +379,23 @@ final class Server
 
             $this->respond($connection, Protocol::encodeSuccess($result['data'], $result['meta']));
         } catch (EmptyConnection) {
-            // ไม่ใช่ความล้มเหลว ไม่ต้องบันทึก — ดูเหตุผลที่ readLine()
+            // Not a failure, nothing to log — see readLine() for why
             return;
         } catch (AgentException $e) {
-            $this->logger->warn('คำสั่งถูกปฏิเสธ', [
+            $this->logger->warn('Command rejected', [
                 'code' => $e->code(),
                 'message' => $e->getMessage(),
                 'actor' => $actor->username,
             ]);
             $this->respond($connection, Protocol::encodeError($e->code(), $e->getMessage()));
         } catch (\Throwable $e) {
-            // ข้อความจริงเข้า log เท่านั้น ฝั่งเว็บได้ข้อความกลาง ๆ กันข้อมูลภายในรั่ว
-            $this->logger->error('เกิดข้อผิดพลาดที่ไม่ได้คาดไว้', [
+            // The real message only goes to the log — the web side gets a generic message, so nothing internal leaks
+            $this->logger->error('An unexpected error occurred', [
                 'exception' => $e::class,
                 'message' => $e->getMessage(),
                 'file' => $e->getFile() . ':' . $e->getLine(),
             ]);
-            $this->respond($connection, Protocol::encodeError('internal_error', 'เกิดข้อผิดพลาดภายในระบบ'));
+            $this->respond($connection, Protocol::encodeError('internal_error', 'An internal error occurred'));
         }
     }
 
@@ -400,20 +418,25 @@ final class Server
             }
 
             if (strlen($buffer) > Protocol::MAX_FRAME) {
-                throw new TransportError('ข้อความใหญ่เกินกำหนด');
+                throw new TransportError('Message exceeds the size limit');
             }
         }
 
         if (trim($buffer) === '') {
             /*
-             * เชื่อมต่อเข้ามาแล้วปิดโดยไม่ส่งอะไร — นี่คือ **การตรวจว่า agent ยังอยู่ไหม**
-             * ไม่ใช่คำสั่งที่ผิดพลาด · {@see Client::isAvailable()} เปิดซ็อกเก็ตแล้ว fclose()
-             * ทันที ซึ่งเป็นวิธีที่ถูกต้องในการถามว่า "รับการเชื่อมต่อได้ไหม"
+             * A connection came in and closed without sending anything — this is
+             * **a check for whether the agent is still there**, not a broken
+             * command · {@see Client::isAvailable()} opens a socket and calls
+             * fclose() immediately, which is the correct way to ask "can this
+             * accept a connection?"
              *
-             * เดิมกรณีนี้ถูกบันทึกเป็น WARN "คำสั่งถูกปฏิเสธ" ทุกครั้ง — ตัวจับเวลาเรียกทุกนาที
-             * และหน้าเว็บเรียกทุกครั้งที่โหลด ผลคือ agent.log เต็มไปด้วยคำเตือนปลอมนาทีละบรรทัด
-             * จนความล้มเหลวจริงจมหายไปในนั้น · **นั่นคือสาเหตุที่ไล่ปัญหาบนเครื่องจริงไม่เจอ**
-             * ผู้ดูแลเปิด log มาเห็นแต่ "คำสั่งถูกปฏิเสธ" แล้วสรุปว่าระบบพังทั้งที่มันปกติดี
+             * This case used to be logged as a WARN "command rejected" every
+             * single time — the scheduler calls it every minute, and the web page
+             * calls it on every load, so agent.log filled up with a fake warning
+             * line per minute until real failures drowned in it · **that's exactly
+             * why real problems couldn't be traced on the production machine** —
+             * an admin would open the log, see nothing but "command rejected", and
+             * conclude the system was broken when it was actually fine.
              */
             throw new EmptyConnection();
         }
@@ -440,7 +463,7 @@ final class Server
     {
         $this->running = false;
 
-        // ปลุก accept ที่บล็อกอยู่ให้ออกจาก loop
+        // Wakes up a blocked accept so it exits the loop
         if ($this->socket !== null) {
             @socket_shutdown($this->socket, 2);
         }

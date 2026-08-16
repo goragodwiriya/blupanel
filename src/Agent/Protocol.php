@@ -5,18 +5,20 @@ declare(strict_types=1);
 namespace Phpcp\Agent;
 
 /**
- * รูปแบบข้อความระหว่างชั้นที่ 1 กับชั้นที่ 2 — JSON หนึ่ง request ต่อหนึ่งบรรทัด
+ * The message format between tier 1 and tier 2 — one JSON request per line
  *
- * เลือก newline-delimited JSON เพราะ: อ่านง่ายตอนดีบัก, ไม่ต้องมี parser พิเศษ,
- * และไม่มีสถานะค้างระหว่าง request ทำให้ agent fork ลูกต่อ connection ได้ตรงไปตรงมา
+ * Newline-delimited JSON was chosen because: it's easy to read while debugging, it
+ * needs no special parser, and there's no state left over between requests, which
+ * lets the agent fork a child per connection in a straightforward way.
  *
- * เปลี่ยนรูปแบบนี้ทีหลังกระทบทุกไฟล์ จึงต้องล็อกให้นิ่งตั้งแต่เฟส 0 (ROADMAP §3)
+ * Changing this format later touches every file, so it had to be locked down as
+ * of Phase 0 (ROADMAP §3).
  */
 final class Protocol
 {
     public const VERSION = 1;
 
-    /** ขนาดสูงสุดต่อหนึ่งข้อความ — กัน client ส่งข้อมูลไม่หยุดจนหน่วยความจำหมด */
+    /** The largest size allowed for one message — stops a client sending data forever until memory runs out */
     public const MAX_FRAME = 4_194_304;
 
     /** @param array<string,mixed> $args */
@@ -39,27 +41,27 @@ final class Protocol
 
         $version = (int) ($payload['v'] ?? 0);
         if ($version !== self::VERSION) {
-            throw new TransportError("โปรโตคอลเวอร์ชันไม่ตรงกัน (ได้รับ {$version} ต้องการ " . self::VERSION . ')');
+            throw new TransportError("Protocol version mismatch (got {$version}, expected " . self::VERSION . ')');
         }
 
         $capability = $payload['cap'] ?? '';
         if (!is_string($capability) || $capability === '') {
-            throw new TransportError('ไม่ได้ระบุคำสั่ง');
+            throw new TransportError('No command specified');
         }
 
-        // ชื่อ capability ต้องอยู่ในรูปแบบที่กำหนดก่อนเอาไปค้นทะเบียน
+        // The capability name must match the required format before it's used to look up the registry
         if (preg_match('/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/', $capability) !== 1) {
-            throw new UnknownCapability('รูปแบบชื่อคำสั่งไม่ถูกต้อง');
+            throw new UnknownCapability('Invalid command name format');
         }
 
         $args = $payload['args'] ?? [];
         if (!is_array($args)) {
-            throw new TransportError('args ต้องเป็น object');
+            throw new TransportError('args must be an object');
         }
 
         $actor = $payload['actor'] ?? [];
         if (!is_array($actor)) {
-            throw new TransportError('actor ต้องเป็น object');
+            throw new TransportError('actor must be an object');
         }
 
         return [
@@ -112,11 +114,11 @@ final class Protocol
     {
         $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
         if ($json === false) {
-            throw new TransportError('แปลงข้อมูลเป็น JSON ไม่สำเร็จ');
+            throw new TransportError('Failed to encode data as JSON');
         }
 
         if (strlen($json) > self::MAX_FRAME) {
-            throw new TransportError('ข้อมูลใหญ่เกินกำหนด');
+            throw new TransportError('Data exceeds the size limit');
         }
 
         return $json . "\n";
@@ -127,21 +129,21 @@ final class Protocol
     {
         $line = trim($line);
         if ($line === '') {
-            throw new TransportError('ได้รับข้อความว่าง');
+            throw new TransportError('Received an empty message');
         }
 
         if (strlen($line) > self::MAX_FRAME) {
-            throw new TransportError('ข้อความใหญ่เกินกำหนด');
+            throw new TransportError('Message exceeds the size limit');
         }
 
         try {
             $payload = json_decode($line, true, 32, JSON_THROW_ON_ERROR);
         } catch (\JsonException $e) {
-            throw new TransportError('ข้อความไม่ใช่ JSON ที่ถูกต้อง: ' . $e->getMessage());
+            throw new TransportError('Message is not valid JSON: ' . $e->getMessage());
         }
 
         if (!is_array($payload)) {
-            throw new TransportError('ข้อความต้องเป็น object');
+            throw new TransportError('Message must be an object');
         }
 
         return $payload;

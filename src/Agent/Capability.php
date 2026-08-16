@@ -7,46 +7,47 @@ namespace Phpcp\Agent;
 use Phpcp\Agent\Executor\Executor;
 
 /**
- * หน่วยงานเดียวที่ agent ยอมทำ — ARCHITECTURE §4.2
+ * The single unit of work the agent will perform — ARCHITECTURE §4.2
  *
- * กฎที่ห้ามละเมิดเมื่อเขียน capability ใหม่:
- *   1. ห้ามรับ "คำสั่ง" จากผู้ใช้ รับได้เฉพาะ "ข้อมูล" ที่ validate ได้ทีละฟิลด์
- *   2. validate() ต้องคืน array ที่สะอาดแล้ว — run() ห้ามแตะ $args ดิบ
- *   3. ทุก path/unit/user ที่รับเข้ามาต้องผ่าน SelfProtection
- *   4. ค่าที่เอาไปประกอบ argv ต้องมาจาก allowlist หรือผ่าน regex ที่เข้มกว่าที่คิดว่าจำเป็น
- *   5. ห้ามเรียก exec/proc_open/file_put_contents เอง ต้องผ่าน Executor เท่านั้น
+ * Rules that must never be broken when writing a new capability:
+ *   1. Never accept a "command" from the user — only "data", validated field by field
+ *   2. validate() must return a clean array — run() must never touch the raw $args
+ *   3. Every path/unit/user accepted as input must go through SelfProtection
+ *   4. Any value that ends up in an argv must come from an allowlist, or pass a
+ *      regex stricter than seems necessary
+ *   5. Never call exec/proc_open/file_put_contents directly — always go through the Executor
  */
 interface Capability
 {
-    /** ชื่อที่ใช้เรียกผ่าน protocol เช่น "service.restart" */
+    /** The name used to call this over the protocol, e.g. "service.restart" */
     public static function name(): string;
 
-    /** permission ที่ actor ต้องมี ตรวจก่อน validate() */
+    /** The permission the actor needs — checked before validate() */
     public function permission(): string;
 
     /**
-     * เปลี่ยนแปลงสถานะระบบหรือไม่
-     * false = โหมด dryrun จะรันของจริงให้ เพื่อให้ผู้ใช้เห็นสถานะจริงของเครื่อง
+     * Does this change system state?
+     * false = dryrun mode will run the real thing, so the user sees the machine's actual state
      */
     public function isMutating(): bool;
 
-    /** ข้อความไทยสั้น ๆ สำหรับ audit log เช่น "รีสตาร์ตบริการ" */
+    /** A short English summary for the audit log, e.g. "restart service" */
     public function summary(): string;
 
     /**
-     * ตรวจและทำความสะอาด argument
+     * Validates and cleans up the argument
      *
-     * @param array<string,mixed> $args ค่าดิบจากฝั่งเว็บ ไม่เชื่อถือได้
-     * @return array<string,mixed> ค่าที่ผ่านการตรวจแล้ว
+     * @param array<string,mixed> $args raw values from the web side — not to be trusted
+     * @return array<string,mixed> the validated values
      * @throws ValidationError|ProtectedResource
      */
     public function validate(array $args): array;
 
     /**
-     * ทำงานจริง — $args คือผลลัพธ์จาก validate() เท่านั้น
+     * Does the actual work — $args is only ever the result of validate()
      *
      * @param array<string,mixed> $args
-     * @return array<string,mixed> ข้อมูลที่จะส่งกลับให้ฝั่งเว็บ
+     * @return array<string,mixed> the data to send back to the web side
      */
     public function run(array $args, Executor $executor, Context $context): array;
 }

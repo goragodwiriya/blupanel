@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace Phpcp\Agent\Executor;
 
 /**
- * ผลของการรันคำสั่งหนึ่งครั้ง
+ * The result of running one command
  *
- * เก็บ argv ไว้ด้วยเพราะโหมด dryrun ต้องเอาไปแสดงให้ผู้ใช้เห็นว่า "จะรันอะไร"
- * และ audit log ต้องบันทึกคำสั่งจริงที่ถูกเรียก
+ * argv is kept too, because dryrun mode has to show the user "what would run", and
+ * the audit log has to record the actual command that was invoked.
  */
 final readonly class ExecResult
 {
@@ -43,7 +43,7 @@ final readonly class ExecResult
     }
 
     /**
-     * แปลงผลลัพธ์รูปแบบ key=value (เช่น systemctl show) เป็น array
+     * Turns key=value output (such as `systemctl show`) into an array
      *
      * @return array<string,string>
      */

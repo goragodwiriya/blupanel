@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Phpcp\Agent;
 
-/** พยายามแตะทรัพยากรของ Control Panel เอง — ARCHITECTURE §5.3 */
+/** Tried to touch a resource belonging to the control panel itself — ARCHITECTURE §5.3 */
 final class ProtectedResource extends AgentException
 {
     public function code(): string

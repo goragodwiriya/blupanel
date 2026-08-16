@@ -5,20 +5,24 @@ declare(strict_types=1);
 namespace Phpcp\Agent;
 
 /**
- * เชื่อมต่อเข้ามาแล้วปิดโดยไม่ส่งอะไรเลย — คือการตรวจว่า agent ยังรับงานได้ไหม
+ * A connection came in and closed without sending anything at all — this is a
+ * health check confirming the agent can still accept work
  *
- * แยกจาก {@see TransportError} เพราะสองอย่างนี้ต้องปฏิบัติต่างกันโดยสิ้นเชิง:
- * transport error คือคำสั่งที่ส่งมาแล้วพัง ต้องบันทึกไว้ให้ผู้ดูแลเห็น ส่วนอันนี้คือ
- * การถาม "ยังอยู่ไหม" ที่สำเร็จตามที่ตั้งใจทุกครั้ง — บันทึกมันคือการสร้างเสียงรบกวน
- * นาทีละบรรทัดที่กลบความล้มเหลวจริงจนหาไม่เจอ
+ * Kept separate from {@see TransportError} because the two must be handled
+ * completely differently: a transport error is a command that was sent and broke,
+ * which has to be logged for the admin to see. This one is an "are you still
+ * there?" check succeeding exactly as intended every time — logging it would
+ * create a line of noise per minute that buries real failures until they can't be
+ * found.
  *
- * ไม่ต้องมี `code()` แบบพิเศษเพราะไม่เคยถูกส่งกลับไปให้ผู้เรียก — ปลายทางปิดไปแล้ว
+ * No special `code()` needed, since this is never sent back to a caller — the
+ * other end has already closed.
  */
 final class EmptyConnection extends AgentException
 {
     public function __construct()
     {
-        parent::__construct('ปลายทางปิดการเชื่อมต่อก่อนส่งคำสั่ง');
+        parent::__construct('The connection closed before a command was sent');
     }
 
     public function code(): string

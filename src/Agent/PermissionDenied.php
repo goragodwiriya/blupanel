@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Phpcp\Agent;
 
-/** actor ไม่มีสิทธิ์เรียก capability นี้ */
+/** The actor doesn't have permission to call this capability */
 final class PermissionDenied extends AgentException
 {
     public function code(): string

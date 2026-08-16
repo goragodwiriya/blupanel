@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Phpcp\Agent;
 
-/** ติดต่อ agent ไม่ได้ หรือได้ข้อความที่ผิดรูปแบบโปรโตคอล */
+/** Couldn't reach the agent, or got a reply that doesn't match the protocol */
 final class TransportError extends AgentException
 {
     public function code(): string

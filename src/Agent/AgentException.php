@@ -5,16 +5,19 @@ declare(strict_types=1);
 namespace Phpcp\Agent;
 
 /**
- * รากของข้อผิดพลาดทั้งหมดในชั้น agent
+ * The root of every error in the agent layer
  *
- * ทุกตัวมี code สั้น ๆ ที่ส่งข้ามโปรโตคอลได้ ฝั่งเว็บเอาไปแปลงกลับเป็น exception ชนิดเดิม
- * และเอาไปเลือกวิธีแสดงผลได้ ข้อความเป็นภาษาไทยเสมอเพราะถูกแสดงบนหน้าจอโดยตรง
+ * Every one carries a short code that crosses the protocol, which the web side
+ * uses to rebuild the same exception type and choose how to display it. The
+ * message itself is written in English and passed through `HttpKernel::t()`
+ * before it reaches a reader, same as any other user-facing string — see
+ * `HttpKernel::handleException()`.
  */
 abstract class AgentException extends \RuntimeException
 {
     abstract public function code(): string;
 
-    /** ควรบันทึกลง audit log เป็นผลลัพธ์อะไร */
+    /** What result this should be recorded as in the audit log */
     public function auditResult(): string
     {
         return 'error';

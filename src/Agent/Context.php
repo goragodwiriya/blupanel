@@ -8,9 +8,10 @@ use Phpcp\Kernel\Config;
 use Phpcp\Kernel\Db;
 
 /**
- * สิ่งแวดล้อมที่ capability เข้าถึงได้ นอกเหนือจาก Executor
+ * The environment a capability can reach, besides the Executor
  *
- * จงใจให้เล็ก — ยิ่ง capability พึ่งพาน้อย ยิ่งตรวจสอบและทดสอบง่าย
+ * Kept small on purpose — the fewer things a capability depends on, the easier it
+ * is to review and test.
  */
 final readonly class Context
 {

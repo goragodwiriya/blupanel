@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Phpcp\Agent;
 
-/** คำสั่งถูกอนุญาตและรันแล้ว แต่ทำงานไม่สำเร็จ */
+/** The command was allowed and ran, but didn't succeed */
 final class ExecutionFailed extends AgentException
 {
     public function __construct(

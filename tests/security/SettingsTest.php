@@ -298,7 +298,7 @@ test('การแจ้งเตือนต้องไม่ทำให้�
     //
     // ตรวจทีละเส้นทาง (ล้มเหลว/สำเร็จ) เพราะทั้งสองเส้นทางมี notify ของตัวเอง
     // การหาตำแหน่งแรกในไฟล์เฉย ๆ จะเทียบข้ามเส้นทางกันจนได้ผลลวง
-    foreach (["'phase' => 'ล้มเหลว'", "'phase' => 'สำเร็จ'"] as $phase) {
+    foreach (["'phase' => 'failed'", "'phase' => 'succeeded'"] as $phase) {
         $auditAt = strpos($dispatcher, $phase);
         assertTrue($auditAt !== false, "ต้องมีการบันทึก audit ช่วง {$phase}");
 

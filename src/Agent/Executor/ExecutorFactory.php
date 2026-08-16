@@ -9,10 +9,12 @@ use Phpcp\Kernel\Config;
 use Phpcp\Kernel\Mode;
 
 /**
- * เลือก Executor ให้ capability ตามโหมดที่ระบบตั้งอยู่ — จุดเดียวในระบบที่ตัดสินใจเรื่องโหมด
+ * Picks an Executor for a capability based on the mode the system is set to — the
+ * one place in the system that decides about mode
  *
- * รายละเอียดที่ทำให้ dryrun มีประโยชน์จริง: capability ที่อ่านอย่างเดียวจะได้ RealExecutor
- * ผู้ใช้จึงเห็นสถานะจริงของเครื่องบนหน้าจอ พร้อมกับรายการคำสั่งที่ระบบ "จะ" ทำถ้ากดจริง
+ * The detail that makes dryrun actually useful: a read-only capability gets a
+ * RealExecutor, so the user sees the machine's real state on screen, alongside the
+ * list of commands the system "would" run if this were for real.
  */
 final class ExecutorFactory
 {
@@ -27,7 +29,7 @@ final class ExecutorFactory
         return match ($this->config->mode) {
             Mode::Production => new RealExecutor(),
 
-            // ใช้ตัวเดิมซ้ำภายใน process เพื่อให้ simulatedCommands() สะสมครบทั้ง request
+            // Reuses the same instance within the process so simulatedCommands() accumulates across the whole request
             Mode::Sandbox => $this->sandbox ??= new SandboxExecutor($this->config->sandboxPrefix()),
 
             Mode::DryRun => $capability->isMutating()

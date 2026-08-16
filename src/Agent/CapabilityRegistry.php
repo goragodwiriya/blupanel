@@ -121,13 +121,14 @@ use Phpcp\Agent\Capability\SystemInfo;
 use Phpcp\Agent\Capability\SystemMetrics;
 
 /**
- * ทะเบียน capability ทั้งหมดที่ agent ยอมทำ — ARCHITECTURE §4.3
+ * The registry of every capability the agent will perform — ARCHITECTURE §4.3
  *
- * เป็น allowlist ตายตัวที่ประกาศไว้ในโค้ด ไม่ scan directory ไม่ทำ dynamic dispatch
- * ชื่อที่ไม่อยู่ในนี้ = ปฏิเสธทันที ไม่มี fallback
+ * A fixed allowlist declared right in the code — no directory scanning, no
+ * dynamic dispatch. A name not on this list is rejected immediately, no fallback.
  *
- * เหตุผลที่ไม่ใช้ autoload ตามชื่อ: ถ้าผู้โจมตีเขียนไฟล์ลง src/Agent/Capability/ ได้
- * (เช่นผ่านช่องโหว่ file manager) การ scan directory จะกลายเป็นทางรันโค้ดทันที
+ * Why not autoload by name: if an attacker could write a file into
+ * src/Agent/Capability/ (say, through a file-manager hole), scanning the
+ * directory would instantly become a code-execution path.
  */
 final class CapabilityRegistry
 {
@@ -148,7 +149,7 @@ final class CapabilityRegistry
     public static function defaults(): array
     {
         return [
-            // อ่านอย่างเดียว
+            // Read-only
             SystemMetrics::class,
             SystemInfo::class,
             ServiceStatus::class,
@@ -168,14 +169,14 @@ final class CapabilityRegistry
             ProtectionOverview::class,
             SettingsGet::class,
 
-            // งานวัดผลตามเวลาของ scheduler — ไม่แตะเครื่อง เขียนแค่ตารางแคชของ panel
+            // Scheduled measurement jobs run by the scheduler — never touch the machine, only write the panel's own cache tables
             DiskUsage::class,
             DiskQuotaCheck::class,
             MetricsRecord::class,
             AlertCheck::class,
             CertSync::class,
 
-            // เปลี่ยนแปลงระบบ — ต้องมี permission service.control และถูกบันทึก audit ทุกครั้ง
+            // Changes the system — needs service.control permission and is audit-logged every time
             ServiceStart::class,
             ServiceStop::class,
             ServiceRestart::class,
@@ -185,7 +186,7 @@ final class CapabilityRegistry
             Fail2banSet::class,
             PanelJailUnban::class,
 
-            // Hosting — สร้างและจัดการเว็บไซต์
+            // Hosting — creating and managing websites
             SiteCreate::class,
             SiteRateLimitSet::class,
             SiteRateLimitStatus::class,
@@ -201,12 +202,12 @@ final class CapabilityRegistry
             SiteResume::class,
             SiteDelete::class,
 
-            // ค่าตั้งเพิ่มเติมที่ผู้ดูแลเขียนเอง — อ่านไฟล์ที่ generate ได้ แต่แก้ได้เฉพาะไฟล์ของตัวเอง
+            // Extra config an admin writes by hand — the generated file can be read, but only its own custom file can be edited
             ConfigFileRead::class,
             SiteCustomConfig::class,
             SiteResetOwner::class,
 
-            // DNS — เชื่อม BIND9 จริง (PLAN-V2 เฟส E3)
+            // DNS — talks to the real BIND9 (PLAN-V2 Phase E3)
             DnsZoneWrite::class,
             DnsReload::class,
             DnsConfigRead::class,
@@ -215,17 +216,17 @@ final class CapabilityRegistry
             DnsZoneImport::class,
             PanelCertSet::class,
 
-            // ฐานข้อมูล
+            // Databases
             DbCreate::class,
             DbDrop::class,
             DbUserPassword::class,
             DbAccountCredentials::class,
             DbAccountRotate::class,
 
-            // งานอัตโนมัติ
+            // Automated jobs
             CronSync::class,
 
-            // สำรองและกู้คืนข้อมูล
+            // Backup and restore
             BackupCreate::class,
             BackupRun::class,
             BackupList::class,
@@ -236,13 +237,13 @@ final class CapabilityRegistry
             BackupPrune::class,
             BackupDestinationTest::class,
 
-            // ค่าตั้ง การแจ้งเตือน และเมลขาออก
+            // Settings, notifications, and outbound mail
             SettingsSet::class,
             NotifyTest::class,
             MailApply::class,
             MailTest::class,
 
-            // เมลโฮสติ้ง — กล่องจดหมายจริงบนเครื่องนี้ (PLAN-MAIL เฟส M1)
+            // Mail hosting — real mailboxes on this machine (PLAN-MAIL Phase M1)
             MailDomainSet::class,
             MailBoxCreate::class,
             MailBoxUpdate::class,
@@ -254,33 +255,33 @@ final class CapabilityRegistry
             MailConfigRead::class,
             MailCustomConfig::class,
 
-            // คิวเมลขาออก — ตอบคำถาม "ทำไมเมลไม่ถึง" โดยไม่ต้อง ssh เข้าเครื่อง
+            // The outbound mail queue — answers "why didn't the mail arrive" without an ssh into the machine
             MailQueueList::class,
             MailQueueAction::class,
             MailMessage::class,
 
-            // SSL — ขอ ต่ออายุ และสลับโหมด HTTPS ของเว็บไซต์
+            // SSL — issuing, renewing, and switching a website's HTTPS mode
             SslIssue::class,
             SslRenew::class,
             SslSetMode::class,
             SslDelete::class,
 
-            // Firewall — ทุกคำสั่งที่ทำให้เข้าถึงเครื่องได้แคบลงต้องยืนยันภายในเวลา
+            // Firewall — every command that narrows access to the machine must be confirmed within a time window
             FirewallRuleAdd::class,
             FirewallRuleDelete::class,
             FirewallEnable::class,
             FirewallDisable::class,
 
-            // ชื่อโฮสต์ของเครื่อง — Postfix กับใบรับรองอ้างชื่อนี้
+            // The machine's hostname — Postfix and certificates reference this name
             HostnameSet::class,
 
-            // SSH + กลไกคืนค่าอัตโนมัติ
+            // SSH + the auto-recovery mechanism
             SshConfigGet::class,
             SshConfigSet::class,
             RollbackConfirm::class,
             RollbackRun::class,
 
-            // ตัวจัดการไฟล์ — ต้องมี permission file.manage และทำงานในสิทธิ์ของเว็บไซต์เท่านั้น
+            // File manager — needs file.manage permission and only ever operates within a website's own scope
             FileWrite::class,
             FileMkdir::class,
             FileMove::class,
@@ -290,14 +291,14 @@ final class CapabilityRegistry
             FileUnzip::class,
             FileUpload::class,
 
-            // ลูกค้า
+            // Customers
             CustomerCreate::class,
             CustomerQuotaUpdate::class,
             CustomerSiteAttach::class,
             CustomerLayoutSet::class,
             ExpiryCheck::class,
 
-            // SFTP — หนึ่งบัญชีโฮสติ้ง = หนึ่ง login (PLAN-V2 เฟส E4)
+            // SFTP — one hosting account = one login (PLAN-V2 Phase E4)
             SftpEnable::class,
             SftpDisable::class,
         ];
@@ -307,12 +308,12 @@ final class CapabilityRegistry
     public function register(string $class): void
     {
         if (!is_subclass_of($class, Capability::class)) {
-            throw new \LogicException("{$class} ไม่ได้ implement Capability");
+            throw new \LogicException("{$class} does not implement Capability");
         }
 
         $name = $class::name();
         if (isset($this->map[$name]) && $this->map[$name] !== $class) {
-            throw new \LogicException("มี capability ชื่อ {$name} ซ้ำกัน");
+            throw new \LogicException("Duplicate capability name: {$name}");
         }
 
         $this->map[$name] = $class;
@@ -332,7 +333,7 @@ final class CapabilityRegistry
     public function resolve(string $name): Capability
     {
         if (!isset($this->map[$name])) {
-            throw new UnknownCapability("ไม่รู้จักคำสั่ง: {$name}");
+            throw new UnknownCapability("Unknown command: {$name}");
         }
 
         return $this->instances[$name] ??= new $this->map[$name]();

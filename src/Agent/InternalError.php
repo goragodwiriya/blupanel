@@ -5,17 +5,21 @@ declare(strict_types=1);
 namespace Phpcp\Agent;
 
 /**
- * capability ตายกลางทางด้วยข้อผิดพลาดที่ไม่ได้คาดไว้ — agent ยังทำงานปกติ
+ * A capability died mid-flight from an unexpected error — the agent itself is still fine
  *
- * **ต้องแยกจาก `TransportError` ให้ขาด** ทั้งที่ผู้ใช้เห็นข้อความคล้ายกัน:
+ * **Must stay clearly separate from `TransportError`**, even though the two look
+ * similar to a reader:
  *
- *   TransportError = ติดต่อ agent ไม่ได้ · ชั่วคราว · **ลองใหม่แล้วหายได้** · 503
- *   InternalError  = agent รับคำสั่งแล้วโค้ดข้างในพัง · **ลองใหม่กี่ครั้งก็เหมือนเดิม** · 500
+ *   TransportError = couldn't reach the agent · transient · **retrying can fix it** · 503
+ *   InternalError  = the agent received the command and code inside it broke ·
+ *                     **retrying changes nothing** · 500
  *
- * เดิมรหัส `internal_error` ตกไปที่ `default` ของ `Client::exceptionFor()` ซึ่งคือ
- * `TransportError` · หน้าเว็บจึงขึ้น AGENT_UNAVAILABLE ตอนที่ SQL ในนั้นอ้างคอลัมน์ที่
- * migration ลบไปแล้ว — ผู้ดูแลไปไล่ socket กับ `systemctl restart phpcp-agentd`
- * ทั้งที่ agent ไม่เคยมีปัญหา และคำตอบที่แท้จริงรออยู่ใน log ของ agent บรรทัดเดียว
+ * Originally the `internal_error` code fell through to the `default` case of
+ * `Client::exceptionFor()`, which is `TransportError` · so the page showed
+ * AGENT_UNAVAILABLE at the exact moment some SQL in there referenced a column a
+ * migration had already dropped — the admin went chasing the socket and running
+ * `systemctl restart phpcp-agentd`, when the agent never had a problem at all, and
+ * the real answer was sitting in a single line of the agent's own log.
  */
 final class InternalError extends AgentException
 {

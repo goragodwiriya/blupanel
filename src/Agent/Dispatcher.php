@@ -12,13 +12,14 @@ use Phpcp\Kernel\Db;
 use Phpcp\Security\AuditLog;
 
 /**
- * เส้นทางเดียวที่คำสั่งเดินผ่าน — ARCHITECTURE §4.1
+ * The single path every command walks through — ARCHITECTURE §4.1
  *
- * ลำดับตายตัว ห้ามสลับ:
- *   resolve → ตรวจ permission → validate → บันทึก audit "ก่อนทำ" → run → บันทึกผล
+ * A fixed order that must never be reshuffled:
+ *   resolve → check permission → validate → write the "about to run" audit entry → run → record the result
  *
- * ที่ต้องบันทึก audit ก่อนลงมือ เพราะคำสั่งที่ทำให้เครื่องดับกลางคัน
- * (เช่น restart ตัวเอง, แก้ firewall จนหลุด) ต้องยังมีร่องรอยว่าใครสั่ง
+ * The audit entry has to be written before the work starts, because a command
+ * that can bring the machine down mid-flight (restarting itself, editing the
+ * firewall until it locks out) must still leave a trace of who gave the order.
  */
 final class Dispatcher
 {
@@ -44,19 +45,19 @@ final class Dispatcher
 
         if (!$actor->can($capability->permission())) {
             $this->audit->write($actor, $name, self::targetOf($args), 'denied', [
-                'reason' => 'ไม่มีสิทธิ์ ' . $capability->permission(),
+                'reason' => 'missing permission ' . $capability->permission(),
             ]);
 
-            throw new PermissionDenied('คุณไม่มีสิทธิ์ใช้คำสั่งนี้');
+            throw new PermissionDenied('You do not have permission to use this command');
         }
 
-        // validate โยน ValidationError/ProtectedResource ออกไปให้ handle() ข้างนอกบันทึก
+        // validate() throws ValidationError/ProtectedResource out to handle() above to record
         $clean = $capability->validate($args);
 
         $auditId = null;
         if ($capability->isMutating()) {
             $auditId = $this->audit->write($actor, $name, self::targetOf($clean), 'ok', [
-                'phase' => 'เริ่มดำเนินการ',
+                'phase' => 'started',
                 'args' => self::redact($clean),
                 'mode' => $this->config->mode->value,
             ]);
@@ -70,7 +71,7 @@ final class Dispatcher
         } catch (\Throwable $e) {
             if ($capability->isMutating()) {
                 $this->audit->write($actor, $name, self::targetOf($clean), 'error', [
-                    'phase' => 'ล้มเหลว',
+                    'phase' => 'failed',
                     'audit_ref' => $auditId,
                     'error' => $e->getMessage(),
                 ]);
@@ -82,7 +83,7 @@ final class Dispatcher
 
         if ($capability->isMutating()) {
             $this->audit->write($actor, $name, self::targetOf($clean), 'ok', [
-                'phase' => 'สำเร็จ',
+                'phase' => 'succeeded',
                 'audit_ref' => $auditId,
                 'simulated' => $executor->isSimulated(),
             ]);
@@ -96,7 +97,7 @@ final class Dispatcher
             'duration_ms' => (int) ((hrtime(true) - $startedAt) / 1_000_000),
         ];
 
-        // โหมด dryrun ต้องบอกผู้ใช้ว่า "จะรันอะไร" ไม่ใช่แค่บอกว่าไม่ได้ทำ
+        // dryrun mode has to tell the user "what would run", not just that nothing happened
         $commands = $executor->simulatedCommands();
         if ($commands !== []) {
             $meta['commands'] = $commands;
@@ -106,21 +107,19 @@ final class Dispatcher
     }
 
     /**
-     * เดา target จาก args สำหรับบันทึกใน audit — เอาไว้ค้นย้อนหลังว่าใครทำอะไรกับอะไร
+     * Commands worth notifying about, along with the category the user can toggle on/off
      *
-     * @param array<string,mixed> $args
-     */
-    /**
-     * คำสั่งที่ควรแจ้งเตือน พร้อมหมวดที่ผู้ใช้เปิด/ปิดได้
+     * A curated list, not "every command that changes the system" — creating a
+     * website or editing a file happens dozens of times a day; notifying on all of
+     * it would get an admin to turn notifications off within a week, and then the
+     * day the firewall actually gets disabled, nobody would see it.
      *
-     * เป็นรายการที่คัดมาแล้ว ไม่ใช่ "ทุกคำสั่งที่เปลี่ยนแปลงระบบ" — การสร้างเว็บไซต์
-     * หรือแก้ไฟล์เกิดขึ้นวันละหลายสิบครั้ง ถ้าแจ้งทั้งหมดผู้ดูแลจะปิดการแจ้งเตือน
-     * ภายในสัปดาห์เดียว แล้ววันที่ firewall ถูกปิดจริงก็จะไม่มีใครเห็น
-     *
-     * **`service.start` อยู่ในรายการเพราะการแจ้งที่ไม่ปิดวงจรสร้างความกังวลค้างไว้** —
-     * ผู้ดูแลที่ได้ข้อความ "หยุดบริการสำเร็จ" ตอนตีสอง แล้วไม่ได้ข้อความตอนเปิดกลับ
-     * ต้องเปิดเครื่องมาตรวจเองว่าใครเปิดคืนหรือยัง · การเริ่มบริการเกิดไม่บ่อยพอ
-     * ที่จะกลายเป็นสแปม ต่างจากการสร้างเว็บหรือแก้ไฟล์
+     * **`service.start` is on the list because a notification that never closes
+     * the loop leaves a lingering worry** — an admin who gets "service stopped
+     * successfully" at 2am and no message when it comes back up has to log in and
+     * check for themselves whether anyone brought it back. Starting a service
+     * doesn't happen often enough to turn into spam, unlike creating a site or
+     * editing a file.
      *
      * @var array<string,string>
      */
@@ -141,11 +140,12 @@ final class Dispatcher
     ];
 
     /**
-     * ส่งการแจ้งเตือนถ้าคำสั่งนี้อยู่ในรายการที่คัดไว้
+     * Sends a notification if this command is on the curated list
      *
-     * ห้ามโยน exception ออกไปเด็ดขาด — งานหลักสำเร็จ (หรือล้มเหลว) ไปแล้วตอนที่มาถึงตรงนี้
-     * ถ้าการส่งข้อความล้มแล้วทำให้ทั้งคำสั่งล้มตาม ผู้ใช้จะเห็นว่าการสร้างสำรองข้อมูล
-     * "ล้มเหลว" ทั้งที่ไฟล์สำรองถูกสร้างเรียบร้อยแล้ว
+     * Must never throw an exception — by the time execution reaches this point,
+     * the main work has already succeeded (or failed). If a failed notification
+     * send took the whole command down with it, the user would see a backup as
+     * "failed" even though the backup file had already been created just fine.
      */
     private function notify(
         string $name,
@@ -164,47 +164,53 @@ final class Dispatcher
         try {
             $capability = $this->registry->resolve($name);
 
-            // ส่ง executor ต่อไปด้วยเสมอ — ช่องทาง**อีเมล**ต้องเรียก `sendmail` ซึ่งเดินผ่าน
-            // Executor เท่านั้น (ARCHITECTURE §4.4) · ถ้าไม่ส่ง `Notifier` จะข้ามอีเมลเงียบ ๆ
-            // แล้วผู้ดูแลที่ตั้งอีเมลไว้ครบถูกต้องจะไม่ได้รับอะไรเลยสักฉบับ โดยไม่มีอะไรฟ้อง
-            // — เคยเป็นแบบนั้นมาแล้วจนกว่าจะไปทดสอบบนเครื่องจริง
+            // Always pass the executor along — the **email** channel has to call
+            // `sendmail`, which only ever goes through the Executor (ARCHITECTURE
+            // §4.4) · without it, `Notifier` silently skips email, and an admin
+            // with every email setting correctly configured gets nothing at all,
+            // with nothing to complain about it — this actually happened, until it
+            // was caught testing on the real machine.
             (new Notifier($this->db, $executor))->send(
                 $event,
-                ($ok ? 'สำเร็จ: ' : 'ล้มเหลว: ') . $capability->summary(),
+                ($ok ? 'Succeeded: ' : 'Failed: ') . $capability->summary(),
                 sprintf(
-                    "เป้าหมาย: %s\nผู้สั่ง: %s (%s)\nเครื่อง: %s\n\n%s",
+                    "Target: %s\nActor: %s (%s)\nMachine: %s\n\n%s",
                     $target !== '' ? $target : '—',
                     $actor->username,
                     $actor->ip,
-                    gethostname() ?: 'ไม่ทราบ',
+                    gethostname() ?: 'unknown',
                     mb_substr(trim($detail), 0, 500),
                 ),
                 $ok ? 'info' : 'danger',
             );
         } catch (\Throwable) {
-            // การแจ้งเตือนที่ส่งไม่ได้ต้องเงียบ ไม่ใช่ทำให้คำสั่งที่สำเร็จแล้วดูเหมือนล้มเหลว
+            // A notification that fails to send must stay silent, not turn an already-successful command into a failure
         }
     }
 
     /**
-     * ชื่อ argument ที่ห้ามลงบันทึกดิบ ๆ — เทียบแบบ "มีคำนี้อยู่ในชื่อ" ไม่ใช่ตรงตัว
+     * Argument names that must never be logged raw — matched as "this word appears
+     * in the name", not an exact match
      *
-     * ครอบทั้ง `password`, `notify.telegram.token`, `smtp_secret` และชื่อที่ยังไม่มีในวันนี้
-     * ตั้งใจให้กว้างไว้ก่อน: บันทึกคำว่า *** เกินความจำเป็นไม่ทำให้ใครเดือดร้อน
-     * แต่รหัสผ่านที่หลุดลง audit log ลบออกไม่ได้เลยเพราะ chain จะขาด
+     * Covers `password`, `notify.telegram.token`, `smtp_secret`, and names that
+     * don't exist yet today. Kept deliberately broad: logging *** more than
+     * strictly necessary hurts nobody, but a password that leaks into the audit
+     * log can never be removed, because that would break the hash chain.
      */
     private const SECRET_HINTS = ['password', 'passwd', 'secret', 'token', 'passphrase', 'private_key', 'credential'];
 
-    /** ค่าที่ยาวกว่านี้เก็บแค่ขนาด — เนื้อหาไฟล์ทั้งไฟล์ไม่ควรอยู่ใน audit log */
+    /** Values longer than this only have their size recorded — a whole file's contents shouldn't live in the audit log */
     private const MAX_AUDIT_VALUE = 200;
 
     /**
-     * ล้างค่าที่ไม่ควรอยู่ใน audit log ออกก่อนบันทึก
+     * Strips out anything that shouldn't be in the audit log before it's written
      *
-     * ทำไมสำคัญ: `audit_log` เป็น hash-chain ที่ตั้งใจให้ลบไม่ได้ และถูก mirror ลงไฟล์
-     * ที่ผู้ดูแลอ่านได้ทุกคน ถ้าปล่อยให้ args ดิบลงไป การสร้างลูกค้าหนึ่งครั้งจะฝัง
-     * รหัสผ่านของลูกค้าไว้ถาวร และ `file.write` หนึ่งครั้งจะสำเนาเนื้อหาไฟล์ทั้งไฟล์
-     * (รวมถึงไฟล์ .env ที่มีรหัสฐานข้อมูล) ลงไปด้วย
+     * Why this matters: `audit_log` is a hash chain that's deliberately impossible
+     * to edit out of, and it's mirrored to a file every admin can read. Left to
+     * write raw args, creating one customer would permanently embed that
+     * customer's password, and one `file.write` call would copy the entire
+     * contents of a file (including a .env file holding database credentials)
+     * right along with it.
      *
      * @param array<string,mixed> $args
      * @return array<string,mixed>
@@ -231,7 +237,7 @@ final class Dispatcher
             }
 
             if (is_string($value) && strlen($value) > self::MAX_AUDIT_VALUE) {
-                $clean[$key] = sprintf('(ตัดทอน %s ไบต์)', number_format(strlen($value)));
+                $clean[$key] = sprintf('(truncated, %s bytes)', number_format(strlen($value)));
 
                 continue;
             }
@@ -242,6 +248,7 @@ final class Dispatcher
         return $clean;
     }
 
+    /** Guesses a target from args for the audit record — lets you search back later for who did what to what */
     private static function targetOf(array $args): string
     {
         foreach (['service', 'domain', 'site_id', 'db_name', 'username', 'path', 'unit'] as $key) {
