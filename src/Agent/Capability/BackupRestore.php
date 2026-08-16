@@ -13,23 +13,28 @@ use Phpcp\Driver\BackupManager;
 use Phpcp\Support\Validator;
 
 /**
- * กู้คืนเว็บไซต์จากไฟล์ในโฟลเดอร์สำรองของเจ้าของ — งานที่เสี่ยงที่สุดในระบบนี้
+ * Restores a website from a file in its owner's backup folder — the riskiest
+ * operation in this system
  *
- * เสี่ยงเพราะเป็นการ "เขียนทับของที่ใช้งานอยู่" ด้วยข้อมูลเก่า มาตรการที่ใช้:
- *   1. ตรวจ checksum ก่อน — ไฟล์เสียหายบางส่วนอันตรายกว่าไม่มีไฟล์
- *   2. สำรองสถานะปัจจุบันอัตโนมัติก่อนเขียนทับ — กู้ผิดตัวแล้วยังย้อนได้
- *   3. แตกไฟล์ลงที่ชั่วคราวแล้วค่อยสลับ — ล้มกลางทางไม่เหลือไฟล์ปนกัน
- *   4. ต้องพิมพ์ชื่อโดเมนยืนยัน — กันการกดผิดรายการ
+ * Risky because it "overwrites something in active use" with old data. The
+ * measures taken:
+ *   1. Check the checksum first — a partially corrupted file is more dangerous than no file at all
+ *   2. Automatically back up the current state before overwriting — a mistaken restore can still be reverted
+ *   3. Extract into a temporary location, then swap — a failure partway through leaves no mixed-up files
+ *   4. The domain name must be typed to confirm — guards against clicking the wrong row
  *
- * ## รับชื่อไฟล์ ไม่ใช่รหัสแถว (PLAN-BACKUP-V2 ข้อ 4.5)
+ * ## Accepts a filename, not a row id (PLAN-BACKUP-V2 item 4.5)
  *
- * เดิมรับ `backup_id` แล้วอ่านเส้นทางกับ checksum จากตาราง · แถวนั้นเพี้ยนได้ทุกเมื่อ
- * เพราะลูกค้าลบไฟล์ของตัวเองได้ผ่าน SFTP — ปุ่มกู้คืนจึงชี้ไปที่ของที่ไม่มีอยู่
- * · ตอนนี้ชี้ที่ไฟล์ในโฟลเดอร์ของเจ้าของโดยตรง และ **checksum คำนวณจากไฟล์นั้นเดี๋ยวนั้น**
+ * Used to accept `backup_id`, then read the path and checksum from a table ·
+ * that row could drift at any time, since a customer can delete their own file
+ * over SFTP — the restore button would then point at something that no longer
+ * existed · now it points directly at a file in the owner's folder, and **the
+ * checksum is computed from that file right at that moment**.
  *
- * ค่า checksum ที่คำนวณสด ๆ ยังมีประโยชน์เต็มที่: `restoreSite()` ตรวจซ้ำอีกครั้งหลัง
- * สร้างไฟล์สำรองนิรภัยและก่อนแตกไฟล์ — ด่านนั้นจับกรณีที่ไฟล์ถูกแก้ระหว่างสองจังหวะ
- * ซึ่งเป็นช่วงเดียวที่ระบบเขียนอะไรลงโฟลเดอร์เดียวกันนั้น
+ * A freshly computed checksum is still fully useful: `restoreSite()` checks it
+ * again after creating the safety backup and before extracting — that check
+ * catches the case where the file was edited between those two moments, the
+ * only window where the system writes anything into that same folder.
  */
 final class BackupRestore extends BackupCapability implements Capability
 {
@@ -50,7 +55,7 @@ final class BackupRestore extends BackupCapability implements Capability
 
     public function summary(): string
     {
-        return 'กู้คืนไฟล์เว็บไซต์จากไฟล์สำรองของเจ้าของ (ตรวจ checksum และสำรองของเดิมก่อนเสมอ)';
+        return 'Restore website files from the owner\'s backup (always checks the checksum and backs up the original first)';
     }
 
     public function validate(array $args): array
@@ -67,16 +72,17 @@ final class BackupRestore extends BackupCapability implements Capability
         $site = $this->siteFor($context, $args['site_id']);
 
         if (BackupFiles::typeOf($args['file']) !== 'site') {
-            // การกู้คืนฐานข้อมูลมีขั้นตอนต่างออกไปมาก (ต้องหยุดเว็บ ล้างตาราง แล้ว
-            // นำเข้าใหม่ทั้งชุด) ทำครึ่ง ๆ กลาง ๆ อันตรายกว่าไม่ทำ · ลูกค้าดาวน์โหลด
-            // ไฟล์ .sql.gz ของตัวเองไปนำเข้าผ่าน phpMyAdmin ได้อยู่แล้ว
+            // Restoring a database follows a very different process (the site
+            // has to stop, tables cleared, then everything reimported) — doing
+            // it halfway is more dangerous than not doing it · a customer can
+            // already download their own .sql.gz file and import it through phpMyAdmin
             throw new ValidationError(
-                'ตอนนี้กู้คืนได้เฉพาะไฟล์เว็บไซต์ — ไฟล์ฐานข้อมูลให้ดาวน์โหลดไปนำเข้าเองผ่าน phpMyAdmin',
+                'Only website files can be restored right now — download a database file to import it through phpMyAdmin instead',
             );
         }
 
         if ($args['confirm'] !== $site->domain) {
-            throw new ValidationError('ชื่อโดเมนที่ยืนยันไม่ตรงกับเว็บไซต์ปลายทาง — ยกเลิกเพื่อความปลอดภัย');
+            throw new ValidationError('The confirmation domain name does not match the target website — cancelled for safety');
         }
 
         $archive = BackupFiles::resolve($site->owner, $args['file']);
@@ -85,16 +91,17 @@ final class BackupRestore extends BackupCapability implements Capability
         $this->assertBelongsTo($executor, $archive, $site->domain);
 
         /*
-         * เจ้าของที่ไฟล์ต้องเป็นหลังกู้คืน — ไม่ส่งค่านี้ไปแปลว่าไฟล์ที่กู้มาจะเป็นของ
-         * root (ไดเรกทอรี) และของ uid ต้นทาง (ไฟล์ข้างใน) ซึ่งพังทันทีเมื่อกู้ข้ามเครื่อง
-         * · ดูเหตุผลเต็มใน BackupManager::restoreSite()
+         * The owner the restored files must belong to — not sending this means
+         * the restored files end up owned by root (the directory) and by the
+         * source's original uid (the files inside), which breaks instantly when
+         * restoring across machines · see the full reasoning in BackupManager::restoreSite()
          */
         $owner = self::ownerString($context, $site->owner);
 
         $checksum = @hash_file('sha256', $executor->path($archive));
 
         if ($checksum === false) {
-            throw new ValidationError('อ่านไฟล์สำรองเพื่อตรวจสอบไม่ได้');
+            throw new ValidationError('Failed to read the backup file to verify it');
         }
 
         $result = (new BackupManager())->restoreSite($executor, $site, $archive, $checksum, $owner);
@@ -106,7 +113,7 @@ final class BackupRestore extends BackupCapability implements Capability
             'entries' => $result['entries'],
             'safety_file' => basename($result['safety']),
             'message' => sprintf(
-                'กู้คืน %s จาก %s แล้ว (%d รายการ) — สำรองสถานะก่อนกู้คืนไว้ที่ %s',
+                'Restored %s from %s (%d item(s)) — the pre-restore state was backed up to %s',
                 $site->domain,
                 $args['file'],
                 $result['entries'],
@@ -116,15 +123,18 @@ final class BackupRestore extends BackupCapability implements Capability
     }
 
     /**
-     * ไฟล์นี้เป็นของโดเมนนี้จริงหรือไม่ — ถามใบแจ้งข้อมูลข้างในไฟล์ ไม่ใช่ดูจากชื่อ
+     * Does this file genuinely belong to this domain — asks the manifest inside the file, never guesses from the name
      *
-     * **ด่านนี้ขาดไม่ได้ตั้งแต่โฟลเดอร์เป็นของลูกค้า** — เขาเปลี่ยนชื่อไฟล์เองได้และ
-     * คัดลอกไฟล์จากที่อื่นเข้ามาวางได้ · ชื่อที่ขึ้นต้นด้วย `shop.example.com-files-`
-     * จึงไม่ใช่คำสัญญาว่าข้างในเป็นไฟล์ของ shop.example.com · กู้ผิดตัวคือการเขียนทับ
-     * เว็บที่ให้บริการอยู่ด้วยไฟล์ของเว็บอื่น ซึ่งย้อนได้แค่จากไฟล์สำรองนิรภัยเท่านั้น
+     * **This check can't be skipped, ever since the folder belongs to the
+     * customer** — they can rename files themselves and copy files in from
+     * elsewhere · a name starting with `shop.example.com-files-` is therefore no
+     * promise that what's inside actually belongs to shop.example.com ·
+     * restoring the wrong one means overwriting a live site with another site's
+     * files, recoverable only from the safety backup.
      *
-     * ไฟล์รุ่นเก่าที่ยังไม่มีใบแจ้งข้อมูล (`readManifest()` คืน null) ถูกปฏิเสธ —
-     * "บอกไม่ได้ว่าเป็นของใคร" ต้องไม่แปลว่า "เดาว่าเป็นของเว็บที่ผู้ใช้กำลังเปิดอยู่"
+     * An older file with no manifest at all (`readManifest()` returns null) is
+     * rejected — "can't tell who it belongs to" must never be read as "assume it
+     * belongs to whichever site the user currently has open".
      */
     private function assertBelongsTo(Executor $executor, string $archive, string $domain): void
     {
@@ -132,8 +142,8 @@ final class BackupRestore extends BackupCapability implements Capability
 
         if ($manifest === null) {
             throw new ValidationError(
-                'ไฟล์นี้ไม่มี ' . BackupManager::MANIFEST . ' อยู่ข้างใน จึงบอกไม่ได้ว่าเป็นไฟล์สำรองของเว็บไหน'
-                . ' — กู้คืนให้ไม่ได้เพราะอาจเขียนทับเว็บนี้ด้วยไฟล์ของเว็บอื่น',
+                'This file has no ' . BackupManager::MANIFEST . ' inside it, so which website it backs up cannot be determined'
+                . ' — it cannot be restored, since it might overwrite this site with another site\'s files',
             );
         }
 
@@ -141,8 +151,8 @@ final class BackupRestore extends BackupCapability implements Capability
 
         if ($inside !== $domain) {
             throw new ValidationError(sprintf(
-                'ไฟล์นี้เป็นไฟล์สำรองของ %s ไม่ใช่ของ %s — กู้คืนข้ามเว็บผ่านหน้านี้ไม่ได้',
-                $inside === '' ? 'เว็บที่ระบุไม่ได้' : $inside,
+                'This file is a backup of %s, not %s — restoring across sites is not possible through this page',
+                $inside === '' ? 'an undetermined website' : $inside,
                 $domain,
             ));
         }

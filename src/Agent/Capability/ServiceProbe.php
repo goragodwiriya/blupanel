@@ -8,11 +8,12 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Domain\ServiceCatalog;
 
 /**
- * อ่านสถานะ service หนึ่งตัวจาก systemd — ใช้ร่วมกันระหว่าง capability หลายตัว
+ * Reads one service's status from systemd — shared between several capabilities
  *
- * ไม่ใช่ Capability เอง แต่เป็นตัวช่วย เพื่อให้ทั้ง service.status และคำสั่งที่เปลี่ยนสถานะ
- * (start/stop/restart/reload) คืนข้อมูลรูปแบบเดียวกัน — UI จึงอัปเดตการ์ดได้ทันที
- * หลังกดปุ่มโดยไม่ต้องเรียกซ้ำอีกรอบ
+ * Not a Capability itself, but a helper, so both service.status and the
+ * commands that change state (start/stop/restart/reload) return the same data
+ * shape — letting the UI update its card immediately after a click, with no
+ * need to call again.
  */
 final class ServiceProbe
 {
@@ -32,8 +33,9 @@ final class ServiceProbe
     {
         $keyValues = self::show($executor, $unit);
 
-        // เมื่อ systemd ไม่ได้รันเป็น PID 1 (เช่น ใน Docker container หรือสภาพแวดล้อมที่ไม่มี systemd)
-        // systemctl show จะล้มเหลว ให้ใช้ fallback ด้วย service / sysvinit / process check
+        // When systemd isn't running as PID 1 (inside a Docker container, or an
+        // environment with no systemd, say), systemctl show fails — falls back
+        // to a service / sysvinit / process check instead
         if (empty($keyValues['LoadState']) || $keyValues['LoadState'] === 'not-found') {
             $fallback = self::probeFallback($executor, $unit);
             if ($fallback !== null) {
@@ -47,21 +49,25 @@ final class ServiceProbe
     }
 
     /**
-     * บริการที่ถูกปลุกโดย socket ยังนับว่า "พร้อมใช้งาน" แม้ `.service` จะ inactive
+     * A service woken by a socket still counts as "available", even while its
+     * `.service` reads inactive
      *
-     * **เจอจากเซิร์ฟเวอร์จริง (Lightsail + Ubuntu 24.04):** ตั้งแต่ Ubuntu 22.10 OpenSSH
-     * ถูกเปลี่ยนมาเป็น socket activation — `ssh.socket` เป็นตัวฟังพอร์ต 22 แล้วปลุก
-     * `ssh@<n>.service` ขึ้นมาต่อการเชื่อมต่อหนึ่งครั้ง · ผลคือ `ssh.service` มี
-     * `ActiveState=inactive` **ตลอดเวลา** ทั้งที่ SSH ใช้งานได้ปกติ (ผู้ดูแลก็ ssh
-     * เข้ามาติดตั้ง panel ด้วยเส้นทางนั้นเอง)
+     * **Found on a real server (Lightsail + Ubuntu 24.04):** as of Ubuntu
+     * 22.10, OpenSSH switched to socket activation — `ssh.socket` listens on
+     * port 22 and wakes up `ssh@<n>.service` for each connection · the result
+     * is that `ssh.service` shows `ActiveState=inactive` **all the time**, even
+     * while SSH works completely normally (the very SSH session an admin used
+     * to install the panel goes through that exact path).
      *
-     * เมื่อไม่รู้จักเรื่องนี้ ระบบจะรายงานว่า "SSH หยุดทำงาน" แล้ว
-     * {@see \Phpcp\Driver\Ssh\SftpAccessManager::assertSshdRunning()} จะปฏิเสธการเปิด SFTP
-     * ด้วยเหตุผลที่ไม่เป็นความจริง — ผู้ดูแลกดปุ่มแล้วเจอ "บริการ SSH ไม่ได้ทำงานอยู่"
-     * บนเครื่องที่ตัวเองกำลัง ssh อยู่ ณ ขณะนั้น
+     * Without knowing this, the system would report "SSH is down", and
+     * {@see \Phpcp\Driver\Ssh\SftpAccessManager::assertSshdRunning()} would
+     * refuse to enable SFTP for a reason that isn't true — an admin clicking
+     * the button would see "the SSH service isn't running" on the very machine
+     * they're ssh'd into at that exact moment.
      *
-     * `activation` บอกผู้เรียกว่าความพร้อมนี้มาจาก socket ไม่ใช่ตัว service —
-     * คนที่จะสั่ง `reload` ต้องรู้ เพราะ reload service ที่ inactive อยู่ทำไม่ได้
+     * `activation` tells the caller this availability comes from the socket,
+     * not the service itself — whoever is about to run `reload` needs to know,
+     * since reloading an inactive service can't be done.
      *
      * @param  array<string,mixed> $status
      * @return array<string,mixed>
@@ -82,8 +88,8 @@ final class ServiceProbe
             'sub' => $socket['SubState'] ?? 'listening',
             'running' => true,
             'status' => 'running',
-            // `.service` ของบริการแบบนี้เป็น `static` เสมอ — สถานะ "เปิดตอนบูตไหม"
-            // ที่เป็นความจริงอยู่ที่ `.socket` ไม่ใช่ที่ `.service`
+            // A service like this always has its `.service` set to `static` —
+            // the genuine "starts on boot?" state lives on `.socket`, not `.service`
             'enabled' => $socket['UnitFileState'] ?? $status['enabled'],
             'activation' => 'socket',
             'socket_unit' => $unit.'.socket',
@@ -104,7 +110,7 @@ final class ServiceProbe
     }
 
     /**
-     * Fallback สำหรับสภาพแวดล้อมที่ไม่มี systemd (เช่น Docker container)
+     * A fallback for environments with no systemd (a Docker container, say)
      * @return array<string,mixed>|null
      */
     private static function probeFallback(Executor $executor, string $unit): ?array
@@ -121,18 +127,19 @@ final class ServiceProbe
             $exists = $exists || file_exists($unitFile);
         }
 
-        // ทดลองรัน service <unit> status
+        // Tries running service <unit> status
         $serviceBin = file_exists('/usr/sbin/service') ? '/usr/sbin/service' : '/usr/bin/service';
         $statusRes = $executor->exec([$executor->path($serviceBin), $unit, 'status'], timeout: 5);
 
         $output = strtolower($statusRes->stdout.' '.$statusRes->stderr);
 
-        // ข้อความที่แต่ละระบบใช้บอกว่า "ไม่มี unit นี้" — ต่างกันตามตัว init ที่ติดตั้งอยู่
+        // The phrase each system uses to say "this unit doesn't exist" — differs by which init system is installed
         //
-        // `could not be found` คือคำที่ systemd รุ่นใหม่ใช้จริง และเคย**ตกสำรวจ**มาแล้ว:
-        // รายการเดิมมีแค่ `unrecognized service` กับ `not-found` ซึ่งไม่ตรงสักคำ ทำให้
-        // php-fpm เวอร์ชันที่ไม่ได้ลงไว้ถูกรายงานว่า "ติดตั้งแล้วแต่หยุดทำงาน" แล้วยิง
-        // แจ้งเตือนเรื่องบริการที่ไม่มีอยู่จริง
+        // `could not be found` is what newer systemd genuinely uses, and was
+        // once **missed in the original survey**: the original list only had
+        // `unrecognized service` and `not-found`, matching neither, which made
+        // a PHP-FPM version that was never installed get reported as "installed
+        // but stopped", firing an alert about a service that never existed at all
         $notFoundPhrases = [
             'unrecognized service',
             'not-found',
@@ -147,14 +154,16 @@ final class ServiceProbe
         }
 
         if (!$exists && $isUnrecognized) {
-            return null; // ถือว่าไม่ได้ติดตั้งจริงๆ
+            return null; // Treated as genuinely not installed
         }
 
-        // ไม่มีไฟล์ unit และคำสั่งก็ล้มเหลว — เดาสถานะไม่ออกจึงต้องไม่เดา
+        // No unit file, and the command failed too — the state can't be
+        // guessed, so it must not be guessed
         //
-        // การคืน `installed => true` ในกรณีนี้อันตรายกว่าการยอมรับว่าไม่รู้ เพราะผู้เรียก
-        // (เช่น `alert.check`) จะเห็นเป็น "ติดตั้งแล้วแต่ไม่ทำงาน" แล้วปลุกคนกลางดึก
-        // เรื่องบริการที่ไม่มีอยู่บนเครื่องนี้เลย
+        // Returning `installed => true` in this case is more dangerous than
+        // admitting it's unknown, because a caller (`alert.check`, say) would
+        // see "installed but not running" and wake someone up in the middle of
+        // the night about a service that never existed on this machine at all
         if (!$exists && $statusRes->exitCode !== 0) {
             return null;
         }
@@ -197,7 +206,7 @@ final class ServiceProbe
             $since = $parsed === false ? null : $parsed;
         }
 
-        // MemoryCurrent เป็น "[not set]" เมื่อบริการไม่ได้ทำงาน
+        // MemoryCurrent reads "[not set]" while the service isn't running
         $memoryRaw = $values['MemoryCurrent'] ?? '0';
 
         return [
@@ -219,8 +228,8 @@ final class ServiceProbe
     }
 
     /**
-     * แปลงสถานะ systemd เป็นสถานะที่ UI แสดงตาม PROMPT.md
-     * (ทำงานปกติ / หยุดทำงาน / มีปัญหา / ต้องดำเนินการ)
+     * Converts systemd's state into the status the UI displays, per PROMPT.md
+     * (running / stopped / failed / needs attention)
      */
     public static function statusOf(bool $installed, string $activeState): string
     {

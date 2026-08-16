@@ -16,13 +16,15 @@ use Phpcp\Driver\Db\MariaDbManager;
 use Phpcp\Support\Validator;
 
 /**
- * สร้างฐานข้อมูลพร้อมผู้ใช้เฉพาะของมัน — PROMPT.md
+ * Creates a database with its own dedicated user — PROMPT.md
  *
- * สร้างผู้ใช้แยกต่อฐานข้อมูลเสมอ ไม่ใช้ผู้ใช้ร่วมกัน เพราะเว็บไซต์ที่ถูกแฮ็ก
- * แล้วยึด credential ไปต้องอ่านฐานข้อมูลของเว็บอื่นไม่ได้ (SECURITY §2.6)
+ * Always creates a separate user per database, never a shared one, because a
+ * website that gets hacked and has its credentials stolen must not be able to
+ * read another site's database (SECURITY §2.6).
  *
- * รหัสผ่านถูกสุ่มให้และแสดงครั้งเดียว — panel ไม่เก็บไว้ เพราะไม่มีเหตุผลที่ต้องใช้อีก
- * และการเก็บรหัสผ่านที่ถอดกลับได้เพิ่มความเสียหายตอนฐานข้อมูล panel รั่ว
+ * The password is randomly generated and shown exactly once — the panel never
+ * stores it, since there's no reason to need it again, and storing a
+ * reversible password would only add to the damage if the panel's own database ever leaked.
  */
 final class DbCreate extends DbAccountCapability
 {
@@ -43,14 +45,14 @@ final class DbCreate extends DbAccountCapability
 
     public function summary(): string
     {
-        return 'สร้างฐานข้อมูลใหม่พร้อมผู้ใช้เฉพาะ';
+        return 'Create new database with dedicated user';
     }
 
     public function validate(array $args): array
     {
         $name = MariaDbManager::assertDatabaseName(Validator::requireString($args, 'name', 64));
 
-        // ชื่อผู้ใช้เริ่มต้นอนุมานจากชื่อฐานข้อมูล ตัดให้พอดีข้อจำกัด 32 ตัว
+        // The default username is inferred from the database name, trimmed to fit the 32-character limit
         $user = Validator::optionalString($args, 'username', '', 32);
         if ($user === '') {
             $user = substr(preg_replace('/_db$/', '', $name) . '_user', 0, 32);
@@ -73,9 +75,10 @@ final class DbCreate extends DbAccountCapability
     }
 
     /**
-     * บัญชีของเจ้าของเว็บที่ฐานข้อมูลนี้จะผูกอยู่ — null = ไม่ได้ผูกกับเว็บของลูกค้า
+     * The account of the site owner this database will be bound to — null = not
+     * bound to a customer's website
      *
-     * ใช้ทั้งกำหนดคำนำหน้าชื่อฐานข้อมูลและตัดสินว่าจะ grant ให้ใคร
+     * Used both to determine the database name's prefix and to decide who to grant to
      */
     private function ownerAccount(Context $context, int $siteId): ?UserAccount
     {
@@ -100,25 +103,25 @@ final class DbCreate extends DbAccountCapability
     }
 
     /**
-     * ตรวจสอบโควตาสำหรับลูกค้าก่อนสร้างฐานข้อมูล
+     * Checks the customer's quota before creating a database
      *
      * @throws ValidationError
      */
     private function assertQuota(Context $context, int $siteId): void
     {
         if ($siteId <= 0) {
-            return; // ไม่มีเว็บไซต์ = ไม่ต้องตรวจสอบโควตา
+            return; // No website = no quota to check
         }
 
-        // หาเจ้าของเว็บไซต์
+        // Finds the website's owner
         $site = $context->db->first('SELECT owner_user_id FROM sites WHERE id = :id', ['id' => $siteId]);
         if ($site === null) {
-            return; // ไม่พบเจ้าของ
+            return; // No owner found
         }
 
         $ownerUserId = (int) ($site['owner_user_id'] ?? 0);
         if ($ownerUserId <= 0) {
-            return; // ไม่มีเจ้าของลูกค้า
+            return; // No customer owner
         }
 
         $quota = new QuotaChecker(new UserRepository($context->db));
@@ -134,30 +137,33 @@ final class DbCreate extends DbAccountCapability
         $manager = $this->manager();
 
         if (!$manager->isInstalled($executor)) {
-            throw new ValidationError('เครื่องนี้ยังไม่ได้ติดตั้ง MariaDB หรือ MySQL');
+            throw new ValidationError('MariaDB or MySQL is not installed on this machine');
         }
 
         $this->assertSiteAccess($context, $args['site_id']);
         $this->assertQuota($context, $args['site_id']);
 
-        // ฐานข้อมูลของลูกค้าถูกใส่คำนำหน้าตามชื่อบัญชีเสมอ — MariaDB มี namespace เดียว
-        // ทั้งเครื่อง ลูกค้าคนละรายจึงตั้งชื่อ `shop` พร้อมกันไม่ได้ถ้าไม่มีคำนำหน้า
-        // (ฐานข้อมูลที่ผู้ดูแลสร้างโดยไม่ผูกกับเว็บของลูกค้าไม่ถูกแตะ)
+        // A customer's database is always prefixed with their account name —
+        // MariaDB has one single namespace across the whole machine, so two
+        // different customers couldn't both name a database `shop` without a
+        // prefix (a database an admin creates without binding it to a
+        // customer's site is left untouched)
         $owner = $this->ownerAccount($context, $args['site_id']);
 
         if ($owner !== null) {
             $qualified = DbAccountRepository::qualify($owner->username, $args['name']);
 
-            // MariaDB จำกัดชื่อฐานข้อมูลที่ 64 ตัว และคำนำหน้ากินโควตานั้นไปด้วย
-            // ถ้าปล่อยให้ไปล้มที่ assertDatabaseName ผู้ใช้จะได้ข้อความว่า "ชื่อยาวเกิน"
-            // โดยไม่รู้เลยว่ามีคำนำหน้าที่ตัวเองไม่ได้พิมพ์บวกเข้าไปด้วย
+            // MariaDB caps a database name at 64 characters, and the prefix eats
+            // into that budget too — letting this fail inside
+            // assertDatabaseName would give the user a "name too long" message
+            // with no idea a prefix they never typed had been added on
             if (strlen($qualified) > 64) {
                 $available = 64 - strlen(DbAccountRepository::prefixFor($owner->username));
 
                 throw new ValidationError(
-                    "ชื่อฐานข้อมูลยาวเกินไป — ระบบเติมคำนำหน้า "
+                    "The database name is too long — the system automatically adds the prefix "
                     .DbAccountRepository::prefixFor($owner->username)
-                    ." ให้อัตโนมัติ จึงเหลือให้ตั้งชื่อได้ {$available} ตัว",
+                    ." leaving {$available} character(s) for the name itself",
                 );
             }
 
@@ -166,30 +172,34 @@ final class DbCreate extends DbAccountCapability
 
         $existing = $context->db->first('SELECT id FROM databases_ WHERE db_name = :n', ['n' => $args['name']]);
         if ($existing !== null) {
-            throw new ValidationError("มีฐานข้อมูลชื่อ {$args['name']} อยู่แล้ว");
+            throw new ValidationError("A database named {$args['name']} already exists");
         }
 
         if (in_array($args['name'], $manager->databases($executor), true)) {
-            throw new ValidationError("มีฐานข้อมูลชื่อ {$args['name']} อยู่บนเครื่องแล้ว");
+            throw new ValidationError("A database named {$args['name']} already exists on the machine");
         }
 
         $password = self::randomPassword();
 
-        // สร้างบนเครื่องก่อน แล้วค่อยบันทึกลง panel — ถ้าขั้นตอนบนเครื่องล้ม
-        // จะไม่เหลือแถวค้างในฐานข้อมูลของ panel ที่ชี้ไปยังของที่ไม่มีอยู่จริง
+        // Created on the machine first, then recorded in the panel — if the
+        // step on the machine fails, no row is left behind in the panel's own
+        // database pointing at something that doesn't actually exist
         $manager->createDatabase($executor, $args['name'], $args['charset']);
 
         try {
             $manager->createUser($executor, $args['username'], $args['host'], $password);
             $manager->grant($executor, $args['name'], $args['username'], $args['host'], $args['privileges']);
 
-            // เจ้าของเว็บต้องเห็นฐานข้อมูลนี้ใน phpMyAdmin ทันที ไม่ใช่ตอนเปิดครั้งถัดไป —
-            // ถ้า grant ตอนเปิด phpMyAdmin แทน ผู้ใช้ที่เพิ่งสร้างฐานข้อมูลเสร็จจะเปิดไป
-            // แล้วไม่เห็นของที่เพิ่งสร้าง ซึ่งดูเหมือนระบบพัง
+            // A site owner needs to see this database in phpMyAdmin immediately,
+            // not the next time they open it — granting only when phpMyAdmin
+            // opens instead would mean a user who just finished creating a
+            // database opens it and doesn't see what they just made, which
+            // looks like the system is broken
             //
-            // ผู้ใช้เฉพาะของฐานข้อมูล (ที่มีรหัสแสดงครั้งเดียวข้างบน) ยังมีอยู่เหมือนเดิม
-            // เพราะแอปของลูกค้าควรต่อฐานข้อมูลด้วยบัญชีที่จำกัดสิทธิ์เฉพาะฐานข้อมูลตัวเอง
-            // ไม่ใช่บัญชีที่เห็นทุกฐานข้อมูลของเจ้าของ
+            // The database's own dedicated user (whose password was shown once,
+            // above) still exists as before, because a customer's application
+            // should connect using an account limited to just its own database,
+            // not one that sees every database the owner has
             if ($owner !== null) {
                 $accounts = $this->dbAccounts($context);
                 $accounts->ensure($executor, $owner);
@@ -208,10 +218,10 @@ final class DbCreate extends DbAccountCapability
             'name' => $args['name'],
             'username' => $args['username'],
             'host' => $args['host'],
-            // แสดงครั้งเดียว — panel ไม่เก็บรหัสผ่านนี้ไว้ที่ใดเลย
+            // Shown exactly once — the panel never stores this password anywhere
             'password' => $password,
             'privileges' => $args['privileges'],
-            'message' => "สร้างฐานข้อมูล {$args['name']} พร้อมผู้ใช้ {$args['username']} แล้ว",
+            'message' => "Created database {$args['name']} with user {$args['username']}",
         ];
     }
 
