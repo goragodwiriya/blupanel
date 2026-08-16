@@ -308,7 +308,7 @@ test('รายการที่ไต่ออกนอกโฟลเดอ�
 
     $rejected = restoreRejection($fixture, $evil);
 
-    assertTrue(str_contains($rejected, 'ชี้ออกนอก'), "ต้องปฏิเสธเพราะไต่ออกนอกโฟลเดอร์ ได้: {$rejected}");
+    assertTrue(str_contains($rejected, 'points outside'), "ต้องปฏิเสธเพราะไต่ออกนอกโฟลเดอร์ ได้: {$rejected}");
 
     assertTrue(
         !file_exists($site->docroot() . '/ธรรมดา.txt'),
@@ -381,7 +381,7 @@ test('รายการที่ไม่ใช่ไฟล์ ไดเรก�
     $rejected = restoreRejection($fixture, $evil);
 
     assertTrue(
-        str_contains($rejected, 'ไม่ใช่ไฟล์ ไดเรกทอรี หรือลิงก์'),
+        str_contains($rejected, 'is not a file, directory, or link'),
         "ต้องปฏิเสธ device node ได้: {$rejected}",
     );
 });
