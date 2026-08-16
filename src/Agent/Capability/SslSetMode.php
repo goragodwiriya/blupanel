@@ -11,21 +11,23 @@ use Phpcp\Agent\ValidationError;
 use Phpcp\Support\Validator;
 
 /**
- * เปิดใช้งาน HTTPS / บังคับ HTTPS / ปิด — PROMPT.md ระบุไว้เป็นสามการกระทำ
+ * Enables HTTPS / forces HTTPS / disables it — PROMPT.md specifies these as three actions
  *
- * ทั้งสามยุบเป็น capability เดียวเพราะเป็นค่าเดียวกันในฐานข้อมูล (`ssl_mode`)
- * และผลลัพธ์คือการเขียน vhost ใหม่เหมือนกันทุกกรณี แยกเป็นสามตัวจะได้โค้ดซ้ำสามชุด
- * ที่ต้องแก้พร้อมกันทุกครั้ง
+ * All three collapse into one capability because they're the same database
+ * value (`ssl_mode`), and the result is rewriting the vhost the same way in every
+ * case — splitting this into three would mean three copies of the same code that
+ * always need editing together.
  *
- * การเปิดใช้งานโดยไม่มีใบรับรองถูกปฏิเสธที่นี่ ไม่ใช่ปล่อยให้ configtest จับ —
- * ข้อความของ Apache ที่ว่าเปิดไฟล์ .pem ไม่ได้ไม่ได้ช่วยให้ผู้ใช้รู้ว่าต้องทำอะไรต่อ
+ * Enabling without a certificate is rejected right here, rather than letting
+ * configtest catch it — Apache's error about failing to open a .pem file doesn't
+ * help a user understand what to do next.
  */
 final class SslSetMode extends SslCapability implements Capability
 {
     private const LABELS = [
-        'off' => 'ปิด HTTPS',
-        'on' => 'เปิดใช้งาน HTTPS',
-        'forced' => 'บังคับ HTTPS',
+        'off' => 'Disable HTTPS',
+        'on' => 'Enable HTTPS',
+        'forced' => 'Force HTTPS',
     ];
 
     public static function name(): string
@@ -45,7 +47,7 @@ final class SslSetMode extends SslCapability implements Capability
 
     public function summary(): string
     {
-        return 'เปิด/ปิด/บังคับ HTTPS ของเว็บไซต์';
+        return 'Enable/disable/force website HTTPS';
     }
 
     public function validate(array $args): array
@@ -69,7 +71,7 @@ final class SslSetMode extends SslCapability implements Capability
                 'domain' => $site->domain,
                 'ssl_mode' => $mode,
                 'changed' => false,
-                'message' => sprintf('%s อยู่ในสถานะ "%s" อยู่แล้ว', $site->domain, self::LABELS[$mode]),
+                'message' => sprintf('%s is already in "%s" state', $site->domain, self::LABELS[$mode]),
             ];
         }
 
@@ -80,7 +82,7 @@ final class SslSetMode extends SslCapability implements Capability
         $updated = $site->withSslMode($mode);
         $repository = $this->repository($context);
 
-        // บันทึกฐานข้อมูลหลังไฟล์ commit แล้วแต่ก่อน reload — ดูเหตุผลใน rewriteVhost()
+        // Saved to the database after the file is committed but before reload — see the reasoning in rewriteVhost()
         $this->rewriteVhost(
             $context,
             $executor,
@@ -95,11 +97,11 @@ final class SslSetMode extends SslCapability implements Capability
             'previous_mode' => $site->sslMode,
             'changed' => true,
             'message' => match ($mode) {
-                'off' => sprintf('ปิด HTTPS ของ %s แล้ว — เว็บให้บริการผ่าน HTTP อย่างเดียว', $site->domain),
-                'on' => sprintf('เปิดใช้งาน HTTPS ให้ %s แล้ว — เข้าได้ทั้ง http:// และ https://', $site->domain),
+                'off' => sprintf('Disabled HTTPS for %s — the site is served over HTTP only', $site->domain),
+                'on' => sprintf('Enabled HTTPS for %s — reachable at both http:// and https://', $site->domain),
                 'forced' => sprintf(
-                    'บังคับ HTTPS ให้ %s แล้ว — คำขอทาง HTTP จะถูก redirect ไป HTTPS ทั้งหมด '
-                    . 'และเบราว์เซอร์จะจำค่านี้ไว้ 6 เดือน (HSTS)',
+                    'HTTPS forced for %s — every HTTP request will be redirected to HTTPS, '
+                    . 'and browsers will remember this for 6 months (HSTS)',
                     $site->domain,
                 ),
             },

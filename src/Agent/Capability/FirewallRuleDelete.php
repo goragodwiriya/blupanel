@@ -10,14 +10,16 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\ValidationError;
 
 /**
- * ลบกฎ firewall — เป็นการเปลี่ยนแปลงที่ต้องยืนยันเสมอ
+ * Deletes a firewall rule — a change that always requires confirmation
  *
- * ลบกฎ allow ทิ้ง = ปิดพอร์ตนั้น ซึ่งอาจเป็นพอร์ตที่ตัวเองกำลังใช้อยู่
- * จึงเข้ากลไกยืนยันภายในเวลาทุกครั้ง ไม่มีข้อยกเว้น
+ * Deleting an allow rule = closing that port, which might be the very port
+ * currently in use — so it always goes through the timed-confirmation
+ * mechanism, no exceptions.
  *
- * ผู้ใช้เลือกกฎจากหมายเลขที่เห็นบนหน้าจอ แต่หมายเลขของ ufw เลื่อนได้ตลอด
- * จึงต้องส่งข้อความของกฎที่เห็นมาด้วยเพื่อยืนยันว่ากำลังลบกฎเดียวกับที่ตั้งใจจริง —
- * เป็นการกันกรณีที่มีคนแก้กฎจากอีกหน้าต่างหนึ่งระหว่างที่หน้านี้เปิดค้างอยู่
+ * The user picks a rule by the number shown on screen, but ufw's numbers can
+ * shift at any time, so the rule's own signature text has to be sent along too,
+ * to confirm the same rule that was intended is the one being deleted — this
+ * guards against someone editing rules from another window while this page sits open.
  */
 final class FirewallRuleDelete extends FirewallCapability implements Capability
 {
@@ -38,7 +40,7 @@ final class FirewallRuleDelete extends FirewallCapability implements Capability
 
     public function summary(): string
     {
-        return 'ลบกฎ firewall (มีการคืนค่าอัตโนมัติถ้าไม่ยืนยันภายในเวลา)';
+        return 'Delete firewall rule (auto-reverts if not confirmed in time)';
     }
 
     public function validate(array $args): array
@@ -46,13 +48,13 @@ final class FirewallRuleDelete extends FirewallCapability implements Capability
         $number = (int) ($args['number'] ?? 0);
 
         if ($number < 1) {
-            throw new ValidationError('ไม่ได้ระบุกฎที่จะลบ');
+            throw new ValidationError('No rule specified to delete');
         }
 
         $expect = trim((string) ($args['expect'] ?? ''));
 
         if ($expect === '') {
-            throw new ValidationError('ไม่ได้ระบุกฎที่คาดหวัง — โหลดหน้าใหม่แล้วลองอีกครั้ง');
+            throw new ValidationError('No expected rule specified — reload the page and try again');
         }
 
         return ['number' => $number, 'expect' => $expect, 'window' => $this->window($args)];
@@ -75,23 +77,23 @@ final class FirewallRuleDelete extends FirewallCapability implements Capability
         }
 
         if ($target === null) {
-            throw new ValidationError('ไม่พบกฎหมายเลข ' . $args['number'] . ' แล้ว — โหลดหน้าใหม่เพื่อดูรายการล่าสุด');
+            throw new ValidationError('Rule number ' . $args['number'] . ' no longer exists — reload the page to see the latest list');
         }
 
         $signature = $this->signature($target);
 
         if ($signature !== $args['expect']) {
             throw new ValidationError(
-                "กฎหมายเลข {$args['number']} เปลี่ยนไปแล้ว (ตอนนี้คือ \"{$signature}\") — "
-                . 'มีคนแก้กฎระหว่างที่หน้านี้เปิดค้างอยู่ โหลดหน้าใหม่ก่อนลบ',
+                "Rule number {$args['number']} has changed (now \"{$signature}\") — "
+                . 'someone edited the rules while this page was open — reload before deleting',
             );
         }
 
         if (!$target['manageable']) {
-            throw new ValidationError('กฎข้อนี้ไม่ได้อยู่ในรูปแบบที่ระบบสร้างคืนให้ได้ จึงไม่เปิดให้ลบผ่านหน้าเว็บ');
+            throw new ValidationError('This rule is not in a shape the system can reconstruct, so it cannot be deleted from the web page');
         }
 
-        $this->assertNotLifeline($target['port'], $context, $executor, 'ลบกฎที่เปิด');
+        $this->assertNotLifeline($target['port'], $context, $executor, 'delete the rule opening');
 
         $action = strtolower($target['action']);
 
@@ -99,7 +101,7 @@ final class FirewallRuleDelete extends FirewallCapability implements Capability
 
         $rollbackId = $this->guard($context)->arm(
             action: 'firewall.rule_delete',
-            description: 'ลบกฎ firewall: ' . $signature,
+            description: 'Delete firewall rule: ' . $signature,
             files: [],
             reloadUnits: [],
             window: $args['window'],
@@ -118,15 +120,15 @@ final class FirewallRuleDelete extends FirewallCapability implements Capability
             'rule' => $signature,
             'window' => $args['window'],
             'message' => sprintf(
-                'ลบกฎแล้ว: %s — ต้องกดยืนยันว่ายังใช้งานได้ภายใน %d วินาที '
-                . 'ไม่อย่างนั้นระบบจะเพิ่มกฎนี้กลับให้อัตโนมัติ',
+                'Rule deleted: %s — confirm it still works within %d seconds, '
+                . 'or the system will automatically add this rule back',
                 $signature,
                 $args['window'],
             ),
         ];
     }
 
-    /** ข้อความสั้น ๆ ที่ระบุกฎได้ไม่ซ้ำ ใช้เทียบว่าหน้าจอกับเซิร์ฟเวอร์ยังตรงกัน */
+    /** A short text uniquely identifying a rule, used to check the screen and server still agree */
     public static function signature(array $rule): string
     {
         return sprintf('%s %s %s', $rule['action'], $rule['target'], $rule['source']);

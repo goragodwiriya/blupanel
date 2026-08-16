@@ -11,13 +11,15 @@ use Phpcp\Agent\ValidationError;
 use Phpcp\Driver\Firewall\UfwDriver;
 
 /**
- * เพิ่มกฎ firewall หนึ่งข้อ
+ * Adds one firewall rule
  *
- * กฎ allow เพิ่มแล้วไม่มีทางทำให้เข้าเครื่องไม่ได้ จึงมีผลทันทีไม่ต้องยืนยัน
- * ส่วนกฎ deny ปิดทางเข้าได้จริง จึงเข้ากลไกยืนยันภายในเวลาเหมือนการแก้ SSH
+ * An allow rule can never lock anyone out of the machine once added, so it takes
+ * effect immediately with no confirmation needed. A deny rule genuinely can close
+ * off access, so it goes through the same timed-confirmation mechanism as editing SSH.
  *
- * ความต่างนี้ตั้งใจให้เห็นชัดบนหน้าจอ — ไม่บังคับนับถอยหลังกับทุกอย่าง
- * เพราะถ้าต้องยืนยันแม้แต่ตอนเปิดพอร์ต 80 ผู้ใช้จะเริ่มกดยืนยันโดยไม่อ่าน
+ * This difference is deliberately visible on screen — not every action forces a
+ * countdown, because if even opening port 80 required confirming, users would
+ * start clicking confirm without reading.
  */
 final class FirewallRuleAdd extends FirewallCapability implements Capability
 {
@@ -38,7 +40,7 @@ final class FirewallRuleAdd extends FirewallCapability implements Capability
 
     public function summary(): string
     {
-        return 'เพิ่มกฎ firewall';
+        return 'Add firewall rule';
     }
 
     public function validate(array $args): array
@@ -46,9 +48,10 @@ final class FirewallRuleAdd extends FirewallCapability implements Capability
         $action = UfwDriver::assertAction((string) ($args['action'] ?? 'allow'));
         $protocol = (string) ($args['protocol'] ?? 'tcp');
 
-        // แบบฟอร์มให้เลือกได้แค่สองค่านี้ — ไม่รับ 'any' ที่ driver ยอมรับสำหรับกฎเดิม
+        // The form only offers these two values — 'any', which the driver
+        // accepts for existing rules, isn't accepted here
         if (!in_array($protocol, ['tcp', 'udp'], true)) {
-            throw new ValidationError('โปรโตคอลต้องเป็น tcp หรือ udp');
+            throw new ValidationError('Protocol must be tcp or udp');
         }
 
         return [
@@ -70,15 +73,15 @@ final class FirewallRuleAdd extends FirewallCapability implements Capability
 
         if ($guarded) {
             $this->assertNoPending($context);
-            $this->assertNotLifeline($args['port'], $context, $executor, 'ปิดกั้น');
+            $this->assertNotLifeline($args['port'], $context, $executor, 'block');
         }
 
         $driver->rule($executor, $args['action'], $args['port'], $args['protocol'], $args['source'], $args['comment']);
 
-        $where = $args['source'] === '' ? 'ทุกที่' : $args['source'];
+        $where = $args['source'] === '' ? 'anywhere' : $args['source'];
         $label = sprintf(
-            '%s %s/%s จาก %s',
-            $args['action'] === 'allow' ? 'อนุญาต' : 'ปิดกั้น',
+            '%s %s/%s from %s',
+            $args['action'] === 'allow' ? 'allow' : 'block',
             $args['port'],
             $args['protocol'],
             $where,
@@ -88,13 +91,13 @@ final class FirewallRuleAdd extends FirewallCapability implements Capability
             return [
                 'rollback_id' => 0,
                 'rule' => $label,
-                'message' => 'เพิ่มกฎแล้ว: ' . $label,
+                'message' => 'Rule added: ' . $label,
             ];
         }
 
         $rollbackId = $this->guard($context)->arm(
             action: 'firewall.rule_add',
-            description: 'เพิ่มกฎ firewall: ' . $label,
+            description: 'Add firewall rule: ' . $label,
             files: [],
             reloadUnits: [],
             window: $args['window'],
@@ -113,8 +116,8 @@ final class FirewallRuleAdd extends FirewallCapability implements Capability
             'rule' => $label,
             'window' => $args['window'],
             'message' => sprintf(
-                'เพิ่มกฎปิดกั้นแล้ว: %s — ต้องกดยืนยันว่ายังใช้งานได้ภายใน %d วินาที '
-                . 'ไม่อย่างนั้นระบบจะลบกฎนี้ออกให้อัตโนมัติ',
+                'Block rule added: %s — confirm it still works within %d seconds, '
+                . 'or the system will automatically remove this rule',
                 $label,
                 $args['window'],
             ),

@@ -11,20 +11,22 @@ use Phpcp\Support\PathGuard;
 use Phpcp\Support\Validator;
 
 /**
- * ลบไฟล์และโฟลเดอร์
+ * Deletes files and folders
  *
- * ปฏิเสธการลบโฟลเดอร์โครงสร้างของเว็บไซต์ (public, logs, tmp, backup) —
- * ไม่ใช่เพราะกลัวผู้ใช้ทำลายข้อมูลตัวเอง แต่เพราะ vhost กับ pool ชี้ไปที่โฟลเดอร์เหล่านี้
- * ลบแล้วเว็บจะ 500 ทันทีและอาการจะดูเหมือนปัญหาที่ตัว PHP ซึ่งตามหาสาเหตุยากมาก
+ * Refuses to delete a website's structural folders (public, logs, tmp, backup) —
+ * not out of fear the user destroys their own data, but because the vhost and
+ * pool point at these folders directly. Delete one and the site 500s
+ * immediately, with a symptom that looks like a PHP problem and is very hard to trace back.
  *
- * `backup` เป็นตัวโฟลเดอร์เท่านั้น — **ไฟล์ข้างในลบได้ตามปกติ** และต้องลบได้ ลูกค้า
- * เป็นเจ้าของสำเนาของตัวเองและตัดสินใจเองได้ว่าจะเก็บอันไหน (PLAN-BACKUP-V2 ข้อ B4)
+ * `backup` is protected as a folder only — **files inside it delete normally**
+ * and must be deletable, since the customer owns their own copies and decides for
+ * themselves what to keep (PLAN-BACKUP-V2 item B4).
  */
 final class FileDelete extends FileCapability
 {
     private const MAX_ITEMS = 100;
 
-    /** โฟลเดอร์ชั้นบนสุดที่ระบบสร้างให้และห้ามลบ */
+    /** The top-level folders the system creates that can never be deleted */
     private const PROTECTED_ROOTS = ['public', 'logs', 'tmp', 'backup'];
 
     public static function name(): string
@@ -39,7 +41,7 @@ final class FileDelete extends FileCapability
 
     public function summary(): string
     {
-        return 'ลบไฟล์หรือโฟลเดอร์';
+        return 'Delete file or folder';
     }
 
     /**
@@ -52,21 +54,21 @@ final class FileDelete extends FileCapability
             $relative = PathGuard::clean($item, 'เส้นทางที่จะลบ');
 
             if ($relative === '') {
-                throw new ValidationError('ลบรากของขอบเขตไม่ได้');
+                throw new ValidationError('Cannot delete the scope root');
             }
 
             $items[] = $relative;
         }
 
         if ($items === []) {
-            throw new ValidationError('ต้องเลือกอย่างน้อยหนึ่งรายการก่อนจึงจะลบได้');
+            throw new ValidationError('At least one item must be selected before deleting');
         }
 
         return [
             'root' => Validator::pattern(
                 Validator::requireString($args, 'root', 64),
                 '/^[a-z][a-z0-9-]{0,63}$/',
-                'คีย์ขอบเขตไฟล์ไม่ถูกต้อง',
+                'Invalid file scope key',
             ),
             'items' => $items
         ];
@@ -81,12 +83,13 @@ final class FileDelete extends FileCapability
     {
         $scope = $this->scope($context, $args);
 
-        // โฟลเดอร์โครงสร้างของเว็บไซต์ลบไม่ได้ — กฎนี้ใช้เฉพาะขอบเขตของเว็บไซต์
-        // ขอบเขตระดับเซิร์ฟเวอร์ไม่มีโครงสร้างแบบนี้ จึงไม่ควรถูกจำกัดด้วยชื่อเดียวกัน
+        // A website's structural folders can't be deleted — this rule applies
+        // only to the site scope; the server scope has no such structure, so it
+        // shouldn't be restricted by the same names
         if ($scope->isSite()) {
             foreach ($args['items'] as $relative) {
                 if (in_array($relative, self::PROTECTED_ROOTS, true)) {
-                    throw new ValidationError("โฟลเดอร์ {$relative} เป็นโครงสร้างของเว็บไซต์ ลบไม่ได้");
+                    throw new ValidationError("Folder {$relative} is part of the website's structure and cannot be deleted");
                 }
             }
         }
@@ -108,7 +111,7 @@ final class FileDelete extends FileCapability
             'site_id' => $scope->siteId,
             'deleted' => $result['deleted'],
             'count' => count($result['deleted']),
-            'message' => sprintf('ลบ %d รายการแล้ว', count($result['deleted']))
+            'message' => sprintf('Deleted %d item(s)', count($result['deleted']))
         ];
     }
 }

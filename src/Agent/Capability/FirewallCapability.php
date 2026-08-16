@@ -12,11 +12,12 @@ use Phpcp\Driver\RollbackGuard;
 use Phpcp\Driver\SshManager;
 
 /**
- * ส่วนที่ capability ของ firewall ใช้ร่วมกัน
+ * Shared pieces every firewall capability uses
  *
- * เรื่องสำคัญที่สุดของหน้านี้คือ "ห้ามปิดประตูขังตัวเอง" — กฎที่เปิดพอร์ตของ panel
- * และพอร์ต SSH คือทางเดียวที่ผู้ดูแลจะกลับเข้ามาแก้ไขได้ถ้าตั้งค่าผิด
- * ตรรกะป้องกันสองพอร์ตนี้จึงรวมไว้ที่เดียว ไม่กระจายไปตาม capability
+ * The single most important rule here is "never lock yourself out" — the rules
+ * that open the panel's port and the SSH port are the only way an admin can get
+ * back in to fix a mistake. The logic protecting those two ports is gathered here
+ * in one place, not scattered across every capability.
  */
 abstract class FirewallCapability
 {
@@ -30,15 +31,16 @@ abstract class FirewallCapability
         return new RollbackGuard($context->db);
     }
 
-    /** พอร์ตที่ panel ให้บริการอยู่ — ลบกฎที่เปิดพอร์ตนี้ไม่ได้เด็ดขาด */
+    /** The port the panel is served on — the rule opening this port can never be deleted */
     protected function panelPort(Context $context): string
     {
         return (string) $context->config->int('panel.port', 8443);
     }
 
     /**
-     * พอร์ต SSH ที่ใช้อยู่จริง อ่านจาก sshd_config ไม่ใช่ค่าคงที่ 22
-     * เพราะผู้ดูแลอาจเปลี่ยนไปแล้วผ่านหน้า SSH ของ panel นี้เอง
+     * The SSH port actually in use, read from sshd_config rather than assumed to
+     * be 22, because an admin may have already changed it through this very
+     * panel's SSH page
      */
     protected function sshPort(Executor $executor): string
     {
@@ -52,10 +54,10 @@ abstract class FirewallCapability
     }
 
     /**
-     * พอร์ตนี้เป็นเส้นชีวิตหรือไม่ — รองรับทั้งพอร์ตเดี่ยวและช่วงที่คร่อมพอร์ตนั้น
+     * Is this port a lifeline — handles both a single port and a range spanning it
      *
-     * ตรวจช่วงด้วยเพราะกฎอย่าง `deny 8000:9000/tcp` ปิดพอร์ต 8443 ไปด้วย
-     * ทั้งที่ไม่ได้เอ่ยถึงตัวเลขนั้นตรง ๆ
+     * A range is checked too, because a rule like `deny 8000:9000/tcp` blocks
+     * port 8443 right along with it, even though that number is never mentioned directly.
      */
     protected function covers(string $spec, string $port): bool
     {
@@ -73,15 +75,15 @@ abstract class FirewallCapability
         return $target >= $from && $target <= $to;
     }
 
-    /** ห้ามปิดทางเข้าของตัวเอง — ARCHITECTURE §5.4 */
+    /** Never allow closing off your own way in — ARCHITECTURE §5.4 */
     protected function assertNotLifeline(string $port, Context $context, Executor $executor, string $what): void
     {
         $panel = $this->panelPort($context);
 
         if ($this->covers($port, $panel)) {
             throw new ValidationError(
-                "{$what}พอร์ต {$panel} ไม่ได้ เพราะเป็นพอร์ตที่หน้าเว็บนี้ให้บริการอยู่ — "
-                . 'ทำแล้วจะเข้ามาแก้กลับไม่ได้อีก',
+                "Cannot {$what} port {$panel} — it's the port this web page is served on, "
+                . 'doing so would leave no way back in to fix it',
             );
         }
 
@@ -89,8 +91,8 @@ abstract class FirewallCapability
 
         if ($this->covers($port, $ssh)) {
             throw new ValidationError(
-                "{$what}พอร์ต {$ssh} ไม่ได้ เพราะเป็นพอร์ตของ SSH ซึ่งเป็นทางกลับเข้าเครื่อง "
-                . 'เมื่อหน้าเว็บใช้การไม่ได้ — ถ้าจำเป็นต้องทำจริง ให้แก้ที่เครื่องโดยตรง',
+                "Cannot {$what} port {$ssh} — it's the SSH port, the way back into the machine "
+                . 'when the web page is unreachable — if this genuinely needs doing, do it directly on the machine',
             );
         }
     }
@@ -102,12 +104,12 @@ abstract class FirewallCapability
             : RollbackGuard::DEFAULT_WINDOW;
     }
 
-    /** มีรายการรอยืนยันค้างอยู่ = ห้ามเปลี่ยนอะไรอีกจนกว่าจะเคลียร์ */
+    /** A pending confirmation means nothing else can change until it's cleared */
     protected function assertNoPending(Context $context): void
     {
         if ($this->guard($context)->pending() !== null) {
             throw new ValidationError(
-                'มีการเปลี่ยนแปลงที่รอการยืนยันอยู่ — ยืนยันหรือรอให้คืนค่าก่อนจึงจะแก้ใหม่ได้',
+                'A change is waiting for confirmation — confirm it or let it roll back before making another',
             );
         }
     }
@@ -115,7 +117,7 @@ abstract class FirewallCapability
     protected function assertInstalled(Executor $executor): void
     {
         if (!$this->driver()->isInstalled($executor)) {
-            throw new ValidationError('ไม่พบ ufw บนเครื่องนี้ — ติดตั้งด้วย apt install ufw ก่อน');
+            throw new ValidationError('ufw was not found on this machine — install it with apt install ufw first');
         }
     }
 }
