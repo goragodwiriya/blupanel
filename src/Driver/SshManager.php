@@ -8,19 +8,21 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\ValidationError;
 
 /**
- * อ่านและแก้ค่าตั้ง SSH — PROMPT.md
+ * Reads and edits SSH configuration — PROMPT.md
  *
- * แก้ได้เฉพาะ 5 คีย์ที่ระบุไว้ และค่าที่ใส่ได้เป็น enum หรือหมายเลขพอร์ตเท่านั้น
- * ไม่เปิดให้แก้ไฟล์ทั้งไฟล์ เพราะ sshd_config ที่ผิดทำให้เข้าเครื่องไม่ได้อีกเลย
+ * Only the 5 keys listed here can be edited, and only to an enum value or a
+ * port number — never the whole file, since a broken sshd_config locks
+ * everyone out of the machine for good.
  *
- * ทุกการแก้ไขต้องผ่าน RollbackGuard — นี่คือค่าที่เปลี่ยนแล้วตัดการเชื่อมต่อ
- * ของคนที่กำลังแก้ได้ทันที (ARCHITECTURE §5.4)
+ * Every edit has to go through RollbackGuard — this is a value that, once
+ * changed, can instantly cut off the connection of the very person editing
+ * it (ARCHITECTURE §5.4).
  */
 final class SshManager
 {
     public const CONFIG = '/etc/ssh/sshd_config';
 
-    /** คีย์ที่แก้ได้ พร้อมค่าที่ยอมรับ */
+    /** The editable keys, with their accepted values */
     private const EDITABLE = [
         'Port' => 'port',
         'PermitRootLogin' => ['yes', 'no', 'prohibit-password', 'forced-commands-only'],
@@ -29,7 +31,7 @@ final class SshManager
         'PermitEmptyPasswords' => ['yes', 'no'],
     ];
 
-    /** ค่าเริ่มต้นของ OpenSSH เมื่อไม่ได้ระบุในไฟล์ */
+    /** OpenSSH's own defaults when a key isn't specified in the file */
     private const DEFAULTS = [
         'Port' => '22',
         'PermitRootLogin' => 'prohibit-password',
@@ -47,16 +49,16 @@ final class SshManager
     public static function label(string $key): string
     {
         return match ($key) {
-            'Port' => 'พอร์ต SSH',
-            'PermitRootLogin' => 'อนุญาตให้ root เข้าสู่ระบบ',
-            'PasswordAuthentication' => 'เข้าสู่ระบบด้วยรหัสผ่าน',
-            'PubkeyAuthentication' => 'เข้าสู่ระบบด้วยกุญแจ',
-            'PermitEmptyPasswords' => 'อนุญาตรหัสผ่านว่าง',
+            'Port' => 'SSH port',
+            'PermitRootLogin' => 'Permit root login',
+            'PasswordAuthentication' => 'Password login',
+            'PubkeyAuthentication' => 'Key-based login',
+            'PermitEmptyPasswords' => 'Permit empty passwords',
             default => $key,
         };
     }
 
-    /** @return list<string>|null ค่าที่เลือกได้ — null = เป็นหมายเลขพอร์ต */
+    /** @return list<string>|null the selectable values — null = it's a port number */
     public static function choices(string $key): ?array
     {
         $spec = self::EDITABLE[$key] ?? null;
@@ -67,21 +69,21 @@ final class SshManager
     public static function assertValue(string $key, string $value): string
     {
         if (!isset(self::EDITABLE[$key])) {
-            throw new ValidationError("แก้ค่า {$key} ผ่านระบบนี้ไม่ได้");
+            throw new ValidationError("{$key} cannot be changed through this system");
         }
 
         $spec = self::EDITABLE[$key];
 
         if ($spec === 'port') {
             if (preg_match('/^\d{1,5}$/', $value) !== 1 || (int) $value < 1 || (int) $value > 65535) {
-                throw new ValidationError('หมายเลขพอร์ตต้องอยู่ระหว่าง 1 ถึง 65535');
+                throw new ValidationError('Port number must be between 1 and 65535');
             }
 
             return $value;
         }
 
         if (!in_array($value, $spec, true)) {
-            throw new ValidationError("ค่าของ {$key} ต้องเป็นหนึ่งใน: " . implode(', ', $spec));
+            throw new ValidationError("The value of {$key} must be one of: " . implode(', ', $spec));
         }
 
         return $value;
@@ -93,7 +95,7 @@ final class SshManager
     }
 
     /**
-     * อ่านค่าปัจจุบัน — คีย์ที่ไม่มีในไฟล์ใช้ค่าเริ่มต้นของ OpenSSH
+     * Reads the current values — a key missing from the file falls back to OpenSSH's own default
      *
      * @return array<string,array{value:string,explicit:bool}>
      */
@@ -117,9 +119,9 @@ final class SshManager
             }
 
             foreach (self::DEFAULTS as $key => $ignored) {
-                // เทียบแบบไม่สนตัวพิมพ์เพราะ sshd ก็ไม่สน
+                // Compared case-insensitively, since sshd itself doesn't care about case
                 if (preg_match('/^' . preg_quote($key, '/') . '\s+(\S+)/i', $line, $m) === 1) {
-                    // บรรทัดแรกที่พบชนะ — sshd ใช้ค่าแรกเช่นกัน
+                    // The first line found wins — sshd itself also uses the first value
                     if (!$values[$key]['explicit']) {
                         $values[$key] = ['value' => $m[1], 'explicit' => true];
                     }
@@ -131,7 +133,7 @@ final class SshManager
     }
 
     /**
-     * เขียนค่าใหม่ลงไฟล์ คืนเนื้อหาเดิมไว้ให้ผู้เรียกเก็บสำหรับการคืนค่า
+     * Writes the new values to the file, returning the original content for the caller to keep for restoring
      *
      * @param array<string,string> $changes
      * @return array{original:string,updated:string}
@@ -141,7 +143,7 @@ final class SshManager
         $path = $executor->path(self::CONFIG);
 
         if (!$executor->exists($path)) {
-            throw new ValidationError('ไม่พบไฟล์ตั้งค่า SSH บนเครื่องนี้');
+            throw new ValidationError('The SSH config file was not found on this machine');
         }
 
         $original = $executor->readFile($path);
@@ -159,7 +161,7 @@ final class SshManager
     }
 
     /**
-     * แทนที่ directive — คอมเมนต์บรรทัดเดิมไว้แทนการลบ เพื่อให้ตามรอยได้ว่าเคยตั้งอะไรไว้
+     * Replaces a directive — the original line is commented out rather than deleted, so what used to be set stays traceable
      *
      * @param list<string> $lines
      * @return list<string>
@@ -172,12 +174,12 @@ final class SshManager
         foreach ($lines as $line) {
             if (preg_match('/^\s*' . preg_quote($key, '/') . '\s+\S+/i', $line) === 1) {
                 if (!$written) {
-                    $out[] = '# ' . trim($line) . '   # แก้โดย PHP Server Control Panel ' . date('Y-m-d H:i');
+                    $out[] = '# ' . trim($line) . '   # edited by PHP Server Control Panel ' . date('Y-m-d H:i');
                     $out[] = $key . ' ' . $value;
                     $written = true;
                 } else {
-                    // บรรทัดซ้ำที่เหลือถูกคอมเมนต์ทิ้ง ไม่อย่างนั้นค่าจะขัดกันเอง
-                    $out[] = '# ' . trim($line) . '   # ซ้ำ ปิดโดย Control Panel';
+                    // Any remaining duplicate line is commented out, or the values would conflict with each other
+                    $out[] = '# ' . trim($line) . '   # duplicate, disabled by Control Panel';
                 }
 
                 continue;
@@ -188,7 +190,7 @@ final class SshManager
 
         if (!$written) {
             $out[] = '';
-            $out[] = '# เพิ่มโดย PHP Server Control Panel ' . date('Y-m-d H:i');
+            $out[] = '# added by PHP Server Control Panel ' . date('Y-m-d H:i');
             $out[] = $key . ' ' . $value;
         }
 
@@ -196,7 +198,7 @@ final class SshManager
     }
 
     /**
-     * ตรวจไฟล์ด้วย sshd เอง ก่อนสั่ง reload
+     * Validates the file with sshd itself before a reload is triggered
      *
      * @return array{0:bool,1:string}
      */
@@ -205,11 +207,12 @@ final class SshManager
         $binary = '/usr/sbin/sshd';
 
         if (!$executor->exists($binary)) {
-            return [true, 'ข้ามการตรวจ: ไม่พบ sshd บนเครื่องนี้'];
+            return [true, 'Skipped validation: sshd was not found on this machine'];
         }
 
-        // /run/sshd ต้องมีก่อน ไม่งั้น `sshd -t` ล้มด้วย "Missing privilege separation
-        // directory" ทั้งที่ไฟล์ตั้งค่าไม่มีอะไรผิด — เหตุผลเต็มอยู่ที่
+        // /run/sshd has to exist first, or `sshd -t` fails with "Missing
+        // privilege separation directory" even though nothing is wrong with
+        // the config file — full reasoning lives at
         // {@see \Phpcp\Driver\Ssh\SftpAccessManager::ensureRuntimeDir()}
         $executor->exec([$executor->path('/usr/bin/mkdir'), '-m', '0755', '-p', '/run/sshd'], timeout: 10);
 

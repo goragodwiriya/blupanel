@@ -8,102 +8,110 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Domain\Site;
 
 /**
- * ชั้นนามธรรมของเว็บเซิร์ฟเวอร์ — ARCHITECTURE §10
+ * The web server abstraction layer — ARCHITECTURE §10
  *
- * v1 ส่ง ApacheDriver (ตรงกับเครื่องเป้าหมาย) ส่วน NginxDriver อยู่ในเฟส 5
- * ทั้งสองใช้ PHP-FPM ผ่าน unix socket เหมือนกัน ตรรกะการสลับเวอร์ชัน PHP
- * จึงใช้ร่วมกันได้ทั้งหมดโดยไม่ต้องเขียนซ้ำ
+ * v1 ships ApacheDriver (matches the target machine), with NginxDriver
+ * arriving in phase 5 · both use PHP-FPM through a unix socket the same
+ * way, so the PHP-version-switching logic can be fully shared between them without duplication.
  */
 interface WebServerDriver
 {
     public function name(): string;
 
-    /** ชื่อ systemd unit ของเว็บเซิร์ฟเวอร์นี้ */
+    /** This web server's systemd unit name */
     public function unit(): string;
 
-    /** ผู้ใช้ระบบที่เว็บเซิร์ฟเวอร์รันอยู่ — ใช้ตั้งเจ้าของ socket ของ FPM */
+    /** The system user the web server runs as — used to set the FPM socket's owner */
     public function runAsUser(): string;
 
     /**
-     * กลุ่มของกระบวนการเว็บเซิร์ฟเวอร์
+     * The web server process's group
      *
-     * ไฟล์ของเว็บไซต์ถูกตั้งเป็น <ผู้ใช้เว็บไซต์>:<กลุ่มนี้> เพื่อให้เว็บเซิร์ฟเวอร์
-     * อ่านและเดินผ่านไดเรกทอรีได้ ขณะที่ผู้ใช้ของเว็บไซต์อื่นยังเข้าไม่ได้
+     * A website's files are set to <website's user>:<this group>, so the
+     * web server can read and traverse the directory while other websites'
+     * users still can't get in.
      */
     public function runAsGroup(): string;
 
     /**
-     * สร้างเนื้อหาไฟล์ vhost จากเทมเพลต ไม่เขียนลงดิสก์
+     * Builds a vhost file's content from a template, without writing it to disk
      *
-     * ต้องรับ Executor เพราะ "เส้นทางที่อยู่ข้างในไฟล์ config" ก็ต้องถูกแมปตามโหมด
-     * เหมือนกับเส้นทางของตัวไฟล์เอง ไม่อย่างนั้นในโหมด sandbox จะได้ vhost ที่ชี้ไปยัง
-     * /srv/phpcp/... ของจริงซึ่งไม่มีอยู่ แล้ว configtest จะล้มทั้งที่ไฟล์ถูกต้อง
+     * Takes an `Executor` because "a path that appears inside the config
+     * file's own content" also has to be mapped to match the current mode,
+     * exactly like the file's own path — otherwise in sandbox mode this
+     * would produce a vhost pointing at the real `/srv/phpcp/...`, which
+     * doesn't exist there, and configtest would fail even though the file is correct.
      */
     public function renderVhost(Site $site, Executor $executor): string;
 
     /**
-     * เส้นทางไฟล์ vhost หลักของเว็บไซต์นี้ (เส้นทางแบบระบบจริง ยังไม่ผ่านการแมป)
+     * This website's primary vhost file path (a real-system path, not yet mapped)
      *
-     * "หลัก" = ไฟล์ของเซิร์ฟเวอร์ที่รับคำขอจากอินเทอร์เน็ตจริง — ใช้แสดงให้ผู้ดูแลเห็น
-     * ว่าเว็บนี้ถูกตั้งค่าไว้ที่ไหน · โหมดที่มีหลายชั้นมีไฟล์มากกว่านี้ ดู vhostFiles()
+     * "Primary" = the file belonging to the server that genuinely receives
+     * requests from the internet — used to show an admin where this site is
+     * configured · a mode with multiple layers has more files than this — see vhostFiles().
      */
     public function vhostPath(Site $site): string;
 
     /**
-     * ไฟล์ตั้งค่าทั้งหมดของเว็บไซต์นี้ — เส้นทาง => เนื้อหา
+     * Every config file belonging to this website — path => content
      *
-     * มีเมธอดนี้เพราะโหมด nginx-proxy เขียน **สองไฟล์ต่อหนึ่งเว็บ** (nginx ชั้นหน้า
-     * กับ Apache ชั้นหลัง) การเขียน/ลบต้องทำครบทั้งคู่ในทรานแซกชันเดียวกันเสมอ
-     * ไม่งั้นจะเหลือ vhost กำพร้าที่ชี้ไปยัง backend ที่ไม่มีอยู่ แล้วทุกคำขอได้ 502
+     * This method exists because nginx-proxy mode writes **two files per
+     * site** (nginx in front, Apache behind) — writing/deleting must always
+     * cover both together in the same transaction, or an orphaned vhost is
+     * left pointing at a backend that no longer exists, and every request gets a 502.
      *
-     * ไดรเวอร์ชั้นเดียวคืนรายการเดียวคือ [vhostPath() => renderVhost()]
+     * A single-layer driver returns just one entry: [vhostPath() => renderVhost()]
      *
      * @return array<string,string>
      */
     public function vhostFiles(Site $site, Executor $executor): array;
 
     /**
-     * ไฟล์ระดับเครื่องของโหมดนี้ — ไม่ใช่ของเว็บใดเว็บหนึ่ง
+     * This mode's machine-level files — not belonging to any one website
      *
-     * เขียนใหม่ทุกครั้งที่สร้างไฟล์ตั้งค่า เพราะแต่ละโหมดเขียนทับไฟล์ของอีกโหมด
-     * (เห็นชัดที่สุดคือ `ports.conf` ของ Apache ที่โหมด nginx-proxy ย้ายไป 8080)
-     * ถ้าโหมดใดไม่เขียนคืนของตัวเอง การสลับกลับมาจะได้เครื่องที่ค้างครึ่งทาง
+     * Rewritten every time config files are generated, because each mode
+     * overwrites the other mode's files (the clearest example is Apache's
+     * `ports.conf`, which nginx-proxy mode moves to 8080) — if a mode never
+     * wrote its own files back, switching back to it would leave the
+     * machine stuck halfway between modes.
      *
-     * แยกจาก vhostPaths() โดยตั้งใจ — ลบเว็บหนึ่งเว็บต้องไม่ลบไฟล์ที่ทั้งเครื่องใช้ร่วมกัน
+     * Deliberately kept separate from vhostPaths() — deleting one website must never delete a file the whole machine shares.
      *
-     * @return array<string,string> เส้นทาง => เนื้อหา
+     * @return array<string,string> path => content
      */
     public function globalFiles(Executor $executor): array;
 
     /**
-     * เส้นทางไฟล์ทั้งหมดของเว็บไซต์นี้ — ใช้ตอนลบ
+     * Every file path belonging to this website — used when deleting
      *
-     * แยกจาก vhostFiles() เพราะการลบไม่ควรต้องเรนเดอร์เนื้อหาก่อน · เว็บที่กำลังจะถูกลบ
-     * อาจเรนเดอร์ไม่ผ่านอยู่แล้ว (เช่นใบรับรองถูกลบไปก่อน) แล้วจะกลายเป็นลบไม่ได้เลย
+     * Kept separate from vhostFiles() because deletion shouldn't have to
+     * render content first · a site about to be deleted might already fail
+     * to render (e.g. its certificate was already removed), which would make it impossible to ever delete at all.
      *
      * @return list<string>
      */
     public function vhostPaths(Site $site): array;
 
     /**
-     * ตรวจความถูกต้องของ config ทั้งหมด
+     * Validates the whole config's correctness
      *
-     * @return array{0:bool,1:string} [ผ่านหรือไม่, ข้อความจากเครื่องมือตรวจ]
+     * @return array{0:bool,1:string} [did it pass, the validation tool's own output]
      */
     public function testConfig(Executor $executor): array;
 
-    /** สั่งให้เว็บเซิร์ฟเวอร์โหลด config ใหม่โดยไม่ตัดการเชื่อมต่อที่ค้างอยู่ */
+    /** Tells the web server to reload its config without cutting off connections already in progress */
     public function reload(Executor $executor): void;
 
     public function isInstalled(Executor $executor): bool;
 
     /**
-     * เปิดโมดูล/ส่วนขยายที่ไฟล์ config ซึ่งระบบสร้างขึ้นจำเป็นต้องใช้
+     * Turns on any module/extension the system's generated config files require
      *
-     * อยู่ใน interface เพราะเว็บเซิร์ฟเวอร์แต่ละตัวมีข้อกำหนดต่างกัน —
-     * nginx ไม่มีระบบโมดูลแบบเปิด/ปิดตอนรัน จึงคืน [] ไปได้เลย
+     * Lives in the interface because each web server has different
+     * requirements — nginx has no runtime enable/disable module system, so it can simply return [].
      *
-     * @return list<string> ชื่อโมดูลที่เพิ่งถูกเปิดในรอบนี้
+     * @return list<string> the names of modules just turned on in this pass
      */
     public function ensureModules(Executor $executor, bool $withSsl = false): array;
 }
