@@ -11,21 +11,23 @@ use Phpcp\Driver\Php\FpmManager;
 use Phpcp\Driver\WebServer\WebServerDriver;
 
 /**
- * งานฝั่งระบบปฏิบัติการทั้งหมดของเว็บไซต์หนึ่งเว็บ — ARCHITECTURE §11
+ * Every operating-system-side task for a single website — ARCHITECTURE §11
  *
- * รวมไว้ที่นี่เพราะทุก capability ที่แตะเว็บไซต์ (สร้าง ลบ ระงับ เปลี่ยนเวอร์ชัน PHP)
- * ต้องทำขั้นตอนชุดเดียวกันและต้องย้อนกลับได้เหมือนกัน ถ้ากระจายไปอยู่ในแต่ละ capability
- * จะเกิดกรณีที่บางเส้นทางลืม rollback แล้วทิ้ง config ค้างไว้จนเว็บทั้งเครื่องพัง
+ * Kept together here because every capability that touches a website
+ * (create, delete, suspend, change PHP version) has to run the same set of
+ * steps and must be able to revert the same way · scattering this across
+ * each capability would mean sooner or later some path forgets to roll
+ * back and leaves a stray config that breaks every site on the machine.
  */
 final class SiteProvisioner
 {
-    /** ผลการหยั่ง filesystem ต่อหนึ่งเส้นทาง — การหยั่งต้องสร้างไฟล์จริง จึงทำซ้ำทุกเว็บไม่ไหว */
+    /** The filesystem probe's result, per path — probing means genuinely creating a file, too costly to repeat for every site */
     private array $ownershipProbe = [];
 
     public function __construct(
         private readonly WebServerDriver $webserver,
         private readonly FpmManager $fpm,
-        /** ดู Config::sharedOwner() — true เมื่อ filesystem เก็บเจ้าของไฟล์ไม่ได้ */
+        /** See Config::sharedOwner() — true when the filesystem can't retain file ownership */
         private readonly bool $sharedOwner = false,
     ) {
     }
@@ -44,7 +46,7 @@ final class SiteProvisioner
     }
 
     /**
-     * บัญชีระบบของผู้ใช้ — งานนี้ย้ายไป AccountProvisioner ตั้งแต่ migration 0006
+     * The user's system account — this task moved to AccountProvisioner since migration 0006
      *
      * @return array{uid:int,gid:int}
      */
@@ -60,14 +62,15 @@ final class SiteProvisioner
     }
 
     /**
-     * สร้างโครงสร้างไดเรกทอรีของเว็บไซต์พร้อมสิทธิ์ที่ถูกต้อง
+     * Creates a website's directory structure with the correct permissions
      *
-     * บ้านของผู้ใช้ต้องถูกสร้างโดย AccountProvisioner มาก่อนแล้ว — ที่นี่ดูแลเฉพาะ
-     * โฟลเดอร์ของเว็บหนึ่งแห่งใต้ `<บ้าน>/domains/`
+     * The user's home must already have been created by AccountProvisioner
+     * — this only handles a single site's own folder under `<home>/domains/`.
      *
-     * สิทธิ์ 750 คือสิ่งที่กันไม่ให้**ลูกค้าต่างราย**อ่านไฟล์กันได้ (SECURITY §2.6)
-     * เว็บเซิร์ฟเวอร์เข้าถึงได้เพราะอยู่ในกลุ่มเดียวกัน · เว็บของลูกค้าคนเดียวกัน
-     * อ่านกันได้โดยตั้งใจ เพราะเป็นทรัพย์สินของคนเดียวกันและใช้ uid เดียวกัน
+     * 750 permissions are what stops **a different customer** from reading
+     * these files (SECURITY §2.6) — the web server can get in because it
+     * shares the same group · sites belonging to the same customer can read
+     * each other's files deliberately, since they're the same person's own property and share the same uid.
      */
     public function createDirectories(Executor $executor, Site $site): void
     {
@@ -77,10 +80,10 @@ final class SiteProvisioner
             $executor->makeDirectory($executor->path($dir), 0750);
         }
 
-        // Domain Pointer — docroot ชี้ไปที่โฟลเดอร์ที่มีโค้ดอยู่ก่อนแล้ว
-        // ห้ามโยนไฟล์ต้อนรับลงไป — โค้ดของผู้ใช้สำคัญกว่าหน้าต้อนรับของเรา
+        // Domain Pointer — the docroot points at a folder that already has code in it
+        // A welcome file must never be dropped in here — the user's own code matters more than our welcome page
         if ($site->docrootOverride === '') {
-            // ไฟล์ตั้งต้นให้เปิดเว็บแล้วเห็นว่าใช้งานได้จริง ไม่ใช่หน้า 403 ของ Apache
+            // A starter file, so opening the site shows it genuinely works, instead of Apache's own 403 page
             $index = $executor->path($site->docroot().'/index.php');
             if (!$executor->exists($index)) {
                 $executor->writeFile($index, $this->welcomePage($site), 0640);
@@ -96,27 +99,31 @@ final class SiteProvisioner
     }
 
     /**
-     * เจ้าของไฟล์คือผู้ใช้ของเว็บไซต์ แต่กลุ่มคือกลุ่มของเว็บเซิร์ฟเวอร์
+     * A file's owner is the website's own user, but the group is the web server's own group
      *
-     * เคยตั้งเป็น <ผู้ใช้>:<ผู้ใช้> ซึ่งดูปลอดภัยกว่า แต่ทำให้ Apache เดินผ่าน
-     * ไดเรกทอรีของเว็บไซต์ไม่ได้เลย (mode 0750) ผลคือไฟล์สแตติกทุกไฟล์ตอบ 403
-     * รวมถึงไฟล์ตรวจสอบของ Let's Encrypt ซึ่งทำให้ต่ออายุใบรับรองไม่ได้ด้วย
+     * This used to be set to <user>:<user>, which looked safer, but left
+     * Apache unable to traverse the website's directory at all (mode
+     * 0750), so every static file answered 403 — including Let's Encrypt's
+     * validation file, which also broke certificate renewal.
      *
-     * รูปแบบนี้ยังกันเว็บไซต์อ่านไฟล์ข้ามกันได้เหมือนเดิม เพราะ PHP-FPM ของแต่ละเว็บ
-     * รันด้วย uid ของตัวเอง ไม่ใช่ www-data และมี open_basedir กำกับอีกชั้น —
-     * สิ่งที่ www-data อ่านได้คือไฟล์สแตติก ซึ่งเป็นงานที่มันต้องทำอยู่แล้ว
+     * This shape still stops sites from reading each other's files, since
+     * each site's own PHP-FPM runs as its own uid, not www-data, with
+     * open_basedir on top as another layer — all www-data can read is
+     * static files, which is exactly the job it has to do anyway.
      *
-     * ข้อยกเว้นเดียว: filesystem ที่เก็บ uid/gid ไม่ได้ (NTFS/exFAT/FAT) — ดู
-     * assertOwnershipUnsupported() และ SECURITY §2.6
+     * The one exception: a filesystem that can't retain uid/gid at all
+     * (NTFS/exFAT/FAT) — see assertOwnershipUnsupported() and SECURITY §2.6.
      */
 
     /**
-     * ทุกไดเรกทอรีที่เว็บนี้เป็นเจ้าของ — ใช้ร่วมกันระหว่างตอน provision และตอนซ่อมเจ้าของ
+     * Every directory this site owns — shared between provisioning and fixing ownership
      *
-     * **ต้องเป็นชุดเดียวกันทั้งสองที่** · ตอนสร้างเว็บเราตั้งเจ้าของครบทุกไดเรกทอรี
-     * แต่ `site.reset_owner` เคย chown แค่ `root()` ตัวเดียว ซึ่งในเลย์เอาต์ cpanel คือ
-     * `.phpcp/<โดเมน>` — ไม่แตะ `public_html` ที่เป็นที่ที่ปัญหาเจ้าของไฟล์เกิดขึ้นจริง
-     * ปุ่มซ่อมจึงรายงานว่าสำเร็จโดยที่เว็บยังพังเหมือนเดิม
+     * **Must stay the same set in both places** · when a site is created,
+     * ownership is set on every directory, but `site.reset_owner` used to
+     * chown just `root()` alone, which in the cpanel layout is
+     * `.phpcp/<domain>` — never touching `public_html`, the place where the
+     * ownership problem genuinely happens — so the reset button reported
+     * success while the site stayed just as broken.
      *
      * @return list<string>
      */
@@ -126,16 +133,18 @@ final class SiteProvisioner
         $targets = [$root];
 
         /*
-         * ไดเรกทอรีของเว็บที่อยู่**นอก** root() ต้อง chown แยกอีกที
+         * A site directory living **outside** root() needs its own separate chown
          *
-         * เลย์เอาต์ phpcp เก็บทุกอย่างไว้ใต้กล่องเดียวกัน (`<บ้าน>/domains/<โดเมน>/`)
-         * `chown -R` ที่นั่นครอบทั้ง docroot, log และ backup ในคำสั่งเดียว — วนลูปนี้
-         * จึงไม่เพิ่มอะไรเลย พฤติกรรมเดิมไม่ขยับแม้แต่คำสั่งเดียว
+         * The phpcp layout keeps everything under one folder
+         * (`<home>/domains/<domain>/`) — a single `chown -R` there already
+         * covers docroot, logs, and backups all at once, so this loop adds
+         * nothing at all — the existing behavior doesn't shift by a single command.
          *
-         * **เลย์เอาต์ cpanel ไม่เป็นแบบนั้น**: docroot อยู่ที่ `<บ้าน>/public_html`
-         * และ log อยู่ที่ `<บ้าน>/logs/<โดเมน>` ซึ่งไม่ได้อยู่ใต้ root() เลย · ถ้าไม่เก็บ
-         * เพิ่ม ไฟล์เว็บจะยังเป็นของ root แล้วลูกค้าอัปโหลดอะไรไม่ได้ผ่าน SFTP
-         * ทั้งที่หน้าจอบอกว่าสร้างเว็บสำเร็จทุกขั้นตอน
+         * **The cpanel layout is nothing like that**: docroot lives at
+         * `<home>/public_html` and logs live at `<home>/logs/<domain>`,
+         * neither of which sits under root() at all · without collecting
+         * these separately, a site's files would stay owned by root, and a
+         * customer couldn't upload anything via SFTP even though the screen said every step of site creation succeeded.
          */
         $layoutDirs = $site->owner->layout()->requiredDirectories(
             $site->owner->home(),
@@ -151,7 +160,7 @@ final class SiteProvisioner
             }
         }
 
-        // docroot ที่ชี้ออกนอกบ้านต้อง chown แยกต่างหาก — chown -R ที่บ้านไปไม่ถึง
+        // A docroot pointing outside the home needs its own separate chown — chown -R at the home never reaches it
         if ($site->docrootOverride !== '') {
             $targets[] = $site->docrootOverride;
         }
@@ -164,7 +173,7 @@ final class SiteProvisioner
     public function setOwnership(Executor $executor, Site $site): void
     {
         if ($this->sharedOwner) {
-            // fail-closed — ยอมข้าม chown ได้ก็ต่อเมื่อพิสูจน์ได้ว่า filesystem ทำไม่ได้จริง
+            // fail-closed — skipping chown is allowed only once it's proven the filesystem genuinely can't do it
             $this->assertOwnershipUnsupported($executor, $site);
 
             return;
@@ -185,16 +194,18 @@ final class SiteProvisioner
     }
 
     /**
-     * พิสูจน์ว่า filesystem ที่เก็บเว็บไซต์ "เก็บเจ้าของไฟล์ไม่ได้จริง" ก่อนข้าม chown
+     * Proves the filesystem holding the website "genuinely can't retain file ownership" before chown is skipped
      *
-     * นี่คือหัวใจของโหมด shared_owner ทั้งหมด — จงอย่าเปลี่ยนเป็นการ
-     * "ลอง chown ถ้าล้มก็ข้าม" เด็ดขาด เพราะบนเซิร์ฟเวอร์จริง chown ล้มชั่วคราว
-     * (ดิสก์เต็ม, quota, SELinux) จะกลายเป็นการปิดการแยกสิทธิ์ระหว่างเว็บโดยเงียบ
-     * ซึ่งอันตรายกว่าไม่มีโหมดนี้เลย
+     * This is the entire point of shared_owner mode — never, under any
+     * circumstance, change this to "try chown, skip it if it fails",
+     * because on a real server a temporary chown failure (disk full,
+     * quota, SELinux) would silently turn off the separation between
+     * sites, more dangerous than not having this mode at all.
      *
-     * วิธีตรวจเป็นการทดสอบจริง ไม่ใช่การเดาจากชนิด filesystem — เขียนไฟล์
-     * ทดสอบ chown แล้วอ่านเจ้าของกลับมา ถ้าเจ้าของเปลี่ยนตามแปลว่า filesystem ทำได้
-     * จึงห้ามเปิด shared_owner — ไม่ต้องดูแลรายชื่อ filesystem ที่จะงอกเรื่อย ๆ
+     * The check is a genuine test, never a guess based on filesystem type —
+     * a test file is written, chown'd, and its owner read back · if the
+     * owner genuinely changed, the filesystem can do it, and shared_owner
+     * must not be turned on — no list of filesystem types to keep maintaining forever.
      */
     private function assertOwnershipUnsupported(Executor $executor, Site $site): void
     {
@@ -215,9 +226,9 @@ final class SiteProvisioner
 
             if ($stat !== null && $stat['uid'] === $expected['uid']) {
                 throw new ExecutionFailed(
-                    "เปิด sites.shared_owner ไว้ แต่ {$site->root()} อยู่บน filesystem ที่เก็บเจ้าของไฟล์ได้ตามปกติ\n\n"
-                    ."โหมดนี้มีไว้สำหรับ filesystem ที่เก็บ uid/gid ไม่ได้ (NTFS, exFAT, FAT) เท่านั้น\n"
-                    .'เครื่องนี้แยกสิทธิ์ระหว่างเว็บได้ตามปกติ จึงต้องตั้ง sites.shared_owner เป็น false',
+                    "sites.shared_owner is turned on, but {$site->root()} sits on a filesystem that can retain file ownership normally\n\n"
+                    ."This mode exists only for a filesystem that can't retain uid/gid (NTFS, exFAT, FAT)\n"
+                    .'This machine can separate permissions between sites normally, so sites.shared_owner must be set to false',
                 );
             }
         } finally {
@@ -228,10 +239,10 @@ final class SiteProvisioner
     }
 
     /**
-     * เขียนไฟล์ config ทั้งชุดของเว็บไซต์ลงทรานแซกชัน (ยังไม่ commit)
+     * Writes a website's entire set of config files into a transaction (not yet committed)
      */
     /**
-     * @param list<string> $poolExtraPaths Domain Pointer ของทุกเว็บที่ใช้ pool เดียวกันนี้
+     * @param list<string> $poolExtraPaths the Domain Pointer of every site sharing this same pool
      */
     public function stageConfigs(
         ConfigTransaction $tx,
@@ -239,8 +250,9 @@ final class SiteProvisioner
         Executor $executor,
         array $poolExtraPaths = [],
     ): void {
-        // ต้องมาก่อนการเขียนไฟล์ ไม่ใช่หลัง — configtest ที่ตามมาจะล้มทันที
-        // ถ้าโมดูลที่ directive ใน vhost ต้องใช้ยังไม่ถูกเปิด
+        // Must come before writing files, never after — the configtest
+        // that follows would fail immediately if a module the vhost's own
+        // directives need isn't turned on yet
         $this->webserver->ensureModules($executor, $site->usesSsl());
 
         $tx->write(
@@ -253,11 +265,13 @@ final class SiteProvisioner
     }
 
     /**
-     * เขียนไฟล์ตั้งค่าของเว็บไซต์ลงทรานแซกชัน — ทุกไฟล์ที่เว็บนี้ต้องมี
+     * Writes a website's config files into a transaction — every file this site needs to have
      *
-     * แยกเป็นเมธอดเพราะมีผู้เรียกหกที่ (สร้างเว็บ · เพิ่ม/ลบ/ตั้งโดเมน · พัก/เปิดใช้งาน)
-     * และตั้งแต่มีโหมด nginx-proxy จำนวนไฟล์ต่อเว็บไม่ใช่หนึ่งเสมอไปอีกแล้ว
-     * ถ้าปล่อยให้แต่ละที่วนเอง วันหนึ่งจะมีที่ที่ลืมเขียนไฟล์ชั้นหลัง
+     * Kept as its own method because there are six callers (creating a
+     * site · adding/removing/setting domains · suspending/resuming), and
+     * since nginx-proxy mode arrived, the file count per site is no longer
+     * always one · leaving each caller to loop on its own would mean
+     * sooner or later one of them forgets to write the backend layer's file.
      */
     public function stageVhost(ConfigTransaction $tx, Site $site, Executor $executor): void
     {
@@ -267,10 +281,10 @@ final class SiteProvisioner
     }
 
     /**
-     * ตรวจ config ทั้งเว็บเซิร์ฟเวอร์และ FPM แล้วค่อย reload
+     * Validates both the web server's and FPM's config, then reloads
      *
-     * ตรวจก่อน reload เสมอ — นี่คือขั้นตอนที่กันไม่ให้ vhost ที่ผิด
-     * ทำให้เว็บทุกเว็บบนเครื่องดับพร้อมกัน (ARCHITECTURE §10)
+     * Always validated before reloading — this is the step that stops a
+     * bad vhost from taking down every site on the machine at once (ARCHITECTURE §10).
      *
      * @return array{0:bool,1:string}
      */
@@ -278,23 +292,23 @@ final class SiteProvisioner
     {
         [$fpmOk, $fpmOut] = $this->fpm->testConfig($executor, $site->phpVersion);
         if (!$fpmOk) {
-            return [false, "การตั้งค่า PHP-FPM {$site->phpVersion} ไม่ผ่าน:\n".$fpmOut];
+            return [false, "PHP-FPM {$site->phpVersion} configuration failed validation:\n".$fpmOut];
         }
 
         [$webOk, $webOut] = $this->webserver->testConfig($executor);
         if (!$webOk) {
-            return [false, "การตั้งค่าเว็บเซิร์ฟเวอร์ไม่ผ่าน:\n".$webOut];
+            return [false, "Web server configuration failed validation:\n".$webOut];
         }
 
         return [true, trim($webOut)];
     }
 
-    /** โหลดค่าตั้งใหม่ทั้งสองบริการหลังจากตรวจผ่านแล้ว */
+    /** Reloads both services after validation has passed */
     public function reload(Executor $executor, Site $site, ?string $alsoPhpVersion = null): void
     {
         $this->fpm->reload($executor, $site->phpVersion);
 
-        // ตอนเปลี่ยนเวอร์ชัน PHP ต้อง reload เวอร์ชันเดิมด้วยเพื่อให้ pool เก่าหายไป
+        // When changing PHP version, the old version must also be reloaded so its old pool goes away
         if ($alsoPhpVersion !== null && $alsoPhpVersion !== $site->phpVersion) {
             $this->fpm->reload($executor, $alsoPhpVersion);
         }
@@ -303,14 +317,16 @@ final class SiteProvisioner
     }
 
     /**
-     * ลบไฟล์ config ของเว็บไซต์ (ใช้ตอนลบเว็บไซต์)
+     * Deletes a website's config files (used when a site is deleted)
      *
-     * **pool ใช้ร่วมกับเว็บอื่นของเจ้าของคนเดียวกัน** ตั้งแต่ migration 0006 จึงลบได้
-     * เฉพาะเวอร์ชันที่เจ้าของไม่ได้ใช้แล้วจริง ๆ · ถ้าลบทุกเวอร์ชันแบบเดิม การลบเว็บ
-     * หนึ่งเว็บจะทำให้เว็บพี่น้องของลูกค้าคนเดียวกันดับทันทีทั้งหมด
+     * **A pool is shared with the same owner's other sites** since
+     * migration 0006, so only a version the owner genuinely isn't using
+     * anymore can be deleted · deleting every version the old way would
+     * mean deleting one site instantly takes down every sibling site
+     * belonging to that same customer.
      *
-     * @param list<string> $allPhpVersions เวอร์ชันทั้งหมดที่ระบบรู้จัก
-     * @param list<string> $versionsStillUsed เวอร์ชันที่เจ้าของยังใช้อยู่หลังลบเว็บนี้แล้ว
+     * @param list<string> $allPhpVersions every version the system knows about
+     * @param list<string> $versionsStillUsed versions the owner still uses after this site is deleted
      */
     public function stageRemoval(
         ConfigTransaction $tx,
@@ -322,7 +338,7 @@ final class SiteProvisioner
             $tx->delete($path);
         }
 
-        // ลบ pool ของทุกเวอร์ชันที่ไม่ได้ใช้แล้ว เผื่อเคยสลับเวอร์ชันจนมีไฟล์ค้าง
+        // Deletes the pool of every version no longer in use, in case a past version switch left a stray file behind
         foreach ($allPhpVersions as $version) {
             if (in_array($version, $versionsStillUsed, true)) {
                 continue;
@@ -334,6 +350,12 @@ final class SiteProvisioner
 
     /**
      * @param Site $site
+     *
+     * NOTE: this generated page's Thai text is deliberately kept — it is
+     * content shown to a hosted site's own end visitors (product content
+     * for this panel's Thai hosting market), not panel UI or a code
+     * comment, so it falls outside this sweep's "English code and
+     * comments" scope. Same for suspendedPage() below.
      */
     private function welcomePage(Site $site): string
     {
