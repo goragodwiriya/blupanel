@@ -18,28 +18,34 @@ use Phpcp\Security\Permissions;
 use Phpcp\Security\SessionStore;
 
 /**
- * บัญชีผู้ใช้ทั้งหมด — `/api/v2/users`
+ * Every user account — `/api/v2/users`
  *
- * ตั้งแต่ migration 0005 ทรัพยากรนี้ครอบคลุมทั้งผู้ดูแลระบบและลูกค้าโฮสติ้ง เพราะเป็น
- * ตารางเดียวกันแล้ว · เส้นทาง `/api/v2/customers` เดิมถูกยุบมาที่นี่ทั้งหมด
- * ลูกค้าคือผู้ใช้ที่ `role=webadmin` และมีคอลัมน์โควตา/วันหมดอายุของตัวเอง
+ * Since migration 0005, this resource covers both admins and hosting customers,
+ * since they're now the same table · the old `/api/v2/customers` route was folded
+ * into this one entirely. A customer is a user with `role=webadmin` and their own
+ * quota/expiry columns.
  *
- * **ขอบเขตสิทธิ์ — จุดสำคัญที่สุดของไฟล์นี้**
- * การยุบสองทรัพยากรเป็นอันเดียวทำให้เส้นทางที่ sysadmin เคยใช้จัดการลูกค้า กลายเป็น
- * เส้นทางเดียวกับที่ใช้จัดการบัญชี superadmin ได้ ถ้าปล่อยไว้ = ยกระดับสิทธิ์ทันที
- * จึงบังคับสองชั้น:
- *   1. route ต้องมี `customer.manage` (superadmin และ sysadmin มีทั้งคู่)
- *   2. `assertMayManage()` ที่นี่ ต้องมี `user.manage` เพิ่มถ้าเป้าหมายไม่ใช่ webadmin
- *      หรือกำลังจะตั้ง/เปลี่ยนบทบาทเป็นอย่างอื่นที่ไม่ใช่ webadmin
- * และชั้น agent ยังกันซ้ำอีกชั้นด้วย `CustomerCapability::loadHostingAccount()`
+ * **Permission scope — the most important thing in this file**
+ * Folding two resources into one means the route sysadmin used to manage customers
+ * with can now also reach superadmin accounts — left as-is, that's an immediate
+ * privilege escalation. So it's enforced in two layers:
+ *   1. the route requires `customer.manage` (both superadmin and sysadmin have it)
+ *   2. `assertMayManage()` here additionally requires `user.manage` whenever the
+ *      target isn't webadmin, or a role is being set/changed to something other
+ *      than webadmin
+ * and the agent layer guards against it once more, independently, in
+ * `CustomerCapability::loadHostingAccount()`.
  *
- * **ทำไมทรัพยากรนี้ไม่เดินผ่าน agent ทั้งหมด**
- * บัญชีผู้ใช้เป็นสถานะภายในของ panel — ไม่แตะระบบปฏิบัติการ ไม่สร้าง system user
- * (การสร้างบัญชี Linux จะเกิดตอนสร้างเว็บแรกในเฟส M3 ไม่ใช่ตอนสร้างผู้ใช้)
- * ส่วนที่มี capability อยู่แล้ว (สร้างบัญชีโฮสติ้ง แก้โควตา มอบเว็บ) ยังต้องเดินผ่าน agent
- * เสมอ เพราะกฎโควตาและ audit ต้องมีที่เดียว — มีเทสต์เฝ้าอยู่ว่าชั้นเว็บไม่เรียก repository เอง
+ * **Why this resource doesn't go through the agent for everything**
+ * A user account is the panel's own internal state — it never touches the OS, never
+ * creates a system user (Linux account creation happens when the first site is
+ * created, in Phase M3, not when the user is created). The parts that already have
+ * a capability (creating a hosting account, editing quotas, assigning sites) still
+ * always go through the agent, because quota rules and audit logging must live in
+ * exactly one place — a test watches for the web tier calling the repository directly.
  *
- * ราคาที่จ่ายคือ **ต้องเขียน audit เองทุกเมธอดที่เปลี่ยนข้อมูล** เพราะไม่มี Dispatcher มาเขียนให้
+ * The price paid for this is that **every method that changes data must write its
+ * own audit entry**, since there's no Dispatcher here to write one automatically.
  */
 final class UsersController extends ApiController
 {
@@ -98,9 +104,11 @@ final class UsersController extends ApiController
         $id = $request->paramInt('id');
 
         if ($id === 0) {
-            // ต้องตอบ 200 เสมอแม้ agent ล่ม — หน้านี้เป็นแค่ค่าเริ่มต้นของฟอร์ม
-            // ไม่ใช่คำสั่งที่ต้องพึ่ง agent จริง ๆ (ดู SystemController::health)
-            // เวอร์ชัน PHP เลือกไม่ได้แค่ช่วงนั้น ไม่ใช่ทั้งหน้าใช้งานไม่ได้
+            // Must always answer 200 even if the agent is down — this page is
+            // only a form's default values, not a command that genuinely
+            // depends on the agent (see SystemController::health). The PHP
+            // version just can't be chosen during that window, not the whole
+            // page being unusable.
             $phpVersions = [];
 
             if ($this->agent()->isAvailable()) {
@@ -124,7 +132,7 @@ final class UsersController extends ApiController
                 return $this->problem(ApiProblem::NotFound, 'User not found');
             }
 
-            // present() ใส่ `sites` ให้เองแล้วสำหรับบัญชีโฮสติ้ง
+            // present() already fills in `sites` for a hosting account
             $body = $this->present($user, $users, new QuotaChecker($users));
         }
 
@@ -132,14 +140,17 @@ final class UsersController extends ApiController
     }
 
     /**
-     * สร้างผู้ใช้ใหม่
+     * Create a new user
      *
-     * บัญชีโฮสติ้ง (webadmin) เดินผ่าน capability `customer.create` เพราะมีกฎโควตาและ
-     * ต้องบันทึก audit ที่ Dispatcher · บัญชีผู้ดูแลสร้างที่ชั้นนี้ตรง ๆ เพราะไม่มีโควตา
-     * และต้องมีสิทธิ์ `user.manage` ซึ่งสูงกว่า
+     * A hosting account (webadmin) goes through the `customer.create` capability,
+     * since it has quota rules and needs an audit entry written by the Dispatcher ·
+     * an admin account is created directly at this layer, since it has no quota and
+     * requires `user.manage`, a higher privilege.
      *
-     * รหัสผ่านสุ่มให้เสมอถ้าไม่ได้ส่งมา และบังคับเปลี่ยนตอนล็อกอินครั้งแรก — ผู้ดูแลไม่ต้อง
-     * คิดรหัสเอง (ซึ่งมักจะได้รหัสที่อ่อน) และรหัสที่ผ่านตาคนกลางแล้วมีอายุสั้นที่สุด
+     * A password is always randomly generated if none was sent, and a change is
+     * forced on first login — the admin never has to think one up themselves
+     * (which usually produces a weak one), and a password that passed through a
+     * middleman's eyes gets the shortest possible lifespan.
      */
     public function store(Request $request): Response
     {
@@ -196,26 +207,31 @@ final class UsersController extends ApiController
 
             $id = (int) $result['id'];
 
-            // สร้างเว็บไซต์แรกให้เลยถ้าระบุโดเมนมาด้วย
+            // Create the first site right away if a domain was given too
             //
-            // บัญชีโฮสติ้งที่ยังไม่มีเว็บสักเว็บใช้ทำอะไรไม่ได้เลย — การบังคับให้ผู้ดูแล
-            // ไปสร้างต่ออีกหน้าหนึ่งคือขั้นตอนที่ลืมได้ และลืมแล้วลูกค้าล็อกอินเข้ามาเจอ
-            // หน้าว่าง · โควตาถูกตรวจโดย capability `site.create` เองอยู่แล้ว
+            // A hosting account with not a single site yet can't do anything at
+            // all — forcing the admin to go create one on a separate page is a
+            // step that's easy to forget, and if it's forgotten, the customer
+            // logs in to an empty page · the quota is already checked by the
+            // `site.create` capability itself.
             $domain = trim($request->payloadString('domain'));
 
             if ($domain !== '') {
-                // **ล้มที่ขั้นนี้ต้องไม่ทำให้ทั้งคำขอกลายเป็นล้มเหลว**
+                // **A failure at this step must not fail the whole request**
                 //
-                // บัญชีถูกสร้างไปแล้วและใช้งานได้จริง · การโยน error ออกไปทำให้ผู้ดูแล
-                // อ่านว่า "สร้างไม่สำเร็จ" แล้วกดซ้ำ ซึ่งจะชนกับชื่อผู้ใช้ที่มีอยู่แล้ว
-                // และไม่มีอะไรบอกว่ารหัสผ่านที่สุ่มให้รอบแรกคืออะไร
+                // The account has already been created and is genuinely usable ·
+                // throwing an error here would make the admin read it as
+                // "creation failed" and try again, which would collide with the
+                // username that already exists, with nothing left to say what
+                // the first randomly generated password even was.
                 //
-                // จึงคืน 201 พร้อมบอกให้ชัดว่าอะไรสำเร็จและอะไรไม่ — ผู้ดูแลไปสร้างเว็บ
-                // ต่อเองได้จากหน้าเว็บไซต์โดยไม่ต้องแตะบัญชีอีก
+                // So this returns 201 with a clear statement of what succeeded
+                // and what didn't — the admin can go create the site themselves
+                // from the sites page without touching the account again.
                 try {
                     $site = $this->agent()->data('site.create', [
                         'domain' => $domain,
-                        // ไม่ระบุมา = ใช้ตัวใหม่ที่สุดที่ระบบรองรับ · `site.create` ตรวจซ้ำอีกชั้น
+                        // Not specified = use the newest version the system supports · `site.create` validates it again anyway
                         'php_version' => $request->payloadString('php_version') ?: ServiceCatalog::PHP_VERSIONS[0],
                         'owner_user_id' => $id
                     ], $this->ctx->actor($request));
@@ -236,10 +252,13 @@ final class UsersController extends ApiController
             $this->audit($request, 'user.create', $username, ['user_id' => $id, 'role' => $role]);
         }
 
-        // รหัสผ่านที่ระบบสุ่มให้อยู่ในคำตอบครั้งเดียว — panel ไม่เก็บไว้ที่ไหนเลย
-        // (ของเดิมส่งผ่าน query string ตอน redirect ซึ่งไปโผล่ใน access log และประวัติเบราว์เซอร์)
-        // คำตอบของ**คำสั่ง** — ไม่มีคีย์ `data` · ค่าที่ผู้เรียกต้องใช้อยู่ระดับบนสุด
-        // (รหัสที่สุ่มให้ไม่มีที่อื่นให้ดูย้อนหลัง จึงต้องอยู่ในคำตอบและในกล่องที่กดปิดเอง)
+        // A system-generated password lives in this one response only — the
+        // panel never stores it anywhere (it used to be passed through a query
+        // string during a redirect, which then ended up in the access log and
+        // the browser's history). The response for a **command** — no `data`
+        // key · values the caller needs sit at the top level (a generated
+        // password has nowhere else to be looked up later, so it must live in
+        // this response and in a dialog the user has to close themselves).
         return $this->done(
             $this->t('Account {user} created', ['user' => $username]),
             $this->createdActions($username, $password, $wasRandom, $createdSite, $siteError),
@@ -252,11 +271,11 @@ final class UsersController extends ApiController
     }
 
     /**
-     * แก้โปรไฟล์ บทบาท สถานะล็อกอิน สถานะบริการ หรือวันหมดอายุ — ส่งเฉพาะที่ต้องการเปลี่ยน
+     * Edit the profile, role, login status, service status, or expiry — send only what needs to change
      *
-     * กฎที่ห้ามละเมิด ตรวจก่อนแตะฐานข้อมูลเสมอ:
-     *   - เปลี่ยนบทบาท/ระงับบัญชีตัวเองไม่ได้ — กันการล็อกตัวเองออกด้วยการกดพลาด
-     *   - ต้องเหลือผู้ดูแลระบบที่ใช้งานได้อย่างน้อยหนึ่งบัญชีเสมอ
+     * Rules that must never be violated, always checked before touching the database:
+     *   - can't change your own role/suspend yourself — prevents locking yourself out with a misclick
+     *   - at least one working admin account must always remain
      */
     public function update(Request $request): Response
     {
@@ -282,8 +301,9 @@ final class UsersController extends ApiController
             return $this->problem(ApiProblem::ValidationError, 'Send at least one value to change');
         }
 
-        // การเปลี่ยนบทบาทและสถานะล็อกอินของตัวเองคือทางลัดไปสู่การล็อกตัวเองออกจากระบบ
-        // ส่วนการแก้ชื่อ/อีเมลของตัวเองไม่อันตราย จึงไม่ห้าม
+        // Changing your own role and login status is a shortcut to locking
+        // yourself out of the system — editing your own name/email isn't
+        // dangerous, so it isn't blocked
         if ($id === $this->ctx->userId() && ($role !== '' || $status !== '')) {
             return $this->problem(
                 ApiProblem::Forbidden,
@@ -300,7 +320,7 @@ final class UsersController extends ApiController
                 ]);
             }
 
-            // ยกบทบาทขึ้นเป็นผู้ดูแลได้เฉพาะคนที่มีสิทธิ์จัดการผู้ใช้จริง ๆ
+            // A role can only be raised to admin by someone who genuinely has permission to manage users
             if (($denied = $this->assertMayManageRole($role)) !== null) {
                 return $denied;
             }
@@ -362,8 +382,9 @@ final class UsersController extends ApiController
             $changes['expiry_at'] = $expiry;
         }
 
-        // สิทธิ์หรือสถานะเปลี่ยนแล้ว session เดิมยังถือของเก่าอยู่ — ต้องให้ล็อกอินใหม่
-        // (การแก้แค่ชื่อหรืออีเมลไม่ต้องตัด session ทิ้ง)
+        // Permission or status changed, but the existing session still holds
+        // the old one — force a fresh login (editing just the name or email
+        // doesn't need sessions cut)
         $revoked = 0;
         if (isset($changes['role']) || isset($changes['status']) || isset($changes['service_status'])) {
             $revoked = (new SessionStore($this->app->db(), $this->app->config))->destroyAllFor($id);
@@ -372,16 +393,19 @@ final class UsersController extends ApiController
         $this->audit($request, 'user.update', (string) $user['username'], $changes + ['sessions_revoked' => $revoked]);
 
         /*
-         * ตอบด้วย**ตัวบัญชีทั้งก้อนหลังแก้** ไม่ใช่แค่รายการที่เปลี่ยน
+         * Respond with **the entire account after editing**, not just what changed
          *
-         * หน้าจอผูกข้อมูลของทั้งหน้าไว้กับ endpoint นี้ · คำตอบของการบันทึกจึงไปทับ
-         * ข้อมูลที่ผูกอยู่ · เดิมตอบแค่ `{user_id, sessions_revoked, ...ที่เปลี่ยน}`
-         * ซึ่งไม่มี `sftp_enabled` เลย — พอผู้ดูแลกดบันทึกชื่อหรืออีเมล **ส่วน SFTP
-         * หายไปทั้งส่วนทันที** แล้วกลับมาเมื่อโหลดหน้าใหม่ ดูเหมือนระบบไม่เสถียร
-         * (เจอบนเซิร์ฟเวอร์จริง 2026-08-14)
+         * The screen binds the whole page's data to this endpoint · a save's
+         * response therefore overwrites the bound data · this used to respond
+         * with only `{user_id, sessions_revoked, ...whatever changed}`, which
+         * had no `sftp_enabled` at all — the moment the admin saved just the
+         * name or email, **the entire SFTP section disappeared immediately**,
+         * then came back once the page was reloaded, looking like the system
+         * was unstable (found on a real server, 2026-08-14).
          *
-         * แก้ที่คำตอบไม่ใช่ที่เทมเพลต เพราะสัญญาของ PATCH คือ "นี่คือทรัพยากรหลังแก้"
-         * — ผู้เรียกอื่น (curl, สคริปต์) ก็ควรได้ของครบเหมือนกัน ไม่ใช่ต้องเรียกซ้ำอีกรอบ
+         * Fixed at the response, not the template, because a PATCH's contract
+         * is "this is the resource after the edit" — another caller (curl, a
+         * script) should get the complete thing too, not have to call again.
          */
         $fresh = $users->find($id);
         $result = ($fresh === null ? [] : $this->present($fresh, $users, new QuotaChecker($users)))
@@ -391,11 +415,12 @@ final class UsersController extends ApiController
     }
 
     /**
-     * เปลี่ยนรูปทรงไฟล์ของบัญชี — **ย้ายไฟล์จริง** ไม่ใช่แค่บันทึกค่า
+     * Change the account's file layout — **actually moves files**, not just a saved value
      *
-     * แยก endpoint ออกจาก `PATCH /users/{id}` เพราะผลข้างเคียงคนละระดับกันสิ้นเชิง:
-     * ที่นั่นแก้ชื่อกับอีเมล ส่วนที่นี่ย้ายไดเรกทอรีของทุกเว็บในบัญชีแล้วเขียน vhost ใหม่
-     * · ผู้ที่กดบันทึกชื่อผู้ใช้ไม่ควรมีทางย้ายไฟล์ของลูกค้าโดยไม่ตั้งใจ
+     * Kept as a separate endpoint from `PATCH /users/{id}` because the side effects
+     * are on an entirely different level: that one edits a name and email, this one
+     * moves every site's directory in the account and rewrites their vhosts · someone
+     * saving a username edit should never accidentally move a customer's files.
      */
     public function setLayout(Request $request): Response
     {
@@ -414,7 +439,7 @@ final class UsersController extends ApiController
             $message,
             [[
                 'type' => 'notification',
-                // ย้ายไฟล์คือเรื่องที่ต้องสะดุดตา ไม่ใช่แถบเขียวที่กวาดสายตาผ่าน
+                // Moving files is something that should catch the eye, not a green bar that gets glossed over
                 'level' => ((int) ($result['moved'] ?? 0)) > 0 ? 'warning' : 'success',
                 'message' => $message,
             ]],
@@ -422,7 +447,7 @@ final class UsersController extends ApiController
         );
     }
 
-    /** อัปเดตโควตา — ผ่าน capability เสมอ (กฎ -1 = ไม่จำกัด อยู่ที่นั่นที่เดียว) */
+    /** Update quotas — always goes through the capability (the rule for -1 = unlimited lives there alone) */
     public function setQuota(Request $request): Response
     {
         $quotas = [];
@@ -442,9 +467,12 @@ final class UsersController extends ApiController
             $this->ctx->actor($request),
         );
 
-        // ใช้ข้อความจาก capability ไม่ใช่ข้อความตายตัว — capability เป็นฝ่ายรู้ว่ามีผลข้างเคียง
-        // อะไรเกิดขึ้นบ้าง เช่นการตัดสิทธิ์ SFTP ตามแพ็กเกจซึ่งปิดการเข้าถึงที่เปิดค้างอยู่ด้วย
-        // (เดิมเขียนทับด้วย "บันทึกโควตาแล้ว" ผู้ดูแลจึงไม่รู้ว่าเพิ่งตัดการเข้าถึงของลูกค้าไป)
+        // Uses the message from the capability, not a fixed one — the
+        // capability is the one that knows what side effects actually
+        // happened, such as revoking SFTP per the package, which also cuts
+        // off an access that was left enabled (this used to be overwritten
+        // with a plain "quota saved," so the admin never knew a customer's
+        // access had just been cut).
         $message = (string) ($result['message'] ?? 'Quota saved');
         $revoked = (bool) ($result['sftp_revoked'] ?? false);
 
@@ -452,7 +480,7 @@ final class UsersController extends ApiController
             $message,
             [[
                 'type' => 'notification',
-                // ตัดการเข้าถึงของลูกค้าเป็นผลข้างเคียงที่ต้องสะดุดตา ไม่ใช่แถบเขียวปกติ
+                // Cutting off a customer's access is a side effect that should catch the eye, not an ordinary green bar
                 'level' => $revoked ? 'warning' : 'success',
                 'message' => $message,
             ]],
@@ -461,17 +489,20 @@ final class UsersController extends ApiController
     }
 
     /**
-     * เปิด SFTP พร้อมตั้งรหัสผ่าน — เรียกซ้ำได้เพื่อเปลี่ยนรหัสผ่าน (PLAN-V2 เฟส E4)
+     * Enable SFTP with a password — safe to call again to change the password (PLAN-V2 Phase E4)
      *
-     * รหัสผ่านมาจากผู้ดูแลเท่านั้น ไม่สุ่มให้ — ต่างจากรหัสผ่านบัญชี panel ตรงที่ผู้ใช้
-     * เอาไปกรอกในโปรแกรม FTP client ของตัวเอง ไม่ได้เปลี่ยนตอนล็อกอินครั้งแรกได้
+     * The password comes from the admin only, never generated randomly — unlike a
+     * panel account's password, this one gets typed into the user's own FTP client
+     * program, and can't be changed on first login the same way.
      */
     /**
-     * ฟอร์มตั้งรหัสผ่าน SFTP — เปิดใน Modal
+     * The SFTP password form — opens in a Modal
      *
-     * ช่องกรอกช่องเดียวไม่ควรกินที่อยู่ในหน้าตลอดเวลา · ฟอร์มเดียวใช้ทั้งเปิดครั้งแรก
-     * และเปลี่ยนรหัสผ่าน เพราะเป็นการกระทำเดียวกันในทางเทคนิค (PUT ตั้งค่าทั้งชุด) —
-     * ที่ต่างกันคือหัวเรื่องซึ่งเซิร์ฟเวอร์เป็นคนเลือกจากสถานะจริง ไม่ใช่หน้าจอเดาเอง
+     * A single input field shouldn't permanently take up space on the page · one
+     * form handles both the first-time enable and a password change, since they're
+     * technically the same action (a PUT that sets the whole value) — what differs
+     * is the title, which the server picks from the real state, not something the
+     * screen has to guess at.
      */
     public function sftpForm(Request $request): Response
     {
@@ -479,7 +510,7 @@ final class UsersController extends ApiController
         $user = (new UserRepository($this->app->db()))->find($id);
 
         if ($user === null) {
-            return $this->problem(ApiProblem::NotFound, 'ไม่พบผู้ใช้');
+            return $this->problem(ApiProblem::NotFound, 'User not found');
         }
 
         $enabled = (bool) ($user['sftp_enabled'] ?? false);
@@ -504,8 +535,9 @@ final class UsersController extends ApiController
             'password' => $request->payloadString('password'),
         ], $this->ctx->actor($request));
 
-        // saved() ไม่ใช่ completed() — ฟอร์มนี้เปิดใน Modal จึงต้องสั่งปิดเมื่อสำเร็จ
-        // ไม่งั้น Modal ค้างอยู่พร้อมช่องรหัสผ่านที่กรอกไว้ ดูเหมือนบันทึกไม่ผ่าน
+        // saved(), not completed() — this form opens in a Modal, so it must
+        // close it on success, otherwise the Modal stays open with the
+        // password field still filled in, looking like the save didn't go through
         return $this->saved(
             (string) ($result['message'] ?? 'SFTP enabled'),
             '',
@@ -528,7 +560,7 @@ final class UsersController extends ApiController
         );
     }
 
-    /** มอบเว็บไซต์ที่ยังไม่มีเจ้าของให้บัญชีโฮสติ้ง — capability ตรวจโควตาให้ด้วย */
+    /** Assign an unowned site to a hosting account — the capability checks the quota too */
     public function attachSites(Request $request): Response
     {
         $siteIds = $request->payload('site_ids', []);
@@ -550,18 +582,21 @@ final class UsersController extends ApiController
             'site_ids' => $siteIds
         ], $this->ctx->actor($request));
 
-        // เชื่อมไม่ได้สักเว็บ = คำขอนี้ไม่สำเร็จ แม้ agent จะไม่ได้โยน error
-        // (เหตุผลรายเว็บอยู่ใน results — เช่นเกินโควตา หรือมีเจ้าของอยู่แล้ว)
+        // Not a single site attached = this request did not succeed, even
+        // though the agent didn't throw an error (per-site reasons live in
+        // results — e.g. over quota, or already has an owner)
         return (int) $result['attached_count'] === 0
             ? $this->problem(ApiProblem::Conflict, (string) $result['message'])
             : $this->completed((string) $result['message'], 'userSites', $result);
     }
 
     /**
-     * ถอนเว็บไซต์ออกจากบัญชีลูกค้า — เจ้าของจะกลายเป็นผู้ดูแลที่สั่ง ไม่ใช่ "ไม่มีเจ้าของ"
+     * Detach a site from a customer account — the owner becomes the admin who
+     * issued the command, never "unowned"
      *
-     * ตั้งแต่ migration 0005 เว็บทุกแห่งต้องมีเจ้าของเสมอ (บังคับด้วย trigger) เพราะเว็บ
-     * ไร้เจ้าของคือเว็บที่ยังรันอยู่บนเครื่องแต่ไม่มีใครรับผิดชอบและไม่ถูกนับเข้าโควตาใคร
+     * Since migration 0005, every site must always have an owner (enforced by a
+     * trigger), because an unowned site is a site that's still running on the
+     * machine with nobody responsible for it and not counted against anyone's quota.
      */
     public function detachSite(Request $request): Response
     {
@@ -604,7 +639,7 @@ final class UsersController extends ApiController
         );
     }
 
-    /** ตั้งรหัสผ่านใหม่ให้ผู้ใช้คนอื่น — ใช้ตอนลืมรหัสผ่าน */
+    /** Set a new password for another user — used when a password is forgotten */
     public function resetPassword(Request $request): Response
     {
         $users = new UserRepository($this->app->db());
@@ -641,19 +676,21 @@ final class UsersController extends ApiController
 
         return $this->done(
             $this->t('New password set for {user}', ['user' => (string) $user['username']]),
-            // รหัสที่ระบบสุ่มให้ **ไม่มีที่อื่นให้ดูย้อนหลังอีกเลย** — ถ้าผู้ดูแลพลาดตา
-            // ต้องรีเซ็ตใหม่ทั้งรอบ · จึงสั่งให้หน้าจอเปิดกล่องที่ต้องกดปิดเอง ไม่ใช่
-            // toast ที่หายไปเองใน 3 วินาที · ตารางถูกโหลดใหม่หลังจากนั้น
+            // A system-generated password has **no other place it can be looked
+            // up later** — if the admin misses it, the whole reset has to
+            // happen again · so the screen is told to open a dialog the user
+            // has to close themselves, not a toast that vanishes on its own in
+            // 3 seconds · the table is reloaded afterward.
             $wasRandom ? [
                 [
                     'type' => 'modal',
                     'action' => 'show',
                     'title' => 'New password',
                     'content' => sprintf(
-                        '<p>รหัสผ่านใหม่ของ <strong>%s</strong> — คัดลอกไว้ก่อนปิดหน้าต่างนี้'
-                        .' เพราะระบบไม่เก็บไว้ที่ใดอีก</p><p class="mono selectable">%s</p>'
-                        .'<p class="muted">เซสชันที่เปิดค้างอยู่ %d รายการถูกตัดออกแล้ว'
-                        .' และบัญชีนี้ต้องตั้งรหัสใหม่เมื่อเข้าใช้งานครั้งต่อไป</p>',
+                        '<p>New password for <strong>%s</strong> — copy it before closing this window,'
+                        .' since the system does not store it anywhere else</p><p class="mono selectable">%s</p>'
+                        .'<p class="muted">%d open session(s) have been revoked,'
+                        .' and this account must set a new password the next time it logs in</p>',
                         htmlspecialchars((string) $user['username'], ENT_QUOTES, 'UTF-8'),
                         htmlspecialchars($password, ENT_QUOTES, 'UTF-8'),
                         $revoked,
@@ -675,11 +712,12 @@ final class UsersController extends ApiController
     }
 
     /**
-     * ปิด 2FA ของผู้ใช้คนอื่น — ใช้เมื่อทำอุปกรณ์ยืนยันตัวตนหาย
+     * Disable another user's 2FA — used when an authentication device is lost
      *
-     * เป็น `DELETE` บนทรัพยากร `two-factor` ตาม §4.1 · การเปิดใช้งานใหม่ต้องทำโดย
-     * เจ้าของบัญชีเองเท่านั้น ไม่มี endpoint ให้ผู้ดูแลเปิดแทน (ไม่งั้นผู้ดูแลจะถือ
-     * secret ของคนอื่นได้ ซึ่งทำลายความหมายของ 2FA)
+     * A `DELETE` on the `two-factor` resource per §4.1 · re-enabling it must be
+     * done by the account's own owner only — there's no endpoint for an admin to
+     * enable it on someone else's behalf (otherwise an admin could hold another
+     * person's secret, which defeats the entire point of 2FA).
      */
     public function disableTwoFactor(Request $request): Response
     {
@@ -732,8 +770,9 @@ final class UsersController extends ApiController
             return $this->problem(ApiProblem::Conflict, 'At least one working administrator account must remain');
         }
 
-        // ฐานข้อมูลกันไว้อีกชั้นด้วย trigger แต่ตอบที่นี่ก่อนเพื่อให้ได้ข้อความที่อธิบายได้
-        // ว่าต้องทำอะไรต่อ แทนที่จะเป็นข้อความ constraint ดิบ ๆ จาก SQLite
+        // The database also guards against this with a trigger, but this is
+        // answered here first, to give a message that explains what to do
+        // next, instead of a raw constraint error straight from SQLite
         if ($users->siteIds($id) !== []) {
             return $this->problem(
                 ApiProblem::Conflict,
@@ -745,12 +784,14 @@ final class UsersController extends ApiController
 
         $this->audit($request, 'user.delete', (string) $user['username'], ['role' => $user['role']]);
 
-        // ตอบ 200 พร้อม `actions` แทน 204
+        // Responds 200 with `actions` instead of 204
         //
-        // 204 ไม่มีเนื้อคำตอบ หน้าจอจึงไม่มีอะไรให้ทำต่อ — แถวที่ลบไปแล้วยังค้าง
-        // อยู่บนตารางจนกว่าผู้ใช้จะโหลดหน้าเอง ซึ่งอ่านได้ว่า "กดลบแล้วไม่เกิดอะไร"
-        // · ให้เซิร์ฟเวอร์สั่งแจ้งผลและโหลดตารางใหม่ไปเลย เป็นรูปแบบเดียวกับที่
-        // การสร้างและการรีเซ็ตรหัสผ่านใช้
+        // 204 has no response body, so the screen has nothing left to act on
+        // — the now-deleted row would stay sitting in the table until the
+        // user reloads the page themselves, which reads as "clicked delete
+        // and nothing happened" · instead, the server tells it to show a
+        // notification and reload the table right away, the same pattern
+        // used for creation and password reset.
         return $this->completed(
             $this->t('Account {user} deleted', ['user' => (string) $user['username']]),
             'users',
@@ -759,11 +800,14 @@ final class UsersController extends ApiController
     }
 
     /**
-     * คำสั่งหน้าจอหลังสร้างบัญชี
+     * The screen's instructions after creating an account
      *
-     * **รหัสที่ระบบสุ่มให้ต้องอยู่ในกล่องที่ผู้ใช้กดปิดเอง** ไม่ใช่ toast ที่หายไปเอง —
-     * ไม่มีที่อื่นให้ดูย้อนหลัง พลาดตาแล้วต้องรีเซ็ตใหม่ทั้งรอบ · และห้ามพาออกจากหน้า
-     * ทันทีเพราะการเปลี่ยนหน้าจะปิดกล่องนั้นไปพร้อมกัน (เจอจากการกดจริงในเบราว์เซอร์)
+     * **A system-generated password must sit in a dialog the user closes
+     * themselves**, not a toast that vanishes on its own — there's nowhere else to
+     * look it up later, and missing it means the whole reset has to happen again ·
+     * and it must never navigate away from the page immediately, since changing
+     * pages would close that dialog right along with it (found by actually
+     * clicking through it in a browser).
      *
      * @param array<string,mixed>|null $site
      * @return list<array<string,mixed>>
@@ -791,8 +835,8 @@ final class UsersController extends ApiController
                 'action' => 'show',
                 'title' => 'Account created',
                 'content' => sprintf(
-                    '<p>รหัสผ่านของ <strong>%s</strong> — คัดลอกไว้ก่อนปิดหน้าต่างนี้'
-                    .' เพราะระบบไม่เก็บไว้ที่ใดอีก</p><p class="mono selectable">%s</p>%s',
+                    '<p>Password for <strong>%s</strong> — copy it before closing this window,'
+                    .' since the system does not store it anywhere else</p><p class="mono selectable">%s</p>%s',
                     htmlspecialchars($username, ENT_QUOTES, 'UTF-8'),
                     htmlspecialchars($password, ENT_QUOTES, 'UTF-8'),
                     $summary,
@@ -810,14 +854,14 @@ final class UsersController extends ApiController
                 : $this->t('Account {user} created with website {domain}', ['user' => $username, 'domain' => (string) $site['domain']])
         ];
 
-        // พากลับหน้ารายการได้เฉพาะตอนที่ไม่มีกล่องรหัสผ่านค้างอยู่
+        // Only navigates back to the list page when there's no password dialog left open
         $actions[] = ['type' => 'redirect', 'url' => '/app/users', 'delay' => 1200];
 
         return $actions;
     }
 
     /**
-     * ผู้ใช้หนึ่งคนในรูปที่ส่งออก API — แนบโควตาให้เฉพาะบัญชีโฮสติ้ง
+     * One user in the shape exported by the API — quotas attached only for hosting accounts
      *
      * @param array<string,mixed> $row
      * @return array<string,mixed>
@@ -831,30 +875,36 @@ final class UsersController extends ApiController
             : UserResource::withHosting($row, $quota->summary($id) ?? [], count($users->siteIds($id)));
 
         /*
-         * เว็บไซต์ของบัญชีอยู่ในรูปร่างเดียวกันเสมอ — เดิม `show()` เติมทีหลังเองที่เดียว
+         * An account's sites are always in the same shape — this used to be
+         * something only `show()` filled in afterward.
          *
-         * หน้าจอใช้ `sites` เป็นเงื่อนไขแสดงส่วนที่มีเฉพาะบัญชีโฮสติ้ง (SFTP, เว็บที่ผูกอยู่)
-         * · คำตอบของ `PATCH` ที่ไม่มีคีย์นี้จึงทำให้ส่วนเหล่านั้นหายไปหลังกดบันทึก
-         * ทั้งที่ไม่มีอะไรเปลี่ยนจริง — รูปร่างของทรัพยากรต้องไม่ขึ้นกับว่าเรียกด้วยวิธีไหน
+         * The screen uses `sites` as the condition for showing the sections
+         * that only exist for hosting accounts (SFTP, attached sites) · a
+         * `PATCH` response with no such key would therefore make those
+         * sections disappear after saving, even though nothing actually
+         * changed — a resource's shape must never depend on which method
+         * was used to call it.
          */
         if (($row['role'] ?? '') === Permissions::WEBADMIN) {
             $presented['sites'] = SiteResource::collection($users->sites($id));
         }
 
-        // แถวรู้เองว่าเป็นบัญชีของผู้เรียกหรือไม่ — หน้าจอเขียนเงื่อนไขซ่อนปุ่มลบ
-        // และปุ่มรีเซ็ตรหัสผ่านของตัวเองได้โดยไม่ต้องมีตรรกะฝั่ง JS
+        // The row knows for itself whether it's the caller's own account —
+        // the screen can write conditions that hide the delete button and
+        // the reset-own-password button without needing any JS-side logic.
         //
-        // เป็นเรื่อง UX ล้วน ๆ · API ปฏิเสธการลบตัวเองซ้ำอีกชั้นอยู่แล้ว
+        // This is purely UX · the API independently refuses self-deletion at its own layer regardless.
         $presented['is_self'] = $id === $this->ctx->userId();
 
         return $presented;
     }
 
     /**
-     * ผู้เรียกมีสิทธิ์จัดการบัญชีเป้าหมายนี้หรือไม่
+     * Whether the caller has permission to manage this target account
      *
-     * `customer.manage` ให้จัดการได้เฉพาะบัญชีโฮสติ้ง · การแตะบัญชีผู้ดูแลต้องมี `user.manage`
-     * ถ้าไม่มีด่านนี้ sysadmin จะรีเซ็ตรหัสผ่านของ superadmin ผ่านเส้นทางนี้ได้ทันที
+     * `customer.manage` only allows managing hosting accounts · touching an
+     * admin account requires `user.manage` — without this guard, a sysadmin
+     * could reset a superadmin's password through this same route immediately.
      *
      * @param array<string,mixed> $target
      */
@@ -869,7 +919,7 @@ final class UsersController extends ApiController
             : $this->problem(ApiProblem::Forbidden, 'Managing system users is required to edit an administrator account');
     }
 
-    /** ตั้งบทบาทที่ไม่ใช่ webadmin ต้องมีสิทธิ์จัดการผู้ใช้ระบบ */
+    /** Setting a role other than webadmin requires permission to manage system users */
     private function assertMayManageRole(string $role): ?Response
     {
         if ($role === Permissions::WEBADMIN) {
@@ -881,7 +931,7 @@ final class UsersController extends ApiController
             : $this->problem(ApiProblem::Forbidden, 'Managing system users is required to assign an administrator role');
     }
 
-    /** วันหมดอายุที่รับได้ทั้ง unix timestamp และข้อความวันที่ */
+    /** Accepts an expiry date as either a unix timestamp or a date string */
     private function expiryFrom(Request $request): ?int
     {
         $value = $request->payload('expiry_at', $request->get('expiry_at'));
@@ -900,10 +950,11 @@ final class UsersController extends ApiController
     }
 
     /**
-     * บันทึก audit — ต้องเรียกจากทุกเมธอดที่เปลี่ยนแปลงข้อมูลในไฟล์นี้
+     * Write an audit entry — must be called from every method in this file that changes data
      *
-     * ทรัพยากรนี้ไม่ผ่าน Dispatcher จึงไม่มีใครเขียน audit ให้อัตโนมัติ
-     * นี่คือราคาที่จ่ายเพื่อไม่ต้องขยายพื้นที่ผิวของชั้น agent
+     * This resource doesn't go through the Dispatcher, so nothing writes an audit
+     * entry automatically — this is the price paid for not expanding the agent
+     * layer's own surface area.
      *
      * @param array<string,mixed> $detail
      */
