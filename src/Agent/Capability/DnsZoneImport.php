@@ -13,31 +13,40 @@ use Phpcp\Driver\WebServer\CustomConfig;
 use Phpcp\Support\Validator;
 
 /**
- * แก้เรกคอร์ดทั้ง zone พร้อมกันด้วยการเขียนเป็นข้อความแบบ zone file
+ * Edits an entire zone's records at once by writing them as zone-file text
  *
- * ## ทำไมไม่ให้แก้ไฟล์บนดิสก์ตรง ๆ
+ * ## Why the file on disk isn't editable directly
  *
- * zone file ถูกเขียนใหม่ทั้งไฟล์จากฐานข้อมูลทุกครั้งที่มีคนแตะเรกคอร์ดสักรายการ —
- * การแก้ไฟล์ตรง ๆ จึงได้ผลทันที ดูถูกต้องทุกอย่าง แล้ววันหนึ่งหายไปเงียบ ๆ ตอนที่มีคน
- * กดเพิ่มเรกคอร์ดอื่น · เป็นกับดักเดียวกับที่ทั้งโปรเจกต์นี้หลบมาตลอด
+ * The zone file is rewritten in full from the database every time someone
+ * touches even one record — so editing the file directly would take effect
+ * immediately, look entirely correct, and then vanish silently the day someone
+ * clicks to add another record · the same trap this entire project has been
+ * dodging throughout.
  *
- * ที่นี่จึง**แปลงข้อความกลับเป็นเรกคอร์ดในฐานข้อมูล** แล้วให้ระบบเขียนไฟล์เองตามปกติ ·
- * ในสายตาผู้ใช้คือ "แก้ไฟล์แล้วมีผล" แต่ฐานข้อมูลยังเป็นแหล่งความจริงเดียว หน้าตาราง
- * กับไฟล์จึงตรงกันเสมอ และไม่มีอะไรหายทีหลัง
+ * So this instead **parses the text back into records in the database**, and
+ * lets the system write the file itself as usual · from the user's point of
+ * view it's "edit the file and it takes effect", but the database remains the
+ * single source of truth, so the table view and the file always agree, and
+ * nothing vanishes later.
  *
- * ## ทำไมต้องเป็นการ "แทนที่ทั้งชุด" ไม่ใช่ "เพิ่มเข้าไป"
+ * ## Why this has to be a "replace the whole set", not "add to it"
  *
- * งานจริงที่ทำให้ต้องมีหน้านี้คือการย้ายเมลไปผู้ให้บริการอื่น (เช่นใส่ MX ห้าตัวของ
- * Google) ซึ่ง **ต้องลบ MX เดิมออกให้หมดก่อน** ไม่งั้นเมลจะวิ่งไปสองทางพร้อมกัน ·
- * การไล่กดลบทีละรายการแล้วค่อยเพิ่มทีละรายการเป็นช่วงเวลาที่ zone อยู่ในสภาพครึ่ง ๆ
- * กลาง ๆ จริง ๆ บนอินเทอร์เน็ต · แทนที่ทั้งชุดในคำสั่งเดียวจึงปลอดภัยกว่า ไม่ใช่แค่สะดวกกว่า
+ * The real job that made this page necessary is moving mail to another
+ * provider (entering Google's five MX records, say), which **requires removing
+ * every old MX record first**, or mail would flow two ways at once · clicking
+ * delete one at a time and then add one at a time would leave the zone
+ * genuinely half-configured on the internet for that whole window · replacing
+ * the whole set in one command is therefore safer, not just more convenient.
  *
- * ## ลำดับการทำงานและการคืนค่า
+ * ## Order of operations and rollback
  *
- * แปลงข้อความทั้งหมดให้ผ่านก่อนแตะฐานข้อมูล → สลับเรกคอร์ดในทรานแซกชันเดียว →
- * เขียนไฟล์ zone (ซึ่งมี `named-checkzone` อยู่ข้างในและคืนไฟล์เดิมให้เองเมื่อไม่ผ่าน) →
- * **ถ้าขั้นสุดท้ายล้ม ต้องคืนเรกคอร์ดเดิมกลับฐานข้อมูลด้วย** ไม่งั้นระบบจะเหลือค่าใหม่
- * ที่ BIND ไม่ยอมรับค้างอยู่ แล้วการ sync ครั้งถัดไปของใครก็ตามจะล้มตามไปโดยไม่มีใครรู้ว่าเพราะอะไร
+ * The entire text is parsed successfully before the database is touched →
+ * records are swapped in a single transaction → the zone file is written
+ * (which has `named-checkzone` inside it and reverts the file on its own if
+ * that fails) → **if that last step fails, the original records must be
+ * restored to the database too**, or the system would be left with new values
+ * BIND refuses to accept, and the next sync anyone triggers would fail right
+ * along with it, with nobody knowing why.
  */
 final class DnsZoneImport extends DomainCapability
 {
@@ -46,7 +55,7 @@ final class DnsZoneImport extends DomainCapability
         return 'dns.zone_import';
     }
 
-    /** สิทธิ์เดียวกับการเพิ่ม/ลบเรกคอร์ดทีละรายการ — เป็นงานเดียวกัน ทำทีเดียวหลายรายการ */
+    /** Same permission as adding/removing records one at a time — the same job, done in bulk */
     public function permission(): string
     {
         return 'domain.manage';
@@ -59,7 +68,7 @@ final class DnsZoneImport extends DomainCapability
 
     public function summary(): string
     {
-        return 'แทนที่เรกคอร์ดทั้ง zone จากข้อความ zone file';
+        return 'Replace entire zone records from zone-file text';
     }
 
     public function validate(array $args): array
@@ -76,8 +85,8 @@ final class DnsZoneImport extends DomainCapability
         $domainId = (int) $domain['id'];
         $name = (string) $domain['domain'];
 
-        // แปลงให้ผ่านทั้งหมดก่อนแตะฐานข้อมูล — ข้อผิดพลาดบรรทัดที่ 40 ต้องไม่ทิ้ง
-        // เรกคอร์ด 39 รายการแรกไว้ในสภาพที่ผู้ใช้ไม่ได้สั่ง
+        // Everything is parsed successfully before the database is touched — an
+        // error on line 40 must never leave the first 39 records in a state the user never asked for
         $records = DnsRecord::parseZoneFile($name, $args['content']);
 
         $previous = $context->db->all(
@@ -92,13 +101,14 @@ final class DnsZoneImport extends DomainCapability
         try {
             $sync = (new BindZoneManager($executor, $context->config, $context->db))->writeZone($domain);
         } catch (\Throwable $e) {
-            // คืนเรกคอร์ดเดิม — ดูเหตุผลที่หัวคลาสว่าทำไมการปล่อยค่าใหม่ค้างไว้อันตรายกว่า
+            // Restores the original records — see the reasoning at the top of
+            // this class for why leaving the new values in place is more dangerous
             $context->db->transaction(function () use ($context, $domainId, $previous): void {
                 $this->replace($context, $domainId, $previous);
             });
 
             throw new ExecutionFailed(
-                "เรกคอร์ดชุดใหม่ไม่ผ่านการตรวจของ BIND9 จึงคืนค่าเดิมทั้งหมดแล้ว\n\n" . $e->getMessage(),
+                "The new set of records failed BIND9's validation, so everything was reverted\n\n" . $e->getMessage(),
             );
         }
 
@@ -108,17 +118,17 @@ final class DnsZoneImport extends DomainCapability
             'previous_count' => count($previous),
             'pushed' => (bool) ($sync['pushed'] ?? false),
             'message' => sprintf(
-                'แทนที่เรกคอร์ดของ %s แล้ว — เดิม %d รายการ ตอนนี้ %d รายการ%s',
+                'Replaced records for %s — was %d record(s), now %d record(s)%s',
                 $name,
                 count($previous),
                 count($records),
-                ($sync['pushed'] ?? false) ? '' : ' (ยังไม่ได้ส่งไปยัง BIND9: ' . ($sync['message'] ?? '') . ')',
+                ($sync['pushed'] ?? false) ? '' : ' (not yet pushed to BIND9: ' . ($sync['message'] ?? '') . ')',
             ),
         ];
     }
 
     /**
-     * เขียนทับเรกคอร์ดทั้งหมดของโดเมนหนึ่ง
+     * Overwrites all of one domain's records
      *
      * @param list<array<string,mixed>> $records
      */
@@ -133,7 +143,7 @@ final class DnsZoneImport extends DomainCapability
                 'name' => $record['name'],
                 'value' => $record['value'],
                 'ttl' => (int) $record['ttl'],
-                // ตาราง dns_records ไม่มีคอลัมน์เวลา — ใส่ไปแล้วการแทรกล้มทั้งคำสั่ง
+                // The dns_records table has no timestamp column — including one would fail the whole insert
                 'priority' => $record['priority'] === null ? null : (int) $record['priority'],
             ]);
         }

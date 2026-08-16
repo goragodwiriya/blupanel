@@ -12,10 +12,11 @@ use Phpcp\Domain\UserRepository;
 use Phpcp\Support\Validator;
 
 /**
- * สร้างบัญชีโฮสติ้งใหม่ — ผู้ใช้ role=webadmin พร้อมโควตาของตัวเอง
+ * Creates a new hosting account — a role=webadmin user with its own quota
  *
- * ตั้งแต่ migration 0005 ลูกค้าไม่ใช่ตารางแยกอีกต่อไป แต่คือแถวเดียวกับที่ใช้ล็อกอิน
- * จึงไม่มีรหัสผ่านสองชุดให้หลุด sync และไม่มี id สองระบบให้แปลงไปมาอีก
+ * Since migration 0005, a customer is no longer a separate table, but the same
+ * row used to log in — so there are no longer two sets of passwords that can
+ * drift out of sync, and no two id systems to convert between.
  */
 final class CustomerCreate extends CustomerCapability implements Capability
 {
@@ -36,13 +37,14 @@ final class CustomerCreate extends CustomerCapability implements Capability
 
     public function summary(): string
     {
-        return 'สร้างลูกค้าใหม่พร้อมโควตา';
+        return 'Create new customer with quota';
     }
 
     public function validate(array $args): array
     {
-        // ชื่อผู้ใช้จะกลายเป็นชื่อบัญชี Linux และโฟลเดอร์บ้านจริง ๆ ในเฟส M3
-        // กฎจึงอยู่ที่ UserRepository ที่เดียว ไม่ใช่ regex ซ้ำในแต่ละ capability
+        // The username becomes a real Linux account name and home folder in
+        // Phase M3 — so the rule lives in one place, UserRepository, not
+        // duplicated as a regex in each capability
         $username = Validator::requireString($args, 'username', 32);
         try {
             UserRepository::assertUsername($username);
@@ -50,21 +52,21 @@ final class CustomerCreate extends CustomerCapability implements Capability
             throw new ValidationError($e->getMessage());
         }
 
-        // ตรวจสอบ password
+        // Validates the password
         $password = Validator::requireString($args, 'password', 256);
         if (mb_strlen($password) < 8) {
-            throw new ValidationError('รหัสผ่านต้องยาวอย่างน้อย 8 ตัวอักษร');
+            throw new ValidationError('Password must be at least 8 characters long');
         }
 
-        // ตรวจสอบ email
+        // Validates the email
         $email = Validator::requireString($args, 'email', 256);
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            throw new ValidationError('อีเมลไม่ถูกต้อง');
+            throw new ValidationError('Invalid email');
         }
 
-        // ตรวจสอบ display name (optional)
+        // Validates the display name (optional)
 
-        // ตรวจสอบ quota (optional, มีค่า default ใน database)
+        // Validates quota (optional, has a database default)
         $quotaDomains = Validator::optionalInt($args, 'quota_domains', 10);
         $quotaSubdomains = Validator::optionalInt($args, 'quota_subdomains', 20);
         $quotaAliases = Validator::optionalInt($args, 'quota_aliases', 50);
@@ -72,18 +74,20 @@ final class CustomerCreate extends CustomerCapability implements Capability
         $quotaDatabases = Validator::optionalInt($args, 'quota_databases', 10);
         $quotaFtpUsers = Validator::optionalInt($args, 'quota_ftp_users', 5);
 
-        // ตรวจสอบ expiry_at (optional)
+        // Validates expiry_at (optional)
         $expiryAt = null;
         if (isset($args['expiry_at']) && $args['expiry_at'] !== null) {
             $expiryAt = Validator::requireInt($args, 'expiry_at', 0);
             if ($expiryAt < time()) {
-                throw new ValidationError('วันหมดอายุต้องเป็นเวลาในอนาคต');
+                throw new ValidationError('The expiry date must be a time in the future');
             }
         }
 
-        // โควตาใช้กฎเดียวกับที่อื่นทั้งระบบ: -1 = ไม่จำกัด · 0 = ปิด · >0 = จำกัด
-        // เดิมตรงนี้ปฏิเสธค่าติดลบทั้งหมด ทำให้ตั้ง "ไม่จำกัด" ผ่านทางนี้ไม่ได้
-        // ทั้งที่ CLI และ repository รองรับ — ความไม่สอดคล้องแบบนี้คือที่มาของบั๊กที่หายาก
+        // Quota follows the same rule as everywhere else in the system: -1 =
+        // unlimited · 0 = disabled · >0 = limited. This used to reject every
+        // negative value, making it impossible to set "unlimited" through this
+        // path even though the CLI and the repository both support it — this
+        // kind of inconsistency is exactly where hard-to-find bugs come from
         self::assertQuota($quotaDomains, 'domains');
         self::assertQuota($quotaSubdomains, 'subdomains');
         self::assertQuota($quotaAliases, 'aliases');
@@ -91,11 +95,11 @@ final class CustomerCreate extends CustomerCapability implements Capability
         self::assertQuota($quotaDatabases, 'databases');
         self::assertQuota($quotaFtpUsers, 'ftp_users');
 
-        // ดิสก์วัดเป็น MB ไม่ใช่จำนวนชิ้น จึงไม่อยู่ใน Quota::TYPES — ตรวจแยกแบบเดียวกับ
-        // CustomerQuotaUpdate (PLAN-V2 เฟส E2)
+        // Disk is measured in MB, not item count, so it isn't in Quota::TYPES —
+        // validated separately, the same way as CustomerQuotaUpdate (PLAN-V2 Phase E2)
         $diskQuotaMb = Validator::optionalInt($args, 'disk_quota_mb', 10240);
         if ($diskQuotaMb < -1) {
-            throw new ValidationError('โควตาพื้นที่ดิสก์ต้องเป็น -1 (ไม่จำกัด) หรือจำนวนเต็มไม่ติดลบ (MB)');
+            throw new ValidationError('Disk space quota must be -1 (unlimited) or a non-negative integer (MB)');
         }
 
         return [
@@ -110,8 +114,9 @@ final class CustomerCreate extends CustomerCapability implements Capability
             'quota_ftp_users' => $quotaFtpUsers,
             'disk_quota_mb' => $diskQuotaMb,
             'expiry_at' => $expiryAt,
-            // รหัสผ่านที่ระบบสุ่มให้ต้องถูกเปลี่ยนตอนเข้าสู่ระบบครั้งแรกเสมอ
-            // ผู้เรียกเป็นคนบอกว่าสุ่มมาหรือผู้ดูแลตั้งเอง เพราะที่นี่แยกไม่ออก
+            // A system-generated password must always be changed on first login
+            // — the caller states whether it was generated or set by an admin,
+            // since this layer can't tell the difference itself
             'must_change_password' => (bool) ($args['must_change_password'] ?? false),
         ];
     }
@@ -121,12 +126,13 @@ final class CustomerCreate extends CustomerCapability implements Capability
         $users = $this->users($context);
 
         if ($users->findByUsername($args['username']) !== null) {
-            throw new ValidationError("มีผู้ใช้ชื่อ {$args['username']} อยู่แล้ว");
+            throw new ValidationError("User {$args['username']} already exists");
         }
 
-        // repository ตรวจซ้ำอีกชั้นและโยน InvalidArgumentException — ต้องแปลงเป็น
-        // ValidationError ที่นี่ ไม่งั้น agent จะตอบ "เกิดข้อผิดพลาดภายในระบบ"
-        // ให้ผู้ใช้ที่แค่กรอกอีเมลผิด แล้วไม่มีใครรู้ว่าต้องแก้อะไร
+        // The repository checks again at its own layer and throws
+        // InvalidArgumentException — it has to be converted to ValidationError
+        // right here, or the agent would answer "an internal error occurred" to
+        // a user who just mistyped an email, with nobody knowing what to fix
         try {
             $userId = $users->createHostingAccount(
                 $args['username'],
@@ -149,7 +155,7 @@ final class CustomerCreate extends CustomerCapability implements Capability
             throw new ValidationError($e->getMessage());
         }
 
-        // audit log บันทึกโดย Dispatcher ให้แล้วรอบ run() ทุกคำสั่ง (ARCHITECTURE §4.1)
+        // The audit log is already written by Dispatcher around every run() call (ARCHITECTURE §4.1)
         return [
             'id' => $userId,
             'username' => $args['username'],
@@ -163,7 +169,7 @@ final class CustomerCreate extends CustomerCapability implements Capability
             'disk_quota_mb' => $args['disk_quota_mb'],
             'expiry_at' => $args['expiry_at'],
             'must_change_password' => $args['must_change_password'],
-            'message' => "สร้างบัญชีโฮสติ้ง {$args['username']} แล้ว",
+            'message' => "Created hosting account {$args['username']}",
         ];
     }
 }

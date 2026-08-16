@@ -13,14 +13,15 @@ use Phpcp\Driver\Security\Fail2banManager;
 use Phpcp\Support\Validator;
 
 /**
- * ลบเว็บไซต์ — งานที่ย้อนกลับไม่ได้ จึงมีมาตรการเพิ่มสองชั้น
+ * Deletes a website — an irreversible operation, so it carries two extra layers of protection
  *
- *   1. ต้องส่งชื่อโดเมนมายืนยันให้ตรงกับที่จะลบ (ป้องกันการกดผิดรายการ)
- *   2. ไฟล์ไม่ถูกลบทันที แต่ย้ายไปที่ถังพัก แล้วค่อยลบจริงตามนโยบายเวลา
- *      ตาม SECURITY §4 — ลบผิดแล้วยังกู้คืนได้
+ *   1. The domain name has to be sent to confirm it matches what's being deleted (guards against clicking the wrong row)
+ *   2. Files aren't deleted immediately — they're moved to a holding area, and
+ *      genuinely deleted later on a time policy per SECURITY §4 — a mistaken
+ *      delete can still be recovered
  *
- * ฐานข้อมูล MySQL ของเว็บไซต์ไม่ถูกแตะที่นี่ (มาในเฟส 3) แถวในตาราง databases_
- * จะถูกปลดการผูกด้วย ON DELETE SET NULL ไม่ใช่ถูกลบตาม
+ * A website's MySQL database is never touched here (that's Phase 3) — a row in
+ * the databases_ table gets unlinked via ON DELETE SET NULL, not deleted along with it.
  */
 final class SiteDelete extends SiteCapability
 {
@@ -41,7 +42,7 @@ final class SiteDelete extends SiteCapability
 
     public function summary(): string
     {
-        return 'ลบเว็บไซต์ พร้อมย้ายไฟล์ไปถังพักก่อนลบจริง';
+        return 'Delete website, moving files to a holding area before real deletion';
     }
 
     public function validate(array $args): array
@@ -59,50 +60,58 @@ final class SiteDelete extends SiteCapability
 
         $site = $this->loadSite($context, $args['site_id']);
 
-        // ชั้นที่ 1 — ชื่อที่พิมพ์ยืนยันต้องตรงกับเว็บไซต์ที่กำลังจะลบจริง ๆ
+        // Layer 1 — the typed confirmation name must match the website genuinely being deleted
         if ($args['confirm_domain'] !== $site->domain) {
             throw new ValidationError(
-                'ชื่อโดเมนที่ยืนยันไม่ตรงกับเว็บไซต์ที่จะลบ — ยกเลิกการลบเพื่อความปลอดภัย',
+                'The confirmation domain name does not match the website being deleted — deletion cancelled for safety',
             );
         }
 
-        // เวอร์ชัน PHP ที่เจ้าของยังใช้อยู่**หลังจากลบเว็บนี้แล้ว** — ไฟล์ pool ของเวอร์ชัน
-        // เหล่านั้นต้องอยู่ต่อ เพราะเว็บพี่น้องของลูกค้าคนเดียวกันยังใช้อยู่
+        // The PHP versions the owner still uses **after this site is deleted** —
+        // those versions' pool files have to stay, since the same customer's
+        // sibling sites are still using them
         $stillUsed = $repository->phpVersionsOwnedBy($site->owner->userId, exceptSiteId: $site->id);
 
-        // ถอน jail ของ fail2ban ก่อนทุกอย่าง — ต้องอยู่ก่อนการย้ายไฟล์ (PLAN-V2 เฟส E5)
+        // Removes the fail2ban jail before anything else — this has to happen
+        // before the files are moved (PLAN-V2 Phase E5)
         //
-        // jail ที่ค้างอยู่จะเฝ้า access log ที่ถูกย้ายไปถังพักแล้ว · fail2ban เตือนทุกครั้ง
-        // ที่ reload ว่าหาไฟล์ไม่เจอ และถ้าโดเมนเดิมถูกสร้างใหม่ในภายหลัง jail เก่าที่ยัง
-        // ชี้ไฟล์ผิดจะทำให้การเปิดใช้ครั้งใหม่ล้มเหลวโดยไม่มีใครรู้ว่าเพราะอะไร
+        // A leftover jail would watch an access log that's already been moved to
+        // the holding area · fail2ban warns on every reload that it can't find
+        // the file, and if the same domain is ever recreated later, the old jail
+        // still pointing at the wrong file would make the new setup fail with
+        // nobody knowing why.
         //
-        // ห้ามให้ความล้มเหลวตรงนี้หยุดการลบเว็บ — ผู้ใช้สั่งลบและยืนยันชื่อโดเมนแล้ว
-        // การค้างไว้ครึ่งทางเพราะ fail2ban มีปัญหาแย่กว่าการเหลือไฟล์ jail กำพร้า
+        // A failure here must never stop the site deletion — the user already
+        // gave the delete command and confirmed the domain name. Getting stuck
+        // halfway because of a fail2ban problem is worse than leaving one orphaned jail file.
         try {
             (new Fail2banManager($executor))->remove($site);
         } catch (\Throwable) {
-            // ไฟล์ที่เหลือค้างถูกเก็บกวาดได้ด้วยมือ · ไม่มีผลต่อเว็บอื่นเพราะแยกไฟล์ต่อเว็บ
+            // A leftover file can be cleaned up by hand · it has no effect on
+            // other sites, since files are kept separate per site
         }
 
-        // ถอน config ออกจากระบบก่อน เว็บจะได้หยุดให้บริการทันที
+        // Config is removed from the system first, so the site stops being served immediately
         $transaction = new ConfigTransaction($executor);
         $provisioner->stageRemoval($transaction, $site, ServiceCatalog::PHP_VERSIONS, $stillUsed);
         $transaction->commit(static fn (): array => $provisioner->webserver()->testConfig($executor));
 
         $provisioner->reload($executor, $site);
 
-        // ชั้นที่ 2 — ย้ายไฟล์ไปถังพัก ไม่ลบทิ้งทันที
+        // Layer 2 — files move to the holding area, never deleted immediately
         $trash = $this->moveToTrash($executor, $site->root(), $site->domain);
 
-        // FPM pool ใช้ร่วมกับเว็บอื่นของเจ้าของคนเดียวกัน จึงเขียนใหม่จากรายชื่อเว็บที่
-        // เหลืออยู่จริง แทนที่จะลบไฟล์ pool ทิ้ง — ลบทิ้งเมื่อไรเว็บพี่น้องล่มทันที
+        // The FPM pool is shared with the owner's other sites, so it's rewritten
+        // from the sites genuinely still remaining, rather than the pool file
+        // being deleted — deleting it would take down sibling sites instantly
         $repository->delete($site->id);
 
         $remaining = $repository->countOwnedBy($site->owner->userId);
 
         if ($remaining === 0) {
-            // ไม่เหลือเว็บแล้วจึงคืนบัญชีระบบ · ตราบใดที่ยังมีเว็บอยู่แม้เว็บเดียว
-            // การลบบัญชีจะทำให้ไฟล์ของเว็บนั้นกลายเป็นของ uid ที่ไม่มีเจ้าของทันที
+            // No sites left, so the system account is reclaimed · as long as
+            // even one site remains, deleting the account would leave that
+            // site's files owned by a uid with no owner immediately
             $provisioner->account()->remove($executor, $site->owner);
             $context->db->update('users', [
                 'system_user' => null,
@@ -128,14 +137,14 @@ final class SiteDelete extends SiteCapability
             'domain' => $site->domain,
             'trash_path' => $trash,
             'account_removed' => $remaining === 0,
-            'message' => "ลบเว็บไซต์ {$site->domain} แล้ว — ไฟล์ถูกย้ายไปที่ถังพัก กู้คืนได้จนกว่าจะถูกล้าง",
+            'message' => "Deleted website {$site->domain} — files moved to the holding area, recoverable until cleared",
         ];
     }
 
     /**
-     * ย้ายบ้านของเว็บไซต์ไปถังพัก คืนเส้นทางปลายทาง
+     * Moves a website's home to the holding area, returns the destination path
      *
-     * ใช้ rename ซึ่งเป็น atomic เมื่ออยู่ filesystem เดียวกัน — ไม่มีสถานะครึ่ง ๆ กลาง ๆ
+     * Uses rename, which is atomic within the same filesystem — no half-finished state
      */
     private function moveToTrash(Executor $executor, string $root, string $domain): string
     {
@@ -149,7 +158,7 @@ final class SiteDelete extends SiteCapability
         $executor->makeDirectory(dirname($target), 0750);
 
         if (!@rename($source, $target)) {
-            // ข้าม filesystem กัน rename ไม่ได้ — ใช้ mv ซึ่งจัดการกรณีนี้ให้
+            // rename can't cross a filesystem boundary — mv handles that case instead
             $executor->exec(['/usr/bin/mv', $source, $target], timeout: 120);
         }
 
