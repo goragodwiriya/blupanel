@@ -12,39 +12,47 @@ use Phpcp\Kernel\Response;
 use Phpcp\Security\Permissions;
 
 /**
- * บัญชีไหนถูกสำรองอัตโนมัติบ้าง — `/api/v2/backup-targets` (ข้อ B3, B6, B8)
+ * Which accounts get automatic backups — `/api/v2/backup-targets` (items B3, B6, B8)
  *
- * ## ทำไมเป็นตารางของ "บัญชี" ไม่ใช่ของ "เว็บ"
+ * ## Why this is a table of "accounts," not "websites"
  *
- * ไฟล์สำรองอยู่ในบ้านของบัญชีและนับในโควตาของบัญชี · การเปิด-ปิดรายเว็บทำให้ผู้ดูแล
- * ต้องกลับมาตั้งค่าใหม่ทุกครั้งที่ลูกค้าเพิ่มเว็บ ซึ่งเป็นจังหวะที่คนลืมได้ง่ายที่สุด
- * และผลของการลืมคือเว็บที่ไม่มีสำเนาเลยโดยไม่มีอะไรฟ้อง · เปิดที่บัญชีแล้วเว็บใหม่
- * ของบัญชีนั้นเข้ารอบเองทันที
+ * Backup files live in an account's home directory and count against the
+ * account's quota · turning it on/off per website would mean an admin has to
+ * come back and reconfigure it every time a customer adds a website, exactly
+ * the moment it's easiest to forget — and the result of forgetting is a
+ * website with no copies at all, with nothing to raise the alarm · turning it
+ * on at the account level means a new website under that account is
+ * immediately included in the round on its own
  *
- * ## ทำไมสองสวิตช์ ไม่ใช่สวิตช์เดียว
+ * ## Why two switches, not one
  *
- * เว็บสแตติกไม่มีฐานข้อมูล และบางบัญชีเก็บไฟล์เว็บไว้ใน git อยู่แล้วจึงต้องการเฉพาะ
- * ฐานข้อมูล · สวิตช์เดียวแปลว่าทั้งสองกลุ่มจ่ายพื้นที่ให้ของที่ไม่ได้ต้องการ (ข้อ B8)
+ * A static website has no database, and some accounts already keep their
+ * website files in git and want only the database · a single switch would
+ * mean both groups pay for space toward something they don't want (item B8)
  *
- * ## ทำไมเขียนตรงลงฐานข้อมูล ไม่ผ่าน agent
+ * ## Why this writes straight to the database, not through the agent
  *
- * ค่านี้ไม่แตะเครื่องเลย — ไม่มีไฟล์ ไม่มี service ไม่มีสิทธิ์ระบบเข้ามาเกี่ยว · สิ่งที่
- * มันเปลี่ยนคือ "รอบถัดไปจะหยิบใครบ้าง" ซึ่งอยู่ในฐานข้อมูลของ panel เอง · รูปแบบเดียว
- * กับ `BackupSchedulesController` · audit ยังเขียนเองที่นี่เพราะไม่ได้ผ่าน Dispatcher
+ * This value never touches the machine at all — no file, no service, no
+ * system privilege involved · what it changes is "who the next round picks
+ * up," which lives in the panel's own database · the same pattern as
+ * `BackupSchedulesController` · the audit entry is still written by hand here
+ * too, since this doesn't go through the Dispatcher
  */
 final class BackupTargetsController extends ApiController
 {
     public function index(Request $request): Response
     {
         /*
-         * **บัญชีโฮสติ้งทุกบัญชี ไม่ว่าจะพร้อมหรือยัง**
+         * **Every hosting account, ready or not**
          *
-         * เคยกรอง `system_user IS NOT NULL` ออกไป ซึ่งแปลว่าบัญชีที่ยังไม่เคยมีเว็บ
-         * หายไปจากตารางเงียบ ๆ · ผู้ดูแลที่เปิดหน้านี้มาหาลูกค้ารายนั้นจะไม่เจอชื่อเขา
-         * แล้วสรุปว่าระบบพัง หรือแย่กว่านั้นคือคิดว่าเปิดสำรองให้เขาไปแล้ว
+         * This used to filter out `system_user IS NOT NULL`, meaning an
+         * account that's never had a website silently disappeared from the
+         * table · an admin opening this page looking for that customer
+         * wouldn't find their name and would conclude the system was broken —
+         * or worse, think backups were already turned on for them
          *
-         * บัญชีที่ยังไม่มีบ้านยังติ๊กไม่ได้ (ไม่มีโฟลเดอร์ให้เขียน) แต่ต้อง**เห็นพร้อม
-         * เหตุผล** ไม่ใช่หายไปเฉย ๆ
+         * An account with no home directory yet still can't be checked (no
+         * folder to write to), but it must **be seen, with a reason**, not just vanish
          */
         $rows = $this->app->db()->all(
             "SELECT u.id, u.username, u.system_user, u.backup_files, u.backup_database,
@@ -62,24 +70,24 @@ final class BackupTargetsController extends ApiController
         $canManage = $this->ctx->can('backup.offsite');
 
         $items = array_map(
-            static function (array $row) use ($canManage): array {
+            function (array $row) use ($canManage): array {
                 $home = (string) ($row['system_user'] ?? '');
                 $ready = $home !== '';
 
                 return [
                     'id' => (int) $row['id'],
                     'username' => (string) $row['username'],
-                    // ยังไม่มีบัญชีระบบ = ยังไม่มีบ้าน · บอกตรง ๆ ดีกว่าโชว์เส้นทางที่ไม่มีอยู่
+                    // No system account yet = no home directory yet · stating that plainly beats showing a path that doesn't exist
                     'backup_dir' => $ready ? Paths::usersDir() . '/' . $home . '/backup' : '—',
                     'backup_files' => (int) $row['backup_files'] === 1,
                     'backup_database' => (int) $row['backup_database'] === 1,
                     'sites' => (int) $row['sites'],
                     'databases' => (int) $row['databases'],
-                    // โควตาที่เหลือ — ไฟล์สำรองนับในนี้ด้วย ผู้ดูแลจึงต้องเห็นก่อนกดเปิด
+                    // Remaining quota — backup files count against it too, so an admin must see this before turning it on
                     'disk_quota_mb' => (int) ($row['disk_quota_mb'] ?? -1),
                     'disk_used_mb' => (int) ($row['disk_used_mb'] ?? 0),
                     'ready' => $ready,
-                    'reason' => $ready ? '' : 'ยังไม่มีบัญชีระบบ — สร้างเว็บไซต์แรกให้บัญชีนี้ก่อน',
+                    'reason' => $ready ? '' : $this->t('This account has no home folder yet — create its first website first'),
                     'can_manage' => $canManage && $ready,
                 ];
             },
@@ -101,7 +109,7 @@ final class BackupTargetsController extends ApiController
             return $this->problem(ApiProblem::NotFound, 'Hosting account not found');
         }
 
-        // บัญชีที่ยังไม่มีบ้านเปิดสำรองไม่ได้ — รอบจะไปล้มทุกคืนโดยไม่มีทางสำเร็จ
+        // An account with no home directory yet can't have backups turned on — the round would just fail every night with no way to succeed
         if ((string) ($row['system_user'] ?? '') === '') {
             return $this->problem(
                 ApiProblem::ValidationError,
@@ -122,7 +130,7 @@ final class BackupTargetsController extends ApiController
         }
 
         $this->app->db()->update('users', $fields + ['updated_at' => time()], ['id' => $id]);
-        // ทรัพยากรนี้ไม่ผ่าน Dispatcher จึงไม่มีใครเขียน audit ให้อัตโนมัติ
+        // This resource doesn't go through the Dispatcher, so nothing writes the audit entry automatically
         $this->app->audit()->write($this->ctx->actor($request), 'backup.target_set', (string) $row['username'], 'ok', $fields);
 
         return $this->saved('Saved', 'backup-targets', [
@@ -133,10 +141,11 @@ final class BackupTargetsController extends ApiController
     }
 
     /**
-     * ค่าจาก checkbox ของหน้าจอ → 0/1
+     * A screen checkbox's value → 0/1
      *
-     * รับได้ทั้ง true/1/"1"/"on" เพราะ checkbox ที่ไม่ได้ผ่าน JSON ส่ง "on" มา และ
-     * การรับแค่ค่าเดียวแปลว่าฟอร์มที่ถูกส่งอีกแบบจะ "บันทึกสำเร็จ" โดยไม่เปลี่ยนอะไร
+     * Accepts true/1/"1"/"on" all together, because a checkbox not sent
+     * through JSON sends "on," and accepting only one shape would mean a form
+     * submitted the other way "saves successfully" while changing nothing
      */
     private function flag(mixed $value): int
     {
