@@ -15,14 +15,17 @@ use Phpcp\Driver\Mail\MailManager;
 use Phpcp\Driver\Template;
 
 /**
- * ฐานของทุก capability ที่แตะกล่องจดหมาย — PLAN-MAIL เฟส M1
+ * Base for every capability that touches mailboxes — PLAN-MAIL phase M1
  *
- * **สิ่งที่ทุกตัวต้องทำเหมือนกันหลังแก้ฐานข้อมูล:** เขียนตารางค้นหาใหม่ทั้งชุดจาก
- * ภาพรวมทั้งเครื่อง แล้วเขียน `main.cf`/`master.cf` ให้ตรงกับว่ามีโดเมนเปิดเมลอยู่ไหม
+ * **What every one of them has to do the same way after changing the
+ * database:** rewrite the whole set of lookup tables from a machine-wide
+ * view, then rewrite `main.cf`/`master.cf` to match whether any domain has
+ * mail turned on.
  *
- * ถ้าปล่อยให้แต่ละตัวทำเอง วันหนึ่งจะมีตัวที่ลืมเขียนไฟล์ใดไฟล์หนึ่ง แล้วได้เครื่องที่
- * ฐานข้อมูลบอกอย่างแต่ Postfix ทำอีกอย่าง — ซึ่งกับเมลแปลว่ากล่องที่ลบแล้วยังรับเมลได้
- * หรือกล่องที่เพิ่งสร้างยังไม่มีตัวตน
+ * Left for each one to do on its own, sooner or later one forgets to write
+ * one of the files, and the machine ends up with the database saying one
+ * thing while Postfix does another — which for mail means a deleted mailbox
+ * still receives mail, or a freshly created one doesn't exist yet.
  */
 abstract class MailCapability implements Capability
 {
@@ -31,7 +34,7 @@ abstract class MailCapability implements Capability
         return true;
     }
 
-    /** ทุกอย่างที่แตะกล่องจดหมายเป็นสิทธิ์เดียวกัน — เจ้าของเว็บจัดการเมลของโดเมนตัวเองได้ */
+    /** Everything that touches mailboxes is the same permission — a site owner manages their own domain's mail */
     public function permission(): string
     {
         return 'mail.manage';
@@ -43,15 +46,19 @@ abstract class MailCapability implements Capability
     }
 
     /**
-     * ชื่อโฮสต์ของเมลที่เครื่องนี้ใช้จริง
+     * The mail hostname this machine actually uses
      *
-     * **ต้องเป็นที่เดียวทั้งระบบ** — ค่านี้ถูกใช้สามที่ที่ต้องตอบตรงกันเสมอ: ตอนเขียน
-     * `myhostname` ลง Postfix · ตอนหาว่าใบรับรองใบไหนครอบคลุมชื่อนี้ · ตอนรายงานความพร้อม
+     * **Has to be the single source of truth for the whole system** — this
+     * value is used in three places that must always agree: writing
+     * `myhostname` into Postfix · deciding which certificate covers this
+     * name · reporting readiness.
      *
-     * ตอนที่แต่ละที่อ่านเอง `mail.cert` กับหน้าความพร้อมอ่านแค่ `mail.hostname` ตรง ๆ
-     * ส่วน `sync()` อนุมานต่อจาก `mail.from` ได้ · เครื่องที่ไม่เคยกรอกช่องชื่อโฮสต์จึงมี
-     * Postfix ที่ประกาศชื่อถูกต้องอยู่ แต่ปุ่มผูกใบรับรองตอบว่า "ยังไม่ได้ตั้งชื่อโฮสต์"
-     * แล้วไม่ทำอะไรเลย — สองส่วนของระบบเดียวกันไม่เห็นตรงกันว่าเครื่องชื่ออะไร
+     * Where each of those reads it on its own, `mail.cert` and the readiness
+     * page read `mail.hostname` directly, while `sync()` can fall back to
+     * `mail.from` · a machine that never filled in the hostname field ends up
+     * with a Postfix that announces the correct name, but the "bind
+     * certificate" button reports "hostname not set yet" and does nothing —
+     * two parts of the same system disagreeing on what the machine is called.
      */
     protected static function mailHostname(SettingsRepository $settings): string
     {
@@ -61,7 +68,7 @@ abstract class MailCapability implements Capability
             return $hostname;
         }
 
-        // ส่วนโดเมนของที่อยู่ผู้ส่งเป็นการเดาที่ดีที่สุดที่มี — เจ้าของเครื่องกรอกไว้แล้ว
+        // The sender address's domain part is the best guess available — the machine owner already filled it in
         $from = trim($settings->get('mail.from'));
 
         if ($from !== '' && str_contains($from, '@')) {
@@ -77,15 +84,20 @@ abstract class MailCapability implements Capability
     }
 
     /**
-     * เขียนไฟล์ตั้งค่าทั้งหมดให้ตรงกับฐานข้อมูลตอนนี้
+     * Writes every config file to match the database as it stands right now
      *
-     * เรียกหลังแก้ฐานข้อมูลเสร็จเสมอ · ลำดับสำคัญ: `main.cf` ต้องรู้ก่อนว่าเปิดรับ
-     * เมลไหม (มันตัดสินว่าจะฟังพอร์ต 25 หรือไม่) แล้วค่อยเขียนตารางค้นหาที่อ้างถึงกัน
+     * Always called after finishing a database change · order matters:
+     * `main.cf` has to know first whether mail receiving is on at all (it
+     * decides whether to listen on port 25), and only then are the lookup
+     * tables that refer back to it written.
      *
-     * **ทางนี้เป็นทางเดียวที่เขียน `main.cf` ได้** — รวมถึงการกดบันทึกค่าเมลขาออกจาก
-     * หน้าตั้งค่า (`mail.apply`) · เขียนจากที่อื่นแปลว่าต้องจำเองว่ามีเมลโฮสติ้งเปิดอยู่
-     * ไหม ซึ่งลืมเมื่อไหร่ก็ได้ `main.cf` ที่ไม่มีส่วนรับเมลเลย: กล่องทุกกล่องบนเครื่อง
-     * หยุดรับเมลเงียบ ๆ ทั้งที่ผู้ใช้แค่กดบันทึกที่อยู่ผู้ส่ง
+     * **This is the only path allowed to write `main.cf`** — including
+     * clicking to save outbound mail settings from the settings page
+     * (`mail.apply`) · writing from anywhere else would mean remembering on
+     * its own whether mail hosting is turned on, and forgetting that even
+     * once produces a `main.cf` with no receiving section at all: every
+     * mailbox on the machine silently stops receiving mail, while the user
+     * only clicked to save a sender address.
      *
      * @return array{domains:int,mailboxes:int,aliases:int}
      */
@@ -98,17 +110,19 @@ abstract class MailCapability implements Capability
         $hostname = self::mailHostname($settings);
 
         /*
-         * ชื่อโฮสต์ของเมลต้องเป็นชื่อเต็มที่มีจุด — เซิร์ฟเวอร์ปลายทางใช้ค่านี้ตอน
-         * ทักทาย (EHLO) และหลายเจ้าปฏิเสธชื่อที่ไม่มีจุดทันที
+         * The mail hostname must be a full name with a dot in it — the
+         * receiving server uses this value at greeting time (EHLO), and many
+         * of them reject a dotless name outright.
          *
-         * เครื่องจำนวนมากตั้ง hostname เป็นชื่อสั้น ๆ (คอนเทนเนอร์แทบทุกตัวเป็นแบบนั้น)
-         * ข้อความตรงนี้จึงต้องบอกวิธีแก้ ไม่ใช่แค่บอกว่าค่าไม่ถูกต้อง
+         * Plenty of machines have their hostname set to a short name
+         * (nearly every container does) — this message therefore has to say
+         * how to fix it, not just that the value is wrong.
          */
         if (!str_contains($hostname, '.')) {
             throw new ValidationError(
-                'ชื่อโฮสต์ของเมลต้องเป็นชื่อเต็มที่มีจุด (เช่น mail.example.com) — ตอนนี้ได้ "'
-                . ($hostname !== '' ? $hostname : 'ค่าว่าง')
-                . '" · ตั้งค่า mail.hostname ในหน้าตั้งค่า หรือแก้ hostname ของเครื่องให้เป็นชื่อเต็ม',
+                'The mail hostname must be a full name with a dot in it (e.g. mail.example.com) — got "'
+                . ($hostname !== '' ? $hostname : 'empty')
+                . '" · set mail.hostname on the settings page, or change the machine\'s hostname to a full name',
             );
         }
 
@@ -124,7 +138,7 @@ abstract class MailCapability implements Capability
             'relay_password' => $settings->get('mail.relay_password'),
             'relay_tls' => $settings->bool('mail.relay_tls'),
             'hosting' => $domains !== [],
-            // ชื่อเครื่องเป็นโดเมนของกล่องจดหมายด้วยไหม — ถ้าใช่ ห้ามใส่ใน mydestination
+            // Is the machine's own name also a mailbox domain? — if so, it must never go into mydestination
             'virtual_hostname' => in_array($hostname, $domains, true),
             'tls_cert' => $settings->get('mail.tls_cert'),
             'tls_key' => $settings->get('mail.tls_key'),
@@ -133,14 +147,17 @@ abstract class MailCapability implements Capability
         $mailboxes = $this->mailboxes($context);
 
         /*
-         * **เครื่องที่ส่งเมลอย่างเดียวไม่ต้องมี Dovecot** — และเป็นเครื่องส่วนใหญ่
+         * **A machine that only sends mail doesn't need Dovecot at all** —
+         * and that's most machines.
          *
-         * `mail.apply` (ปุ่มบันทึกค่าเมลขาออกในหน้าตั้งค่า) เดินผ่านทางนี้ด้วย ซึ่ง
-         * เครื่องเหล่านั้นมีแค่ Postfix ไว้ส่งเมลแจ้งเตือน · การเขียนตารางกล่องจดหมาย
-         * ที่นั่นจะล้มที่ `doveconf -n` ทั้งที่ไม่มีกล่องให้เขียนสักกล่อง
+         * `mail.apply` (the outbound-settings save button on the settings
+         * page) runs through this same path too, and those machines only
+         * have Postfix, for sending notification mail · writing the mailbox
+         * tables there would fail at `doveconf -n` with not a single mailbox
+         * to write.
          */
         if ($domains === [] && !$mailboxes->isInstalled($executor)) {
-            // reload เปลี่ยนพอร์ตที่ฟังไม่ได้ · เครื่องที่เคยฟังพอร์ต 25 อยู่ต้องหยุดฟังจริง
+            // reload can't change the listening port · a machine that used to listen on port 25 has to genuinely stop listening
             ($outbound['restart_required'] ?? false)
                 ? $postfix->restart($executor)
                 : $postfix->reload($executor);
@@ -153,11 +170,11 @@ abstract class MailCapability implements Capability
             $domains,
             $repository->activeMailboxes(),
             $repository->activeAliases(),
-            // Dovecot ต้องได้ใบใบเดียวกับ Postfix — โปรแกรมเมลต่อ IMAP เข้า Dovecot ตรง ๆ
+            // Dovecot has to get the exact same certificate as Postfix — mail clients connect IMAP straight to Dovecot
             ['cert' => $settings->get('mail.tls_cert'), 'key' => $settings->get('mail.tls_key')],
         );
 
-        // เปิดหรือปิดเมลครั้งแรกเปลี่ยนพอร์ตที่ Postfix ฟัง ซึ่ง reload ทำให้ไม่ได้
+        // Turning mail hosting on or off for the first time changes which port Postfix listens on, which reload can't do
         if ($outbound['restart_required'] ?? false) {
             $postfix->restart($executor);
         }
@@ -166,7 +183,7 @@ abstract class MailCapability implements Capability
     }
 
     /**
-     * หาโดเมนที่ผู้เรียกระบุ พร้อมตรวจว่ามีอยู่จริง
+     * Looks up the domain the caller specified, checking it genuinely exists
      *
      * @return array<string,mixed>
      */
@@ -175,7 +192,7 @@ abstract class MailCapability implements Capability
         $row = $this->repository($context)->findDomain($domain);
 
         if ($row === null) {
-            throw new ValidationError('ไม่พบโดเมน ' . $domain . ' ในระบบ');
+            throw new ValidationError('Domain ' . $domain . ' was not found in the system');
         }
 
         return $row;

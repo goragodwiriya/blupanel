@@ -12,32 +12,34 @@ use Phpcp\Domain\SettingsRepository;
 use Phpcp\Support\Validator;
 
 /**
- * เปลี่ยนเว็บเซิร์ฟเวอร์ให้จบในคำสั่งเดียว — กดจากหน้าจอแล้วใช้งานได้เลย
+ * Switches the web server, all done in a single command — click it on screen and it's live
  *
- * **ทำไมต้องเป็น capability เดียว ไม่ใช่หลายปุ่ม:** การสลับเว็บเซิร์ฟเวอร์มีห้าขั้นตอน
- * ที่ต้องทำ*เรียงกัน*และ*ครบทุกขั้น* ไม่งั้นเครื่องค้างครึ่งทางแบบที่ผู้ดูแลกู้เองไม่ได้:
+ * **Why this has to be one capability, not several buttons:** switching web
+ * servers has five steps that must run *in order* and *every single one*, or
+ * the machine ends up stuck halfway in a state an admin can't recover from on their own:
  *
- *   1. บันทึกค่าที่เลือก
- *   2. เขียนไฟล์ตั้งค่าของทุกเว็บใหม่ตามรูปแบบของเซิร์ฟเวอร์ตัวใหม่ (site.rebuild)
- *   3. **restart** ตัวที่ต้องเปลี่ยนพอร์ตที่ฟัง — ไม่ใช่ reload · Apache เปลี่ยน
- *      Listen ตอน reload ไม่ได้ตามการออกแบบของมันเอง
- *   4. เปิดตัวที่ต้องใช้ / หยุดตัวที่ไม่ใช้แล้ว — สองตัวถือพอร์ต 80 พร้อมกันไม่ได้
- *   5. ยิงคำขอจริงเข้าไปดูว่าเว็บยังตอบอยู่
+ *   1. Save the chosen value
+ *   2. Rewrite every site's config file to match the new server's format (site.rebuild)
+ *   3. **restart** whichever one needs its listening port changed — never
+ *      reload · Apache can't change its Listen directive on reload, by its own design
+ *   4. Start the one now needed / stop the one no longer used — two servers can't hold port 80 at once
+ *   5. Fire a real request in to confirm the site still responds
  *
- * ถ้าปล่อยให้ผู้ดูแลทำเองทีละขั้นตามคู่มือ ข้ามขั้นเดียวก็ได้ nginx ที่สตาร์ตไม่ขึ้น
- * พร้อมข้อความ "Address already in use" ที่ไม่ได้บอกว่าต้องทำอะไรต่อ — ซึ่งเกิดขึ้นจริง
- * มาแล้ว และเป็นเหตุผลทั้งหมดที่ control panel ควรมีอยู่
+ * Left for an admin to do by hand from a manual, skipping even one step gets an
+ * nginx that won't start, with an "Address already in use" message that never
+ * says what to do next — this genuinely happened before, and is the entire
+ * reason a control panel should exist.
  */
 final class WebserverApply extends SiteCapability
 {
-    /** โหมดที่เลือกได้ พร้อมชื่อที่ผู้ใช้เห็น */
+    /** The selectable modes, with the name the user sees */
     public const MODES = [
-        'nginx-proxy' => 'nginx + Apache (รองรับ .htaccess · แนะนำ)',
-        'apache' => 'Apache อย่างเดียว',
-        'nginx' => 'nginx อย่างเดียว (ไม่มี .htaccess)',
+        'nginx-proxy' => 'nginx + Apache (supports .htaccess · recommended)',
+        'apache' => 'Apache only',
+        'nginx' => 'nginx only (no .htaccess)',
     ];
 
-    /** unit ที่แต่ละโหมดต้องการให้ทำงาน */
+    /** The units each mode requires running */
     private const REQUIRED_UNITS = [
         'apache' => ['apache2'],
         'nginx' => ['nginx'],
@@ -61,7 +63,7 @@ final class WebserverApply extends SiteCapability
 
     public function summary(): string
     {
-        return 'เปลี่ยนเว็บเซิร์ฟเวอร์ที่ใช้โฮสต์เว็บไซต์';
+        return 'Switch the web server hosting websites';
     }
 
     public function validate(array $args): array
@@ -70,7 +72,7 @@ final class WebserverApply extends SiteCapability
 
         if (!array_key_exists($mode, self::MODES)) {
             throw new ValidationError(sprintf(
-                'โหมดที่เลือกใช้ไม่ได้: %s (ใช้ได้: %s)',
+                'Not a usable mode: %s (usable: %s)',
                 $mode,
                 implode(', ', array_keys(self::MODES)),
             ));
@@ -78,7 +80,7 @@ final class WebserverApply extends SiteCapability
 
         return [
             'mode' => $mode,
-            // ให้ nginx ตอบไฟล์ static เอง — มีผลเฉพาะโหมด nginx-proxy
+            // Lets nginx answer static files itself — only has an effect in nginx-proxy mode
             'static_by_nginx' => !isset($args['static_by_nginx'])
                 || in_array($args['static_by_nginx'], [true, 1, '1', 'on', 'true'], true),
         ];
@@ -92,8 +94,9 @@ final class WebserverApply extends SiteCapability
 
         $this->assertInstalled($target, $executor);
 
-        // บันทึกก่อนลงมือ — ขั้นตอนที่เหลืออ่านค่านี้ผ่าน SiteCapability::webServerMode()
-        // ถ้าบันทึกทีหลัง site.rebuild จะเขียนไฟล์ด้วยรูปแบบของโหมดเก่าทั้งหมด
+        // Saved before doing anything else — the remaining steps read this
+        // value through SiteCapability::webServerMode() · saving it later
+        // would mean site.rebuild writes every file in the old mode's format
         $settings->save([
             'webserver.mode' => $target,
             'webserver.static_by_nginx' => $args['static_by_nginx'] ? '1' : '0',
@@ -102,12 +105,13 @@ final class WebserverApply extends SiteCapability
         try {
             $rebuild = (new SiteRebuild())->run([], $executor, $context);
         } catch (\Throwable $e) {
-            // คืนค่าเดิมทันที ไม่งั้นหน้าจอจะบอกว่าใช้โหมดใหม่อยู่ทั้งที่ไฟล์บนดิสก์
-            // ยังเป็นของเก่า — สภาพที่ผู้ดูแลมองไม่ออกว่าอะไรเป็นอะไร
+            // Reverted immediately — otherwise the screen would say the new
+            // mode is active while the files on disk are still the old ones, a
+            // state an admin has no way to make sense of
             $settings->save(['webserver.mode' => $previous]);
 
             throw new ExecutionFailed(
-                "เขียนไฟล์ตั้งค่าของเว็บไซต์ไม่สำเร็จ จึงคืนค่าเดิมแล้ว\n\n" . $e->getMessage(),
+                "Failed to write website config files, so it was reverted\n\n" . $e->getMessage(),
             );
         }
 
@@ -120,7 +124,7 @@ final class WebserverApply extends SiteCapability
             'rebuilt' => $rebuild['count'] ?? 0,
             'steps' => $steps,
             'message' => sprintf(
-                'เปลี่ยนเป็น %s แล้ว · เขียนไฟล์ตั้งค่าใหม่ %d เว็บไซต์',
+                'Switched to %s · rewrote config files for %d website(s)',
                 self::MODES[$target],
                 (int) ($rebuild['count'] ?? 0),
             ),
@@ -128,10 +132,11 @@ final class WebserverApply extends SiteCapability
     }
 
     /**
-     * เครื่องต้องมีโปรแกรมที่โหมดนั้นต้องใช้จริงก่อนจะยอมเปลี่ยน
+     * The machine has to genuinely have the software a mode needs, before switching is allowed
      *
-     * ตรวจก่อนบันทึกค่า — ถ้าปล่อยให้บันทึกแล้วค่อยไปล้มตอนสตาร์ต ผู้ดูแลจะเหลือเครื่อง
-     * ที่ค่าตั้งบอกว่าใช้ nginx แต่ไม่มี nginx อยู่ ซึ่งกู้กลับได้ยากกว่าการถูกปฏิเสธ
+     * Checked before saving the value — letting it save first and only fail at
+     * start time would leave an admin with a machine whose settings say nginx
+     * while nginx doesn't exist, which is harder to recover from than being rejected outright.
      */
     private function assertInstalled(string $mode, Executor $executor): void
     {
@@ -147,18 +152,19 @@ final class WebserverApply extends SiteCapability
 
         if ($missing !== []) {
             throw new ValidationError(sprintf(
-                'เครื่องนี้ยังไม่ได้ติดตั้ง %s — ติดตั้งด้วย `apt install %s` ก่อน',
-                implode(' และ ', $missing),
+                'This machine does not have %s installed — install it with `apt install %s` first',
+                implode(' and ', $missing),
                 implode(' ', $missing),
             ));
         }
     }
 
     /**
-     * เปิด/ปิด/รีสตาร์ตให้ตรงกับโหมดใหม่
+     * Starts/stops/restarts to match the new mode
      *
-     * **หยุดตัวที่ไม่ใช้ก่อนเสมอ** — พอร์ต 80 มีเจ้าของได้ทีละตัว ถ้าสั่งเปิดตัวใหม่
-     * ก่อนหยุดตัวเก่าจะได้ "Address already in use" ทุกครั้ง
+     * **Always stops whichever one isn't needed first** — port 80 can only ever
+     * have one owner; starting the new one before stopping the old one gets
+     * "Address already in use" every single time.
      *
      * @return list<string>
      */
@@ -173,11 +179,11 @@ final class WebserverApply extends SiteCapability
             }
 
             $executor->exec([$executor->path('/usr/bin/systemctl'), 'stop', $unit], timeout: 30);
-            $steps[] = "หยุด {$unit}";
+            $steps[] = "Stopped {$unit}";
         }
 
         foreach ($needed as $unit) {
-            // restart ไม่ใช่ reload — พอร์ตที่ฟังเปลี่ยนได้เฉพาะตอนสตาร์ตใหม่เท่านั้น
+            // restart, not reload — the listening port only ever changes on a fresh start
             $result = $executor->exec(
                 [$executor->path('/usr/bin/systemctl'), 'restart', $unit],
                 timeout: 60,
@@ -185,14 +191,14 @@ final class WebserverApply extends SiteCapability
 
             if (!$result->ok()) {
                 throw new ExecutionFailed(sprintf(
-                    "เขียนไฟล์ตั้งค่าเรียบร้อยแล้วแต่สตาร์ต %s ไม่สำเร็จ\n\n%s\n\n"
-                    . 'ไฟล์บนดิสก์ถูกต้องแล้ว — แก้สาเหตุข้างต้นแล้วสั่งเปลี่ยนโหมดซ้ำได้ทันที',
+                    "Config files were written successfully, but starting %s failed\n\n%s\n\n"
+                    . 'The files on disk are already correct — fix the cause above and switching modes can be retried immediately',
                     $unit,
                     trim($result->stderr ?: $result->stdout),
                 ));
             }
 
-            $steps[] = "รีสตาร์ต {$unit}";
+            $steps[] = "Restarted {$unit}";
         }
 
         return $steps;

@@ -14,11 +14,13 @@ use Phpcp\Driver\Ssl\CertbotManager;
 use Phpcp\Support\Validator;
 
 /**
- * ติดตั้งใบรับรอง — Let's Encrypt หรือใบที่เซ็นเอง
+ * Installs a certificate — Let's Encrypt or self-signed
  *
- * ไม่เปิด SSL ให้อัตโนมัติหลังขอใบสำเร็จ แยกเป็นสองขั้นโดยเจตนา:
- * การขอใบอาจสำเร็จแต่ใบครอบคลุมโดเมนไม่ครบ หรือผู้ดูแลอาจยังไม่พร้อมสลับ
- * ให้เห็นผลก่อนแล้วค่อยกดเปิดใช้งาน ปลอดภัยกว่าสลับให้ทันทีแล้วเว็บล่ม
+ * Never enables SSL automatically after successfully issuing a certificate,
+ * split into two steps on purpose: issuing can succeed while the certificate
+ * doesn't cover every domain, or an admin might not be ready to switch yet —
+ * seeing the result first, then clicking to enable it, is safer than switching
+ * immediately and breaking the site.
  */
 final class SslIssue extends SslCapability implements Capability
 {
@@ -39,7 +41,7 @@ final class SslIssue extends SslCapability implements Capability
 
     public function summary(): string
     {
-        return 'ขอใบรับรอง SSL ให้เว็บไซต์';
+        return 'Request SSL certificate for website';
     }
 
     public function validate(array $args): array
@@ -52,9 +54,10 @@ final class SslIssue extends SslCapability implements Capability
             'email' => '',
         ];
 
-        // อีเมลถูกตรวจตอน run() ไม่ใช่ตรงนี้ — ค่าที่ผู้เรียกไม่ได้ส่งมาจะถูกเติมจาก
-        // เจ้าของเว็บหรือค่าตั้งของระบบก่อน (ดู resolveEmail) · ถ้าตรวจที่นี่จะปฏิเสธ
-        // ตั้งแต่ยังไม่ได้ลองหาค่าที่มีอยู่แล้วในระบบ
+        // The email is validated in run(), not here — a value the caller
+        // didn't send gets filled in from the site owner or system settings
+        // first (see resolveEmail) · validating it here would reject before
+        // ever trying values that already exist in the system
         $out['email'] = trim((string) ($args['email'] ?? ''));
 
         return $out;
@@ -67,14 +70,14 @@ final class SslIssue extends SslCapability implements Capability
         $site = $this->loadSite($context, $args['site_id']);
 
         if (!$site->isActive()) {
-            throw new ValidationError('เว็บไซต์ถูกระงับอยู่ — ยกเลิกการระงับก่อนจึงจะขอใบรับรองได้');
+            throw new ValidationError('The website is suspended — lift the suspension before requesting a certificate');
         }
 
         $certbot = $this->certbot();
         $domains = $this->domainsFor($site);
 
         if ($args['method'] === 'self-signed') {
-            // ทุกโดเมนของเว็บ ไม่ใช่แค่โดเมนหลัก — ชุดเดียวกับที่ letsencrypt ขอไป
+            // Every domain of the site, not just the primary one — the same set letsencrypt requests
             $certbot->selfSign($executor, $site, $domains);
 
             return [
@@ -83,8 +86,8 @@ final class SslIssue extends SslCapability implements Capability
                 'method' => 'self-signed',
                 'certificate' => $certbot->inspect($executor, $site),
                 'message' => sprintf(
-                    'สร้างใบรับรองที่เซ็นเองให้ %s แล้ว — เบราว์เซอร์จะขึ้นคำเตือนเสมอ '
-                    . 'เหมาะกับการทดสอบหรือเว็บภายในเท่านั้น ไม่ควรใช้กับเว็บสาธารณะ',
+                    'Created a self-signed certificate for %s — browsers will always show a warning, '
+                    . 'suitable for testing or internal sites only, never for a public website',
                     $site->domain,
                 ),
             ];
@@ -94,17 +97,20 @@ final class SslIssue extends SslCapability implements Capability
         $certificate = $certbot->inspect($executor, $site);
 
         /*
-         * เว็บเซิร์ฟเวอร์อ่านใบรับรองตอน start/reload เท่านั้น — ไฟล์ใหม่บนดิสก์ไม่มีผล
-         * จนกว่าจะสั่งโหลด
+         * The web server only reads the certificate at start/reload — a new
+         * file on disk has no effect until a reload is triggered.
          *
-         * **เจอบนเซิร์ฟเวอร์จริง (2026-08-14):** ขอใบใหม่ที่ครอบคลุม `www.` เพิ่ม หน้าจอ
-         * ตอบว่าสำเร็จและไฟล์บนดิสก์ถูกต้องทุกอย่าง แต่ผู้เยี่ยมชมยังได้ใบเก่าที่ไม่มี
-         * `www.` อยู่ — เบราว์เซอร์ขึ้นคำเตือนชื่อไม่ตรงต่อไปโดยไม่มีอะไรบอกว่าทำไม
-         * และผู้ดูแลไม่มีทางเดาได้ว่าต้องไปกด reload เอง
+         * **Found on the real server (2026-08-14):** requested a new
+         * certificate that added `www.` coverage, the screen reported success
+         * and the file on disk was entirely correct, but visitors still
+         * received the old certificate with no `www.` in it — the browser kept
+         * showing a name-mismatch warning with nothing explaining why, and an
+         * admin had no way to guess that a manual reload was needed.
          *
-         * ล้มแล้วไม่โยนต่อ: ใบรับรองขอสำเร็จไปแล้วจริง ๆ การทำให้ทั้งคำสั่งกลายเป็น
-         * ข้อผิดพลาดจะชวนให้กดขอใหม่ ซึ่งกินโควตาของ Let's Encrypt โดยไม่ได้แก้อะไร
-         * — รายงานกลับไปว่ายังไม่ได้โหลดแทน
+         * Never rethrown on failure: the certificate genuinely was issued
+         * successfully — turning the whole command into an error would invite
+         * clicking to request again, burning through Let's Encrypt's quota
+         * without fixing anything — reports back that it wasn't loaded instead.
          */
         $reloaded = true;
 
@@ -122,30 +128,34 @@ final class SslIssue extends SslCapability implements Capability
             'certificate' => $certificate,
             'reloaded' => $reloaded,
             'message' => sprintf(
-                'ขอใบรับรองให้ %s สำเร็จ (ครอบคลุม %d โดเมน หมดอายุใน %d วัน)%s — '
-                . 'กด "เปิดใช้งาน HTTPS" เพื่อเริ่มใช้จริง%s',
+                'Successfully requested a certificate for %s (covers %d domain(s), expires in %d days)%s — '
+                . 'click "Enable HTTPS" to actually start using it%s',
                 $site->domain,
                 count($domains),
                 $certificate['days_left'],
-                $args['staging'] ? ' [ใบทดสอบ staging เบราว์เซอร์ไม่เชื่อถือ]' : '',
-                $reloaded ? '' : ' · โหลดใบใหม่เข้าเว็บเซิร์ฟเวอร์ไม่สำเร็จ ผู้เยี่ยมชมยังได้ใบเดิมจนกว่าจะ reload',
+                $args['staging'] ? ' [staging test certificate, not trusted by browsers]' : '',
+                $reloaded ? '' : ' · failed to load the new certificate into the web server, visitors still get the old one until reloaded',
             ),
         ];
     }
 
     /**
-     * หาอีเมลติดต่อสำหรับ Let's Encrypt ตามลำดับความเหมาะสม
+     * Finds a contact email for Let's Encrypt, in order of appropriateness
      *
-     * **ทำไมต้องเติมให้ ไม่ใช่บังคับให้ส่งมา:** หน้ารายการใบรับรองมีปุ่ม "ขอใบรับรอง"
-     * เป็นปุ่มในแถวตาราง ซึ่งไม่มีที่ให้กรอกอะไร · ถ้าบังคับให้ส่งอีเมล ปุ่มนั้นจะ
-     * ล้มเหลวทุกครั้งด้วยข้อความ "อีเมลไม่ถูกต้อง" ที่ชี้ไปคนละทางกับต้นตอ
-     * (ผู้ใช้ไม่ได้กรอกอะไรผิด — ไม่มีช่องให้กรอกตั้งแต่แรก) · เจอบนเครื่องจริง 2026-08-11
+     * **Why it's filled in automatically rather than required:** the
+     * certificate list page has a "request certificate" button right in a
+     * table row, with nowhere to type anything · requiring an email would make
+     * that button fail every time with an "invalid email" message pointing at
+     * entirely the wrong cause (the user didn't type anything wrong — there
+     * was never a field to type into in the first place) · found on the real
+     * machine on 2026-08-11.
      *
-     * ลำดับที่เลือก:
-     *   1. ค่าที่ผู้เรียกส่งมา — API ที่ระบุเองต้องชนะเสมอ
-     *   2. **อีเมลของเจ้าของเว็บ** — คนที่ควรได้รับคำเตือนว่าใบใกล้หมดอายุคือคนที่
-     *      ดูแลเว็บนั้น ไม่ใช่ผู้ดูแลเครื่องที่บังเอิญกดปุ่ม
-     *   3. `mail.from` ของระบบ — ที่พึ่งสุดท้ายเมื่อบัญชีลูกค้าไม่ได้กรอกอีเมลไว้
+     * The order chosen:
+     *   1. The value the caller sent — an API caller who specifies one always wins
+     *   2. **The site owner's email** — the person who should get the warning
+     *      that a certificate is about to expire is whoever manages that site,
+     *      not an admin who happened to click the button
+     *   3. The system's `mail.from` — the last resort when a customer account never filled in an email
      */
     private function resolveEmail(string $requested, Site $site, Context $context): string
     {
@@ -172,9 +182,9 @@ final class SslIssue extends SslCapability implements Capability
         }
 
         throw new ValidationError(
-            "ไม่พบอีเมลติดต่อสำหรับ Let's Encrypt — ระบบต้องใช้อีเมลนี้แจ้งเตือนตอนใบใกล้หมดอายุ\n\n"
-            . "แก้ได้สองทาง: กรอกอีเมลในบัญชีเจ้าของเว็บไซต์ "
-            . 'หรือตั้ง "อีเมลผู้ส่ง" ในหน้าตั้งค่าของระบบ',
+            "No contact email found for Let's Encrypt — the system needs this email to warn when a certificate is about to expire\n\n"
+            . "Two ways to fix this: fill in an email on the website owner's account, "
+            . 'or set the "sender email" on the system settings page',
         );
     }
 }

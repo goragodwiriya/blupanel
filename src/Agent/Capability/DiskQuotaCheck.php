@@ -13,29 +13,37 @@ use Phpcp\Domain\UserAccount;
 use Phpcp\Domain\UserRepository;
 
 /**
- * วัดพื้นที่ดิสก์ที่แต่ละบัญชีโฮสติ้งใช้จริง แล้วแจ้งเตือนเมื่อใกล้เต็มโควตา (PLAN-V2 เฟส E2)
+ * Measures each hosting account's real disk usage, and warns when it's
+ * approaching its quota (PLAN-V2 Phase E2)
  *
- * **ทำไมวัดที่ระดับ "บัญชี" ไม่ใช่ "เว็บไซต์" เหมือน `disk.usage`:** ตั้งแต่ migration 0006
- * โควตาดิสก์ย้ายไปอยู่กับ `users` แล้ว (หนึ่งบัญชี = หนึ่งบ้าน = หลายเว็บ) และบ้านของบัญชี
- * มีไฟล์ที่ไม่ได้อยู่ใต้ docroot ของเว็บใดเว็บหนึ่งด้วย (`tmp/`, `logs/`, `.ssh/`) การ `du`
- * ทั้งบ้านครั้งเดียวจึงตรงกับตัวเลขที่โควตาจริง ๆ ตั้งใจจำกัดมากกว่าการรวมเลขจากรายเว็บ
+ * **Why this measures at the "account" level, not the "website" level like
+ * `disk.usage`:** since migration 0006, disk quota lives on `users` (one
+ * account = one home = many sites), and an account's home has files that don't
+ * fall under any one site's docroot at all (`tmp/`, `logs/`, `.ssh/`) — running
+ * `du` once on the whole home matches the number quota is actually meant to
+ * limit, more precisely than summing per-site numbers would.
  *
- * **ด่านที่บังคับได้จริงในเฟสนี้:** ตัวเลข `disk_used_mb` ที่คลาสนี้เขียน ถูก
- * {@see \Phpcp\Domain\QuotaChecker::checkOwnerCanCreate()} ใช้กันการ**สร้างทรัพยากรใหม่**
- * ผ่าน panel เมื่อเต็ม — เป็นการบังคับใช้ทางแอปพลิเคชัน ไม่ใช่การบังคับที่ระดับ filesystem
- * จริง (XFS/ext4 project quota) ซึ่งจะบล็อกการเขียนไฟล์ได้ทุกจุดรวมถึงจากโค้ดของลูกค้าเอง
- * ทางนั้นยังไม่ได้ทำในเฟสนี้ — ดู "ที่ยังเหลือ" ของเฟส E2 ใน PLAN-V2.md ว่าทำไม
+ * **What's genuinely enforced at this phase:** the `disk_used_mb` figure this
+ * class writes is used by
+ * {@see \Phpcp\Domain\QuotaChecker::checkOwnerCanCreate()} to block
+ * **creating new resources** through the panel once full — an
+ * application-level enforcement, not a real filesystem-level one (XFS/ext4
+ * project quota), which would block file writes everywhere, including from a
+ * customer's own code. That path hasn't been built in this phase — see "What's
+ * left" for Phase E2 in PLAN-V2.md for why.
  *
- * **การแจ้งเตือนไม่สแปม:** เก็บ "ระดับล่าสุดที่แจ้งไปแล้ว" ต่อบัญชีไว้ที่
- * `disk_quota_state` (ผ่าน {@see UserRepository::recordDiskQuotaThreshold()}) แจ้งเฉพาะ
- * ตอนระดับ**สูงขึ้น**กว่าที่แจ้งไปแล้วเท่านั้น ต่างจาก `expiry_notifications` ที่แจ้งครั้งเดียว
- * ต่อค่าตายตัวแล้วจบ เพราะการใช้ดิสก์ขึ้นลงได้ตลอดเวลาไม่เหมือนวันหมดอายุ
+ * **Notifications don't spam:** the "highest level already notified" is kept
+ * per account in `disk_quota_state` (through
+ * {@see UserRepository::recordDiskQuotaThreshold()}), notifying only when the
+ * level goes **higher** than what was already notified — unlike
+ * `expiry_notifications`, which notifies once for a fixed value and is done,
+ * because disk usage moves up and down constantly, unlike an expiry date.
  */
 final class DiskQuotaCheck implements Capability
 {
     private const DU = '/usr/bin/du';
 
-    /** บ้านของบัญชีที่มีหลายเว็บอาจใหญ่ ต้องมีเพดานกันงานรอบถัดไปซ้อนคิว */
+    /** An account's home with several sites can be large — needs a ceiling to keep the next run from stacking up in a queue */
     private const TIMEOUT = 120;
 
     public static function name(): string
@@ -55,7 +63,7 @@ final class DiskQuotaCheck implements Capability
 
     public function summary(): string
     {
-        return 'วัดพื้นที่ดิสก์ของบัญชีโฮสติ้งและแจ้งเตือนเมื่อใกล้เต็มโควตา';
+        return 'Measure hosting account disk usage and warn when quota is nearly full';
     }
 
     public function validate(array $args): array
@@ -77,7 +85,7 @@ final class DiskQuotaCheck implements Capability
         ];
 
         foreach ($users->hostingAccounts() as $row) {
-            // บัญชีที่ยังไม่เคยมีเว็บยังไม่มีบ้านให้วัด (สร้างแบบ lazy ตอนสร้างเว็บแรก)
+            // An account with no site yet has no home to measure (created lazily when the first site is created)
             if (($row['system_user'] ?? null) === null) {
                 continue;
             }
@@ -89,7 +97,7 @@ final class DiskQuotaCheck implements Capability
             try {
                 $usedMb = $this->measure($executor, $account);
             } catch (\Throwable $e) {
-                // บัญชีเดียวที่วัดไม่ได้ (โฟลเดอร์หาย, ผู้ใช้ระบบถูกลบ) ต้องไม่ทำให้ทั้งรอบล้ม
+                // One account that can't be measured (folder gone, system user deleted) must never fail the whole cycle
                 $results['failed']++;
                 $results['accounts'][] = [
                     'user_id' => $userId,
@@ -103,10 +111,12 @@ final class DiskQuotaCheck implements Capability
             $context->db->update('users', ['disk_used_mb' => $usedMb, 'updated_at' => time()], ['id' => $userId]);
             $results['measured']++;
 
-            // disk_quota_mb เป็น NULL ได้สำหรับบัญชีที่สร้างก่อนคอลัมน์นี้มีค่าเริ่มต้น
-            // (ALTER TABLE ADD COLUMN ไม่มี DEFAULT) — ต้องตีความเป็น "ไม่จำกัด" เหมือนที่
-            // QuotaChecker::diskQuotaExceeded() ทำ ไม่ใช่ปล่อยให้ (int) null กลายเป็น 0
-            // ซึ่งจะทำให้ทุกบัญชีที่ไม่เคยตั้งโควตาโดนแจ้งเตือน "เต็ม 100%" ทันที
+            // disk_quota_mb can be NULL for an account created before this
+            // column had a default (ALTER TABLE ADD COLUMN has no DEFAULT) —
+            // has to be read as "unlimited", the same way
+            // QuotaChecker::diskQuotaExceeded() does, not let (int) null turn
+            // into 0, which would flag every account that never had a quota
+            // set as "100% full" immediately
             $quotaMb = (int) ($row['disk_quota_mb'] ?? Quota::UNLIMITED);
             $threshold = $this->thresholdFor($usedMb, $quotaMb);
             $previous = $users->diskQuotaThreshold($userId);
@@ -119,22 +129,23 @@ final class DiskQuotaCheck implements Capability
                 'threshold' => $threshold,
             ];
 
-            // แจ้งเฉพาะตอนระดับสูงขึ้นกว่ารอบก่อน — กลับมาต่ำกว่า 80% ไม่ต้องแจ้ง (ไม่มีอะไรต้องทำ)
+            // Notifies only when the level rises above the previous run — dropping back below 80% needs no notification (nothing to act on)
             if ($threshold > 0 && $threshold > $previous) {
                 $entry['notified'] = $notifier->send(
                     'quota',
-                    sprintf('โควตาดิสก์ของ %s ถึง %d%%', $row['username'], $threshold),
+                    sprintf('Disk quota for %s reached %d%%', $row['username'], $threshold),
                     sprintf(
-                        "บัญชี: %s (%s)\nใช้ไป: %d MB จาก %d MB (%d%%)\n\n%s",
+                        "Account: %s (%s)\nUsed: %d MB of %d MB (%d%%)\n\n%s",
                         (string) $row['username'],
                         $row['username'],
                         $usedMb,
                         $quotaMb,
                         $threshold,
                         $threshold >= 100
-                            ? 'เต็มแล้ว — บัญชีนี้สร้างทรัพยากรใหม่ผ่าน panel ไม่ได้อีกจนกว่าจะลบไฟล์หรือขยายโควตา '
-                              . '(หมายเหตุ: ยังเขียนไฟล์เดิมต่อได้ตามปกติ เพราะเฟสนี้ยังไม่ได้บังคับที่ระดับ filesystem จริง)'
-                            : 'ใกล้เต็ม — แจ้งล่วงหน้าก่อนถึง 100%',
+                            ? 'Full — this account can no longer create new resources through the panel until '
+                              . 'files are deleted or quota is increased (note: it can still write to existing '
+                              . 'files as normal, since this phase does not yet enforce at the real filesystem level)'
+                            : 'Nearly full — this is an advance warning before it reaches 100%',
                     ),
                     $threshold >= 100 ? 'danger' : 'warn',
                 );
@@ -146,22 +157,22 @@ final class DiskQuotaCheck implements Capability
         }
 
         $results['message'] = sprintf(
-            'วัดพื้นที่ดิสก์ %d บัญชี · แจ้งเตือน %d บัญชี',
+            'Measured disk usage for %d account(s) · notified %d account(s)',
             $results['measured'],
             $results['notified'],
-        ) . ($results['failed'] > 0 ? sprintf(' · วัดไม่ได้ %d บัญชี', $results['failed']) : '');
+        ) . ($results['failed'] > 0 ? sprintf(' · %d account(s) could not be measured', $results['failed']) : '');
 
         return $results;
     }
 
-    /** ระดับที่ใช้ไปแล้วเทียบกับโควตา — 0 = ยังไม่ถึง 80% หรือไม่จำกัด */
+    /** The level used so far, compared to quota — 0 = not yet at 80%, or unlimited */
     private function thresholdFor(int $usedMb, int $quotaMb): int
     {
         if (Quota::isUnlimited($quotaMb)) {
             return 0;
         }
 
-        // โควตา 0 MB = ไม่มีที่ว่างให้เลย ถือว่าเต็มทันทีที่มีการใช้พื้นที่ใด ๆ
+        // A 0 MB quota = no room at all — counts as full the instant any space is used
         if ($quotaMb <= 0) {
             return $usedMb > 0 ? 100 : 0;
         }
@@ -177,34 +188,35 @@ final class DiskQuotaCheck implements Capability
     }
 
     /**
-     * ขนาดรวมของบ้านบัญชีเป็น MB
+     * An account's home's total size in MB
      *
-     * เดินไฟล์ด้วยสิทธิ์ของเจ้าของบัญชีตาม ARCHITECTURE §4.4 เหมือนกับที่ `DiskUsage`
-     * ทำกับเว็บไซต์ — root ไม่ต้องเดินเข้าไปในต้นไม้ไฟล์ที่ผู้ใช้ควบคุมได้เอง
+     * Walks the files under the account owner's own privileges, per
+     * ARCHITECTURE §4.4, the same way `DiskUsage` does for a website — root
+     * never has to walk into a file tree the user controls themselves.
      */
     private function measure(Executor $executor, UserAccount $account): int
     {
         $path = $executor->path($account->home());
 
         if (!$executor->exists($path)) {
-            throw new \RuntimeException('ไม่พบไดเรกทอรีบ้านของบัญชีนี้');
+            throw new \RuntimeException('This account\'s home directory was not found');
         }
 
         $result = $executor->asUser($account->username, static function () use ($executor, $path): array {
-            // -s สรุปยอดเดียว · -k เป็นกิโลไบต์ · -x ไม่ข้าม filesystem
+            // -s a single summary total · -k in kilobytes · -x never crosses a filesystem
             $exec = $executor->exec([self::DU, '-sk', '-x', '--', $path], timeout: self::TIMEOUT);
 
             return ['ok' => $exec->ok(), 'out' => $exec->output(), 'err' => trim($exec->stderr)];
         });
 
         if (($result['ok'] ?? false) !== true) {
-            throw new \RuntimeException(mb_substr((string) ($result['err'] ?? 'วัดขนาดไม่สำเร็จ'), 0, 200));
+            throw new \RuntimeException(mb_substr((string) ($result['err'] ?? 'Failed to measure size'), 0, 200));
         }
 
         $out = (string) ($result['out'] ?? '');
 
         if (preg_match('/^(\d+)/', $out, $m) !== 1) {
-            throw new \RuntimeException('อ่านผลลัพธ์ของ du ไม่ได้');
+            throw new \RuntimeException('Failed to read du\'s output');
         }
 
         return (int) ceil(((int) $m[1]) / 1024);
