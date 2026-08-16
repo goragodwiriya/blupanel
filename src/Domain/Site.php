@@ -8,13 +8,15 @@ use Phpcp\Kernel\Paths;
 use Phpcp\Support\Validator;
 
 /**
- * เว็บไซต์หนึ่งเว็บ พร้อมเส้นทางทั้งหมดที่อนุมานจากชื่อโดเมน
+ * One site, with every path derived from its domain name
  *
- * เหตุผลที่รวมการคำนวณเส้นทางไว้ที่นี่ที่เดียว: ถ้าปล่อยให้แต่ละที่ประกอบ path เอง
- * จะเกิดกรณีที่ vhost ชี้ socket หนึ่งแต่ pool สร้างอีก socket หนึ่งโดยไม่มีใครรู้
- * จนกว่าเว็บจะขึ้น 502 — บั๊กแบบนี้หายากและเจ็บ
+ * Why path computation is consolidated here in one place: if each caller built its
+ * own path, a vhost could end up pointing at one socket while the pool creates a
+ * different one, with nobody noticing until the site starts returning 502s — a bug
+ * class that's rare and painful to track down.
  *
- * ชื่อโดเมนถูก validate ก่อนสร้าง object เสมอ เส้นทางที่อนุมานออกมาจึงปลอดภัย
+ * The domain name is always validated before this object is constructed, so every
+ * path derived from it is safe.
  */
 final readonly class Site
 {
@@ -22,7 +24,7 @@ final readonly class Site
     public function __construct(
         public int $id,
         public string $domain,
-        /** เจ้าของเว็บ — เส้นทางและ uid ทั้งหมดของเว็บนี้อนุมานจากบัญชีของเขา */
+        /** The site's owner — every path and uid for this site is derived from their account */
         public UserAccount $owner,
         public string $phpVersion,
         public string $sslMode = 'off',
@@ -31,9 +33,9 @@ final readonly class Site
         public int $memoryLimitMb = 256,
         public int $uploadLimitMb = 64,
         public int $maxChildren = 5,
-        /** ว่าง = ใช้ <บ้าน>/public ตามปกติ */
+        /** Empty = use <home>/public as normal */
         public string $docrootOverride = '',
-        /** โดเมนย่อย => path ปลายทาง */
+        /** subdomain => target path */
         public array $subdomainPaths = [],
     ) {
     }
@@ -53,13 +55,16 @@ final readonly class Site
             domain: Validator::domain((string) $row['primary_domain']),
             owner: $owner ?? UserAccount::fromRow([
                 'id' => $row['owner_user_id'] ?? 0,
-                // แถวของ sites ที่ join users มาแล้วจะมีคีย์พวกนี้ · ถ้าไม่มี UserAccount
-                // จะโยนทิ้งทันทีแทนที่จะสร้างเส้นทางอย่าง /srv/phpcp/users//domains/…
-                // ซึ่งผิดแต่ไม่มีอะไรฟ้อง — เคยหลุดไปโผล่บน API จริงมาแล้ว
+                // A sites row that's already joined with users will have these
+                // keys · without a UserAccount, this throws immediately instead of
+                // building a path like /srv/phpcp/users//domains/…, which is wrong
+                // but has nothing to flag it — this has actually reached the real
+                // API before.
                 'system_user' => $row['owner_system_user'] ?? null,
                 'username' => $row['owner_username'] ?? '',
-                // เลย์เอาต์กับโดเมนหลักต้องมาด้วย ไม่งั้น docroot ตกกลับไปเป็น phpcp
-                // เงียบ ๆ ทั้งที่เจ้าของตั้ง cpanel ไว้ — vhost จะชี้ผิดที่ทั้งเว็บ
+                // Layout and main domain must come along too, otherwise docroot
+                // silently falls back to phpcp even when the owner set cpanel —
+                // the vhost would point at the wrong place for the whole site.
                 'site_layout' => $row['owner_site_layout'] ?? '',
                 'main_domain' => $row['owner_main_domain'] ?? '',
             ]),
@@ -73,32 +78,35 @@ final readonly class Site
     }
 
     /**
-     * บัญชีระบบที่เว็บนี้รันด้วย — เป็นของ**เจ้าของ** ไม่ใช่ของเว็บ
+     * The system account this site runs as — belongs to **the owner**, not the site
      *
-     * เดิมเป็น `web_<siteId>` หนึ่งบัญชีต่อหนึ่งเว็บ · ตั้งแต่ migration 0006 เว็บทุกแห่ง
-     * ของผู้ใช้คนเดียวกันใช้บัญชีเดียวกัน ซึ่งเป็นเหตุผลที่คอลัมน์ `sites.system_user`
-     * ถูกลบทิ้ง (ข้อจำกัด UNIQUE ของมันขัดกับความจริงใหม่นี้โดยตรง)
+     * This used to be `web_<siteId>`, one account per site · since migration 0006,
+     * every site belonging to the same user shares the same account, which is why
+     * the `sites.system_user` column was removed (its UNIQUE constraint directly
+     * contradicted this new reality).
      */
     public function systemUser(): string
     {
         return $this->owner->username;
     }
 
-    /** บ้านของเว็บไซต์ — log, tmp, backup อยู่ใต้เส้นทางนี้เสมอ แม้ docroot จะชี้ออกไปที่อื่น */
+    /** The site's own home — logs, tmp, and backups always live under this path, even when docroot points elsewhere */
     public function root(): string
     {
         return $this->owner->siteRoot($this->domain);
     }
 
     /**
-     * ไดเรกทอรีที่เว็บเซิร์ฟเวอร์เสิร์ฟจริง
+     * The directory the web server actually serves
      *
-     * รูปทรงมาจากเลย์เอาต์ของ**เจ้าของ** ({@see SiteLayout}) ไม่ใช่สูตรตายตัว —
-     * phpcp ได้ `<บ้าน>/domains/<โดเมน>/public` ส่วน cpanel ได้ `<บ้าน>/public_html`
+     * The shape comes from **the owner's** layout ({@see SiteLayout}), not a fixed
+     * formula — phpcp gets `<home>/domains/<domain>/public`, while cpanel gets
+     * `<home>/public_html`.
      *
-     * ตั้ง docrootOverride ได้เมื่อต้องการชี้โดเมนไปที่โฟลเดอร์ที่มีอยู่ก่อนแล้ว
-     * (Domain Pointer) เส้นทางที่ชี้ได้ถูกจำกัดด้วย Config::docrootRoots()
-     * ตอนสร้าง/แก้ไขเสมอ · override มาก่อนเลย์เอาต์เสมอเพราะเป็นคำสั่งที่ชัดเจนกว่า
+     * `docrootOverride` can be set to point a domain at a folder that already
+     * exists (a Domain Pointer); which paths are allowed is always restricted by
+     * `Config::docrootRoots()` at creation/edit time · the override always wins
+     * over the layout, since it's the more explicit instruction.
      */
     public function docroot(): string
     {
@@ -115,7 +123,7 @@ final readonly class Site
         return $this->root().'/tmp';
     }
 
-    /** ที่พักไฟล์ชั่วคราวของ pool ซึ่งใช้ร่วมกับเว็บอื่นของเจ้าของคนเดียวกัน */
+    /** The pool's temp storage, shared with the owner's other sites */
     public function poolTmpDir(): string
     {
         return $this->owner->tmpDir();
@@ -178,10 +186,11 @@ final readonly class Site
     }
 
     /**
-     * socket ของ FPM pool — หนึ่งตัวต่อ (เจ้าของ × เวอร์ชัน PHP)
+     * The FPM pool's socket — one per (owner × PHP version)
      *
-     * เว็บของเจ้าของคนเดียวกันที่ใช้ PHP เวอร์ชันเดียวกันจึงใช้ socket และ pool ร่วมกัน
-     * ผลคือลูกค้าที่มี 5 เว็บบน PHP 8.4 ใช้ pool เดียว ไม่ใช่ 5 pool
+     * Sites belonging to the same owner using the same PHP version therefore share
+     * a socket and a pool — meaning a customer with 5 sites on PHP 8.4 uses one
+     * pool, not 5.
      */
     public function fpmSocket(): string
     {
@@ -214,18 +223,19 @@ final readonly class Site
         return $this->status === 'active';
     }
 
-    /** ทุกโดเมนที่ vhost นี้ต้องรับผิดชอบ */
+    /** Every domain this vhost is responsible for */
     public function allDomains(): array
     {
         return array_values(array_unique([$this->domain, ...$this->aliases]));
     }
 
     /**
-     * เว็บนี้รับ subdomain แบบ wildcard หรือไม่ (PLAN-V2 เฟส E7)
+     * Whether this site accepts wildcard subdomains (PLAN-V2 Phase E7)
      *
-     * มีผลสองอย่าง: ต้องขอใบรับรองด้วย DNS-01 (HTTP-01 ใช้กับ wildcard ไม่ได้)
-     * และ vhost ต้องถูกอ่าน**ท้ายสุด** ไม่งั้นมันจะกลืนคำขอของ subdomain
-     * ที่เว็บอื่นระบุชื่อเต็มไว้แล้ว (ดู `ApacheDriver::vhostPath()`)
+     * Has two consequences: the certificate must be requested via DNS-01 (HTTP-01
+     * doesn't work with wildcards), and the vhost must be read **last**, otherwise
+     * it would swallow requests for a subdomain that another site has already
+     * declared by its full name (see `ApacheDriver::vhostPath()`).
      */
     public function hasWildcard(): bool
     {
@@ -238,7 +248,7 @@ final readonly class Site
         return false;
     }
 
-    /** เว็บนี้ยังเป็นเว็บเดียวของเจ้าของที่ใช้ PHP เวอร์ชันนี้อยู่หรือไม่ */
+    /** Whether this site shares its owner and PHP version with another site */
     public function sharesPoolWith(self $other): bool
     {
         return $this->owner->username === $other->owner->username
@@ -284,11 +294,11 @@ final readonly class Site
         );
     }
 
-    /** ค่าเดียวกับ CHECK constraint ของคอลัมน์ ssl_mode ในฐานข้อมูล */
+    /** The same values as the ssl_mode column's CHECK constraint in the database */
     public static function assertSslMode(string $mode): string
     {
         if (!in_array($mode, ['off', 'on', 'forced'], true)) {
-            throw new \Phpcp\Agent\ValidationError('โหมด SSL ต้องเป็น off, on หรือ forced');
+            throw new \Phpcp\Agent\ValidationError('SSL mode must be off, on, or forced');
         }
 
         return $mode;
