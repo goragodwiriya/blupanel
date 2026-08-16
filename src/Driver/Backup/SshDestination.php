@@ -9,26 +9,32 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\ValidationError;
 
 /**
- * ฐานร่วมของปลายทางที่คุยผ่าน OpenSSH — `sftp` และ `rsync`
+ * The shared base for destinations that talk over OpenSSH — `sftp` and `rsync`
  *
- * **ทำไมเป็น OpenSSH ไม่ใช่ไลบรารี:** โปรเจกต์ไม่มี Composer และ `ext-ssh2` ไม่ได้ติดมา
- * กับ PHP มาตรฐาน · `ssh`/`sftp`/`rsync` มีอยู่บนทุกเครื่องที่ระบบนี้รองรับอยู่แล้ว
- * และเดินผ่าน `Executor` เหมือน capability อื่นทั้งหมด จึงได้ audit กับโหมด dryrun มาด้วย
+ * **Why OpenSSH, not a library:** this project has no Composer, and
+ * `ext-ssh2` doesn't ship with standard PHP · `ssh`/`sftp`/`rsync` already
+ * exist on every machine this system supports, and they run through
+ * `Executor` exactly like every other capability, which gets audit logging and dryrun mode for free.
  *
- * **ยืนยันตัวตนด้วยกุญแจเท่านั้น — ไม่รองรับรหัสผ่านโดยตั้งใจ**
+ * **Authenticates with a key only — password support is deliberately not
+ * included**
  *
- * private key ที่เข้ารหัสไว้ในฐานข้อมูลถูกเขียนลงไฟล์ชั่วคราวสิทธิ์ 0600 เฉพาะตอนใช้
- * แล้วลบทุกกรณีรวมทั้งตอนคำสั่งล้มเหลว
+ * The private key, encrypted in the database, is written to a temporary
+ * file with 0600 permissions only while it's being used, then deleted in
+ * every case, including when the command fails.
  *
- * รหัสผ่านถูกตัดออกด้วยเหตุผลสามข้อ: ต้องติดตั้ง `sshpass` เพิ่ม · ส่งผ่าน
- * อาร์กิวเมนต์ไม่ได้เพราะ `/proc/<pid>/cmdline` ผู้ใช้อื่นบนเครื่องอ่านได้ · และ
- * ส่งผ่านตัวแปรแวดล้อมก็ทำไม่ได้เพราะ `Executor::exec()` ไม่รับ env ซึ่งเป็นข้อจำกัด
- * ที่**ไม่ควรขยายเพื่อรองรับวิธียืนยันตัวตนที่อ่อนกว่าอยู่แล้ว** · กุญแจยังเป็นสิ่งที่
- * ถอนคืนได้ทีละใบโดยไม่กระทบบัญชีอื่น ซึ่งรหัสผ่านทำไม่ได้
+ * A password was cut for three reasons: it needs `sshpass` installed
+ * separately · it can't be passed as an argument, since other users on the
+ * machine can read `/proc/<pid>/cmdline` · and it can't be passed through
+ * an environment variable either, since `Executor::exec()` doesn't accept
+ * env at all — a limitation that **should never be widened just to support
+ * an authentication method that's already weaker** · a key is also
+ * something that can be revoked one at a time without affecting any other account, which a password can't do.
  *
- * **`StrictHostKeyChecking` เปิดไว้เสมอโดยตั้งใจ** — ปิดมันทำให้ทุกการส่งไฟล์สำรอง
- * ถูกดักกลางทางแล้วรับไปได้โดยไม่มีอะไรฟ้อง ซึ่งเป็นการยกข้อมูลทั้งระบบให้ผู้โจมตี ·
- * ราคาที่จ่ายคือผู้ดูแลต้องใส่ host key ตอนตั้งค่า ซึ่ง `test()` บอกวิธีไว้ในข้อความ error
+ * **`StrictHostKeyChecking` is deliberately always on** — turning it off
+ * would let every backup push be intercepted and accepted with nothing
+ * ever complaining, handing the entire system's data to an attacker · the
+ * price paid is that an admin has to supply the host key at setup time, which `test()` explains how to do in its error message.
  */
 abstract class SshDestination implements Destination
 {
@@ -40,12 +46,14 @@ abstract class SshDestination implements Destination
     ];
 
     /**
-     * เส้นทางไฟล์ known_hosts ชั่วคราวระหว่างที่คำสั่งกำลังทำงาน
+     * The temporary known_hosts file path while a command is running
      *
-     * `$knownHosts` เก็บ **เนื้อหา** (ผลของ `ssh-keyscan`) ไม่ใช่เส้นทางไฟล์ — เพราะ
-     * ผู้ดูแลวางไฟล์บนเครื่อง panel เองไม่ได้ (systemd hardening จำกัดที่เขียนได้) และ
-     * ไม่มีช่องในหน้าเว็บให้กรอกเส้นทาง · เนื้อหาถูกเขียนลงไฟล์ชั่วคราวตอนใช้แบบเดียว
-     * กับ private key แล้วลบทิ้งทุกกรณี · ค่านี้ถูกตั้งใน withKey() และล้างใน finally
+     * `$knownHosts` stores **content** (the result of `ssh-keyscan`), never
+     * a file path — because an admin can't place a file on the panel's own
+     * machine (systemd hardening restricts what's writable), and there's no
+     * field on the web page to type a path into · the content is written to
+     * a temp file only while in use, the same as the private key, and
+     * deleted in every case · this value is set in withKey() and cleared in its `finally`.
      */
     private ?string $knownHostsFile = null;
 
@@ -58,37 +66,38 @@ abstract class SshDestination implements Destination
         protected readonly string $knownHosts = '',
     ) {
         if ($this->host === '') {
-            throw new ValidationError('ต้องระบุชื่อเครื่องปลายทาง');
+            throw new ValidationError('A destination hostname must be specified');
         }
 
         if ($this->port < 1 || $this->port > 65535) {
-            throw new ValidationError('พอร์ตต้องอยู่ระหว่าง 1 ถึง 65535');
+            throw new ValidationError('Port must be between 1 and 65535');
         }
 
         if ($this->user === '') {
-            throw new ValidationError('ต้องระบุชื่อผู้ใช้ของเครื่องปลายทาง');
+            throw new ValidationError('A destination username must be specified');
         }
 
         if ($this->path === '' || !str_starts_with($this->path, '/')) {
-            throw new ValidationError('เส้นทางปลายทางต้องเป็นเส้นทางเต็มที่ขึ้นต้นด้วย /');
+            throw new ValidationError('The destination path must be a full path starting with /');
         }
 
         if (preg_match('#(^|/)\.\.(/|$)#', $this->path) === 1) {
-            throw new ValidationError('เส้นทางปลายทางต้องไม่มี ..');
+            throw new ValidationError('The destination path must not contain ..');
         }
 
         if ($this->privateKey === '') {
-            throw new ValidationError('ต้องมีกุญแจส่วนตัวสำหรับเข้าเครื่องปลายทาง');
+            throw new ValidationError('A private key is required to access the destination machine');
         }
     }
 
     /**
-     * เตรียมไฟล์ความลับชั่วคราวแล้วรันงาน — ลบไฟล์ทุกกรณี
+     * Prepares temporary secret files and runs the work — deletes the files in every case
      *
-     * รับ callback แทนที่จะคืนเส้นทางไฟล์ออกไป เพื่อให้ **ไม่มีทางลืมลบ** ·
-     * private key ที่ค้างอยู่ใน /tmp คือกุญแจเข้าเครื่องสำรองที่ใครก็อ่านได้
+     * Takes a callback rather than returning the file path, so **there's no
+     * way to forget to delete it** · a private key left behind in /tmp is
+     * the key to the backup machine, readable by anyone.
      *
-     * @param callable(string): mixed $work รับเส้นทางไฟล์กุญแจชั่วคราว
+     * @param callable(string): mixed $work receives the temporary key file path
      */
     protected function withKey(Executor $executor, callable $work): mixed
     {
@@ -98,7 +107,7 @@ abstract class SshDestination implements Destination
         try {
             $executor->writeFile($executor->path($keyFile), rtrim($this->privateKey, "\n") . "\n", 0600);
 
-            // host key ที่ผู้ดูแลวางไว้ → ไฟล์ชั่วคราวที่ UserKnownHostsFile ชี้ไป
+            // The host key an admin supplied → a temp file UserKnownHostsFile points at
             if (trim($this->knownHosts) !== '') {
                 $hostsFile = sys_get_temp_dir() . '/phpcp-known-' . bin2hex(random_bytes(8));
                 $executor->writeFile($executor->path($hostsFile), rtrim($this->knownHosts, "\n") . "\n", 0600);
@@ -107,7 +116,7 @@ abstract class SshDestination implements Destination
 
             return $work($keyFile);
         } finally {
-            // ล้างสถานะก่อนเสมอ ไม่งั้นครั้งถัดไปอ้างเส้นทางไฟล์ที่ลบไปแล้ว
+            // State is always cleared first, or the next call would reference an already-deleted file path
             $this->knownHostsFile = null;
 
             if ($executor->exists($executor->path($keyFile))) {
@@ -120,7 +129,7 @@ abstract class SshDestination implements Destination
         }
     }
 
-    /** ตัวเลือกของ ssh ที่ใช้ร่วมกันทุกคำสั่ง */
+    /** The ssh options shared by every command */
     protected function sshOptions(string $keyFile): array
     {
         $options = self::SSH_OPTIONS;
@@ -130,15 +139,15 @@ abstract class SshDestination implements Destination
             $options[] = 'UserKnownHostsFile=' . $this->knownHostsFile;
         }
 
-        // IdentitiesOnly กัน ssh ไปหยิบกุญแจอื่นของ root มาลองแทน ซึ่งจะทำให้
-        // "ตั้งค่าผิดแต่ใช้งานได้" แล้วพังตอนย้ายเครื่อง
+        // IdentitiesOnly stops ssh from trying one of root's other keys
+        // instead, which would produce "misconfigured but somehow works" that breaks the moment it moves machines
         return [...$options, '-i', $keyFile, '-o', 'IdentitiesOnly=yes'];
     }
 
     protected function remote(string $name): string
     {
         if ($name === '' || str_contains($name, '/')) {
-            throw new ValidationError('ชื่อไฟล์ปลายทางต้องเป็นชื่อล้วน ไม่มีไดเรกทอรี');
+            throw new ValidationError('The destination filename must be a name only, no directory');
         }
 
         return rtrim($this->path, '/') . '/' . $name;
@@ -147,74 +156,80 @@ abstract class SshDestination implements Destination
     protected function assertInsidePath(string $remotePath): void
     {
         if (preg_match('#(^|/)\.\.(/|$)#', $remotePath) === 1) {
-            throw new ValidationError('เส้นทางไฟล์ปลายทางต้องไม่มี ..');
+            throw new ValidationError('The destination file path must not contain ..');
         }
 
         if (!str_starts_with($remotePath, rtrim($this->path, '/') . '/')) {
-            throw new ValidationError('เส้นทางนี้อยู่นอกปลายทางสำรองที่กำหนดไว้');
+            throw new ValidationError('This path is outside the configured backup destination');
         }
     }
 
     /**
-     * แปลงข้อความผิดพลาดของ ssh ให้เป็นคำแนะนำที่ทำตามได้
+     * Turns ssh's own error message into actionable advice
      *
-     * ข้อความดิบของ OpenSSH บอกสาเหตุจริงอยู่แล้ว แต่ไม่ได้บอกว่าต้องทำอะไรต่อ ·
-     * สองกรณีข้างล่างคือกรณีที่เจอจริงเกือบทั้งหมดตอนตั้งค่าครั้งแรก
+     * OpenSSH's raw message already states the real cause, but doesn't say
+     * what to do next · the two cases below cover nearly everything genuinely encountered during first-time setup.
      */
     protected function explain(string $stderr): string
     {
         $text = trim($stderr);
 
         if (str_contains($text, 'Host key verification failed')) {
-            return $text . "\n\nเครื่องปลายทางยังไม่อยู่ในรายการที่เชื่อถือ — "
-                . "กดปุ่ม \"อ่านจากเครื่องปลายทาง\" ข้างช่อง known_hosts เพื่อดึงกุญแจมาให้อัตโนมัติ";
+            return $text . "\n\nThe destination machine is not on the trusted list yet — "
+                . 'click "read from destination machine" next to the known_hosts field to fetch the key automatically';
         }
 
         /*
-         * **"Permission denied" มีสองความหมายที่คนละเรื่องกันสิ้นเชิง**
+         * **"Permission denied" carries two entirely unrelated meanings**
          *
-         * เดิมจับคำนี้คำเดียวแล้วบอกให้ไปแก้ `authorized_keys` ทุกครั้ง · แต่ตอนที่
-         * ยืนยันตัวตนผ่านแล้วและติดที่ **สิทธิ์ของไดเรกทอรีปลายทาง** (เช่นตั้ง path
-         * เป็น `/backup` ซึ่งอยู่ที่รากของ filesystem ที่ผู้ใช้ธรรมดาสร้างอะไรไม่ได้)
-         * คำแนะนำนั้นพาไปผิดทางทั้งหมด — ผู้ดูแลไปนั่งไล่กุญแจที่ไม่เคยมีปัญหา
+         * This used to match that phrase alone and always advise fixing
+         * `authorized_keys` · but when authentication had already
+         * succeeded and the real problem was **the destination
+         * directory's own permissions** (e.g. path set to `/backup`,
+         * sitting at the filesystem root where an ordinary user can't
+         * create anything), that advice sent people entirely the wrong
+         * way — an admin would sit there re-checking a key that was never the problem.
          *
-         * แยกด้วยบริบทที่ ssh/sftp พิมพ์มาเอง: การยืนยันตัวตนล้มจะมี `(publickey`
-         * หรือ `Authentication failed` ส่วนสิทธิ์ของไฟล์จะมาพร้อมชื่อคำสั่งที่ล้ม
-         * (`remote mkdir` / `dest open` / `scp:`)
+         * Distinguished by the context ssh/sftp themselves print: a failed
+         * authentication carries `(publickey` or `Authentication failed`,
+         * while a permissions problem arrives alongside the name of the
+         * failed operation (`remote mkdir` / `dest open` / `scp:`).
          */
         $authFailed = str_contains($text, '(publickey')
             || str_contains($text, 'Authentication failed')
             || str_contains($text, 'Too many authentication failures');
 
         if ($authFailed) {
-            return $text . "\n\nยืนยันตัวตนไม่ผ่าน — ตรวจว่ากุญแจสาธารณะถูกใส่ไว้ใน "
-                . "~{$this->user}/.ssh/authorized_keys ของเครื่องปลายทางแล้ว";
+            return $text . "\n\nAuthentication failed — check that the public key has been added to "
+                . "~{$this->user}/.ssh/authorized_keys on the destination machine";
         }
 
         if (str_contains($text, 'Permission denied')) {
-            return $text . "\n\nยืนยันตัวตนผ่านแล้ว แต่ผู้ใช้ {$this->user} "
-                . "สร้างหรือเขียนไฟล์ใน {$this->path} บนเครื่องปลายทางไม่ได้"
-                . "\n\nเส้นทางที่อยู่ติดรากของ filesystem (เช่น /backup) ผู้ใช้ธรรมดาสร้างไม่ได้ — "
-                . "ใช้เส้นทางใต้บ้านของผู้ใช้นั้นแทน เช่น /home/{$this->user}/backups "
-                . "หรือให้ผู้ดูแลเครื่องปลายทางสร้างโฟลเดอร์แล้ว chown ให้ {$this->user} ก่อน";
+            return $text . "\n\nAuthentication succeeded, but user {$this->user} "
+                . "cannot create or write files in {$this->path} on the destination machine"
+                . "\n\nA path sitting at the filesystem root (e.g. /backup) can't be created by an ordinary user — "
+                . "use a path under that user's own home instead, e.g. /home/{$this->user}/backups, "
+                . "or have the destination machine's admin create the folder and chown it to {$this->user} first";
         }
 
         if (str_contains($text, 'No such file or directory')) {
-            return $text . "\n\nไม่พบไดเรกทอรี {$this->path} ที่เครื่องปลายทาง และสร้างให้ไม่ได้ — "
-                . "ตรวจว่าเส้นทางถูกต้องและผู้ใช้ {$this->user} มีสิทธิ์เขียนในชั้นบนของมัน";
+            return $text . "\n\nDirectory {$this->path} was not found on the destination machine, and could not be created — "
+                . "check that the path is correct and that user {$this->user} has write permission on its parent";
         }
 
-        return $text === '' ? 'คำสั่งล้มเหลวโดยไม่มีข้อความอธิบาย' : $text;
+        return $text === '' ? 'The command failed with no explanation given' : $text;
     }
 
     /**
-     * คำสั่ง `-mkdir` ของทุกชั้นในเส้นทางปลายทาง — เรียงจากบนลงล่าง
+     * A `-mkdir` command for every level of the destination path, top-down
      *
-     * `sftp` สร้างได้ทีละชั้นเท่านั้น ต่างจาก `mkdir -p` ที่ rsync ใช้ได้ · ตั้ง path
-     * เป็น `/home/ubuntu/backups/phpcp` แล้วชั้นกลางยังไม่มี จะล้มทั้งที่ผู้ใช้มีสิทธิ์
-     * เขียนทุกชั้น — อาการที่ดูเหมือน "สิทธิ์ไม่พอ" ทั้งที่เป็นแค่ลำดับการสร้าง
+     * `sftp` can only create one level at a time, unlike the `mkdir -p`
+     * rsync can use · setting path to `/home/ubuntu/backups/phpcp` with an
+     * intermediate level missing would fail even though the user has write
+     * permission at every level — a symptom that looks like "insufficient
+     * permission" when it's really just creation order.
      *
-     * `-` นำหน้าแปลว่า "ล้มก็ไม่เป็นไร" ชั้นที่มีอยู่แล้วจึงไม่ทำให้ทั้งชุดล้ม
+     * The leading `-` means "a failure here is fine", so a level that already exists doesn't fail the whole batch.
      */
     protected function makeDirectoryScript(): string
     {
@@ -230,7 +245,7 @@ abstract class SshDestination implements Destination
         return $script;
     }
 
-    /** ใส่เครื่องหมายคำพูดแบบที่ sftp เข้าใจ — เส้นทางของเราไม่มี " อยู่แล้ว แต่กันไว้ */
+    /** Quotes a value the way sftp understands — our own paths never contain a " anyway, but this guards against it */
     protected function quotePath(string $value): string
     {
         return '"' . str_replace('"', '', $value) . '"';
@@ -262,7 +277,7 @@ abstract class SshDestination implements Destination
             $executor->removePath($executor->path($roundTrip));
 
             if ($readBack !== $content) {
-                throw new ExecutionFailed('ส่งไฟล์ทดสอบได้ แต่ดึงกลับมาแล้วเนื้อหาไม่ตรง');
+                throw new ExecutionFailed('Pushed the test file successfully, but pulling it back returned different content');
             }
 
             $this->delete($executor, $remotePath);

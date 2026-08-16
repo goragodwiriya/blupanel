@@ -144,7 +144,7 @@ test('ข้อความเมื่อ host key ยังไม่ถูก�
 
     assertTrue(str_contains($message, 'known_hosts'), 'ต้องบอกว่าค่าไปอยู่ช่องไหน');
     assertTrue(
-        str_contains($message, 'อ่านจากเครื่องปลายทาง'),
+        str_contains($message, 'read from destination machine'),
         'ต้องชี้ไปที่ปุ่มที่ทำให้เลย ไม่ใช่ให้ไปรันคำสั่งเองแล้ว copy กลับมา',
     );
 });

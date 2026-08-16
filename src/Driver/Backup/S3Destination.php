@@ -9,32 +9,39 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\ValidationError;
 
 /**
- * ส่งไฟล์สำรองไปที่ปลายทางแบบ S3 (AWS S3 หรือบริการที่พูดโปรโตคอลเดียวกัน
- * เช่น MinIO, Backblaze B2, DigitalOcean Spaces, Cloudflare R2) — PLAN-V2 เฟส E1
+ * Pushes a backup file to an S3-compatible destination (AWS S3 or any
+ * service speaking the same protocol — MinIO, Backblaze B2, DigitalOcean
+ * Spaces, Cloudflare R2) — PLAN-V2 phase E1
  *
- * **ทำไมเซ็น SigV4 เอง ไม่ใช้ SDK:** โปรเจกต์นี้ไม่มี Composer โดยตั้งใจ (ARCHITECTURE §2)
- * และ AWS SDK for PHP ต้องมันเสมอ · ตัวเซ็นในไฟล์นี้ใช้แค่ `hash_hmac`/`hash` ที่มากับ PHP
- * และ `ext-curl` สำหรับส่ง HTTP ตรง ๆ ตามแบบเดียวกับ {@see \Phpcp\Driver\Updater::fetch()}
- * และ {@see \Phpcp\Driver\Notify\TelegramNotifier}
+ * **Why SigV4 is signed by hand instead of using an SDK:** this project
+ * deliberately has no Composer (ARCHITECTURE §2), and the AWS SDK for PHP
+ * always needs it · the signer in this file uses only `hash_hmac`/`hash`,
+ * which ship with PHP, and `ext-curl` to send HTTP directly, the same
+ * approach as {@see \Phpcp\Driver\Updater::fetch()} and {@see \Phpcp\Driver\Notify\TelegramNotifier}.
  *
- * **ทำไมไม่ผ่าน `Executor::exec()` เหมือน driver อื่นในโฟลเดอร์นี้:** sftp/rsync สั่ง
- * โปรแกรมบนเครื่องซึ่งต้องผ่านการจำลอง/จำกัดสิทธิ์ของ `Executor` เสมอ แต่ที่นี่คือ
- * การเรียก HTTPS API ภายนอกโดยตรง — เหมือนที่ `TelegramNotifier` และ `Updater::fetch()`
- * ทำอยู่แล้ว ไม่มีอะไรให้ sandbox ป้องกัน (เครื่องนี้ไม่ถูกแตะเลย) `Executor` ยังถูกใช้
- * เพื่ออ่าน/เขียนไฟล์ *ในเครื่อง* เท่านั้น
+ * **Why this doesn't go through `Executor::exec()` like the other drivers
+ * in this folder do:** sftp/rsync run a program on the machine, which must
+ * always go through `Executor`'s simulation/permission limits, but this is
+ * a direct external HTTPS API call — exactly what `TelegramNotifier` and
+ * `Updater::fetch()` already do — there's nothing here for a sandbox to
+ * protect (this machine is never touched) · `Executor` is still used, but only to read/write files *on this machine*.
  *
- * **น้ำหนักไฟล์:** อัปโหลด/ดาวน์โหลดสตรีมตรงเข้า-ออกดิสก์ผ่าน `CURLOPT_INFILE`/
- * `CURLOPT_FILE` ไม่โหลดทั้งไฟล์ขึ้นหน่วยความจำ — ไฟล์สำรองมีสิทธิ์ใหญ่เป็น GB
+ * **File weight:** uploads/downloads stream directly to/from disk via
+ * `CURLOPT_INFILE`/`CURLOPT_FILE`, never loading the whole file into memory
+ * — a backup file can easily reach several GB.
  *
- * **ยืนยันตัวตนด้วยคู่กุญแจเท่านั้น** เหมือน sftp/rsync — `access_key` เก็บเป็นค่าตั้ง
- * ธรรมดา (ไม่ใช่ความลับ อ่านได้จากทุกที่ที่มีสิทธิ์เรียก AWS อยู่แล้วเช่น access log)
- * ส่วน `secret_key` เข้ารหัสเก็บแบบเดียวกับ private key ของ sftp/rsync
+ * **Authenticates with a key pair only**, like sftp/rsync — `access_key` is
+ * stored as an ordinary setting (not a secret; already readable from
+ * anywhere with permission to call AWS, e.g. an access log), while
+ * `secret_key` is encrypted at rest the same way an sftp/rsync private key is.
  *
- * **ยังไม่เคยยิงไปเซิร์ฟเวอร์ S3 จริง** — อัลกอริทึม SigV4 เขียนตามสเปกของ AWS อย่าง
- * ละเอียด และมีเทสต์ตรวจความถูกต้องภายใน (`tests/security/S3BackupDestinationTest.php`)
- * แต่ `test()`/`push()`/`pull()` ยังไม่เคยพิสูจน์กับ endpoint จริงสักครั้งเพราะเครื่องพัฒนา
- * ไม่มีบัญชี S3 ให้ทดสอบ — ต้องยิงจริงอย่างน้อยหนึ่งครั้งก่อนเชื่อว่าใช้งานได้ (เหมือนที่
- * PLAN-V2 §6 เฟส E1 บันทึกไว้สำหรับ sftp/rsync)
+ * **Never yet fired against a genuine S3 server** — the SigV4 algorithm was
+ * written closely against AWS's own spec, and has internal tests verifying
+ * its correctness (`tests/security/S3BackupDestinationTest.php`), but
+ * `test()`/`push()`/`pull()` have never once been proven against a real
+ * endpoint, because the dev machine has no S3 account to test with — this
+ * needs at least one real run before it can be trusted to work (the same
+ * caveat PLAN-V2 §6 phase E1 recorded for sftp/rsync).
  */
 final class S3Destination implements Destination
 {
@@ -53,27 +60,27 @@ final class S3Destination implements Destination
         private readonly bool $pathStyle = false,
     ) {
         if ($this->bucket === '' || preg_match('/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/', $this->bucket) !== 1) {
-            throw new ValidationError('ชื่อ bucket ไม่ถูกต้อง — ใช้ได้เฉพาะตัวเล็ก ตัวเลข จุด และขีด');
+            throw new ValidationError('Invalid bucket name — only lowercase letters, digits, dots, and hyphens are allowed');
         }
 
         if ($this->region === '') {
-            throw new ValidationError('ต้องระบุ region');
+            throw new ValidationError('A region must be specified');
         }
 
         if ($this->accessKey === '') {
-            throw new ValidationError('ต้องระบุ access key');
+            throw new ValidationError('An access key must be specified');
         }
 
         if ($this->secretKey === '') {
-            throw new ValidationError('ต้องระบุ secret key');
+            throw new ValidationError('A secret key must be specified');
         }
 
         if (preg_match('#(^|/)\.\.(/|$)#', $this->path) === 1) {
-            throw new ValidationError('เส้นทางปลายทางต้องไม่มี ..');
+            throw new ValidationError('The destination path must not contain ..');
         }
 
         if ($this->endpoint !== '' && !str_starts_with($this->endpoint, 'https://')) {
-            throw new ValidationError('endpoint ต้องเป็น https:// เท่านั้น');
+            throw new ValidationError('The endpoint must be https:// only');
         }
     }
 
@@ -90,18 +97,19 @@ final class S3Destination implements Destination
         $size = $stat['size'] ?? null;
 
         if ($size === null) {
-            throw new ExecutionFailed('อ่านขนาดไฟล์สำรองต้นทางไม่ได้: ' . $localPath);
+            throw new ExecutionFailed('Failed to read the source backup file\'s size: ' . $localPath);
         }
 
         $handle = fopen($realLocal, 'rb');
 
         if ($handle === false) {
-            throw new ExecutionFailed('เปิดไฟล์สำรองต้นทางไม่ได้: ' . $localPath);
+            throw new ExecutionFailed('Failed to open the source backup file: ' . $localPath);
         }
 
         try {
-            // UNSIGNED-PAYLOAD กันไม่ต้องอ่านทั้งไฟล์มา hash ก่อนอัปโหลด (ไฟล์สำรอง
-            // มีสิทธิ์ใหญ่เป็น GB) — เป็นค่าที่ S3 ยอมรับตามสเปกโดยตรง ไม่ใช่ทางลัดที่ผิด
+            // UNSIGNED-PAYLOAD avoids reading the whole file to hash it
+            // before uploading (a backup file can easily reach several GB)
+            // — a value S3's own spec directly permits, not an incorrect shortcut
             $response = $this->call('PUT', $key, 'UNSIGNED-PAYLOAD', [
                 CURLOPT_PUT => true,
                 CURLOPT_INFILE => $handle,
@@ -111,7 +119,7 @@ final class S3Destination implements Destination
             fclose($handle);
         }
 
-        $this->assertStatus($response, [200], 'ส่งไฟล์สำรองไปยังปลายทางไม่สำเร็จ');
+        $this->assertStatus($response, [200], 'Failed to push the backup file to the destination');
         $this->assertArrived($response, $realLocal, (int) $size);
 
         return $key;
@@ -125,7 +133,7 @@ final class S3Destination implements Destination
         $handle = fopen($realLocal, 'wb');
 
         if ($handle === false) {
-            throw new ExecutionFailed('เปิดไฟล์ปลายทางบนเครื่องนี้ไม่ได้: ' . $localPath);
+            throw new ExecutionFailed('Failed to open the destination file on this machine: ' . $localPath);
         }
 
         try {
@@ -137,12 +145,12 @@ final class S3Destination implements Destination
         }
 
         if (!$this->ok($response, [200])) {
-            @unlink($realLocal);   // ไฟล์ครึ่งเดียวอันตรายกว่าไม่มีไฟล์เลย
-            throw new ExecutionFailed('ดึงไฟล์สำรองจากปลายทางไม่สำเร็จ: ' . $this->explainError($response));
+            @unlink($realLocal);   // A half-written file is more dangerous than no file at all
+            throw new ExecutionFailed('Failed to pull the backup file from the destination: ' . $this->explainError($response));
         }
 
         if (!$executor->exists($realLocal)) {
-            throw new ExecutionFailed('คำสั่งดึงไฟล์สำเร็จ แต่ไม่พบไฟล์บนเครื่องนี้');
+            throw new ExecutionFailed('The pull command succeeded, but the file was not found on this machine');
         }
     }
 
@@ -152,10 +160,11 @@ final class S3Destination implements Destination
 
         $response = $this->call('DELETE', $remotePath, hash('sha256', ''), []);
 
-        // S3 ตอบ 204 ทั้งกรณีลบสำเร็จและกรณีไม่มีวัตถุนั้นอยู่แล้ว — สอดคล้องกับสัญญา
-        // ของ Destination ที่ต้อง "ไฟล์ที่ไม่มีอยู่แล้วถือว่าสำเร็จ" โดยไม่ต้องเช็คพิเศษ
+        // S3 answers 204 both when a delete succeeds and when the object
+        // never existed — matching the Destination contract's requirement
+        // that "a file that's already gone counts as success" with no special-case check needed
         if (!$this->ok($response, [204, 200])) {
-            throw new ExecutionFailed('ลบไฟล์ที่ปลายทางไม่สำเร็จ: ' . $this->explainError($response));
+            throw new ExecutionFailed('Failed to delete the file at the destination: ' . $this->explainError($response));
         }
     }
 
@@ -177,7 +186,7 @@ final class S3Destination implements Destination
             $executor->removePath($executor->path($roundTrip));
 
             if ($readBack !== $content) {
-                throw new ExecutionFailed('ส่งไฟล์ทดสอบได้ แต่ดึงกลับมาแล้วเนื้อหาไม่ตรง');
+                throw new ExecutionFailed('Pushed the test file successfully, but pulling it back returned different content');
             }
 
             $this->delete($executor, $remoteKey);
@@ -199,7 +208,7 @@ final class S3Destination implements Destination
     private function keyFor(string $name): string
     {
         if ($name === '' || str_contains($name, '/')) {
-            throw new ValidationError('ชื่อไฟล์ปลายทางต้องเป็นชื่อล้วน ไม่มีไดเรกทอรี');
+            throw new ValidationError('The destination filename must be a name only, no directory');
         }
 
         return $this->path === '' ? $name : rtrim($this->path, '/') . '/' . $name;
@@ -208,21 +217,23 @@ final class S3Destination implements Destination
     private function assertInsidePath(string $key): void
     {
         if (preg_match('#(^|/)\.\.(/|$)#', $key) === 1) {
-            throw new ValidationError('เส้นทางไฟล์ปลายทางต้องไม่มี ..');
+            throw new ValidationError('The destination file path must not contain ..');
         }
 
         if ($this->path !== '' && !str_starts_with($key, rtrim($this->path, '/') . '/')) {
-            throw new ValidationError('เส้นทางนี้อยู่นอกปลายทางสำรองที่กำหนดไว้');
+            throw new ValidationError('This path is outside the configured backup destination');
         }
     }
 
     /**
-     * ยืนยันว่าวัตถุที่อัปโหลดครบถ้วนจริง — ไม่ใช่แค่ HTTP 200
+     * Confirms the uploaded object genuinely arrived complete — not just that HTTP returned 200
      *
-     * เทียบ ETag กับ MD5 ของไฟล์ต้นฉบับเมื่อทำได้ (อัปโหลดชิ้นเดียวไม่เข้ารหัสฝั่งเซิร์ฟเวอร์
-     * ด้วยกุญแจของ AWS เอง — S3 การันตีว่า ETag = MD5 hex เฉพาะกรณีนี้) ถ้า ETag ไม่ใช่รูปแบบ
-     * นั้น (มัลติพาร์ตหรือเข้ารหัสฝั่งเซิร์ฟเวอร์) ถอยไปเทียบขนาดที่ได้จาก header เดียวกัน
-     * ซึ่งอ่อนกว่าแต่ยังจับกรณีส่งไปครึ่งเดียวได้ — แบบเดียวกับ `SftpDestination::assertArrived()`
+     * Compares the ETag against the original file's MD5 when possible (a
+     * single-part upload not encrypted server-side with AWS's own key — S3
+     * only guarantees ETag = MD5 hex in that specific case) · if the ETag
+     * isn't in that shape (multipart, or server-side encryption), this
+     * falls back to comparing the size reported in the same header — weaker,
+     * but still catches a half-arrived file — the same approach as `SftpDestination::assertArrived()`.
      */
     private function assertArrived(array $response, string $realLocal, int $localSize): void
     {
@@ -232,7 +243,7 @@ final class S3Destination implements Destination
             $localMd5 = @hash_file('md5', $realLocal);
 
             if ($localMd5 === false || !hash_equals($localMd5, $etag)) {
-                throw new ExecutionFailed('ไฟล์ที่ปลายทางไม่ตรงกับต้นฉบับ (ETag ไม่ตรง) — ถือว่าส่งไม่สำเร็จ');
+                throw new ExecutionFailed('The file at the destination does not match the original (ETag mismatch) — treated as a failed push');
             }
 
             return;
@@ -241,17 +252,18 @@ final class S3Destination implements Destination
         $contentLength = $response['headers']['content-length'] ?? null;
 
         if ($contentLength !== null && (int) $contentLength !== $localSize) {
-            throw new ExecutionFailed('ขนาดไฟล์ที่ปลายทางไม่ตรงกับต้นฉบับ — ถือว่าส่งไม่สำเร็จ');
+            throw new ExecutionFailed('The file size at the destination does not match the original — treated as a failed push');
         }
     }
 
     /**
-     * ประกอบ canonical request / string-to-sign / Authorization header ตามสเปก SigV4
+     * Builds the canonical request / string-to-sign / Authorization header per the SigV4 spec
      *
-     * แยกออกจาก `call()` เพื่อให้เทสต์เรียกตรง ๆ ผ่าน reflection ได้โดยไม่ต้องมี
-     * การเชื่อมต่อเครือข่ายจริง — ฟังก์ชันนี้เป็น pure function ล้วน (input เดียวกัน
-     * ได้ output เดียวกันเสมอ ไม่แตะ curl หรือระบบไฟล์เลย) จึงตรวจความถูกต้องของ
-     * อัลกอริทึมได้ครบโดยไม่ต้องมีบัญชี S3 จริง
+     * Kept separate from `call()` so a test can call it directly through
+     * reflection with no genuine network connection needed — this function
+     * is entirely pure (the same input always produces the same output,
+     * never touching curl or the filesystem), so the algorithm's
+     * correctness can be fully verified without a real S3 account.
      *
      * @return array{host:string,canonicalUri:string,amzDate:string,canonicalRequest:string,stringToSign:string,authorization:string}
      */
@@ -267,7 +279,7 @@ final class S3Destination implements Destination
         $canonicalRequest = implode("\n", [
             $method,
             $canonicalUri,
-            '',   // ไม่มี query string ในคำขอชุดนี้
+            '',   // No query string in this set of requests
             $canonicalHeaders,
             $signedHeaders,
             $payloadHash,
@@ -299,9 +311,9 @@ final class S3Destination implements Destination
     }
 
     /**
-     * ส่งคำขอที่เซ็นด้วย AWS Signature Version 4 แล้วคืนผลดิบ
+     * Sends a request signed with AWS Signature Version 4 and returns the raw result
      *
-     * @param array<int,mixed> $curlOptions ตัวเลือก curl เพิ่มเติมเฉพาะคำสั่ง (ไฟล์อัปโหลด/ดาวน์โหลด)
+     * @param array<int,mixed> $curlOptions command-specific extra curl options (uploading/downloading a file)
      * @return array{status:int,headers:array<string,string>,body:string,error:string}
      */
     private function call(string $method, string $key, string $payloadHash, array $curlOptions): array
@@ -316,7 +328,7 @@ final class S3Destination implements Destination
         $handle = curl_init("https://{$host}{$canonicalUri}");
 
         if ($handle === false) {
-            throw new ExecutionFailed('เริ่มการเชื่อมต่อ S3 ไม่สำเร็จ');
+            throw new ExecutionFailed('Failed to start a connection to S3');
         }
 
         curl_setopt_array($handle, $curlOptions + [
@@ -350,8 +362,8 @@ final class S3Destination implements Destination
         curl_close($handle);
 
         if ($body === false && $error === '') {
-            // CURLOPT_FILE/CURLOPT_RETURNTRANSFER ทำให้ curl_exec คืน true ไม่ใช่เนื้อ body
-            // เวลาที่ตัวรับเป็นไฟล์ — ไม่ใช่ความล้มเหลว
+            // CURLOPT_FILE/CURLOPT_RETURNTRANSFER makes curl_exec return true,
+            // not the body content, when the receiver is a file — not a failure
             $body = '';
         }
 
@@ -384,7 +396,7 @@ final class S3Destination implements Destination
             return $response['error'];
         }
 
-        // ข้อความ error ของ S3 เป็น XML: <Error><Code>...</Code><Message>...</Message></Error>
+        // S3's own error message is XML: <Error><Code>...</Code><Message>...</Message></Error>
         if (preg_match('#<Message>(.*?)</Message>#s', $response['body'], $m) === 1) {
             return "HTTP {$response['status']}: " . trim($m[1]);
         }
@@ -401,7 +413,7 @@ final class S3Destination implements Destination
         return hash_hmac('sha256', 'aws4_request', $kService, true);
     }
 
-    /** ชื่อโฮสต์ของ endpoint ที่ตั้งไว้ หรือ endpoint มาตรฐานของ AWS ตาม region */
+    /** The configured endpoint's own hostname, or AWS's standard endpoint for the region */
     private function defaultHost(): string
     {
         return $this->endpoint !== ''
@@ -410,9 +422,10 @@ final class S3Destination implements Destination
     }
 
     /**
-     * โฮสต์ที่ใช้ในคำขอจริง — virtual-hosted (`bucket.host`) เป็นค่าเริ่มต้นของ AWS เอง
-     * ส่วน path-style (`host` เฉย ๆ + bucket อยู่ใน URI) จำเป็นสำหรับผู้ให้บริการที่ไม่มี
-     * wildcard DNS ให้ทุก bucket เช่น MinIO ที่ตั้งเอง — เลือกได้ผ่าน config `path_style`
+     * The host genuinely used in a request — virtual-hosted (`bucket.host`)
+     * is AWS's own default, while path-style (plain `host` + bucket in the
+     * URI) is required for a provider with no wildcard DNS for every
+     * bucket, e.g. a self-hosted MinIO — selectable via the `path_style` config.
      */
     private function requestHost(): string
     {
@@ -421,7 +434,7 @@ final class S3Destination implements Destination
         return $this->pathStyle ? $host : "{$this->bucket}.{$host}";
     }
 
-    /** เข้ารหัสแต่ละส่วนของ key ตามกฎของ AWS SigV4 โดยคง `/` เป็นตัวคั่นไว้ */
+    /** URL-encodes each segment of the key per AWS SigV4's rules, keeping `/` as a separator */
     private function canonicalUri(string $key): string
     {
         $encodedKey = implode('/', array_map(rawurlencode(...), explode('/', $key)));
