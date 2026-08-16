@@ -12,15 +12,17 @@ use Phpcp\Domain\UserAccount;
 use Phpcp\Support\Validator;
 
 /**
- * รายการไฟล์สำรอง — อ่านจากโฟลเดอร์จริงในบ้านของลูกค้า
+ * The backup file list — read from the customer's real folder
  *
- * ## ทำไมต้องผ่าน agent ทั้งที่เป็นแค่การอ่านรายชื่อไฟล์
+ * ## Why this has to go through the agent when it's just listing filenames
  *
- * `<บ้าน>/backup` เป็นของลูกค้าโหมด 0750 — โปรเซสเว็บ (www-data) อ่านได้ก็ต่อเมื่อ
- * เจ้าของกลุ่มถูกตั้งไว้ถูกต้องแล้วเท่านั้น · บัญชีที่ยังไม่เคยถูก provision ใหม่ หรือ
- * เครื่องที่ตั้ง `shared_owner` ไว้ จะอ่านไม่ได้แล้วหน้าจอจะบอกว่า "ไม่มีไฟล์สำรอง"
- * ทั้งที่มีอยู่ครบ — คำตอบที่ผิดแบบที่ดูเหมือนคำตอบที่ถูก · agent เป็น root จึงเห็น
- * ตรงกับความจริงเสมอ ไม่ว่าเจ้าของไฟล์จะเป็นใคร (เหตุผลเดียวกับ `file.list`)
+ * `<home>/backup` belongs to the customer at mode 0750 — the web process
+ * (www-data) can only read it once ownership and group are set up correctly ·
+ * an account that was never re-provisioned, or a machine with `shared_owner`
+ * set, would fail to read it and the screen would say "no backup files" even
+ * though every one of them is there — a wrong answer that looks like a right one
+ * · the agent runs as root, so it always sees the truth regardless of who owns
+ * the file (the same reason as `file.list`).
  */
 final class BackupList extends BackupCapability implements Capability
 {
@@ -41,13 +43,13 @@ final class BackupList extends BackupCapability implements Capability
 
     public function summary(): string
     {
-        return 'อ่านรายการไฟล์สำรองจากโฟลเดอร์ของแต่ละบัญชี';
+        return 'Read the backup file list from each account\'s folder';
     }
 
     public function validate(array $args): array
     {
         return [
-            // 0 = ทุกบัญชีที่ผู้เรียกมีสิทธิ์เห็น
+            // 0 = every account the caller has permission to see
             'user_id' => Validator::optionalInt($args, 'user_id', 0, 0),
         ];
     }
@@ -68,7 +70,7 @@ final class BackupList extends BackupCapability implements Capability
             }
         }
 
-        // ใหม่สุดขึ้นก่อนข้ามบัญชี — หน้าจอของผู้ดูแลเรียงรวมกันทั้งเครื่อง
+        // Newest first across accounts — an admin's screen sorts everything together, machine-wide
         usort($files, static fn (array $a, array $b): int => $b['modified_at'] <=> $a['modified_at']);
 
         return [
@@ -79,11 +81,12 @@ final class BackupList extends BackupCapability implements Capability
     }
 
     /**
-     * ไฟล์ของบัญชีเดียว พร้อมข้อมูลที่หน้าจอต้องใช้
+     * One account's files, with the data the screen needs
      *
-     * โฟลเดอร์ที่อ่านไม่ได้ต้องไม่ทำให้ทั้งรายการล้ม — บัญชีหนึ่งที่มีสิทธิ์เพี้ยนจะ
-     * ทำให้ผู้ดูแลมองไม่เห็นไฟล์สำรองของบัญชีอื่นเลยทั้งเครื่อง ซึ่งแย่กว่าการเห็น
-     * ไม่ครบหนึ่งบัญชี · ข้อผิดพลาดจึงติดไปกับแถวของบัญชีนั้นแทน
+     * A folder that fails to read must never fail the whole list — one account
+     * with broken permissions would leave the admin unable to see any other
+     * account's backup files on the whole machine, which is worse than missing
+     * one account's worth · so the error stays attached to that account's own row instead.
      *
      * @return list<array<string,mixed>>
      */

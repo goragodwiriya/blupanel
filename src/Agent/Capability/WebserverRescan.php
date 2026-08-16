@@ -8,17 +8,20 @@ use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
 
 /**
- * ตรวจว่าไฟล์ vhost บนดิสก์ยังตรงกับความจริงของเว็บไซต์ไหม ถ้าไม่ตรงก็เขียนใหม่ให้
+ * Checks whether the vhost files on disk still match each website's real state, and rewrites them if not
  *
- * **ทำไมต้องมีงานนี้:** ในโหมด nginx-proxy การตัดสินว่า nginx ตอบไฟล์ static เองได้ไหม
- * ขึ้นกับเนื้อหาของ `.htaccess` ที่รากเว็บ ซึ่ง**ลูกค้าแก้เองได้ตลอดเวลาผ่าน SFTP
- * หรือตัวจัดการไฟล์** โดยที่ panel ไม่มีทางรู้ · ถ้าไม่มีอะไรตรวจซ้ำ ลูกค้าที่เพิ่งเพิ่ม
- * กฎป้องกันลงไปจะเข้าใจว่าป้องกันแล้วทั้งที่ยังเปิดอยู่ จนกว่าจะมีใครไปกดแก้เว็บนั้น
+ * **Why this job exists:** in nginx-proxy mode, whether nginx can answer a static
+ * file itself depends on the content of `.htaccess` at the site root, which
+ * **the customer can edit at any time over SFTP or the file manager** with no way
+ * for the panel to know · without something re-checking this, a customer who just
+ * added a protection rule would believe it's protected while it's actually still
+ * open, until someone happens to click edit on that site.
  *
- * โฟลเดอร์ย่อยมีตาข่ายอีกชั้นอยู่แล้ว (nginx ตรวจ `.htaccess` ตอนรับคำขอทุกครั้ง)
- * งานนี้จึงมีไว้ปิดช่องของ **ไฟล์ที่รากเว็บ** เป็นหลัก
+ * Subdirectories already have another safety net (nginx checks `.htaccess` on
+ * every incoming request), so this job mainly exists to close the gap for
+ * **the file at the site root**.
  *
- * เขียนใหม่เฉพาะเมื่อเนื้อหาต่างจริง — ไม่ใช่ reload ทุกชั่วโมงโดยไม่มีเหตุ
+ * Only rewrites when the content is genuinely different — not an hourly reload for no reason.
  */
 final class WebserverRescan extends SiteCapability
 {
@@ -39,7 +42,7 @@ final class WebserverRescan extends SiteCapability
 
     public function summary(): string
     {
-        return 'ตรวจว่าไฟล์ตั้งค่าของเว็บไซต์ยังตรงกับความจริงไหม';
+        return 'Check whether website config files still match reality';
     }
 
     public function validate(array $args): array
@@ -74,19 +77,20 @@ final class WebserverRescan extends SiteCapability
             return [
                 'changed' => [],
                 'rebuilt' => false,
-                'message' => 'ไฟล์ตั้งค่าของทุกเว็บไซต์ยังตรงกับความจริง',
+                'message' => 'Every website\'s config files still match reality',
             ];
         }
 
-        // ต่างแม้เว็บเดียวก็เขียนใหม่ทั้งชุดในทรานแซกชันเดียว — ถูกกว่าการไล่เขียนทีละเว็บ
-        // แล้ว reload หลายรอบ และได้ configtest ที่ครอบคลุมทั้งเครื่องไปในตัว
+        // Even one site being different rewrites the whole set in a single
+        // transaction — cheaper than writing site by site with several reloads,
+        // and it gets a machine-wide configtest along the way
         $result = (new SiteRebuild())->run([], $executor, $context);
 
         return [
             'changed' => array_values(array_unique($changed)),
             'rebuilt' => true,
             'message' => sprintf(
-                'ไฟล์ตั้งค่าของ %d เว็บไซต์ไม่ตรงกับความจริงแล้ว จึงเขียนใหม่ทั้งหมด (%s)',
+                '%d website(s) no longer matched reality, so everything was rewritten (%s)',
                 count(array_unique($changed)),
                 implode(', ', array_slice(array_unique($changed), 0, 5)),
             ),

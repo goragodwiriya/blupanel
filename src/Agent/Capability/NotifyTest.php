@@ -14,14 +14,16 @@ use Phpcp\Driver\Notify\WebhookNotifier;
 use Phpcp\Support\Validator;
 
 /**
- * ส่งข้อความทดสอบไปยังช่องทางที่ระบุ — Telegram · อีเมล · webhook (PLAN-V2 เฟส E6)
+ * Sends a test message to the specified channel — Telegram · email · webhook (PLAN-V2 Phase E6)
  *
- * ต่างจากการแจ้งเตือนอัตโนมัติตรงที่ **ความล้มเหลวต้องดัง** — ผู้ใช้เพิ่งกดปุ่มทดสอบ
- * ถ้าเงียบไปเฉย ๆ จะเข้าใจว่าตั้งค่าถูกแล้ว ทั้งที่ token ผิด
- * แล้วจะไม่ได้รับการแจ้งเตือนจริงในวันที่เซิร์ฟเวอร์มีปัญหา
+ * Unlike an automatic notification, **a failure here has to be loud** — a user
+ * who just clicked test would assume the setup was correct if it failed silently,
+ * even with a wrong token, and then get no real notification on the day the
+ * server actually has a problem.
  *
- * **ทดสอบทีละช่องทาง ไม่ใช่ยิงทุกช่องพร้อมกัน** — ผู้ดูแลต้องรู้ว่าช่องไหนพังกันแน่
- * ถ้ายิงรวมแล้วบอกว่า "ส่งสำเร็จ 2 จาก 3" ก็ยังต้องเดาต่อว่าอันไหนไม่ผ่าน
+ * **Tests one channel at a time, never fires all of them together** — an admin
+ * needs to know exactly which channel is broken. A combined test reporting
+ * "2 of 3 succeeded" would still leave them guessing which one failed.
  */
 final class NotifyTest implements Capability
 {
@@ -37,18 +39,18 @@ final class NotifyTest implements Capability
 
     public function isMutating(): bool
     {
-        // ไม่เปลี่ยนสถานะระบบ แต่ส่งข้อความออกไปภายนอก จึงควรอยู่ใน audit log
+        // Never changes system state, but sends a message out externally, so it belongs in the audit log
         return true;
     }
 
     public function summary(): string
     {
-        return 'ส่งข้อความทดสอบการแจ้งเตือน';
+        return 'Send test notification message';
     }
 
     public function validate(array $args): array
     {
-        // ไม่ระบุ = Telegram เพื่อความเข้ากันได้กับผู้เรียกเดิมที่มีช่องทางเดียว
+        // Not specified = Telegram, for compatibility with older callers that only had one channel
         return [
             'channel' => Validator::optionalEnum($args, 'channel', ['telegram', 'email', 'webhook'], 'telegram'),
         ];
@@ -76,7 +78,7 @@ final class NotifyTest implements Capability
         return [
             'channel' => 'telegram',
             'message_id' => $result['message_id'],
-            'message' => 'ส่งข้อความทดสอบไปยัง Telegram แล้ว — ตรวจดูในแชทว่าได้รับหรือไม่',
+            'message' => 'Sent a test message to Telegram — check the chat to confirm it arrived',
         ];
     }
 
@@ -92,10 +94,12 @@ final class NotifyTest implements Capability
         return [
             'channel' => 'email',
             'to' => $result['to'],
-            // Postfix รับเข้าคิวแล้วจบ — "ส่งสำเร็จ" ที่นี่ยังไม่ได้แปลว่าถึงกล่องจดหมาย
-            // ต้องบอกให้ชัด ไม่งั้นผู้ดูแลจะเข้าใจว่าเรียบร้อยแล้วทั้งที่อาจติดที่ปลายทาง
+            // Postfix accepting it into the queue is the end of the line here —
+            // "sent successfully" doesn't yet mean it reached the mailbox. This
+            // has to be stated clearly, or an admin would assume it's done when
+            // it might still get stuck at the destination.
             'message' => sprintf(
-                'ส่งอีเมลทดสอบไปที่ %s แล้ว — Postfix รับเข้าคิวสำเร็จ ตรวจกล่องจดหมายว่าได้รับจริงหรือไม่',
+                'Sent a test email to %s — Postfix accepted it into the queue, check the mailbox to confirm it actually arrived',
                 $result['to'],
             ),
         ];
@@ -112,7 +116,7 @@ final class NotifyTest implements Capability
         return [
             'channel' => 'webhook',
             'status' => $result['status'],
-            'message' => sprintf('ปลายทาง webhook ตอบรหัส %d — ส่งสำเร็จ', $result['status']),
+            'message' => sprintf('The webhook destination responded with code %d — sent successfully', $result['status']),
         ];
     }
 }

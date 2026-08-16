@@ -12,14 +12,16 @@ use Phpcp\Security\Password;
 use Phpcp\Support\Validator;
 
 /**
- * แก้กล่องที่มีอยู่ — ตั้งรหัสใหม่ หรือเปลี่ยนโควตา (PLAN-MAIL เฟส M2)
+ * Edits an existing mailbox — sets a new password, or changes its quota (PLAN-MAIL Phase M2)
  *
- * รวมสองอย่างไว้ที่เดียวเพราะทั้งคู่คือ "แก้กล่องเดิม" และฟอร์มเดียวกันบนหน้าเว็บ
- * ส่งมาพร้อมกันได้ · แยกเป็นสอง capability จะทำให้หน้าเว็บต้องยิงสองคำขอแล้วต้อง
- * ตัดสินใจเองว่าจะทำยังไงถ้าอันแรกสำเร็จแต่อันที่สองล้ม
+ * Both are combined into one capability because they're both "edit this
+ * mailbox", and the same form on the web page can send them together · splitting
+ * this into two capabilities would force the page to fire two requests and then
+ * decide for itself what to do if the first succeeded but the second failed.
  *
- * **รหัสผ่านที่ส่งมาว่าง = ไม่เปลี่ยน** ไม่ใช่ "ตั้งเป็นค่าว่าง" — ฟอร์มแก้ไขเว้นช่อง
- * รหัสไว้เสมอเพราะระบบไม่เคยส่งรหัสเดิมกลับไปแสดง (เก็บเป็นแฮชอย่างเดียว)
+ * **An empty password sent means "don't change it"**, not "set it to empty" —
+ * the edit form always leaves the password field blank, because the system never
+ * sends the existing password back to display it (only its hash is ever stored).
  */
 final class MailBoxUpdate extends MailCapability
 {
@@ -30,7 +32,7 @@ final class MailBoxUpdate extends MailCapability
 
     public function summary(): string
     {
-        return 'ตั้งรหัสผ่านใหม่หรือเปลี่ยนโควตาของกล่อง';
+        return 'Set a new password or change a mailbox quota';
     }
 
     public function validate(array $args): array
@@ -39,7 +41,7 @@ final class MailBoxUpdate extends MailCapability
         $quota = isset($args['quota_mb']) ? (int) $args['quota_mb'] : 0;
 
         if ($quota !== 0 && ($quota < 1 || $quota > 1024 * 100)) {
-            throw new ValidationError('ขนาดกล่องต้องอยู่ระหว่าง 1 MB ถึง 100 GB');
+            throw new ValidationError('Mailbox size must be between 1 MB and 100 GB');
         }
 
         return [
@@ -58,7 +60,7 @@ final class MailBoxUpdate extends MailCapability
         $mailbox = $repository->findMailbox((int) $domain['id'], $args['local_part']);
 
         if ($mailbox === null) {
-            throw new ValidationError('ไม่พบกล่อง ' . $args['local_part'] . '@' . $args['domain']);
+            throw new ValidationError('Mailbox not found: ' . $args['local_part'] . '@' . $args['domain']);
         }
 
         $manager = $this->mailboxes($context);
@@ -78,13 +80,13 @@ final class MailBoxUpdate extends MailCapability
 
         return $result + [
             'address' => $address,
-            // แสดงครั้งเดียวเท่านั้น เหมือนตอนสร้างกล่อง
+            // Shown exactly once, same as when the mailbox is created
             'password' => $plain,
-            // โชว์เฉพาะรหัสที่ระบบสุ่มให้ — เหตุผลเดียวกับตอนสร้างกล่อง
+            // Only flagged when the system generated the password — same reason as at creation
             'password_generated' => $plain !== '' && $args['password'] === '',
             'message' => $plain !== ''
-                ? sprintf('ตั้งรหัสผ่านใหม่ให้ %s แล้ว', $address)
-                : sprintf('บันทึกกล่อง %s แล้ว', $address),
+                ? sprintf('Set a new password for %s', $address)
+                : sprintf('Saved mailbox %s', $address),
         ];
     }
 }

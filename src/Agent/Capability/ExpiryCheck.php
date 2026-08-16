@@ -10,15 +10,15 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Domain\UserRepository;
 
 /**
- * ตรวจสอบวันหมดอายุของบัญชีโฮสติ้งและส่งการแจ้งเตือน
+ * Checks hosting accounts' expiry dates and sends notifications
  *
- * ใช้เป็น cron job ตรวจสอบบัญชีที่:
- * - จะหมดอายุใน 30, 7, 1 วันข้างหน้า
- * - หมดอายุแล้ว
+ * Runs as a cron job, checking accounts that:
+ * - expire in 30, 7, or 1 days from now
+ * - have already expired
  *
- * ทำงาน:
- * - บันทึกการแจ้งเตือนลง expiry_notifications
- * - เปลี่ยนสถานะลูกค้าเป็น 'expired' ถ้าหมดอายุแล้ว
+ * Does:
+ * - records the notification into expiry_notifications
+ * - sets the customer's status to 'expired' if it's already past due
  */
 final class ExpiryCheck implements Capability
 {
@@ -39,7 +39,7 @@ final class ExpiryCheck implements Capability
 
     public function summary(): string
     {
-        return 'ตรวจสอบวันหมดอายุของลูกค้า';
+        return 'Check customer expiry dates';
     }
 
     public function validate(array $args): array
@@ -59,9 +59,10 @@ final class ExpiryCheck implements Capability
             'notifications' => [],
         ];
 
-        // แจ้งล่วงหน้าสามช่วง — บัญชีเดียวอาจเข้าเกณฑ์หลายช่วงพร้อมกัน (เหลือ 1 วัน
-        // ก็ยังเข้าเกณฑ์ 7 และ 30 ด้วย) จึงต้องยุบให้เหลือช่วงที่ใกล้ที่สุดช่วงเดียว
-        // ไม่งั้นลูกค้าคนเดียวจะได้อีเมลสามฉบับในวันเดียวกัน
+        // Three advance-warning windows — one account can match several at once
+        // (1 day left also matches the 7- and 30-day windows), so they have to be
+        // collapsed down to just the closest one, or a single customer would get
+        // three emails on the same day
         $due = [];
         foreach ([30, 7, 1] as $daysBefore) {
             foreach ($users->findExpiring($daysBefore) as $user) {
@@ -82,7 +83,7 @@ final class ExpiryCheck implements Capability
             }
         }
 
-        // บัญชีที่เลยวันหมดอายุไปแล้ว — ปิดบริการ แต่ไม่แตะสิทธิ์ล็อกอิน (คนละแกนกัน)
+        // Accounts already past their expiry date — decommission the service, but never touch login access (a separate axis)
         foreach ($users->hostingAccounts() as $user) {
             $expiry = $user['expiry_at'];
 
@@ -100,7 +101,7 @@ final class ExpiryCheck implements Capability
             $results['expired']++;
         }
 
-        // audit log บันทึกโดย Dispatcher ให้แล้วรอบ run() ทุกคำสั่ง (ARCHITECTURE §4.1)
+        // The audit log is already written by Dispatcher around every run() call (ARCHITECTURE §4.1)
         return $results;
     }
 }

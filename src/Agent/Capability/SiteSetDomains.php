@@ -11,13 +11,14 @@ use Phpcp\Driver\ConfigTransaction;
 use Phpcp\Support\Validator;
 
 /**
- * ตั้งรายการโดเมนย่อยและ alias ของเว็บไซต์ใหม่ทั้งชุด
+ * Sets a website's whole set of subdomains and aliases at once
  *
- * รับเป็น "รายการทั้งหมดที่ต้องการให้เป็น" ไม่ใช่ "เพิ่มทีละอัน" เพราะ vhost
- * ต้องถูกเขียนใหม่ทั้งไฟล์อยู่แล้ว การรับทั้งชุดทำให้สถานะในฐานข้อมูลกับในไฟล์
- * ตรงกันเสมอ และไม่มีทางเกิดกรณีเพิ่มสำเร็จแต่ vhost ไม่อัปเดต
+ * Accepts "the entire list this should now be", not "add one at a time",
+ * because the vhost has to be rewritten as a whole file anyway — accepting the
+ * whole set keeps the database and the file always in sync, with no way to end up
+ * with an addition that succeeded while the vhost never updated.
  *
- * โดเมนที่เพิ่มต้องยังไม่ถูกใช้โดยเว็บไซต์อื่น — ตรวจก่อนแตะไฟล์ใด ๆ
+ * An added domain must not already be in use by another website — checked before touching any file.
  */
 final class SiteSetDomains extends SiteCapability
 {
@@ -40,7 +41,7 @@ final class SiteSetDomains extends SiteCapability
 
     public function summary(): string
     {
-        return 'ตั้งรายการโดเมนย่อยและ alias ของเว็บไซต์';
+        return 'Set website subdomains and aliases';
     }
 
     public function validate(array $args): array
@@ -72,10 +73,10 @@ final class SiteSetDomains extends SiteCapability
 
         foreach ($args['domains'] as $domain) {
             if ($domain === $site->domain) {
-                throw new ValidationError('โดเมนหลักอยู่ในรายการอยู่แล้ว ไม่ต้องเพิ่มซ้ำ');
+                throw new ValidationError('The primary domain is already in the list — no need to add it again');
             }
 
-            // โดเมนต้องว่างจริง หรือเป็นของเว็บไซต์นี้เองอยู่แล้วในชนิดที่กำลังตั้ง
+            // The domain must genuinely be free, or already belong to this website under the type being set
             $owner = $context->db->first(
                 'SELECT site_id, type FROM domains WHERE domain = :d',
                 ['d' => $domain],
@@ -86,18 +87,18 @@ final class SiteSetDomains extends SiteCapability
             }
 
             if ((int) $owner['site_id'] !== $site->id) {
-                throw new ValidationError("โดเมน {$domain} ถูกใช้งานโดยเว็บไซต์อื่นอยู่แล้ว");
+                throw new ValidationError("Domain {$domain} is already in use by another website");
             }
 
             if ($owner['type'] !== $args['type'] && $owner['type'] !== 'primary') {
                 throw new ValidationError(
-                    "โดเมน {$domain} เป็น{$owner['type']} อยู่แล้ว — ลบออกก่อนถ้าต้องการเปลี่ยนชนิด",
+                    "Domain {$domain} is already a {$owner['type']} — remove it first to change its type",
                 );
             }
         }
 
-        // รวมโดเมนชนิดอื่นที่ไม่ได้แตะในรอบนี้เข้า vhost ด้วย
-        // ไม่งั้นบันทึก alias จะทำให้ subdomain หายจาก ServerAlias
+        // Merges in other domain types that weren't touched this round, into the
+        // vhost too — otherwise saving aliases would drop subdomains from ServerAlias
         $kept = $context->db->all(
             "SELECT domain FROM domains
              WHERE site_id = :id AND type IN ('alias','subdomain') AND type != :type
@@ -137,7 +138,7 @@ final class SiteSetDomains extends SiteCapability
             'domains' => $allAliases,
             'count' => count($allAliases),
             'message' => sprintf(
-                'ปรับรายการโดเมนของ %s เป็น %d รายการแล้ว',
+                'Set %s\'s domain list to %d entries',
                 $site->domain,
                 count($allAliases),
             ),
@@ -148,7 +149,7 @@ final class SiteSetDomains extends SiteCapability
     private function syncDomainRows(Context $context, int $siteId, array $domains, string $type): void
     {
         $context->db->transaction(static function ($db) use ($siteId, $domains, $type): void {
-            // ลบเฉพาะชนิดที่กำลังตั้งใหม่ — ไม่แตะโดเมนหลัก, redirect และชนิดอื่น
+            // Deletes only the type currently being set — never touches the primary domain, redirects, or other types
             $db->run(
                 'DELETE FROM domains WHERE site_id = :id AND type = :type',
                 ['id' => $siteId, 'type' => $type],

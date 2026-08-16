@@ -13,14 +13,16 @@ use Phpcp\Driver\WebServer\CustomConfig;
 use Phpcp\Support\Validator;
 
 /**
- * อ่านไฟล์ตั้งค่าหนึ่งไฟล์จากทะเบียน — ตัวกลางที่ทุกหน้าจอเรียกใช้ได้
+ * Reads one config file from the registry — a shared resource every screen can call
  *
- * รับ **คีย์** ไม่ใช่เส้นทาง · เส้นทางจริงถูกประกอบใน `ConfigFileCatalog` จากข้อมูลที่
- * ผ่านการตรวจแล้ว ผู้เรียกจึงขอไฟล์นอกทะเบียนไม่ได้เลยไม่ว่าจะส่งอะไรมา
+ * Accepts a **key**, not a path · the real path is assembled inside
+ * `ConfigFileCatalog` from already-validated data, so a caller can never request
+ * a file outside the registry no matter what they send.
  *
- * อ่านจาก**ไฟล์บนดิสก์จริง** ไม่ใช่เรนเดอร์เทมเพลตใหม่มาแสดง — สองอย่างนี้ต่างกันได้
- * และเวลาที่ต่างกันคือเวลาที่ผู้ดูแลต้องการคำตอบมากที่สุด ("ทำไมค่าที่เห็นในหน้าจอ
- * ไม่ตรงกับที่เซิร์ฟเวอร์ทำอยู่")
+ * Reads from the **real file on disk**, never re-renders a template to display —
+ * the two can diverge, and the moment they diverge is exactly the moment an admin
+ * needs the answer most ("why doesn't what I see on screen match what the server
+ * is actually doing").
  */
 final class ConfigFileRead extends SiteCapability
 {
@@ -41,14 +43,14 @@ final class ConfigFileRead extends SiteCapability
 
     public function summary(): string
     {
-        return 'อ่านไฟล์ตั้งค่าจากทะเบียน';
+        return 'Read config file from registry';
     }
 
     public function validate(array $args): array
     {
         return [
             'site_id' => Validator::requireInt($args, 'site_id', 1),
-            // ว่าง = ขอรายการทั้งหมด · มีค่า = ขอเนื้อไฟล์เดียว
+            // Empty = request the full list · a value = request one file's content
             'key' => isset($args['key']) && $args['key'] !== ''
                 ? ConfigFileCatalog::assertKey((string) $args['key'])
                 : '',
@@ -67,7 +69,7 @@ final class ConfigFileRead extends SiteCapability
             $driver->vhostPaths($site),
         );
 
-        // เติมสถานะของไฟล์จริงให้ทุกแถว — หน้าจอต้องแยก "ยังไม่มีไฟล์" ออกจาก "ว่าง" ได้
+        // Fills in the real file's status on every row — the screen has to tell "no file yet" apart from "empty"
         foreach ($files as $index => $file) {
             $exists = $executor->exists($executor->path($file['path']));
             $files[$index]['exists'] = $exists;
@@ -81,15 +83,17 @@ final class ConfigFileRead extends SiteCapability
         $file = ConfigFileCatalog::find($files, $args['key']);
 
         if ($file === null) {
-            throw new ValidationError('ไม่พบไฟล์ตั้งค่านี้ในทะเบียน');
+            throw new ValidationError('This config file is not in the registry');
         }
 
         $content = $this->contents($executor, (string) $file['path']);
 
         /*
-         * ไฟล์ที่ยังไม่เคยถูกเขียน → เปิดมาพร้อมเนื้อไฟล์ตั้งต้นที่มีคำอธิบายและตัวอย่าง
-         * (คอมเมนต์ไว้ทั้งหมด) · ผู้ดูแลจึงไม่ต้องเปิดหน้าเปล่าแล้วเดาว่าเขียนอะไรได้บ้าง
-         * และคำอธิบายติดไปกับไฟล์เสมอ ไม่ใช่อยู่แค่บนหน้าจอที่ปิดแล้วหาย
+         * A file never written yet → opens with starter content carrying the full
+         * explanation and examples (all commented out) · so an admin never opens
+         * a blank page and has to guess what can be written, and the explanation
+         * always travels with the file, rather than living only on a screen that
+         * disappears once closed.
          */
         if ($content === '' && ($file['kind'] ?? '') === ConfigFileCatalog::KIND_WRITABLE) {
             $content = (new CustomConfig())->seed(
