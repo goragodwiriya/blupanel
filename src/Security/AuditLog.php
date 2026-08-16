@@ -8,13 +8,14 @@ use Phpcp\Agent\Actor;
 use Phpcp\Kernel\Db;
 
 /**
- * Audit log แบบ hash chain — SECURITY §2.8
+ * A hash-chained audit log — SECURITY §2.8
  *
- * แต่ละแถวผูกกับ hash ของแถวก่อนหน้า การลบหรือแก้แถวย้อนหลังจึงทำให้ chain ขาด
- * และตรวจเจอด้วย `phpcp doctor` ระบบไม่มี capability สำหรับลบ audit ไม่ว่า role ใด
+ * Each row is bound to the previous row's hash, so deleting or editing a
+ * row after the fact breaks the chain, and `phpcp doctor` catches it — no
+ * role has a capability that can delete an audit entry
  *
- * เขียนคู่ขนานลงไฟล์ด้วย เพื่อให้ยังมีร่องรอยแม้ไฟล์ SQLite จะถูกทำลาย
- * (ตอนติดตั้งจะตั้งไฟล์นั้นเป็น append-only ด้วย chattr +a)
+ * Also written to a file in parallel, so a trace still exists even if the
+ * SQLite file is destroyed (that file is set append-only with chattr +a during setup)
  */
 final class AuditLog
 {
@@ -27,7 +28,7 @@ final class AuditLog
     }
 
     /**
-     * บันทึกเหตุการณ์ คืน id ของแถวที่บันทึก
+     * Record an event, returning the id of the row written
      *
      * @param array<string,mixed> $detail
      */
@@ -121,13 +122,13 @@ final class AuditLog
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
         if ($line !== false) {
-            // FILE_APPEND + LOCK_EX ทำงานได้แม้ไฟล์ถูกตั้งเป็น append-only
+            // FILE_APPEND + LOCK_EX still works even when the file is set append-only
             @file_put_contents($this->mirrorFile, $line . "\n", FILE_APPEND | LOCK_EX);
         }
     }
 
     /**
-     * ตรวจความต่อเนื่องของ chain ทั้งตาราง
+     * Verify the chain's continuity across the whole table
      *
      * @return array{ok:bool,count:int,broken_at:int|null}
      */
@@ -146,7 +147,7 @@ final class AuditLog
             $actor = new Actor(
                 userId: (int) ($row['actor_user_id'] ?? 0),
                 username: (string) $row['actor_name'],
-                role: Permissions::SUPERADMIN, // role ไม่ได้อยู่ใน hash จึงไม่มีผลต่อการตรวจ
+                role: Permissions::SUPERADMIN, // the role isn't part of the hash, so it has no effect on verification
                 ip: (string) $row['actor_ip'],
                 requestId: (string) $row['request_id'],
             );

@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace Phpcp\Security;
 
 /**
- * TOTP ตาม RFC 6238 — ใช้กับ Google Authenticator, Authy, 1Password ได้ทั้งหมด
+ * TOTP per RFC 6238 — works with Google Authenticator, Authy, and 1Password alike
  *
- * บังคับใช้กับ role ผู้ดูแลระบบและผู้ดูแลเซิร์ฟเวอร์ (SECURITY §2.2)
- * เขียนเองเพราะเป็นโค้ดไม่ถึง 100 บรรทัดและช่วยให้ไม่ต้องมี dependency ภายนอก
+ * Enforced for the Administrator and Server admin roles (SECURITY §2.2) ·
+ * written by hand since it's under 100 lines of code, and avoids needing an external dependency
  */
 final class Totp
 {
@@ -16,10 +16,10 @@ final class Totp
     private const PERIOD = 30;
     private const DIGITS = 6;
 
-    /** ยอมรับรหัสของช่วงเวลาก่อนหน้าและถัดไป 1 ช่วง กันนาฬิกาคลาดเคลื่อน */
+    /** Accepts a code from 1 period before or after, to tolerate clock drift */
     private const WINDOW = 1;
 
-    /** สร้าง secret ใหม่ (160 บิตตามที่ RFC 4226 แนะนำ) คืนเป็น base32 */
+    /** Generates a new secret (160 bits, as RFC 4226 recommends), returned as base32 */
     public static function generateSecret(): string
     {
         return self::base32Encode(random_bytes(20));
@@ -31,20 +31,22 @@ final class Totp
     }
 
     /**
-     * ตรวจรหัสแล้วคืน**หมายเลขช่วงเวลา**ที่ตรง — null = ไม่ตรง
+     * Verify a code and return the **period number** it matched — null = no match
      *
-     * ## ทำไมต้องคืนหมายเลข ไม่ใช่แค่จริง/เท็จ
+     * ## Why return a number, not just true/false
      *
-     * หน้าต่างที่กว้าง ±1 ช่วง (กันนาฬิกาคลาดเคลื่อน) แปลว่ารหัสหนึ่งรหัสใช้ได้นาน
-     * ราว 90 วินาที · ถ้าไม่จำว่ารหัสไหนถูกใช้ไปแล้ว รหัสเดิมก็ใช้ซ้ำได้ตลอดช่วงนั้น
-     * — ซึ่งขัดกับเหตุผลที่ 2FA มีอยู่ · 2FA มีไว้กันกรณีที่**รหัสผ่านหลุดไปแล้ว**
-     * ผู้โจมตีที่เห็นรหัสหกหลักได้ครั้งเดียว (แอบดูจอ, มัลแวร์, ฟิชชิง) จึงต้องไม่เหลือ
-     * เวลาอีกเกือบนาทีครึ่งไว้ใช้รหัสเดียวกันซ้ำหลังเจ้าตัวใช้ไปแล้ว
+     * The ±1 period window (which tolerates clock drift) means a single code
+     * stays valid for around 90 seconds · without remembering which code was
+     * already used, the same code could be reused for that entire window —
+     * which defeats the reason 2FA exists at all · 2FA exists to cover the
+     * case where **the password has already leaked** — an attacker who
+     * catches the six-digit code just once (shoulder-surfing, malware,
+     * phishing) must not get almost another minute and a half to reuse that same code after the real owner already used it
      *
-     * ผู้เรียกต้องเก็บค่าที่คืนไปไว้ แล้วส่งกลับมาเป็น `$notBefore` ครั้งถัดไป
-     * ({@see \Phpcp\Domain\UserRepository::recordTotpCounter()})
+     * The caller must store the returned value and pass it back as
+     * `$notBefore` next time ({@see \Phpcp\Domain\UserRepository::recordTotpCounter()})
      *
-     * @param int $notBefore หมายเลขช่วงเวลาที่ใช้ไปแล้ว · รับเฉพาะที่ใหม่กว่านี้เท่านั้น
+     * @param int $notBefore the period number already used · only a code newer than this is accepted
      */
     public static function verifyAt(string $base32Secret, string $code, int $notBefore = 0): ?int
     {
@@ -58,7 +60,7 @@ final class Totp
         for ($offset = -self::WINDOW; $offset <= self::WINDOW; $offset++) {
             $candidate = $counter + $offset;
 
-            // รหัสของช่วงที่ใช้ไปแล้ว (หรือเก่ากว่านั้น) ต้องไม่ผ่าน แม้จะยังอยู่ในหน้าต่าง
+            // A code from a period already used (or older) must never pass, even if it's still within the window
             if ($candidate <= $notBefore) {
                 continue;
             }
@@ -88,10 +90,10 @@ final class Totp
             return '';
         }
 
-        $binary = pack('J', $counter);              // 64 บิต big-endian
+        $binary = pack('J', $counter);              // 64-bit big-endian
         $hash = hash_hmac('sha1', $binary, $key, true);
 
-        // dynamic truncation ตาม RFC 4226 §5.4
+        // dynamic truncation per RFC 4226 §5.4
         $offset = ord($hash[19]) & 0x0F;
         $value = ((ord($hash[$offset]) & 0x7F) << 24)
             | ((ord($hash[$offset + 1]) & 0xFF) << 16)
@@ -101,7 +103,7 @@ final class Totp
         return str_pad((string) ($value % (10 ** self::DIGITS)), self::DIGITS, '0', STR_PAD_LEFT);
     }
 
-    /** URI สำหรับสร้าง QR code ให้ผู้ใช้สแกน */
+    /** The URI used to generate a QR code for the user to scan */
     public static function provisioningUri(string $base32Secret, string $account, string $issuer): string
     {
         return 'otpauth://totp/' . rawurlencode($issuer . ':' . $account) . '?' . http_build_query([
@@ -114,7 +116,7 @@ final class Totp
     }
 
     /**
-     * รหัสสำรองสำหรับกรณีทำ authenticator หาย ใช้ได้ครั้งเดียวต่อรหัส
+     * Recovery codes for when the authenticator app is lost — each one is single-use
      *
      * @return list<string>
      */

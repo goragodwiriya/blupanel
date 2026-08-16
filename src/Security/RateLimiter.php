@@ -7,13 +7,14 @@ namespace Phpcp\Security;
 use Phpcp\Kernel\Db;
 
 /**
- * Token bucket เก็บใน SQLite — SECURITY §2.1
+ * A token bucket stored in SQLite — SECURITY §2.1
  *
- * เก็บใน DB ไม่ใช่ในหน่วยความจำ เพราะ PHP-FPM มีหลาย worker
- * ถ้าเก็บในหน่วยความจำ ผู้โจมตีจะได้โควตาคูณจำนวน worker
+ * Stored in the DB, not in memory, because PHP-FPM has multiple workers — if
+ * it were stored in memory, an attacker would get the quota multiplied by the worker count
  *
- * ใช้ token bucket แทนการนับแบบหน้าต่างเวลา เพราะยอมให้กดถี่ได้ช่วงสั้น ๆ
- * (ผู้ใช้จริงที่พิมพ์รหัสผิดสองสามครั้ง) แต่กันการยิงต่อเนื่องได้
+ * Uses a token bucket instead of counting by time window, because it allows a
+ * short burst of attempts (a genuine user mistyping their password a couple
+ * of times) while still blocking a sustained stream of requests
  */
 final class RateLimiter
 {
@@ -22,10 +23,10 @@ final class RateLimiter
     }
 
     /**
-     * พยายามใช้ 1 token คืน true ถ้ายังมีโควตาเหลือ
+     * Try to spend 1 token, returning true if quota remains
      *
-     * @param float $capacity     จำนวนครั้งสูงสุดที่กดรัวได้
-     * @param float $refillPerSec เติมกลับกี่ token ต่อวินาที
+     * @param float $capacity     the maximum number of attempts allowed in a burst
+     * @param float $refillPerSec how many tokens refill per second
      */
     public function allow(string $bucket, float $capacity, float $refillPerSec): bool
     {
@@ -48,7 +49,7 @@ final class RateLimiter
             $tokens = min($capacity, (float) $row['tokens'] + $elapsed * $refillPerSec);
 
             if ($tokens < 1.0) {
-                // อัปเดตเวลาไว้ด้วยเพื่อให้การเติมกลับคำนวณต่อเนื่อง
+                // Also updates the time, so the refill keeps computing continuously
                 $db->run('UPDATE rate_limits SET tokens = :t, updated_at = :u WHERE bucket = :b', [
                     't' => $tokens, 'u' => $now, 'b' => $key,
                 ]);
@@ -64,7 +65,7 @@ final class RateLimiter
         });
     }
 
-    /** เหลืออีกกี่วินาทีถึงจะกดได้อีกครั้ง ใช้บอกผู้ใช้ให้ชัดเจน */
+    /** How many seconds remain until an attempt is allowed again — used to tell the user clearly */
     public function retryAfter(string $bucket, float $refillPerSec): int
     {
         $key = substr(hash('sha256', $bucket), 0, 40);
@@ -88,7 +89,7 @@ final class RateLimiter
         );
     }
 
-    /** ลบ bucket ที่เต็มแล้วออก เรียกจากงานทำความสะอาดเป็นระยะ */
+    /** Deletes buckets that are fully refilled — called from the periodic cleanup job */
     public function prune(int $olderThanSeconds = 86400): int
     {
         return $this->db

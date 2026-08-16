@@ -5,18 +5,18 @@ declare(strict_types=1);
 namespace Phpcp\Security;
 
 /**
- * เข้ารหัสข้อมูลอ่อนไหวที่ต้องถอดกลับได้ — ปัจจุบันใช้กับ TOTP secret เท่านั้น
+ * Encrypts sensitive data that must be decryptable again — currently only used for TOTP secrets
  *
- * ใช้ XSalsa20-Poly1305 ผ่าน libsodium ที่มากับ PHP อยู่แล้ว
- * คีย์อยู่ใน /etc/phpcp/config.php (0640) ซึ่งแยกจากไฟล์ฐานข้อมูล
- * ผู้ที่ได้ไฟล์ panel.db ไปอย่างเดียวจึงถอด TOTP secret ไม่ได้
+ * Uses XSalsa20-Poly1305 via libsodium, which already ships with PHP · the
+ * key lives in /etc/phpcp/config.php (0640), separate from the database
+ * file, so whoever gets only the panel.db file can't decrypt a TOTP secret
  */
 final class Secret
 {
     public function __construct(private readonly string $key)
     {
         if (strlen($key) !== SODIUM_CRYPTO_SECRETBOX_KEYBYTES) {
-            throw new \InvalidArgumentException('คีย์ต้องมีขนาด 32 ไบต์');
+            throw new \InvalidArgumentException('The key must be 32 bytes');
         }
     }
 
@@ -37,7 +37,7 @@ final class Secret
     {
         $raw = base64_decode($encoded, true);
         if ($raw === false || strlen($raw) <= SODIUM_CRYPTO_SECRETBOX_NONCEBYTES) {
-            throw new \RuntimeException('ข้อมูลที่เข้ารหัสไว้เสียหาย');
+            throw new \RuntimeException('The encrypted data is corrupted');
         }
 
         $nonce = substr($raw, 0, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
@@ -45,7 +45,7 @@ final class Secret
 
         $plain = sodium_crypto_secretbox_open($cipher, $nonce, $this->key);
         if ($plain === false) {
-            throw new \RuntimeException('ถอดรหัสไม่สำเร็จ — คีย์ไม่ตรงหรือข้อมูลถูกแก้ไข');
+            throw new \RuntimeException('Decryption failed — the key does not match, or the data was tampered with');
         }
 
         return $plain;
