@@ -18,23 +18,26 @@ use Phpcp\Security\SessionStore;
 use Phpcp\Security\Totp;
 
 /**
- * เซสชันของ REST API v2 — PLAN-V2 §4.4
+ * REST API v2's session — PLAN-V2 §4.4
  *
- * `GET /api/v2/session` เป็นจุดเริ่มต้นของ SPA ทุกครั้งที่เปิดแอป และเป็นทางเดียว
- * ที่ฝั่งหน้าเว็บได้ CSRF token มา (เดิม token ฝังอยู่ใน `<meta>` ของหน้า HTML
- * ซึ่ง SPA ไม่มีให้ขูด — นี่คือช่องว่างที่แผนระบุว่าต้องเพิ่มใหม่)
+ * `GET /api/v2/session` is the SPA's starting point every time the app opens,
+ * and the only way the frontend gets a CSRF token (the token used to sit in the
+ * HTML page's `<meta>` tag, which the SPA has none of to scrape — this is the
+ * gap the plan says must be filled in)
  *
- * **สิ่งที่จงใจไม่เปลี่ยนจากของเดิม:** คุกกี้ session ยังเป็น HttpOnly + SameSite=Strict
- * และยังผูกกับ IP/User-Agent เหมือนเดิมทุกประการ · ไม่มีการย้าย token ไปเก็บใน JS
- * (ตัดสินใจ N6) เพราะนั่นจะเป็นการถอยหลังจากที่มีอยู่แล้ว
+ * **What was deliberately left unchanged:** the session cookie is still
+ * HttpOnly + SameSite=Strict, and still bound to IP/User-Agent exactly as
+ * before · the token was never moved into JS storage (decision N6), because
+ * that would be a step backward from what already existed
  */
 final class SessionController extends ApiController
 {
     /**
-     * สถานะปัจจุบัน — เรียกได้โดยไม่ต้องล็อกอิน
+     * The current state — callable without being logged in
      *
-     * ตอบ 200 เสมอ ไม่ว่าจะล็อกอินอยู่หรือไม่ · "ยังไม่ล็อกอิน" ไม่ใช่ข้อผิดพลาด
-     * แต่เป็นสถานะหนึ่งที่ SPA ต้องรู้เพื่อตัดสินใจว่าจะแสดงหน้าล็อกอินหรือหน้าหลัก
+     * Always answers 200, whether logged in or not · "not logged in" isn't an
+     * error, it's a state the SPA needs to know to decide whether to show the
+     * login page or the main app
      */
     public function show(Request $request): Response
     {
@@ -42,10 +45,11 @@ final class SessionController extends ApiController
     }
 
     /**
-     * เข้าสู่ระบบ
+     * Sign in
      *
-     * ตอบเหมือนกันหมดทุกกรณีที่ล้มเหลว (ชื่อผู้ใช้ผิด/รหัสผ่านผิด/บัญชีถูกระงับ)
-     * และคำนวณ Argon2id เสมอแม้ไม่พบผู้ใช้ เพื่อไม่ให้เวลาตอบกลับบอกว่าชื่อนี้มีอยู่จริงไหม
+     * Answers identically for every failure case (wrong username / wrong
+     * password / suspended account), and always computes Argon2id even when no
+     * user is found, so response timing never reveals whether that username exists
      */
     public function create(Request $request): Response
     {
@@ -55,20 +59,20 @@ final class SessionController extends ApiController
         $users = new UserRepository($this->app->db());
         $user = $username === '' ? null : $users->findByUsername($username);
 
-        // ค่าคงที่ชุดเดียวกับ AuthController — ต้องคำนวณจริงเพื่อให้เวลาตอบใกล้เคียงกัน
+        // The same dummy hash AuthController uses — must genuinely compute it so response timing stays close
         $dummyHash = '$argon2id$v=19$m=65536,t=4,p=2$YWFhYWFhYWFhYWFhYWFhYQ$'
             . 'c2FtcGxlaGFzaHZhbHVlZm9ydGltaW5nZXF1YWxpdHl4eA';
 
         if ($user === null) {
             Password::verify($password, $dummyHash);
 
-            return $this->loginFailed($request, $username, 'ไม่พบผู้ใช้');
+            return $this->loginFailed($request, $username, 'User not found');
         }
 
         if ($users->isLocked($user)) {
             $seconds = $users->lockRemaining($user);
 
-            $this->audit($request, 'auth.login', $username, 'denied', ['reason' => 'บัญชีถูกล็อกชั่วคราว']);
+            $this->audit($request, 'auth.login', $username, 'denied', ['reason' => 'Account temporarily locked']);
 
             return $this->problem(
                 ApiProblem::RateLimited,
@@ -77,14 +81,15 @@ final class SessionController extends ApiController
         }
 
         if ($user['status'] !== 'active') {
-            return $this->loginFailed($request, $username, 'บัญชีถูกระงับ');
+            return $this->loginFailed($request, $username, 'Account suspended');
         }
 
-        // บัญชีที่ถูกระงับหรือหมดอายุห้ามเข้าใช้งาน แม้สิทธิ์ล็อกอินจะยัง active
-        // ข้อความตอบกลับไม่บอกเหตุผลละเอียด เพราะเป็นการตอบก่อนตรวจรหัสผ่าน —
-        // ถ้าบอกชัดจะกลายเป็นช่องให้เดาว่าชื่อผู้ใช้ไหนมีอยู่จริง
+        // A suspended or expired account may not sign in, even if its login
+        // credentials are still active · the response never states the exact
+        // reason, since this check runs before the password is even verified —
+        // stating it plainly would become a way to guess which usernames exist
         if (!$users->checkService((int) $user['id'])['ok']) {
-            return $this->loginFailed($request, $username, 'สถานะบัญชีไม่อนุญาตให้เข้าใช้งาน');
+            return $this->loginFailed($request, $username, 'Account status does not allow sign-in');
         }
 
         if (!Password::verify($password, (string) $user['password_hash'])) {
@@ -94,10 +99,10 @@ final class SessionController extends ApiController
                 $this->app->config->int('security.lockout_seconds', 900),
             );
 
-            return $this->loginFailed($request, $username, 'รหัสผ่านไม่ถูกต้อง');
+            return $this->loginFailed($request, $username, 'Incorrect password');
         }
 
-        // สร้าง session ใหม่เสมอหลังยืนยันตัวตน (กัน session fixation)
+        // Always create a new session after authenticating (guards against session fixation)
         $needs2fa = (int) $user['totp_enabled'] === 1;
         $store = new SessionStore($this->app->db(), $this->app->config);
 
@@ -110,7 +115,7 @@ final class SessionController extends ApiController
 
         $users->registerSuccess((int) $user['id'], $request->ip, (string) $user['password_hash']);
 
-        // actor สร้างจากข้อมูลผู้ใช้ตรง ๆ เพราะ ctx->session ยังไม่ถูกโหลดในคำขอนี้
+        // The actor is built straight from the user's data, because ctx->session hasn't been loaded yet in this request
         $this->app->audit()->write(
             new Actor(
                 userId: (int) $user['id'],
@@ -126,18 +131,19 @@ final class SessionController extends ApiController
         );
 
         if ($needs2fa) {
-            // 401 พร้อมรหัส TWO_FACTOR_REQUIRED — คุกกี้ session ถูกตั้งแล้วแต่ยังใช้ทำอะไรไม่ได้
-            // นอกจากยืนยัน 2FA · SPA ใช้รหัสนี้ตัดสินใจแสดงหน้ากรอกรหัส ไม่ใช่หน้าเข้าสู่ระบบใหม่
+            // 401 with the TWO_FACTOR_REQUIRED code — the session cookie is already
+            // set but can't be used for anything except verifying 2FA · the SPA
+            // uses this code to decide to show the code-entry screen, not a fresh login page
             return $this->problem(ApiProblem::TwoFactorRequired, 'Two-factor verification is required first');
         }
 
-        // โหลด session ที่เพิ่งสร้างเข้า ctx เพื่อให้คำตอบสะท้อนสถานะจริงทันที
+        // Loads the session just created into ctx, so the response reflects the real state immediately
         $this->loadSessionIntoCtx($request);
 
         return $this->ok($this->state($request));
     }
 
-    /** ยืนยันรหัส 2FA ของ session ที่ผ่านรหัสผ่านมาแล้ว */
+    /** Verify the 2FA code for a session that already passed the password check */
     public function verifyTwoFactor(Request $request): Response
     {
         if (!$this->ctx->awaiting2fa()) {
@@ -152,17 +158,19 @@ final class SessionController extends ApiController
         }
 
         /*
-         * บัญชีที่ถูกล็อกจากการเดาต้องถูกกันที่ด่านนี้ด้วย ไม่ใช่เฉพาะด่านรหัสผ่าน
+         * An account locked from guessing must be stopped at this gate too, not only the password gate
          *
-         * ตัวจำกัดอัตราของ middleware ผูกกับ **IP** (`login:<ip>`) ซึ่งกันคนเดียวยิงรัว
-         * ได้ แต่ไม่กันการกระจายยิงจากหลาย IP · รหัสหกหลักมีความเป็นไปได้ล้านแบบ
-         * ซึ่งน้อยพอที่การกระจายยิงจะได้ผลจริงถ้าไม่มีการนับความล้มเหลว**รายบัญชี**
-         * · ใช้ตัวนับชุดเดียวกับรหัสผ่าน เพราะทั้งสองด่านกันของเดียวกันคือการเดา
+         * The middleware's rate limiter is bound to **IP** (`login:<ip>`), which
+         * stops one person hammering it but not a spread attack from many IPs ·
+         * a six-digit code has a million possibilities, few enough that a spread
+         * attack genuinely works if failures aren't counted **per account** ·
+         * uses the same counter as the password, since both gates guard against
+         * the same thing: guessing
          */
         if ($users->isLocked($user)) {
             $seconds = $users->lockRemaining($user);
 
-            $this->audit($request, 'auth.2fa', (string) $user['username'], 'denied', ['reason' => 'บัญชีถูกล็อกชั่วคราว']);
+            $this->audit($request, 'auth.2fa', (string) $user['username'], 'denied', ['reason' => 'Account temporarily locked']);
 
             return $this->problem(
                 ApiProblem::RateLimited,
@@ -173,7 +181,7 @@ final class SessionController extends ApiController
         $code = trim($request->payloadString('code'));
         $secret = new Secret($this->app->config->secretKey());
 
-        // รับเฉพาะรหัสที่ใหม่กว่าช่วงเวลาที่ใช้ไปแล้ว — รหัสเดิมใช้ซ้ำไม่ได้แม้ยังไม่หมดอายุ
+        // Only accepts a code newer than the time step already used — the same code can't be reused even before it expires
         $counter = Totp::verifyAt(
             $secret->decrypt((string) $user['totp_secret']),
             $code,
@@ -186,7 +194,7 @@ final class SessionController extends ApiController
             $users->recordTotpCounter((int) $user['id'], $counter);
         }
 
-        // รหัสสำรองใช้ได้ครั้งเดียว เผื่อทำอุปกรณ์ยืนยันตัวตนหาย
+        // A recovery code is single-use, kept in case the authenticator device is lost
         if (!$accepted) {
             $accepted = $users->consumeRecoveryCode((int) $user['id'], $code);
         }
@@ -203,16 +211,18 @@ final class SessionController extends ApiController
             return $this->problem(ApiProblem::TwoFactorRequired, 'The verification code is not correct', ['code' => 'The verification code is not correct']);
         }
 
-        // ผ่านแล้วต้องล้างตัวนับ ไม่งั้นความล้มเหลวสะสมจากครั้งก่อน ๆ จะไปล็อกบัญชี
-        // ในการเข้าใช้งานครั้งถัดไปทั้งที่คนใช้ทำถูกทุกอย่าง
+        // Must clear the counter once passed, or failures accumulated from
+        // earlier attempts would lock the account on the next sign-in even
+        // though the user did everything right this time
         $users->registerSuccess((int) $user['id'], $request->ip, (string) $user['password_hash']);
 
         $store = new SessionStore($this->app->db(), $this->app->config);
         $store->markAuthenticated($this->ctx->sessionId);
 
-        // หมุน id อีกครั้งหลังยกระดับสิทธิ์ของ session
-        // rotate() คืน null เมื่อคำขออื่นหมุนไปก่อนแล้ว — กรณีนั้นให้ใช้ id เดิมต่อ
-        // (ยังใช้งานได้อยู่ในช่วงผ่อนผัน) ไม่ใช่เขียนทับด้วย null
+        // Rotate the id again after the session's privileges are elevated
+        // rotate() returns null when another request already rotated it first —
+        // in that case keep using the existing id (still valid during the grace
+        // period), never overwrite with null
         $this->ctx->sessionId = $store->rotate($this->ctx->sessionId) ?? $this->ctx->sessionId;
 
         $this->audit($request, 'auth.2fa', (string) $user['username'], 'ok');
@@ -222,10 +232,11 @@ final class SessionController extends ApiController
     }
 
     /**
-     * ออกจากระบบ
+     * Sign out
      *
-     * ตอบ 204 เสมอแม้ไม่ได้ล็อกอินอยู่ — การออกจากระบบซ้ำไม่ใช่ข้อผิดพลาด
-     * และการตอบต่างกันจะบอกผู้เรียกว่าคุกกี้ที่ถืออยู่ใช้ได้จริงหรือไม่
+     * Always answers 204 even when not logged in — signing out twice isn't an
+     * error, and answering differently would tell the caller whether the cookie
+     * they're holding is actually valid
      */
     public function destroy(Request $request): Response
     {
@@ -241,7 +252,7 @@ final class SessionController extends ApiController
     }
 
     /**
-     * สถานะที่ SPA ต้องใช้ตอน bootstrap — §4.4
+     * The state the SPA needs at bootstrap — §4.4
      *
      * @return array<string,mixed>
      */
@@ -276,16 +287,20 @@ final class SessionController extends ApiController
     }
 
     /**
-     * สิทธิ์ในรูป map ที่**มีครบทุกตัวที่ระบบรู้จัก** พร้อมค่า true/false
+     * Permissions as a map that **carries every permission the system knows
+     * about**, each with a true/false value
      *
-     * เป็นแผนที่ ไม่ใช่รายการ เพราะหน้าจอเขียนเงื่อนไขตรง ๆ ว่า
-     * `data-if="permissions['user.manage']"` ได้โดยไม่ต้องมีฟังก์ชันช่วยฝั่ง JS เลย
-     * (บนอาร์เรย์ การอ้างด้วยชื่อจะได้ `undefined` ซึ่ง `data-if` ตีความว่า "แสดง")
+     * A map, not a list, because a screen can write a condition directly as
+     * `data-if="permissions['user.manage']"` with no JS helper function needed
+     * at all (on an array, referring to it by name would get `undefined`, which
+     * `data-if` interprets as "show it")
      *
-     * **ส่งครบทุกตัวแม้ค่าจะเป็น false โดยเจตนา** — ถ้าส่งเฉพาะตัวที่มีสิทธิ์ คีย์ที่
-     * ไม่มีจะเป็น `undefined` แล้วองค์ประกอบนั้นจะ**โผล่** ไม่ใช่ถูกซ่อน · ส่งครบแล้ว
-     * ทุกเงื่อนไขในเทมเพลตมีค่าที่นิยามชัดเจนเสมอ เหลือความเสี่ยงเดียวคือสะกดชื่อผิด
-     * ซึ่งมีเทสต์ไล่ตรวจทุกเทมเพลตคุมอยู่
+     * **Every permission is sent even when its value is deliberately false** —
+     * sending only the ones granted would leave missing keys as `undefined`,
+     * and that element would **appear** instead of staying hidden · sending all
+     * of them means every condition in a template always has a clearly defined
+     * value, leaving only one risk: a misspelled name, which a test sweeping
+     * every template already guards against
      *
      * @return array<string,bool>
      */
@@ -302,10 +317,11 @@ final class SessionController extends ApiController
     }
 
     /**
-     * โหลด session ที่เพิ่งสร้าง/หมุน เข้า ctx
+     * Load the session just created/rotated into ctx
      *
-     * จำเป็นเพราะ SessionMiddleware ทำงานไปแล้วก่อนถึง controller — ถ้าไม่โหลดซ้ำ
-     * คำตอบของคำขอล็อกอินจะบอกว่า "ยังไม่ได้ล็อกอิน" ทั้งที่คุกกี้ถูกตั้งไปแล้ว
+     * Needed because SessionMiddleware already ran before reaching the
+     * controller — without reloading, the login request's own response would
+     * say "not logged in" even though the cookie was already set
      */
     private function loadSessionIntoCtx(Request $request): void
     {
@@ -317,7 +333,7 @@ final class SessionController extends ApiController
             SessionStore::hashUserAgent($request->userAgent),
         );
 
-        // token ที่ middleware ออกไว้ผูกกับ session เก่า ต้องออกใหม่ก่อนใส่ลงคำตอบ
+        // The token the middleware issued is bound to the old session — must issue a new one before putting it into the response
         $this->ctx->refreshCsrfToken();
     }
 
