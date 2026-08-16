@@ -13,38 +13,42 @@ use Phpcp\Kernel\Db;
 use Phpcp\Support\BinaryPath;
 
 /**
- * เพิ่ม/ลบเรกคอร์ด `_acme-challenge` สำหรับการพิสูจน์แบบ DNS-01 — PLAN-V2 เฟส E7
+ * Add/remove the `_acme-challenge` record for DNS-01 validation — PLAN-V2 Phase E7
  *
- * ใช้กลไกเดิมทั้งหมด: เขียนแถวลง `dns_records` แล้วให้ {@see BindZoneManager} สร้าง
- * zone file ใหม่และสั่ง `rndc reload` — ไม่มีเส้นทางพิเศษที่ข้ามการตรวจ `named-checkzone`
+ * Uses the existing mechanism throughout: write a row into `dns_records`, then let
+ * {@see BindZoneManager} regenerate the zone file and issue `rndc reload` — no
+ * special path skips `named-checkzone`'s validation.
  *
- * **หัวใจอยู่ที่การรอ ไม่ใช่การเขียน** — certbot ถือว่า hook ที่จบแล้วแปลว่าเรกคอร์ด
- * พร้อมใช้ แล้วบอก Let's Encrypt ให้มาถามทันที · ถ้าคืนค่าก่อนที่ BIND9 จะเสิร์ฟ
- * เรกคอร์ดใหม่จริง จะได้ error "DNS problem: NXDOMAIN looking up TXT" ซึ่งชี้ไปที่
- * การตั้งค่าที่ผิด ทั้งที่จริง ๆ แค่ถามเร็วไปหนึ่งวินาที
+ * **The core of this is the waiting, not the writing** — certbot treats a hook that
+ * finished as meaning the record is ready, and immediately tells Let's Encrypt to go
+ * query it · returning before BIND9 is actually serving the new record produces the
+ * error "DNS problem: NXDOMAIN looking up TXT," which points at a misconfiguration
+ * when the real cause was just querying one second too early.
  *
- * **ข้อจำกัดที่ต้องรู้:** ตรวจกับ nameserver ในเครื่องเท่านั้น (`@127.0.0.1`) ไม่ได้ตรวจว่า
- * โลกภายนอกเห็นแล้วหรือยัง · ถ้าโดเมนนี้มี secondary NS ที่ยังไม่ได้ transfer หรือ
- * resolver ของ Let's Encrypt แคชคำตอบ NXDOMAIN ไว้ก่อนหน้า การขอใบอาจยังล้มได้
- * — ค่า TTL ที่ตั้งไว้ต่ำ ({@see TTL}) ช่วยลดโอกาสนั้นแต่ไม่ได้กันทั้งหมด
+ * **A limitation worth knowing:** this only checks against the local nameserver
+ * (`@127.0.0.1`), not whether the outside world can see it yet · if this domain has a
+ * secondary NS that hasn't transferred yet, or Let's Encrypt's resolver already
+ * cached a previous NXDOMAIN answer, the certificate request can still fail — the low
+ * configured TTL ({@see TTL}) reduces that chance but doesn't eliminate it.
  */
 final class AcmeDnsChallenge
 {
-    /** ชื่อเรกคอร์ดตามมาตรฐาน ACME — ต้องเป็นชื่อนี้เท่านั้น */
+    /** The record name per the ACME standard — must be exactly this name */
     public const RECORD_NAME = '_acme-challenge';
 
     /**
-     * TTL ต่ำสุดที่สมเหตุสมผล — เรกคอร์ดนี้มีอายุแค่ไม่กี่นาที
+     * The lowest sensible TTL — this record only lives for a few minutes
      *
-     * ตั้งต่ำเพราะถ้า resolver ของ Let's Encrypt เคยถามชื่อนี้แล้วได้ NXDOMAIN
-     * มันจะแคชคำตอบนั้นไว้ตาม negative TTL ของ SOA · ค่าต่ำทำให้รอบถัดไปถามใหม่เร็วขึ้น
+     * Set low because if Let's Encrypt's resolver already queried this name and got
+     * NXDOMAIN, it will cache that answer per the SOA's negative TTL · a low value
+     * means the next round gets queried fresh sooner.
      */
     public const TTL = 60;
 
-    /** รอไม่เกินเท่านี้ให้ BIND9 เสิร์ฟเรกคอร์ดใหม่ — เกินกว่านี้แปลว่ามีอะไรผิดจริง */
+    /** Wait no longer than this for BIND9 to serve the new record — past this, something is genuinely wrong */
     private const MAX_WAIT = 60;
 
-    /** ถามซ้ำทุกกี่วินาที */
+    /** How many seconds between each retry */
     private const POLL_INTERVAL = 2;
 
     /** @var list<string> */
@@ -58,7 +62,7 @@ final class AcmeDnsChallenge
     }
 
     /**
-     * เพิ่มเรกคอร์ดแล้วรอจนถามเจอจริง
+     * Add the record and wait until it actually resolves
      *
      * @return array{domain:string,serial:int,waited:int}
      */
@@ -67,14 +71,17 @@ final class AcmeDnsChallenge
         $row = $this->requireZone($domain);
 
         if ($validation === '' || preg_match('/^[A-Za-z0-9_-]{20,128}$/', $validation) !== 1) {
-            // ค่านี้มาจาก certbot ไม่ใช่จากผู้ใช้ แต่มันจะถูกเขียนลง zone file
-            // ที่ BIND9 อ่าน — ค่าที่ผิดรูปแบบต้องไม่มีทางไปถึงไฟล์นั้น
-            throw new ValidationError('ค่า CERTBOT_VALIDATION ผิดรูปแบบ');
+            // This value comes from certbot, not the user, but it gets written into
+            // a zone file that BIND9 reads — a malformed value must never have a way
+            // to reach that file.
+            throw new ValidationError('Malformed CERTBOT_VALIDATION value');
         }
 
-        // ลบของเก่าก่อนเสมอ — certbot เรียก auth สองครั้งเมื่อขอทั้ง example.com
-        // และ *.example.com ในใบเดียว · **ครั้งที่สองต้องไม่ทับครั้งแรก** เพราะ
-        // Let's Encrypt ตรวจทั้งสองค่าที่ชื่อเดียวกัน · จึงลบเฉพาะค่าที่ซ้ำกันเป๊ะ
+        // Always delete the old one first — certbot calls auth twice when
+        // requesting both example.com and *.example.com in one certificate ·
+        // **the second call must not overwrite the first**, since Let's Encrypt
+        // checks both values at the same name · so only an exact duplicate value
+        // gets deleted.
         $this->db->run(
             'DELETE FROM dns_records WHERE domain_id = :id AND type = :t AND name = :n AND value = :v',
             ['id' => (int) $row['id'], 't' => 'TXT', 'n' => self::RECORD_NAME, 'v' => $validation],
@@ -93,7 +100,7 @@ final class AcmeDnsChallenge
 
         if (($result['pushed'] ?? false) !== true) {
             throw new ExecutionFailed(
-                'ส่ง zone ไปยัง BIND9 ไม่สำเร็จ: ' . (string) ($result['message'] ?? 'ไม่ทราบสาเหตุ'),
+                'Failed to push the zone to BIND9: ' . (string) ($result['message'] ?? 'unknown reason'),
             );
         }
 
@@ -105,11 +112,13 @@ final class AcmeDnsChallenge
     }
 
     /**
-     * ลบเรกคอร์ดที่ใช้พิสูจน์ออกให้หมด
+     * Remove every validation record entirely
      *
-     * ลบ**ทุกค่า**ของชื่อนี้ ไม่ใช่เฉพาะค่าล่าสุด เพราะการขอใบที่มีทั้งโดเมนหลัก
-     * และ wildcard ทิ้งไว้สองแถว และ certbot เรียก cleanup แยกกันสองครั้ง
-     * ซึ่งครั้งแรกควรกวาดให้หมดเลย — เรกคอร์ดนี้ไม่มีความหมายอื่นนอกจากการพิสูจน์
+     * Deletes **every value** for this name, not just the most recent one, because
+     * requesting a certificate that covers both the primary domain and its wildcard
+     * leaves two rows behind, and certbot calls cleanup twice separately — the first
+     * call should already sweep everything · this record has no meaning outside of
+     * validation.
      *
      * @return array{domain:string,removed:int}
      */
@@ -118,8 +127,9 @@ final class AcmeDnsChallenge
         $row = $this->findZone($domain);
 
         if ($row === null) {
-            // ไม่มี zone แล้ว = ไม่มีอะไรให้ลบ · cleanup ต้องไม่ล้มเหลวเพราะเรื่องนี้
-            // ไม่งั้น certbot จะรายงานว่าการขอใบล้มเหลวทั้งที่ใบออกมาแล้ว
+            // No zone at all = nothing to delete · cleanup must never fail over
+            // this, or certbot would report the certificate request as failed even
+            // though the certificate was actually issued.
             return ['domain' => $domain, 'removed' => 0];
         }
 
@@ -136,9 +146,9 @@ final class AcmeDnsChallenge
     }
 
     /**
-     * ถาม nameserver ในเครื่องซ้ำ ๆ จนกว่าจะเห็นค่าที่เพิ่งเขียน
+     * Query the local nameserver repeatedly until the freshly written value shows up
      *
-     * @return int วินาทีที่รอไปทั้งหมด
+     * @return int total seconds waited
      */
     private function waitUntilVisible(string $domain, string $validation): int
     {
@@ -152,7 +162,7 @@ final class AcmeDnsChallenge
                 timeout: 10,
             );
 
-            // dig คืนค่า TXT พร้อมเครื่องหมายคำพูด — ตัดออกก่อนเทียบ
+            // dig returns a TXT value with quotes attached — strip them before comparing
             if (str_contains(str_replace('"', '', $result->output()), $validation)) {
                 return $waited;
             }
@@ -162,9 +172,9 @@ final class AcmeDnsChallenge
         }
 
         throw new ExecutionFailed(sprintf(
-            "BIND9 ยังไม่เสิร์ฟเรกคอร์ด %s หลังรอ %d วินาที\n\n"
-            . "ตรวจด้วย: dig @127.0.0.1 TXT %s\n"
-            . 'ถ้าไม่มีคำตอบ แปลว่า zone ถูกเขียนแล้วแต่ BIND9 ยังไม่ได้โหลด — ดู `rndc status`',
+            "BIND9 still isn't serving the record %s after waiting %d seconds\n\n"
+            . "Check with: dig @127.0.0.1 TXT %s\n"
+            . 'If there\'s no answer, the zone was written but BIND9 hasn\'t loaded it yet — check `rndc status`',
             $name,
             self::MAX_WAIT,
             $name,
@@ -172,11 +182,12 @@ final class AcmeDnsChallenge
     }
 
     /**
-     * หาแถวโดเมนที่เป็นเจ้าของ zone ของชื่อนี้
+     * Find the domain row that owns this name's zone
      *
-     * certbot ส่งชื่อที่กำลังพิสูจน์มา ซึ่งอาจเป็น subdomain ที่ไม่มี zone ของตัวเอง
-     * (เช่น `blog.example.com` อยู่ใน zone ของ `example.com`) · ต้องไล่หาขึ้นไป
-     * ทีละระดับจนเจอโดเมนที่มี zone จริง ไม่งั้นจะเขียนเรกคอร์ดผิดที่
+     * certbot sends the name being validated, which may be a subdomain with no zone
+     * of its own (e.g. `blog.example.com` lives inside `example.com`'s zone) · this
+     * must walk upward one level at a time until it finds a domain with a real zone,
+     * otherwise the record would be written into the wrong place.
      *
      * @return array<string,mixed>|null
      */
@@ -205,8 +216,8 @@ final class AcmeDnsChallenge
     {
         if (!$this->config->dnsEnabled()) {
             throw new ValidationError(
-                "ใบรับรอง wildcard ต้องพิสูจน์ผ่าน DNS ซึ่งต้องเปิด `dns.enabled` ก่อน\n\n"
-                . 'ตั้งค่าใน /etc/phpcp/config.php แล้วสั่ง `phpcp dns:sync` เพื่อส่ง zone ที่มีอยู่ออกไปให้ครบ',
+                "A wildcard certificate must be validated through DNS, which requires `dns.enabled` first\n\n"
+                . 'Set it in /etc/phpcp/config.php, then run `phpcp dns:sync` to push every existing zone out',
             );
         }
 
@@ -214,9 +225,9 @@ final class AcmeDnsChallenge
 
         if ($row === null) {
             throw new ValidationError(sprintf(
-                "ไม่พบ zone ของ %s บนเครื่องนี้ — ใบรับรอง wildcard ต้องให้ BIND9 ในเครื่อง"
-                . " เป็นเจ้าของโซนของโดเมนนั้น\n\n"
-                . 'เพิ่มเรกคอร์ด DNS ของโดเมนนี้ใน panel แล้วกด "ส่งไปยัง DNS" ก่อน',
+                "No zone found for %s on this machine — a wildcard certificate requires this machine's"
+                . " own BIND9 to own that domain's zone\n\n"
+                . 'Add a DNS record for this domain in the panel and click "Push to DNS" first',
                 $domain,
             ));
         }
@@ -225,11 +236,12 @@ final class AcmeDnsChallenge
     }
 
     /**
-     * โหลดแถวโดเมนใหม่จากฐานข้อมูลก่อนส่งให้ BindZoneManager
+     * Reload the domain row fresh from the database before handing it to BindZoneManager
      *
-     * จำเป็นเพราะ `writeZone()` อ่าน `zone_serial` จากแถวที่ได้รับ ไม่ใช่จากฐานข้อมูล —
-     * แถวที่ค้างในตัวแปรตั้งแต่ก่อนการเขียนครั้งก่อนจะมี serial เก่า แล้ว serial ใหม่
-     * จะไม่เพิ่มขึ้นจริง ซึ่งทำให้ secondary NS ไม่รู้ว่ามีการเปลี่ยนแปลง
+     * Necessary because `writeZone()` reads `zone_serial` from the row it's given,
+     * not from the database — a row still held in a variable from before a previous
+     * write would carry a stale serial, and the new serial wouldn't actually
+     * increment, leaving a secondary NS with no way to know anything changed.
      *
      * @param array<string,mixed> $row
      * @return array<string,mixed>
