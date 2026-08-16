@@ -12,14 +12,17 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * ค่าตั้ง SSH — `/api/v2/ssh-config`
+ * SSH settings — `/api/v2/ssh-config`
  *
- * แก้ได้เฉพาะคีย์ใน allowlist ของ `SshManager` และค่าที่อยู่ใน enum ของแต่ละคีย์เท่านั้น
- * — ไม่มีทางเขียนบรรทัดอิสระลง sshd_config ผ่าน API นี้ ซึ่งเป็นสิ่งที่กัน
- * "แก้ config แล้ว sshd ไม่ขึ้นอีกเลย" ตั้งแต่ต้นทาง
+ * Only keys in `SshManager`'s allowlist can be edited, and only values within
+ * each key's own enum — there's no way to write an arbitrary line into
+ * sshd_config through this API, which prevents "edited the config and sshd
+ * never came back up" at the source
  *
- * **การเปลี่ยนค่าที่นี่อาจตัดการเชื่อมต่อของผู้สั่งเอง** (เปลี่ยนพอร์ต, ปิด password auth)
- * จึงต้องยืนยันภายในเวลาเสมอ · คำตอบแนบ `pending_rollback` กลับไปให้ SPA ขึ้นตัวนับถอยหลัง
+ * **A change here can cut off the very connection that requested it**
+ * (changing the port, disabling password auth), so it always requires
+ * confirming within the time window · the response attaches
+ * `pending_rollback` so the SPA can show a countdown
  */
 final class SshConfigController extends ApiController
 {
@@ -29,8 +32,9 @@ final class SshConfigController extends ApiController
 
         return $this->ok($data + [
             'editable_keys' => SshManager::keys(),
-            // ปุ่มบันทึกถาม can['manage'] จากคำตอบนี้ตรง ๆ — ฟอร์มโหลดข้อมูลผ่าน
-            // data-load-api ของตัวเอง ไม่ได้อยู่ใต้ data-component="api" ของ /session
+            // The save button reads can['manage'] directly from this
+            // response — the form loads its own data via data-load-api, it's
+            // not nested under /session's data-component="api"
             'can' => $this->can(['manage' => 'ssh.manage']),
         ], [
             'pending_rollback' => $this->pendingRollback(),
@@ -39,10 +43,11 @@ final class SshConfigController extends ApiController
     }
 
     /**
-     * แก้ค่าบางส่วน — ส่งมาเฉพาะคีย์ที่ต้องการเปลี่ยน
+     * A partial update — only the keys that need changing are sent
      *
-     * คีย์ที่ไม่ได้ส่งมาจะไม่ถูกแตะ (นี่คือความหมายของ PATCH) · คีย์ที่ไม่รู้จักถูกปฏิเสธ
-     * พร้อมบอกรายการที่ใช้ได้ แทนที่จะเงียบ ๆ ไม่ทำอะไรแล้วผู้ใช้คิดว่าบันทึกแล้ว
+     * A key that isn't sent is left untouched (that's what PATCH means) ·
+     * an unknown key is rejected along with the list of valid ones, instead
+     * of silently doing nothing while the user thinks it saved
      */
     public function update(Request $request): Response
     {

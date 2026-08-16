@@ -14,12 +14,14 @@ use Phpcp\Security\Password;
 use Phpcp\Security\SessionStore;
 
 /**
- * บัญชีของผู้ที่กำลังล็อกอินอยู่ — `/api/v2/me`
+ * The currently signed-in user's own account — `/api/v2/me`
  *
- * แยกจาก `/users/{id}` โดยเจตนา: การแก้ข้อมูลตัวเองไม่ต้องใช้สิทธิ์ `user.manage`
- * (ลูกค้าที่เป็น webadmin ต้องเปลี่ยนรหัสผ่านตัวเองได้ แต่ต้องแตะบัญชีคนอื่นไม่ได้เลย)
- * ถ้าใช้เส้นทางเดียวกันแล้วเช็คว่า id ตรงกับตัวเองไหม จะมีวันที่ลืมเช็ค — เส้นทางแยก
- * ทำให้ผิดพลาดแบบนั้นไม่ได้ตั้งแต่โครงสร้าง
+ * Deliberately separate from `/users/{id}`: editing your own data doesn't
+ * need the `user.manage` permission (a customer who's a webadmin must be able
+ * to change their own password, but must never be able to touch anyone
+ * else's account) · sharing the same route and checking whether the id
+ * matches yourself would eventually get forgotten somewhere — a separate
+ * route makes that mistake structurally impossible
  */
 final class MeController extends ApiController
 {
@@ -35,10 +37,12 @@ final class MeController extends ApiController
     }
 
     /**
-     * เปลี่ยนรหัสผ่านของตัวเอง
+     * Change your own password
      *
-     * ตัด session อื่นทั้งหมดทิ้งหลังเปลี่ยนสำเร็จ เผื่อว่ารหัสเดิมรั่วและมีคนสวมรอยอยู่
-     * แล้วสร้าง session ใหม่ให้ผู้เรียกทันที เพื่อไม่ให้ตัวเองหลุดออกจากระบบไปด้วย
+     * Destroys every other session right after a successful change, in case
+     * the old password had leaked and someone else was impersonating this
+     * account · then immediately creates a new session for the caller, so
+     * they don't get signed out along with everyone else
      */
     public function changePassword(Request $request): Response
     {
@@ -56,17 +60,17 @@ final class MeController extends ApiController
         $fields = [];
 
         if (!Password::verify($current, (string) $user['password_hash'])) {
-            $fields['current_password'] = 'รหัสผ่านปัจจุบันไม่ถูกต้อง';
+            $fields['current_password'] = 'The current password is incorrect';
         }
 
         if ($new === $current) {
-            $fields['new_password'] = 'รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม';
+            $fields['new_password'] = 'The new password must not be the same as the current one';
         }
 
         $problems = Password::problems($new, $minLength, (string) $user['username']);
 
         if ($problems !== []) {
-            // ข้อความรวมกันในฟิลด์เดียว เพราะทุกข้อพูดถึงช่องเดียวกันคือรหัสผ่านใหม่
+            // Joined into a single field, since every item is about the same field: the new password
             $fields['new_password'] = implode(' · ', array_unique($problems));
         }
 

@@ -9,26 +9,28 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * ข้อมูลเครื่องและสุขภาพของ panel — `/api/v2/system`
+ * Machine information and the panel's own health — `/api/v2/system`
  *
- * `GET /system/health` **ไม่เรียก agent** โดยเจตนา — มันมีไว้ตอบคำถามว่า
- * "ติดต่อ agent ได้ไหม" ถ้าตัวมันเองต้องพึ่ง agent มันจะล้มพร้อมกันแล้วตอบอะไรไม่ได้เลย
- * ในจังหวะที่ต้องการคำตอบที่สุด · SPA เรียกอันนี้เพื่อขึ้นแถบเตือนเมื่อ agent ล่ม
+ * `GET /system/health` **deliberately never calls the agent** — it exists to
+ * answer "can the agent be reached at all?" if it depended on the agent
+ * itself, it would fail right alongside it and have nothing to say at exactly
+ * the moment an answer is needed most · the SPA calls this to raise a warning bar when the agent is down
  */
 final class SystemController extends ApiController
 {
-    /** ข้อมูลเครื่อง: distro, kernel, CPU, RAM, เวลาที่เปิดเครื่อง */
+    /** Machine information: distro, kernel, CPU, RAM, uptime */
     public function info(Request $request): Response
     {
         return $this->ok($this->agent()->data('system.info', [], $this->ctx->actor($request)));
     }
 
     /**
-     * ตั้งชื่อโฮสต์ของเครื่อง
+     * Set the machine's hostname
      *
-     * PUT ไม่ใช่ PATCH เพราะส่งค่าทั้งชุด (ชื่อเดียว) · ผลข้างเคียงที่ระบบทำให้ไม่ได้
-     * — rDNS, ใบรับรอง, การรีสตาร์ต Postfix — ถูกส่งกลับใน `follow_up` เพื่อให้หน้าจอ
-     * บอกต่อ แทนที่จะทำเงียบ ๆ แล้วเมลล่มโดยไม่มีใครรู้ว่าเพราะอะไร
+     * PUT, not PATCH, because it sends the whole value (a single name) · the
+     * side effects the system can't handle itself — rDNS, certificates,
+     * restarting Postfix — are sent back in `follow_up` so the screen can
+     * pass them along, instead of doing it silently and mail breaking with nobody knowing why
      */
     public function setHostname(Request $request): Response
     {
@@ -42,7 +44,7 @@ final class SystemController extends ApiController
             (string) ($result['message'] ?? 'Hostname saved'),
             [[
                 'type' => 'notification',
-                // ชื่อโฮสต์กระทบเมลกับใบรับรอง ผู้ดูแลต้องอ่านสิ่งที่ต้องตามไปทำ
+                // The hostname affects mail and certificates — the admin needs to read what still needs following up
                 'level' => ($result['follow_up'] ?? []) === [] ? 'success' : 'warning',
                 'message' => (string) ($result['message'] ?? ''),
             ]],
@@ -50,7 +52,7 @@ final class SystemController extends ApiController
         );
     }
 
-    /** สถานะของ panel เอง — ตอบได้แม้ agent ล่ม */
+    /** The panel's own status — answers even when the agent is down */
     public function health(Request $request): Response
     {
         $agent = $this->agent();

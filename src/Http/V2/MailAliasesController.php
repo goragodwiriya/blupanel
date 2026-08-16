@@ -12,20 +12,21 @@ use Phpcp\Kernel\Response;
 use Phpcp\Security\Permissions;
 
 /**
- * ที่อยู่ส่งต่อ — `/api/v2/mail-aliases` (PLAN-MAIL เฟส M2)
+ * Mail forwarders — `/api/v2/mail-aliases` (PLAN-MAIL phase M2)
  *
- * รายการอยู่ใน `meta.aliases` ของหน้ากล่องจดหมาย จึงไม่มี index ของตัวเอง — ตารางบน
- * หน้าเว็บผูกกับข้อมูลที่โหลดมาแล้ว (`data-attr="data:aliases"`) ไม่ได้ยิงคำขอแยก
+ * The list used to live in the mailboxes page's `meta.aliases`, so it had no
+ * index of its own — a table bound to already-loaded data
+ * (`data-attr="data:aliases"`) never fires a request of its own
  */
 final class MailAliasesController extends ApiController
 {
-    /** โครงเปล่าของฟอร์ม พร้อมคำสั่งเปิด modal */
     /**
-     * รายการที่อยู่ส่งต่อ — ตารางดึงเอง (`data-source`)
+     * The list of forwarders — the table fetches this itself (`data-source`)
      *
-     * **ต้องมี endpoint ของตัวเอง ไม่ใช่แถมมากับ `/api/v2/mailboxes`** · ตารางที่ดึง
-     * ข้อมูลเองเท่านั้นที่สั่ง "โหลดใหม่" ได้จริงหลังลบสำเร็จ — ตอนที่ผูกกับข้อมูลของหน้า
-     * การลบทำงานถูกต้องบนเซิร์ฟเวอร์แต่ตารางยังโชว์แถวเดิมค้างอยู่
+     * **Needs its own endpoint, not bundled into `/api/v2/mailboxes`** · only
+     * a table that fetches its own data can genuinely be told to "reload"
+     * after a successful delete — when bound to the page's already-loaded
+     * data, the delete succeeds correctly on the server but the table keeps showing the old row
      */
     public function index(Request $request): Response
     {
@@ -35,7 +36,7 @@ final class MailAliasesController extends ApiController
             static fn (array $row): array => [
                 'id' => (int) $row['id'],
                 'row_id' => (int) $row['id'],
-                // ว่าง = catch-all · แสดงเป็น `@โดเมน` ให้ตรงกับที่ Postfix เขียน
+                // Empty = catch-all · shown as `@domain` to match what Postfix writes
                 'source' => ((string) $row['source'] === '' ? '' : $row['source']) . '@' . $row['domain'],
                 'destination' => (string) $row['destination'],
                 'domain' => (string) $row['domain'],
@@ -45,6 +46,7 @@ final class MailAliasesController extends ApiController
         ));
     }
 
+    /** An empty form shape, with the command that opens the modal */
     public function form(Request $request): Response
     {
         return $this->ok(
@@ -90,7 +92,7 @@ final class MailAliasesController extends ApiController
 
         $result = $this->agent()->data('mail.alias_delete', ['id' => $id], $this->ctx->actor($request));
 
-        // สั่งให้ตารางโหลดใหม่ด้วยชนิดคำสั่งที่เฟรมเวิร์กมีตัวรับอยู่แล้ว
+        // Tells the table to reload, using an action type the framework already has a handler for
         return $this->completed(
             (string) ($result['message'] ?? 'Forwarder deleted'),
             'mailAliases',
@@ -98,7 +100,7 @@ final class MailAliasesController extends ApiController
         );
     }
 
-    /** ผู้เรียกเห็นรายการนี้ได้จริงไหม — ตรวจจากรายการที่ scope ให้แล้ว */
+    /** Can the caller genuinely see this item? — checked against the already-scoped list */
     private function owns(int $id): bool
     {
         foreach ($this->repository()->listAliases($this->scopeOwner()) as $row) {

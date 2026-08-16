@@ -9,14 +9,15 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * เวอร์ชัน PHP ที่ติดตั้งอยู่บนเครื่อง — `/api/v2/php-versions`
+ * PHP versions installed on the machine — `/api/v2/php-versions`
  *
- * อ่านสถานะจริงจาก agent ทุกครั้ง ไม่แคช เพราะผู้ดูแลติดตั้ง/ถอน PHP ผ่าน apt
- * นอกเหนือจาก panel ได้ตลอดเวลา — รายการที่แคชไว้จะกลายเป็นคำโกหกทันทีที่เขาทำแบบนั้น
+ * Always reads live status from the agent, never cached, because an admin
+ * can install/remove PHP via apt outside the panel at any time — a cached
+ * list would turn into a lie the moment they do that
  *
- * ตามกฎ UX ใน PROMPT.md: หน้านี้เป็นข้อมูลอย่างเดียว **ไม่มีปุ่มควบคุมโปรเซส FPM**
- * การ start/stop อยู่ที่ทรัพยากร services เท่านั้น (ค่า `fpm_running` มีไว้ให้แสดงสถานะ
- * ไม่ใช่ให้สร้างปุ่มสั่งงานตรงนี้)
+ * Per the UX rule in PROMPT.md: this page is read-only data, **no button
+ * controls the FPM process here** — start/stop lives only on the services
+ * resource (the `fpm_running` value is here to show status, not to build a command button)
  */
 final class PhpVersionsController extends ApiController
 {
@@ -25,8 +26,8 @@ final class PhpVersionsController extends ApiController
         $data = $this->fetchPhpVersions($request);
         $versions = $data['versions'];
 
-        // สีของป้ายมาจากฝั่งเซิร์ฟเวอร์ เทมเพลตจึงเขียน `pill-${..._tone}` ได้ตรง ๆ
-        // ไม่ต้องมีตารางแปลงสถานะ→สี ซ้ำกันในฝั่งหน้าจอ
+        // The pill's color comes from the server, so the template can write
+        // `pill-${..._tone}` directly, with no status-to-color lookup table duplicated on screen
         $versions = array_map(static function (array $v): array {
             $v['fpm_tone'] = match ($v['fpm_status'] ?? '') {
                 'running' => 'ok',
@@ -35,8 +36,9 @@ final class PhpVersionsController extends ApiController
                 default => 'muted',
             };
             $v['supported_tone'] = ($v['supported'] ?? false) ? 'ok' : 'warn';
-            // `data-template` แทนได้แค่ ${key} ตรง ๆ ไม่รองรับเงื่อนไข — ต้องมีฟิลด์
-            // ข้อความสำเร็จรูปมาให้ ไม่ใช่ให้เทมเพลตคำนวณจาก boolean เอง
+            // `data-template` can only substitute ${key} directly, it has no
+            // conditional support — a ready-composed text field must be
+            // supplied, rather than having the template compute it from a boolean itself
             $v['supported_label'] = ($v['supported'] ?? false) ? 'Supported' : 'End of life';
 
             return $v;
@@ -44,7 +46,7 @@ final class PhpVersionsController extends ApiController
 
         return $this->ok($versions, [
             'installed_count' => (int) ($data['installed_count'] ?? count($versions)),
-            // เวอร์ชันที่แนะนำสำหรับเว็บใหม่ — ตัวแรกหลังเรียงคือตัวที่เสิร์ฟได้อยู่จริง
+            // The version recommended for a new website — the first one after sorting is the one genuinely able to serve
             'default' => $versions[0]['version'] ?? ($data['default'] ?? null),
         ]);
     }
