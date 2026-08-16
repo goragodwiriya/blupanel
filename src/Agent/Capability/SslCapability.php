@@ -12,11 +12,12 @@ use Phpcp\Driver\ConfigTransaction;
 use Phpcp\Driver\Ssl\CertbotManager;
 
 /**
- * ฐานร่วมของ capability ที่จัดการใบรับรอง SSL
+ * The shared base for capabilities that manage SSL certificates
  *
- * สืบทอดจาก SiteCapability เพราะทุกคำสั่งของ SSL ผูกกับเว็บไซต์หนึ่งเว็บเสมอ
- * และต้องเขียน vhost ใหม่หลังเปลี่ยนใบรับรอง — ใช้เส้นทางเดียวกับการแก้เว็บไซต์อื่น ๆ
- * ทั้ง ConfigTransaction, configtest และ reload จึงไม่มีทางลัดที่ข้ามการตรวจ
+ * Extends SiteCapability because every SSL command is always bound to a single
+ * website, and has to rewrite the vhost after a certificate changes — using the
+ * exact same path as any other site edit, so ConfigTransaction, configtest, and
+ * reload all still apply, with no shortcut that skips validation.
  */
 abstract class SslCapability extends SiteCapability
 {
@@ -26,15 +27,19 @@ abstract class SslCapability extends SiteCapability
     }
 
     /**
-     * เขียน vhost ใหม่แล้ว reload โดยให้ผู้เรียกแทรกการบันทึกฐานข้อมูลไว้ตรงกลางได้
+     * Rewrites the vhost and reloads, letting the caller insert a database save
+     * in the middle
      *
-     * ลำดับสำคัญมาก และเคยผิดมาแล้ว: เดิมบันทึกฐานข้อมูล "หลัง" reload
-     * พอ reload ล้ม (เช่น systemd ใช้งานไม่ได้) จะโยน error ออกไปก่อนถึงบรรทัดบันทึก
-     * ผลคือไฟล์บนดิสก์เป็นค่าใหม่แล้วแต่ฐานข้อมูลยังเป็นค่าเก่า — หน้าจอโกหก
+     * The order matters a great deal, and has been wrong before: the database
+     * used to be saved "after" reload. When reload failed (systemd unavailable,
+     * say), the error threw before the save line ever ran — leaving the file on
+     * disk holding the new value while the database still held the old one, and
+     * the screen lying about it.
      *
-     * ตอนนี้จึงเป็น: commit ไฟล์ → บันทึกฐานข้อมูล → reload
-     * ถ้า reload ล้ม ฐานข้อมูลกับไฟล์ยังตรงกัน เหลือแค่ต้องไป reload ให้สำเร็จ
-     * ส่วนถ้า configtest ไม่ผ่าน ConfigTransaction คืนไฟล์เดิมและยังไม่มีอะไรถูกบันทึก
+     * Now the order is: commit the file → save the database → reload.
+     * If reload fails, the database and the file still agree — all that's left is
+     * getting the reload to succeed. And if configtest fails, ConfigTransaction
+     * restores the original file and nothing has been saved at all.
      *
      * @param (callable(): void)|null $afterCommit
      */
@@ -63,10 +68,11 @@ abstract class SslCapability extends SiteCapability
     }
 
     /**
-     * โดเมนทั้งหมดของเว็บไซต์ที่ควรอยู่ในใบรับรองใบเดียวกัน
+     * Every domain of a website that should be covered by the same certificate
      *
-     * รวม alias ด้วยเสมอ เพราะใบที่ครอบคลุมไม่ครบทำให้เบราว์เซอร์ขึ้นคำเตือน
-     * เฉพาะบาง alias ซึ่งเป็นอาการที่หาสาเหตุยากกว่าการที่ทั้งเว็บไม่มี SSL เลย
+     * Always includes aliases, because a certificate that doesn't cover all of
+     * them makes the browser warn on just some aliases — a symptom harder to
+     * trace back than the whole site having no SSL at all.
      *
      * @return list<string>
      */
@@ -81,7 +87,7 @@ abstract class SslCapability extends SiteCapability
 
         if ($certificate['status'] === 'none') {
             throw new ValidationError(
-                'เว็บไซต์นี้ยังไม่มีใบรับรอง — ติดตั้ง SSL ก่อนจึงจะเปิดใช้งาน HTTPS ได้',
+                'This website has no certificate yet — install SSL before HTTPS can be enabled',
             );
         }
 

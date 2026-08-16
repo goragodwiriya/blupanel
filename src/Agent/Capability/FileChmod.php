@@ -10,11 +10,12 @@ use Phpcp\Agent\ValidationError;
 use Phpcp\Support\Validator;
 
 /**
- * เปลี่ยนสิทธิ์ของไฟล์หรือโฟลเดอร์
+ * Changes a file's or folder's permissions
  *
- * ยอมรับเฉพาะค่าที่อยู่ในรายการที่ปลอดภัย ไม่ใช่เลขฐานแปดอะไรก็ได้:
- * 0777 บนไฟล์ในเว็บทำให้ผู้ใช้อื่นบนเครื่องเดียวกันเขียนทับสคริปต์ของเว็บได้
- * และ setuid/setgid/sticky bit ไม่มีเหตุผลให้ตั้งจากแผงควบคุมเว็บเลย
+ * Only accepts values on a safe allowlist, not any octal number at all: 0777 on
+ * a website file lets another user on the same machine overwrite that site's
+ * scripts, and there's never a reason to set setuid/setgid/the sticky bit from a
+ * web control panel.
  */
 final class FileChmod extends FileCapability
 {
@@ -33,7 +34,7 @@ final class FileChmod extends FileCapability
 
     public function summary(): string
     {
-        return 'เปลี่ยนสิทธิ์ไฟล์';
+        return 'Change file permissions';
     }
 
     /**
@@ -45,17 +46,17 @@ final class FileChmod extends FileCapability
         $base = self::baseArgs($args);
 
         if ($base['path'] === '') {
-            throw new ValidationError('ต้องระบุไฟล์หรือโฟลเดอร์');
+            throw new ValidationError('A file or folder must be specified');
         }
 
         $raw = Validator::requireString($args, 'mode', 4);
         if (preg_match('/^[0-7]{3,4}$/', $raw) !== 1) {
-            throw new ValidationError('สิทธิ์ต้องเป็นเลขฐานแปด 3 หรือ 4 หลัก');
+            throw new ValidationError('Permissions must be an octal number with 3 or 4 digits');
         }
 
         $mode = (int) octdec($raw);
         if (!in_array($mode, self::ALLOWED, true)) {
-            throw new ValidationError('ระบบอนุญาตเฉพาะสิทธิ์ '.implode(', ', array_map(
+            throw new ValidationError('Only these permissions are allowed: '.implode(', ', array_map(
                 static fn(int $m): string => sprintf('%04o', $m),
                 self::ALLOWED,
             )));
@@ -79,10 +80,10 @@ final class FileChmod extends FileCapability
         $result = $this->withPath($executor, $scope, $relative, static function (string $root, string $target) use ($executor, $mode, $recursive): array {
             $info = $executor->stat($target);
             if ($info === null) {
-                throw new ValidationError('ไม่พบไฟล์ที่ระบุ');
+                throw new ValidationError('The specified file was not found');
             }
             if ($info['type'] === 'link') {
-                throw new ValidationError('เปลี่ยนสิทธิ์ของ symlink ไม่ได้');
+                throw new ValidationError('Cannot change permissions on a symlink');
             }
 
             $changed = 1;
@@ -101,26 +102,28 @@ final class FileChmod extends FileCapability
             'path' => $relative,
             'mode' => sprintf('%04o', $mode),
             'changed' => $result['changed'],
-            'message' => sprintf('เปลี่ยนสิทธิ์ %d รายการเป็น %04o แล้ว', $result['changed'], $mode)
+            'message' => sprintf('Changed permissions on %d item(s) to %04o', $result['changed'], $mode)
         ];
     }
 
     /**
-     * ไล่เปลี่ยนสิทธิ์ในโฟลเดอร์ย่อย
+     * Walks down changing permissions in subfolders
      *
-     * ไฟล์กับโฟลเดอร์ต้องได้สิทธิ์คนละแบบ: โฟลเดอร์ที่ไม่มี execute bit จะเข้าไม่ได้เลย
-     * การใส่ 0644 ทั้งต้นไม้จึงทำให้เว็บพังทั้งเว็บ — เติม execute ให้เฉพาะโฟลเดอร์
+     * Files and folders need different permissions: a folder with no execute bit
+     * can't be entered at all, so applying 0644 to a whole tree would break the
+     * entire site — execute is added only to folders.
      */
     private static function descend(Executor $executor, string $directory, int $mode): int
     {
-        // ใครอ่านได้ก็ต้องเข้าไปในโฟลเดอร์ได้ — เลื่อน read bit (4) ไปเป็น execute bit (1)
-        // 0644 จึงกลายเป็น 0755 สำหรับโฟลเดอร์ และ 0640 กลายเป็น 0750
+        // Anyone who can read must also be able to enter the folder — shifts the
+        // read bit (4) into the execute bit (1), so 0644 becomes 0755 for a
+        // folder, and 0640 becomes 0750
         $directoryMode = $mode | (($mode & 0o444) >> 2);
         $count = 0;
 
         foreach ($executor->listDirectory($directory) as $entry) {
             if ($entry['type'] === 'link') {
-                continue; // ไม่เดินตามลิงก์ ปลายทางอาจอยู่นอกบ้านของเว็บไซต์
+                continue; // Never follows a link — its target could sit outside the website's home
             }
 
             $child = $directory.'/'.$entry['name'];

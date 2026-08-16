@@ -13,14 +13,16 @@ use Phpcp\Driver\RollbackGuard;
 use Phpcp\Driver\SshManager;
 
 /**
- * แก้ค่าตั้ง SSH พร้อมกลไกคืนค่าอัตโนมัติ — ARCHITECTURE §5.4
+ * Edits SSH configuration with an automatic rollback mechanism — ARCHITECTURE §5.4
  *
- * นี่คือการเปลี่ยนแปลงที่อันตรายที่สุดที่ทำผ่านหน้าเว็บได้:
- * ตั้งพอร์ตผิด ปิด password auth ทั้งที่ยังไม่ได้ใส่กุญแจ หรือ firewall ไม่เปิดพอร์ตใหม่
- * ล้วนทำให้เข้าเครื่องไม่ได้อีกเลยถ้าไม่มีทางเข้าทางอื่น
+ * This is the most dangerous change that can be made through the web page:
+ * a wrong port, disabling password auth before a key is in place, or the
+ * firewall not opening the new port — any of these can lock someone out of the
+ * machine for good if there's no other way in.
  *
- * จึงไม่ยอมให้ "เปลี่ยนแล้วจบ" — ต้องกดยืนยันว่ายังเชื่อมต่อได้ภายในเวลาที่กำหนด
- * ไม่กด = ระบบคืนค่าเดิมให้เอง เหมือนที่ `netplan try` ทำกับการตั้งค่าเครือข่าย
+ * So it never allows "change and done" — it requires confirming the connection
+ * still works within a set time. No confirmation = the system reverts it
+ * automatically, the same way `netplan try` works for network configuration.
  */
 final class SshConfigSet implements Capability
 {
@@ -41,7 +43,7 @@ final class SshConfigSet implements Capability
 
     public function summary(): string
     {
-        return 'แก้ค่าตั้ง SSH (มีการคืนค่าอัตโนมัติถ้าไม่ยืนยันภายในเวลา)';
+        return 'Edit SSH configuration (auto-reverts if not confirmed in time)';
     }
 
     public function validate(array $args): array
@@ -57,7 +59,7 @@ final class SshConfigSet implements Capability
         }
 
         if ($changes === []) {
-            throw new ValidationError('ไม่มีค่าที่จะเปลี่ยน');
+            throw new ValidationError('No values to change');
         }
 
         $window = isset($args['window'])
@@ -73,30 +75,30 @@ final class SshConfigSet implements Capability
         $guard = new RollbackGuard($context->db);
 
         if (!$manager->isInstalled($executor)) {
-            throw new ValidationError('ไม่พบไฟล์ตั้งค่า SSH บนเครื่องนี้');
+            throw new ValidationError('No SSH configuration file was found on this machine');
         }
 
         if ($guard->pending() !== null) {
             throw new ValidationError(
-                'มีการเปลี่ยนแปลงที่รอการยืนยันอยู่แล้ว — ยืนยันหรือรอให้คืนค่าก่อนจึงจะแก้ใหม่ได้',
+                'A change is already waiting for confirmation — confirm it or let it roll back before making another',
             );
         }
 
         $before = $manager->read($executor);
         $applied = $manager->apply($executor, $args['changes']);
 
-        // ตรวจไฟล์ด้วย sshd เอง ถ้าไม่ผ่านให้คืนทันที ไม่ต้องรอหมดเวลา
+        // Validates the file with sshd itself — revert immediately if it fails, no need to wait out the timer
         [$ok, $output] = $manager->testConfig($executor);
 
         if (!$ok) {
             $executor->writeFile($executor->path(SshManager::CONFIG), $applied['original'], 0600);
 
-            throw new ExecutionFailed("ค่าตั้ง SSH ที่สร้างขึ้นไม่ผ่านการตรวจสอบ จึงคืนค่าเดิมแล้ว\n\n" . trim($output));
+            throw new ExecutionFailed("The generated SSH configuration failed validation and was reverted\n\n" . trim($output));
         }
 
         $rollbackId = $guard->arm(
             action: 'ssh.config_set',
-            description: 'แก้ค่าตั้ง SSH: ' . implode(', ', array_map(
+            description: 'Edit SSH configuration: ' . implode(', ', array_map(
                 static fn (string $k, string $v): string => SshManager::label($k) . ' = ' . $v,
                 array_keys($args['changes']),
                 array_values($args['changes']),
@@ -107,8 +109,9 @@ final class SshConfigSet implements Capability
             actorId: $context->actor->userId,
         );
 
-        // reload หลังบันทึกรายการรอยืนยันแล้วเท่านั้น — ถ้าการเชื่อมต่อขาดตรงนี้
-        // รายการก็ยังอยู่ในฐานข้อมูลและจะถูกคืนค่าเมื่อหมดเวลา
+        // Reloads only after the pending-confirmation record is saved — if the
+        // connection drops right here, the record is still in the database and
+        // will be reverted once time runs out
         $executor->exec([$executor->path('/usr/bin/systemctl'), 'reload-or-restart', 'ssh'], timeout: 30);
 
         return [
@@ -117,8 +120,8 @@ final class SshConfigSet implements Capability
             'changes' => $args['changes'],
             'before' => array_map(static fn (array $v): string => $v['value'], $before),
             'message' => sprintf(
-                'เปลี่ยนค่าตั้ง SSH แล้ว — ต้องกดยืนยันว่ายังเชื่อมต่อได้ภายใน %d วินาที '
-                . 'ไม่อย่างนั้นระบบจะคืนค่าเดิมให้อัตโนมัติ',
+                'SSH configuration changed — confirm the connection still works within %d seconds, '
+                . 'or the system will automatically revert it',
                 $args['window'],
             ),
         ];
