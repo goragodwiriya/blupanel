@@ -14,33 +14,39 @@ use Phpcp\Driver\RollbackGuard;
 use Phpcp\Support\Validator;
 
 /**
- * เปลี่ยนใบรับรองของ **หน้าจัดการเอง** ให้เป็นใบจริง หรือกลับไปใช้ใบที่เซ็นเอง
+ * Switches **the panel's own** certificate to a real one, or back to a self-signed one
  *
- * ## ทำไมต้องมี ทั้งที่แก้ไฟล์ด้วยมือก็ได้
+ * ## Why this needs to exist, when the file could just be edited by hand
  *
- * เดิมทำได้ทางเดียวคือ ssh เข้าไปสลับไฟล์เอง ผลคือแทบไม่มีใครทำ แล้วผู้ดูแลก็คลิกผ่าน
- * คำเตือนใบรับรองทุกวันไปเรื่อย ๆ · **นั่นคือการฝึกให้คนเพิกเฉยต่อคำเตือนที่วันหนึ่ง
- * จะเป็นของจริง** — ค่าเสียหายที่แท้จริงของข้อจำกัดนี้ไม่ใช่ความไม่สะดวก แต่เป็นการทำให้
- * สัญญาณเตือนที่สำคัญที่สุดของเบราว์เซอร์กลายเป็นสิ่งที่ทุกคนกดข้าม
+ * The only way used to be sshing in and swapping files by hand — the result
+ * was almost nobody ever did it, and admins just clicked through the
+ * certificate warning every single day instead · **that trains people to
+ * ignore a warning that will one day be real** — the actual cost of that
+ * limitation isn't inconvenience, it's turning the browser's single most
+ * important warning signal into something everyone just dismisses.
  *
- * ## ทำไมต้องถอนคืนได้
+ * ## Why this has to be reversible
  *
- * นี่คือคำสั่งที่ **ตัดทางเข้าของตัวเองได้** แบบเดียวกับกฎไฟร์วอลล์และค่าตั้ง SSH ·
- * ใบที่ผิดทำให้เบราว์เซอร์ปฏิเสธการเชื่อมต่อทั้งหมด แล้วผู้ดูแลจะไม่มีทางเข้ามาแก้ผ่าน
- * หน้าเว็บได้อีกเลย · จึงตั้ง `RollbackGuard` ไว้เหมือนกันทุกประการ — ไม่กดยืนยันภายใน
- * เวลาที่กำหนด ระบบคืนใบเดิมให้เอง
+ * This is a command that **can cut off its own access**, exactly like
+ * firewall rules and SSH settings can · a bad certificate makes the browser
+ * refuse the connection entirely, and an admin then has no way left to fix
+ * it through the web page at all · so it arms a `RollbackGuard` exactly the
+ * same way — if nothing confirms within the given time, the system restores
+ * the previous certificate on its own.
  *
- * มีทางกลับที่ไม่ต้องพึ่งหน้าเว็บด้วยเสมอ: `phpcp panel:cert --self-signed`
+ * A path back that doesn't depend on the web page at all always exists too:
+ * `phpcp panel:cert --self-signed`
  *
- * ## ลำดับที่สำคัญ
+ * ## Why the order matters
  *
- * เก็บสภาพเดิม → ตรวจคู่กุญแจกับวันหมดอายุ → เขียนไฟล์ → **ให้ตัวตรวจของ Apache ตัดสิน** →
- * `reload` แบบ graceful (ไม่ใช่ restart เพราะคำขอที่กำลังตอบอยู่คือคำขอของคนที่เพิ่งกดปุ่ม) →
- * ตั้งเวลาถอนคืน
+ * Save the current state → check the key pair matches and its expiry →
+ * write the files → **let Apache's own validator decide** → a graceful
+ * `reload` (never a restart, because the request currently being answered
+ * is the one from whoever just clicked the button) → arm the rollback timer.
  */
 final class PanelCertSet implements Capability
 {
-    /** คีย์ที่จำว่าตอนนี้หน้าจัดการผูกกับใบของโดเมนไหน — ว่าง = ใบที่เซ็นเอง */
+    /** The key that remembers which domain's certificate the panel is currently bound to — empty = self-signed */
     public const SETTING = 'panel.cert_domain';
 
     public static function name(): string
@@ -48,7 +54,7 @@ final class PanelCertSet implements Capability
         return 'panel.cert_set';
     }
 
-    /** ค่าตั้งระดับเครื่อง — กระทบทางเข้าของผู้ดูแลทุกคน ไม่ใช่ของเว็บไซต์ใด */
+    /** A machine-level setting — affects every admin's access, not any one website's */
     public function permission(): string
     {
         return 'settings.manage';
@@ -61,7 +67,7 @@ final class PanelCertSet implements Capability
 
     public function summary(): string
     {
-        return 'เปลี่ยนใบรับรองของหน้าจัดการ';
+        return "Switch the panel's own certificate";
     }
 
     public function validate(array $args): array
@@ -69,9 +75,9 @@ final class PanelCertSet implements Capability
         $domain = trim((string) ($args['domain'] ?? ''));
 
         return [
-            // ว่าง = กลับไปใช้ใบที่เซ็นเอง ซึ่งเป็นทางกลับที่ต้องมีเสมอ
+            // Empty = switch back to self-signed, which must always remain a way back
             'domain' => $domain === '' ? '' : Validator::domain($domain),
-            // 0 = ไม่ตั้งเวลาถอนคืน (ใช้จากบรรทัดคำสั่ง) · ค่าลบถือเป็น 0 เช่นกัน
+            // 0 = never arm a rollback timer (used from the command line) · a negative value also counts as 0
             'window' => isset($args['window']) ? max(0, (int) $args['window']) : RollbackGuard::DEFAULT_WINDOW,
         ];
     }
@@ -91,8 +97,10 @@ final class PanelCertSet implements Capability
             : array_values($panel::sourcePaths($domain));
 
         /*
-         * ใบที่เซ็นเองอาจยังไม่ถูกเก็บสำรองไว้ (เครื่องที่ติดตั้งก่อนมีคุณสมบัตินี้) —
-         * เก็บของที่ใช้อยู่ตอนนี้ไว้ก่อนสลับ เพื่อให้ทางกลับมีจริงเสมอ ไม่ใช่มีแต่ในเอกสาร
+         * The self-signed certificate might not be backed up yet (a machine
+         * installed before this feature existed) — save whatever's in use
+         * right now before switching, so the way back genuinely exists, not
+         * just on paper.
          */
         if ($domain !== '' && !$executor->exists($executor->path(PanelCertificate::SELF_SIGNED_CERT))) {
             $this->keepSelfSigned($executor, $previous);
@@ -102,7 +110,7 @@ final class PanelCertSet implements Capability
 
         $transaction = new ConfigTransaction($executor);
         $transaction->write(PanelCertificate::CERT, $files['cert'], 0644);
-        // กุญแจส่วนตัวต้องอ่านได้เฉพาะ root — Apache อ่านตอนสตาร์ตในฐานะ root อยู่แล้ว
+        // The private key must be readable by root only — Apache already reads it as root at start time
         $transaction->write(PanelCertificate::KEY, $files['key'], 0600);
 
         $transaction->commit(fn (): array => $panel->checkConfig($executor, $context->config));
@@ -111,16 +119,20 @@ final class PanelCertSet implements Capability
 
         $this->installHook($executor, $context, $domain !== '');
 
-        // graceful — คำขอที่กำลังตอบอยู่คือคำขอของคนที่เพิ่งกดปุ่ม การ restart จะตัดมันทิ้ง
+        // graceful — the request currently being answered is the one from whoever just clicked the button; a restart would cut it off
         $panel->reload($executor);
 
         /*
-         * **`window = 0` แปลว่าไม่ตั้งเวลาถอนคืนเลย ไม่ใช่ตั้งเป็นศูนย์วินาที**
+         * **`window = 0` means never arm a rollback timer at all, not "arm it
+         * for zero seconds"**
          *
-         * `RollbackGuard::arm()` บีบค่าให้อยู่ในช่วง 30–900 วินาทีเสมอ — ส่ง 0 เข้าไปตรง ๆ
-         * จะได้ 30 วินาที แล้วการสั่งจากบรรทัดคำสั่งจะคืนค่าเองภายในครึ่งนาทีโดยที่ผู้สั่ง
-         * ไม่รู้ว่าต้องไปกดยืนยันที่ไหน · คนที่สั่งจาก CLI อยู่บนเครื่องแล้วและแก้กลับได้ทันที
-         * กลไกนี้จึงมีไว้สำหรับคนที่ทำงานผ่านหน้าเว็บเท่านั้น
+         * `RollbackGuard::arm()` always clamps the value into the 30–900
+         * second range — passing 0 straight through would get 30 seconds,
+         * and a command run from the command line would then revert itself
+         * within half a minute with the operator having no idea where they
+         * were supposed to go confirm it · someone running from the CLI is
+         * already on the machine and can fix it back immediately, so this
+         * mechanism exists only for someone working through the web page.
          */
         $rollbackId = 0;
 
@@ -128,8 +140,8 @@ final class PanelCertSet implements Capability
             $rollbackId = (new RollbackGuard($context->db))->arm(
                 action: self::name(),
                 description: $domain === ''
-                    ? 'กลับไปใช้ใบรับรองที่เซ็นเองของหน้าจัดการ'
-                    : sprintf('ใช้ใบรับรองของ %s กับหน้าจัดการ', $domain),
+                    ? "Revert the panel's certificate back to self-signed"
+                    : sprintf("Use %s's certificate for the panel", $domain),
                 files: $previous,
                 reloadUnits: [PanelCertificate::UNIT],
                 window: $args['window'],
@@ -138,7 +150,7 @@ final class PanelCertSet implements Capability
         }
 
         $confirm = $rollbackId > 0
-            ? ' แล้วกดยืนยันภายในเวลาที่กำหนด ไม่งั้นระบบคืนใบเดิมให้เอง'
+            ? ', then confirm within the time given, or the system will restore the previous certificate automatically'
             : '';
 
         return [
@@ -146,18 +158,17 @@ final class PanelCertSet implements Capability
             'rollback_id' => $rollbackId,
             'window' => $args['window'],
             'message' => $domain === ''
-                ? 'กลับไปใช้ใบรับรองที่เซ็นเองแล้ว — เปิดหน้าจัดการซ้ำเพื่อยืนยันว่ายังเข้าได้'
+                ? 'Reverted to the self-signed certificate — reopen the panel to confirm it still lets you in'
                     . $confirm
                 : sprintf(
-                    'หน้าจัดการใช้ใบรับรองของ %s แล้ว — เปิดหน้าจัดการในแท็บใหม่เพื่อยืนยันว่า'
-                        . 'ยังเข้าได้จริง%s',
+                    "The panel is now using %s's certificate — open the panel in a new tab to confirm it genuinely still lets you in%s",
                     $domain,
                     $confirm,
                 ),
         ];
     }
 
-    /** เก็บใบที่ใช้อยู่ตอนนี้ไว้เป็นทางกลับ — เรียกเฉพาะตอนที่ยังไม่มีสำรอง */
+    /** Saves the certificate currently in use as a way back — only called when no backup exists yet */
     private function keepSelfSigned(Executor $executor, array $current): void
     {
         foreach ([
@@ -173,10 +184,12 @@ final class PanelCertSet implements Capability
     }
 
     /**
-     * ติดตั้ง (หรือถอน) hook ที่ certbot เรียกหลังต่ออายุ
+     * Installs (or removes) the hook certbot calls after a renewal
      *
-     * **ขาด hook นี้คือใบจะหมดอายุใน 90 วันแล้วกลับไปเจอคำเตือนอีก** ทั้งที่ใบบนดิสก์
-     * ของ certbot ถูกต้องทุกอย่าง — อาการที่ไม่มีใครโยงกลับมาที่การกดปุ่มเมื่อสามเดือนก่อน
+     * **Missing this hook means the certificate expires in 90 days and the
+     * warning is right back**, even though certbot's own copy on disk is
+     * completely correct — a symptom nobody would ever trace back to a
+     * button clicked three months earlier.
      */
     private function installHook(Executor $executor, Context $context, bool $wanted): void
     {
@@ -201,7 +214,7 @@ final class PanelCertSet implements Capability
         );
     }
 
-    /** null = ยังไม่มีไฟล์นี้ ซึ่ง RollbackGuard แปลว่า "ลบทิ้งตอนคืนค่า" */
+    /** null = this file doesn't exist yet, which RollbackGuard treats as "delete it on restore" */
     private function contents(Executor $executor, string $path): ?string
     {
         $resolved = $executor->path($path);

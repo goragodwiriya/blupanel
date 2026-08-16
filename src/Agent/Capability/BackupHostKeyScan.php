@@ -14,28 +14,36 @@ use Phpcp\Security\Permissions;
 use Phpcp\Support\Validator;
 
 /**
- * อ่าน host key ของเครื่องปลายทางมาให้ — `ssh-keyscan` ที่กดจากหน้าเว็บ
+ * Fetches the target machine's host key for it — `ssh-keyscan` clicked from
+ * the web page
  *
- * ## ทำไมถึงคุ้มที่จะมี
+ * ## Why this is worth having
  *
- * `StrictHostKeyChecking=yes` เปิดไว้เสมอ การตั้งปลายทาง sftp/rsync จึงล้มครั้งแรก
- * ทุกครั้งจนกว่าจะมี host key · ทางเดิมคือให้ผู้ดูแลไปหาเครื่องที่มี `ssh-keyscan`
- * รันเอง แล้ว copy ผลกลับมาวาง ซึ่งพลาดได้หลายจุด: พิมพ์พอร์ตผิด · copy ไม่ครบบรรทัด
- * · เครื่องที่รันมองเห็นคนละ IP กับที่ panel มองเห็น (NAT/split-horizon DNS) แล้วได้
- * กุญแจของคนละเครื่องมาโดยไม่รู้ตัว
+ * `StrictHostKeyChecking=yes` is always on, so setting up an sftp/rsync
+ * destination fails the very first time, every time, until a host key
+ * exists · the old way was for an admin to find a machine with
+ * `ssh-keyscan`, run it there, then copy the result back in by hand — which
+ * fails in plenty of places: mistyping the port · copying an incomplete
+ * line · the machine that ran it seeing a different IP than the panel sees
+ * (NAT/split-horizon DNS), ending up with the wrong machine's key without
+ * realizing it.
  *
- * ปุ่มนี้รันจาก **เครื่องเดียวกับที่จะส่งไฟล์สำรองจริง** ผลที่ได้จึงเป็นกุญแจของเครื่อง
- * ที่มันจะคุยด้วยจริง ๆ ไม่ใช่ของเครื่องที่ผู้ดูแลบังเอิญนั่งอยู่
+ * This button runs from **the same machine that will actually push backup
+ * files**, so the result is the key of the machine it will genuinely talk
+ * to, not whichever machine the admin happens to be sitting at.
  *
- * ## สิ่งที่ปุ่มนี้**ไม่ได้**ทำ
+ * ## What this button **does not** do
  *
- * **ไม่ได้ยืนยันว่ากุญแจนั้นเป็นของจริง** — `ssh-keyscan` เชื่อสิ่งที่ปลายสายตอบมา
- * เหมือนกับการต่อครั้งแรกทุกประการ (trust on first use) · ถ้ามีคนดักอยู่กลางทาง
- * ตั้งแต่ก่อนกดปุ่ม กุญแจที่ได้ก็เป็นของผู้ดักนั้น
+ * **It does not confirm the key is genuine** — `ssh-keyscan` trusts whatever
+ * the other end answers with, exactly like trust-on-first-use · if someone
+ * is already intercepting the connection before the button is even clicked,
+ * the key returned is the interceptor's.
  *
- * ที่มันแก้จริงคือ **การพิมพ์ผิดและการหยิบผิดเครื่อง** ไม่ใช่การดักกลางทาง · ผู้ดูแล
- * ที่ต้องการความมั่นใจเต็มที่ยังต้องเทียบลายนิ้วมือกับที่อ่านจากคอนโซลของเครื่องปลายทาง
- * — คำตอบจึงแนบ fingerprint มาให้เทียบ แทนที่จะให้ไปหาเอง
+ * What it actually fixes is **typos and grabbing the wrong machine**, not a
+ * man-in-the-middle · an admin who wants full confidence still has to
+ * compare the fingerprint against one read from the target machine's own
+ * console — which is why the response attaches a fingerprint to compare,
+ * instead of leaving that lookup to the admin.
  */
 final class BackupHostKeyScan implements Capability
 {
@@ -53,10 +61,11 @@ final class BackupHostKeyScan implements Capability
     }
 
     /**
-     * อ่านอย่างเดียว — ไม่เปลี่ยนอะไรบนเครื่องนี้หรือเครื่องปลายทาง
+     * Read-only — changes nothing on this machine or the target
      *
-     * ผลพลอยได้คือได้ `Executor` จริงในโหมด dryrun จึงยังอ่านกุญแจได้ตอนที่ผู้ดูแล
-     * กำลังลองตั้งค่าอยู่ ซึ่งเป็นตอนที่ต้องใช้พอดี
+     * A side benefit of that: it's still backed by a real `Executor` even in
+     * dryrun mode, so keys can still be read while an admin is in the middle
+     * of trying out a configuration — exactly when this is needed most.
      */
     public function isMutating(): bool
     {
@@ -65,7 +74,7 @@ final class BackupHostKeyScan implements Capability
 
     public function summary(): string
     {
-        return 'อ่าน host key ของเครื่องปลายทาง';
+        return "Read the target machine's host key";
     }
 
     public function validate(array $args): array
@@ -73,23 +82,25 @@ final class BackupHostKeyScan implements Capability
         $host = trim(Validator::requireString($args, 'host', 255));
 
         /*
-         * ค่านี้กลายเป็นอาร์กิวเมนต์ของคำสั่ง — ต้องเป็นชื่อโฮสต์หรือ IP เท่านั้น
+         * This value becomes a command argument — it must be a hostname or
+         * IP only.
          *
-         * `Executor::exec()` รับ argv เป็น array อยู่แล้วจึงไม่มีเชลล์มาตีความ แต่
-         * `ssh-keyscan` เองรับตัวเลือกที่ขึ้นต้นด้วย `-` · ค่าที่ขึ้นต้นแบบนั้นจะ
-         * กลายเป็นตัวเลือกแทนที่จะเป็นชื่อเครื่อง
+         * `Executor::exec()` already takes argv as an array, so there's no
+         * shell to interpret it, but `ssh-keyscan` itself accepts options
+         * starting with `-` · a value that starts that way would become an
+         * option instead of a hostname.
          */
-        $hostname = '[A-Za-z0-9](?:[A-Za-z0-9.\-:]*[A-Za-z0-9])?';   // ชื่อโดเมน · IPv4 · IPv6 เปล่า
-        $bracketed = '\[[0-9A-Fa-f:]+\]';                            // IPv6 ในวงเล็บเหลี่ยม
+        $hostname = '[A-Za-z0-9](?:[A-Za-z0-9.\-:]*[A-Za-z0-9])?';   // domain name · IPv4 · bare IPv6
+        $bracketed = '\[[0-9A-Fa-f:]+\]';                            // bracketed IPv6
 
         if (preg_match('/^(?:' . $hostname . '|' . $bracketed . ')$/', $host) !== 1) {
-            throw new ValidationError('ชื่อเครื่องปลายทางต้องเป็นชื่อโฮสต์หรือหมายเลข IP เท่านั้น');
+            throw new ValidationError('The target machine must be a hostname or IP address only');
         }
 
         $port = (int) ($args['port'] ?? 22);
 
         if ($port < 1 || $port > 65535) {
-            throw new ValidationError('พอร์ตต้องอยู่ระหว่าง 1 ถึง 65535');
+            throw new ValidationError('Port must be between 1 and 65535');
         }
 
         return ['host' => $host, 'port' => $port];
@@ -98,7 +109,7 @@ final class BackupHostKeyScan implements Capability
     public function run(array $args, Executor $executor, Context $context): array
     {
         if (!in_array($context->actor->role, [Permissions::SUPERADMIN, Permissions::SYSADMIN], true)) {
-            throw new PermissionDenied('การอ่าน host key ต้องใช้สิทธิ์ผู้ดูแลเซิร์ฟเวอร์');
+            throw new PermissionDenied('Reading a host key requires server admin permission');
         }
 
         $result = $executor->exec([
@@ -108,13 +119,13 @@ final class BackupHostKeyScan implements Capability
             $args['host'],
         ], timeout: 30);
 
-        // ssh-keyscan เขียนบรรทัดสถานะลง stderr เป็นปกติ จึงตัดสินจาก stdout ที่ได้
+        // ssh-keyscan normally writes status lines to stderr, so the outcome is judged from stdout alone
         $keys = trim($result->stdout);
 
         if ($keys === '') {
             throw new ExecutionFailed(
-                'อ่าน host key ของ ' . $args['host'] . ':' . $args['port'] . ' ไม่ได้'
-                . ' — ตรวจว่าเครื่องปลายทางเปิดอยู่ พอร์ตถูกต้อง และไฟร์วอลล์ยอมให้เครื่องนี้ต่อเข้าไป'
+                'Failed to read the host key of ' . $args['host'] . ':' . $args['port']
+                . ' — check that the target machine is up, the port is correct, and its firewall allows this machine to connect'
                 . ($result->stderr !== '' ? "\n\n" . trim($result->stderr) : ''),
             );
         }
@@ -124,16 +135,18 @@ final class BackupHostKeyScan implements Capability
             'port' => $args['port'],
             'known_hosts' => $keys,
             'lines' => count(array_filter(explode("\n", $keys), static fn (string $l): bool => trim($l) !== '')),
-            // ให้เทียบกับที่อ่านจากคอนโซลของเครื่องปลายทางได้ — ปุ่มนี้ยืนยันตัวตนแทนไม่ได้
+            // Lets it be compared against what's read from the target machine's own console — this button can't confirm identity on its own
             'fingerprints' => $this->fingerprints($executor, $keys),
-            'message' => sprintf('อ่าน host key ของ %s:%d มาแล้ว', $args['host'], $args['port']),
+            'message' => sprintf('Read the host key of %s:%d', $args['host'], $args['port']),
         ];
     }
 
     /**
-     * ลายนิ้วมือของกุญแจที่อ่านมา — สิ่งเดียวที่เทียบกับเครื่องปลายทางด้วยตาได้
+     * The fingerprint of the key just read — the only part that can be
+     * compared against the target machine by eye
      *
-     * ล้มแล้วไม่ถือว่าทั้งคำสั่งล้ม · กุญแจยังใช้ได้ แค่เทียบด้วยตาไม่ได้เท่านั้น
+     * A failure here doesn't fail the whole command · the key is still
+     * usable, it just can't be visually compared.
      *
      * @return list<string>
      */

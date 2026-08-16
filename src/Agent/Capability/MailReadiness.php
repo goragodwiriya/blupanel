@@ -13,15 +13,18 @@ use Phpcp\Driver\Mail\MailCertificate;
 use Phpcp\Driver\Ssl\CertbotManager;
 
 /**
- * ความพร้อมของเมล — PLAN-MAIL §7
+ * Mail readiness — PLAN-MAIL §7
  *
- * **หัวใจของเฟส M3 อยู่ที่นี่** · PLAN-V2 เคยตัดเมลออกเพราะสามอย่างที่โค้ดแก้ให้ไม่ได้
- * (rDNS ตั้งได้ที่ผู้ให้บริการเท่านั้น · พอร์ต 25 ขาออกมักถูกบล็อก · IP ใหม่ไม่มี
- * ชื่อเสียง) · เฟสนี้ไม่ได้ทำให้สามข้อนั้นหายไป แต่ทำให้**ระบบบอกตรง ๆ** ว่าข้อไหน
- * ยังไม่พร้อมและข้อไหนต้องไปทำที่อื่น แทนที่จะปล่อยให้ผู้ดูแลค้นพบตอนที่ลูกค้าโทรมาบอก
- * ว่าเมลไม่ถึง
+ * **This is where phase M3's real substance lives** · PLAN-V2 originally cut
+ * mail out because of three things code can't fix (rDNS can only be set at
+ * the provider · outbound port 25 is often blocked · a new IP has no
+ * reputation yet) · this phase doesn't make those three go away, it makes
+ * **the system say so plainly** — which item isn't ready and which one has
+ * to be handled somewhere else — instead of leaving an admin to discover it
+ * when a customer calls to say mail never arrived.
  *
- * ทุกข้อคืนสามอย่างเสมอ: ผ่านหรือไม่ · ค่าที่เจอจริง · ใครแก้ได้ (panel หรือที่อื่น)
+ * Every check always returns the same three things: pass or not · what was
+ * actually found · who can fix it (the panel, or somewhere else).
  */
 final class MailReadiness extends MailCapability
 {
@@ -42,7 +45,7 @@ final class MailReadiness extends MailCapability
 
     public function summary(): string
     {
-        return 'ตรวจความพร้อมของเมลหกข้อ';
+        return 'Check mail readiness across six items';
     }
 
     public function validate(array $args): array
@@ -53,8 +56,7 @@ final class MailReadiness extends MailCapability
     public function run(array $args, Executor $executor, Context $context): array
     {
         $settings = new SettingsRepository($context->db);
-        // ต้องเป็นชื่อที่ Postfix ประกาศจริง ไม่ใช่ค่าในช่องกรอก — หน้าความพร้อมที่บอกว่า
-        // "ยังไม่ได้ตั้ง" ทั้งที่เครื่องประกาศชื่อถูกต้องอยู่ ทำให้ไล่ปัญหาผิดทางทั้งหมด
+        // Has to be the name Postfix actually announces, not the value in the form field — a readiness page that says "not set" while the machine correctly announces a name sends every investigation the wrong way
         $hostname = self::mailHostname($settings);
         $domains = (new MailboxRepository($context->db))->enabledDomains();
 
@@ -75,8 +77,8 @@ final class MailReadiness extends MailCapability
             'failed' => $failed,
             'domains' => $domains,
             'message' => $failed === 0
-                ? 'เมลพร้อมใช้งานครบทุกข้อ'
-                : sprintf('ยังไม่พร้อม %d ข้อจาก %d ข้อ', $failed, count($checks)),
+                ? 'Mail is ready on every item'
+                : sprintf('%d of %d item(s) are not ready yet', $failed, count($checks)),
         ];
     }
 
@@ -86,8 +88,8 @@ final class MailReadiness extends MailCapability
         return [
             'key' => 'hostname',
             'ok' => $hostname !== '' && str_contains($hostname, '.'),
-            'found' => $hostname !== '' ? $hostname : 'ยังไม่ได้ตั้ง',
-            // ตั้งได้จากหน้าตั้งค่า จึงเป็นงานของ panel
+            'found' => $hostname !== '' ? $hostname : 'not set yet',
+            // Can be set from the settings page, so this is the panel's job
             'fix' => 'panel',
         ];
     }
@@ -117,23 +119,24 @@ final class MailReadiness extends MailCapability
         return [
             'key' => 'listening',
             'ok' => $public,
-            'found' => $public ? 'ฟังพอร์ต 25 จากภายนอกแล้ว' : 'ฟังแค่ loopback',
+            'found' => $public ? 'Already listening on port 25 externally' : 'Only listening on loopback',
             'fix' => 'panel',
         ];
     }
 
     /**
-     * ส่งออกได้จริงไหม — ต่อพอร์ต 25 ไปยัง MX ของ Gmail
+     * Can it genuinely send outbound — connects on port 25 to Gmail's MX
      *
-     * โหมด relay ไม่ต้องใช้พอร์ต 25 ขาออก จึงถือว่าผ่านเสมอ — การรายงานว่า "ไม่ผ่าน"
-     * บนเครื่องที่ตั้งใจส่งผ่าน relay อยู่แล้วคือสัญญาณรบกวน ไม่ใช่ข้อมูล
+     * Relay mode doesn't need outbound port 25 at all, so it's always
+     * treated as passing — reporting "not passing" on a machine that already
+     * intends to send through a relay would be noise, not information.
      *
      * @return array{key:string,ok:bool,found:string,fix:string}
      */
     private function outboundCheck(Executor $executor, string $mode): array
     {
         if ($mode === 'relay') {
-            return ['key' => 'outbound', 'ok' => true, 'found' => 'ส่งผ่าน relay ไม่ต้องใช้พอร์ต 25 ขาออก', 'fix' => 'panel'];
+            return ['key' => 'outbound', 'ok' => true, 'found' => "Sending through a relay doesn't need outbound port 25", 'fix' => 'panel'];
         }
 
         $socket = @stream_socket_client('tcp://gmail-smtp-in.l.google.com:25', $errno, $error, 6);
@@ -146,8 +149,8 @@ final class MailReadiness extends MailCapability
         return [
             'key' => 'outbound',
             'ok' => $ok,
-            'found' => $ok ? 'ต่อพอร์ต 25 ออกไปได้' : 'พอร์ต 25 ขาออกถูกบล็อก',
-            // ปลดบล็อกต้องยื่นเรื่องกับผู้ให้บริการ หรือสลับไปใช้ relay
+            'found' => $ok ? 'Can connect out on port 25' : 'Outbound port 25 is blocked',
+            // Getting it unblocked means filing a request with the provider, or switching to a relay
             'fix' => $ok ? 'panel' : 'provider',
         ];
     }
@@ -161,8 +164,8 @@ final class MailReadiness extends MailCapability
         return [
             'key' => 'rdns',
             'ok' => $ptr !== '' && $ptr !== $ip && $ptr === $hostname,
-            'found' => $ptr !== '' ? $ptr : 'ไม่มี PTR',
-            // **ข้อเดียวที่ panel ทำให้ไม่ได้เลย** — ต้องตั้งที่ผู้ให้บริการ VPS
+            'found' => $ptr !== '' ? $ptr : 'No PTR record',
+            // **The one item the panel genuinely cannot do at all** — has to be set at the VPS provider
             'fix' => 'provider',
         ];
     }
@@ -174,7 +177,7 @@ final class MailReadiness extends MailCapability
     private function dkimCheck(Executor $executor, Context $context, array $domains): array
     {
         if ($domains === []) {
-            return ['key' => 'dkim', 'ok' => false, 'found' => 'ยังไม่มีโดเมนที่เปิดเมล', 'fix' => 'panel'];
+            return ['key' => 'dkim', 'ok' => false, 'found' => 'No domain has mail enabled yet', 'fix' => 'panel'];
         }
 
         $manager = new DkimManager(new \Phpcp\Driver\Template($context->config->paths->templates()));
@@ -190,19 +193,22 @@ final class MailReadiness extends MailCapability
             'key' => 'dkim',
             'ok' => $missing === [],
             'found' => $missing === []
-                ? sprintf('มีกุญแจครบ %d โดเมน', count($domains))
-                : 'ยังไม่มีกุญแจ: ' . implode(', ', $missing),
+                ? sprintf('All %d domain(s) have a key', count($domains))
+                : 'No key yet for: ' . implode(', ', $missing),
             'fix' => 'panel',
         ];
     }
 
     /**
-     * ใบรับรองของ mail hostname — **อ่านจากไฟล์จริง ไม่ใช่เชื่อค่าในฐานข้อมูล**
+     * The mail hostname's certificate — **read from the real file, never
+     * trusted from the database value**
      *
-     * ค่าที่บันทึกไว้บอกได้แค่ว่า "เคยผูกใบไว้" · สิ่งที่ผู้ดูแลต้องรู้จริง ๆ คือใบที่
-     * เดมอนหยิบไปใช้ตอนนี้หมดอายุหรือยัง และชื่อในใบตรงกับชื่อที่เครื่องประกาศไหม —
-     * ใบที่หมดอายุเมื่อวานยังเป็นไฟล์ที่ "มีอยู่" ทุกประการ (§7 บอกไว้ว่าอ่านวันหมดอายุ
-     * จากไฟล์)
+     * The saved value can only ever say "a certificate was bound at some
+     * point" · what an admin genuinely needs to know is whether the
+     * certificate the daemon is using right now has expired, and whether the
+     * name in it matches the name the machine announces — a certificate that
+     * expired yesterday is still a file that "exists" in every sense (§7
+     * specifies reading the expiry date from the file itself).
      *
      * @return array{key:string,ok:bool,found:string,fix:string}
      */
@@ -212,8 +218,9 @@ final class MailReadiness extends MailCapability
 
         if ($cert === '' || !$executor->exists($executor->path($cert))) {
             /*
-             * ยังไม่ได้ผูกใบ — แต่บอกด้วยว่ามีใบที่ใช้ได้รออยู่บนเครื่องหรือเปล่า
-             * "ยังไม่ได้ตั้ง" กับ "ขอใบมาแล้วแต่ยังไม่ได้กดผูก" ต้องแก้คนละแบบ
+             * No certificate bound yet — but also report whether a usable one
+             * is already sitting on the machine waiting · "never configured"
+             * and "already requested but never bound" need two different fixes.
              */
             $available = (new MailCertificate(new CertbotManager()))->locate($executor, $hostname);
 
@@ -221,8 +228,8 @@ final class MailReadiness extends MailCapability
                 'key' => 'tls',
                 'ok' => false,
                 'found' => $available !== null
-                    ? sprintf('มีใบของ %s อยู่แล้วแต่เมลยังไม่ได้ใช้ — กดปุ่มผูกใบรับรอง', $available['name'])
-                    : 'ใช้ใบรับรองของดิสโทร (โปรแกรมเมลจะเตือน)',
+                    ? sprintf('A certificate for %s already exists but mail isn\'t using it yet — click "bind certificate"', $available['name'])
+                    : "Using the distro's default certificate (mail clients will warn)",
                 'fix' => 'panel',
             ];
         }
@@ -234,14 +241,13 @@ final class MailReadiness extends MailCapability
 
         return [
             'key' => 'tls',
-            // ใกล้หมดอายุยังถือว่าผ่าน — certbot ต่อให้เองที่ 30 วัน การขึ้นสีแดงตรงนั้น
-            // คือการฝึกให้ผู้ดูแลเพิกเฉยกับข้อที่แดงอยู่ตลอดโดยไม่มีอะไรให้ทำ
+            // Nearly expired still counts as passing — certbot renews on its own at 30 days out; turning this red at that point would just train an admin to ignore a permanently-red item with nothing to actually do about it
             'ok' => in_array($status, ['valid', 'expiring'], true) && $covers,
             'found' => match (true) {
-                !$covers => sprintf('ใบนี้ไม่ครอบคลุม %s (ในใบมี: %s)', $hostname, implode(', ', (array) ($info['domains'] ?? [])) ?: '—'),
-                $status === 'expired' => sprintf('หมดอายุแล้ว (%s)', $cert),
-                $status === 'invalid' => sprintf('อ่านไฟล์ใบรับรองไม่ได้ (%s)', $cert),
-                default => sprintf('%s · เหลือ %d วัน', $cert, $days),
+                !$covers => sprintf('This certificate does not cover %s (covers: %s)', $hostname, implode(', ', (array) ($info['domains'] ?? [])) ?: '—'),
+                $status === 'expired' => sprintf('Already expired (%s)', $cert),
+                $status === 'invalid' => sprintf('Failed to read the certificate file (%s)', $cert),
+                default => sprintf('%s · %d day(s) left', $cert, $days),
             },
             'fix' => 'panel',
         ];
