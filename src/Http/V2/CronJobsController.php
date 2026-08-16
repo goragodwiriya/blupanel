@@ -11,13 +11,15 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * งานอัตโนมัติต่อเว็บไซต์ — `/api/v2/cron-jobs`
+ * Per-website scheduled jobs — `/api/v2/cron-jobs`
  *
- * ต่างจากทรัพยากรอื่นตรงที่ข้อมูลอยู่ในฐานข้อมูลของ panel แล้วค่อย generate ไฟล์
- * `/etc/cron.d` ตามทีหลัง · ทุก endpoint ที่เปลี่ยนแปลงจึงต้องจบด้วย `cron.sync` เสมอ
- * และ **ถ้า sync ล้มต้องย้อนการแก้ไขในฐานข้อมูลกลับ** ไม่งั้นหน้าจอจะบอกว่างานทำงานอยู่
- * ทั้งที่ cron ไม่รู้จักมันเลย — ตรรกะนั้นอยู่ใน `CronJobRepository::applyThenSync()`
- * ที่หน้าเว็บเดิมกับ API ใช้ร่วมกัน
+ * Different from other resources in that the data lives in the panel's own
+ * database first, and the `/etc/cron.d` file is generated from it afterward ·
+ * every endpoint that changes anything must therefore always finish with
+ * `cron.sync`, and **if the sync fails, the database edit must be rolled
+ * back** — otherwise the screen would say a job is running when cron doesn't
+ * know about it at all — that logic lives in `CronJobRepository::applyThenSync()`,
+ * shared between the old web page and the API
  */
 final class CronJobsController extends HostingController
 {
@@ -37,7 +39,7 @@ final class CronJobsController extends HostingController
         $page = $this->pagination($request);
         $slice = array_slice($jobs, $page['offset'], $page['per_page']);
 
-        // เงื่อนไขปุ่มเปิด/ปิด/ลบในตารางอ่านได้แค่ค่าในแถวเดียวกัน — สิทธิ์จึงต้องมากับแถว
+        // The enable/disable/delete buttons' conditions in the table can only read values in the same row — so permission must travel with the row
         $manage = $this->ctx->can('cron.manage');
         $rows = array_map(
             static fn(array $row): array=> $row + ['can_manage' => $manage],
@@ -54,11 +56,13 @@ final class CronJobsController extends HostingController
     public function store(Request $request): Response
     {
         /*
-         * ฟอร์มเดียวทำทั้งสร้างและแก้ไข จึงยิงมาที่ปลายทางเดียวเสมอ แล้วให้ `id`
-         * ที่ซ่อนอยู่ในฟอร์มเป็นตัวตัดสิน — แบบเดียวกับที่ระบบอื่นบนเฟรมเวิร์กนี้ทำ
+         * One form does both create and edit, so it always fires at the same
+         * endpoint, letting the hidden `id` in the form decide — the same way
+         * other systems on this framework do it
          *
-         * ยอมให้ POST ทำหน้าที่แก้ไขด้วยโดยตั้งใจ แลกกับการมีฟอร์มชุดเดียวจริง ๆ
-         * `PATCH /cron-jobs/{id}` ยังอยู่เหมือนเดิมสำหรับผู้เรียกที่เป็นเครื่อง
+         * Deliberately lets POST also act as an edit, trading that for
+         * genuinely having just one form · `PATCH /cron-jobs/{id}` still exists
+         * unchanged for a machine caller
          */
         $id = (int) $request->payload('id', 0);
 
@@ -80,7 +84,7 @@ final class CronJobsController extends HostingController
             'enabled' => $request->payload('enabled', true)
         ]);
 
-        // เขียนไฟล์ cron ไม่สำเร็จ = ลบแถวที่เพิ่งสร้างทิ้ง ไม่ปล่อยให้เหลืองานที่ cron ไม่รู้จัก
+        // Failing to write the cron file = delete the row just created, never leave behind a job cron doesn't know about
         $id = $repository->applyThenSync(
             static fn(): int => $repository->create($siteId, $data),
             fn(): mixed => $this->sync($request, $siteId),
@@ -102,26 +106,30 @@ final class CronJobsController extends HostingController
     }
 
     /**
-     * งานเดียว
+     * A single job
      *
-     * เดิมไม่มีเส้นทางนี้ ทั้งที่ `PATCH /cron-jobs/{id}` มีอยู่ — แก้ทรัพยากรที่อ่านตัวเดียว
-     * ไม่ได้เป็นความไม่สมมาตรที่ทำให้ฟอร์มแก้ไขโหลดค่าเดิมมาไม่ได้ ต้องไปดึงทั้งรายการ
-     * มากรองเอง ซึ่งแปลว่างานของเว็บไซต์อื่นถูกส่งออกไปโดยไม่จำเป็น
+     * This route didn't exist before, even though `PATCH /cron-jobs/{id}` did —
+     * editing a resource with no way to read that one resource was an
+     * asymmetry that left the edit form unable to load existing values, having
+     * to fetch the whole list and filter it itself, meaning other websites'
+     * jobs were sent out unnecessarily
      */
     public function show(Request $request): Response
     {
         $id = $request->paramInt('id');
 
         /*
-         * **id = 0 คือ "ของใหม่" ไม่ใช่ 404**
+         * **id = 0 means "a new one," not a 404**
          *
-         * ฟอร์มสร้างกับฟอร์มแก้ไขเป็นไฟล์เดียวกัน (FRAMEWORK_GUIDE Pattern 3) ทั้งสอง
-         * ทางจึงถามข้อมูลจากที่นี่เหมือนกัน ต่างกันแค่ได้โครงว่างหรือได้ค่าเดิม —
-         * ถ้าที่นี่ตอบ 404 ให้ id=0 ฝั่งหน้าเว็บจะต้องมีทางพิเศษสำหรับ "สร้างใหม่"
-         * ซึ่งแปลว่ามีสองเส้นทางที่ต้องดูแลให้เหมือนกันตลอดไป
+         * The create form and edit form are the same file (FRAMEWORK_GUIDE
+         * Pattern 3), so both paths ask for their data here the same way — the
+         * only difference is getting an empty shell versus existing values —
+         * if this answered 404 for id=0, the frontend would need a special path
+         * for "create new," meaning two routes that must forever be kept in sync
          *
-         * ต้องมีสิทธิ์สร้างก่อนถึงจะได้โครงเปล่า — ไม่งั้นคนที่ดูได้อย่างเดียวจะเปิด
-         * ฟอร์มขึ้นมากรอกจนเสร็จแล้วค่อยโดนปฏิเสธตอนกดบันทึก
+         * Must have create permission before even getting the empty shell —
+         * otherwise a view-only user would open the form, fill it all in, and
+         * only then get rejected when clicking save
          */
         if ($id === 0) {
             if (!$this->ctx->can('cron.manage')) {
@@ -149,10 +157,11 @@ final class CronJobsController extends HostingController
     }
 
     /**
-     * คำสั่งให้หน้าเว็บเปิดฟอร์มใน modal
+     * The command telling the page to open the form in a modal
      *
-     * เซิร์ฟเวอร์เป็นคนบอกว่าใช้เทมเพลตไหนและหัวข้อว่าอะไร — หน้าเว็บแค่ยิงคำขอแล้ว
-     * ส่งคำตอบต่อให้ `ResponseHandler` ทั้งก้อน ไม่ต้องรู้จักชื่อไฟล์เทมเพลตเลย
+     * The server decides which template to use and what the title says — the
+     * page just fires the request and hands the whole response to
+     * `ResponseHandler`, never needing to know the template's filename at all
      *
      * @return list<array<string,mixed>>
      */
@@ -180,7 +189,7 @@ final class CronJobsController extends HostingController
             return $this->problem(ApiProblem::NotFound, 'Cron job not found');
         }
 
-        // PATCH = แก้เฉพาะที่ส่งมา · ค่าที่ไม่ส่งมาต้องคงเดิม
+        // PATCH = edit only what's sent · a value not sent must stay unchanged
         $data = CronJobRepository::validate([
             'name' => $request->payload('name', $job['name']),
             'schedule' => $request->payload('schedule', $job['schedule']),
@@ -224,7 +233,7 @@ final class CronJobsController extends HostingController
                 $repository->delete($id);
             },
             fn(): mixed => $this->sync($request, (int) $job['site_id']),
-            // ย้อนกลับ = ใส่แถวเดิมคืน (id ใหม่ แต่ค่าเหมือนเดิมทุกฟิลด์)
+            // Rolling back = insert the same row again (a new id, but every field's value the same as before)
             static function () use ($repository, $job): void {
                 $repository->create((int) $job['site_id'], CronJobRepository::restorable($job));
             },
@@ -238,14 +247,14 @@ final class CronJobsController extends HostingController
         return new CronJobRepository($this->app->db());
     }
 
-    /** เขียนไฟล์ cron ใหม่ — โยน AgentException เมื่อล้ม ให้ผู้เรียกย้อนกลับ */
+    /** Rewrite the cron file — throws AgentException on failure, for the caller to roll back */
     private function sync(Request $request, int $siteId): mixed
     {
         return $this->agent()->data('cron.sync', ['site_id' => $siteId], $this->ctx->actor($request));
     }
 
     /**
-     * โหลดงานที่ผู้เรียกมีสิทธิ์เห็น
+     * Load a job the caller has permission to see
      *
      * @return array<string,mixed>|null
      */
