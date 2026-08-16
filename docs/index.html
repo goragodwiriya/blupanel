@@ -1,836 +1,2388 @@
 <!DOCTYPE html>
 <html lang="th">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BluPanel — แผงควบคุมเซิร์ฟเวอร์ PHP บน Linux</title>
-<meta name="description" content="BluPanel — แผงควบคุมโฮสติ้งโอเพนซอร์สสำหรับ Linux จัดการเว็บไซต์ โดเมน DNS ฐานข้อมูล SSL อีเมล สำรองข้อมูล จากหน้าจอเดียว ติดตั้งด้วยคำสั่งเดียว">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232563eb'/%3E%3Crect x='14' y='16' width='36' height='8' rx='4' fill='white' opacity='.55'/%3E%3Crect x='14' y='28' width='36' height='8' rx='4' fill='white' opacity='.8'/%3E%3Crect x='14' y='40' width='24' height='8' rx='4' fill='white'/%3E%3C/svg%3E">
-<style>
-:root{
-  --bg:#ffffff;
-  --bg-soft:#f8fafc;
-  --ink:#0f172a;
-  --muted:#5b6b82;
-  --line:#e2e8f0;
-  --accent:#2563eb;
-  --accent-deep:#1d4ed8;
-  --accent-soft:#eff6ff;
-  --ok:#059669;
-  --radius:16px;
-  --shadow-sm:0 1px 2px rgba(15,23,42,.05);
-  --shadow-md:0 10px 30px -12px rgba(15,23,42,.14);
-  --font:"Segoe UI",system-ui,-apple-system,Roboto,"Noto Sans Thai","Leelawadee UI","Sarabun",sans-serif;
-  --mono:ui-monospace,"Cascadia Code","JetBrains Mono",Consolas,Menlo,monospace;
-}
-*{margin:0;padding:0;box-sizing:border-box}
-html{scroll-behavior:smooth}
-body{font-family:var(--font);color:var(--ink);background:var(--bg);line-height:1.65;font-size:16.5px;-webkit-font-smoothing:antialiased}
-::selection{background:#bfdbfe;color:#0f172a}
-img,svg{vertical-align:middle}
-a{color:var(--accent-deep);text-decoration:none}
-a:hover{text-decoration:underline}
-code{font-family:var(--mono);font-size:.92em}
-.wrap{max-width:1120px;margin:0 auto;padding:0 24px}
-section{padding:88px 0;scroll-margin-top:76px}
-.kicker{display:inline-flex;align-items:center;gap:8px;font-size:.78rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--accent-deep);margin-bottom:14px}
-.kicker::before{content:"";width:22px;height:2px;background:var(--accent);border-radius:2px}
-h2{font-size:clamp(1.7rem,3.4vw,2.3rem);line-height:1.25;letter-spacing:-.01em;margin-bottom:14px}
-.sec-lead{color:var(--muted);max-width:640px;font-size:1.05rem}
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BluPanel — แผงควบคุมเซิร์ฟเวอร์ PHP บน Linux</title>
+  <meta name="description"
+        content="BluPanel — แผงควบคุมโฮสติ้งโอเพนซอร์สสำหรับ Linux จัดการเว็บไซต์ โดเมน DNS ฐานข้อมูล SSL อีเมล สำรองข้อมูล จากหน้าจอเดียว ติดตั้งด้วยคำสั่งเดียว">
+  <link rel="icon"
+        href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232563eb'/%3E%3Crect x='14' y='16' width='36' height='8' rx='4' fill='white' opacity='.55'/%3E%3Crect x='14' y='28' width='36' height='8' rx='4' fill='white' opacity='.8'/%3E%3Crect x='14' y='40' width='24' height='8' rx='4' fill='white'/%3E%3C/svg%3E">
+  <style>
+    :root {
+      --bg: #ffffff;
+      --bg-soft: #f8fafc;
+      --ink: #0f172a;
+      --muted: #5b6b82;
+      --line: #e2e8f0;
+      --accent: #2563eb;
+      --accent-deep: #1d4ed8;
+      --accent-soft: #eff6ff;
+      --ok: #059669;
+      --radius: 16px;
+      --shadow-sm: 0 1px 2px rgba(15, 23, 42, .05);
+      --shadow-md: 0 10px 30px -12px rgba(15, 23, 42, .14);
+      --font: "Segoe UI", system-ui, -apple-system, Roboto, "Noto Sans Thai", "Leelawadee UI", "Sarabun", sans-serif;
+      --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, Menlo, monospace;
+    }
 
-/* ---------- Nav ---------- */
-.nav{position:sticky;top:0;z-index:60;background:rgba(255,255,255,.86);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
-.nav-inner{display:flex;align-items:center;gap:28px;height:64px}
-.brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:1.14rem;color:var(--ink);letter-spacing:-.01em}
-.brand:hover{text-decoration:none}
-.brand svg{width:30px;height:30px}
-.nav-links{display:flex;align-items:center;gap:4px;margin-left:auto;list-style:none}
-.nav-links a{color:var(--muted);font-weight:600;font-size:.95rem;padding:8px 13px;border-radius:9px;transition:color .15s,background .15s}
-.nav-links a:hover{color:var(--ink);background:var(--accent-soft);text-decoration:none}
-.nav-links a[aria-current="true"]{color:var(--accent-deep);background:var(--accent-soft)}
-.nav-actions{display:flex;align-items:center;gap:10px}
-.lang{display:flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;font-size:.85rem;font-weight:700}
-.lang button{border:0;background:transparent;color:var(--muted);padding:6px 13px;cursor:pointer;font-family:inherit;transition:background .15s,color .15s}
-.lang button.on{background:var(--accent);color:#fff}
-.gh-btn{display:inline-flex;align-items:center;gap:8px;background:var(--ink);color:#fff;font-weight:600;font-size:.9rem;padding:8px 16px;border-radius:10px;transition:background .15s,transform .15s}
-.gh-btn:hover{background:#1e293b;text-decoration:none;transform:translateY(-1px)}
-.gh-btn svg{width:17px;height:17px}
-.burger{display:none;border:0;background:none;cursor:pointer;padding:8px;margin-left:auto}
-.burger svg{width:24px;height:24px;stroke:var(--ink)}
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box
+    }
 
-/* ---------- Hero ---------- */
-.hero{padding:84px 0 70px;position:relative;overflow:hidden}
-.hero::before{content:"";position:absolute;inset:0;background:
-  radial-gradient(700px 340px at 12% -8%,rgba(37,99,235,.075),transparent 60%),
-  radial-gradient(600px 300px at 95% 0%,rgba(37,99,235,.05),transparent 55%);pointer-events:none}
-.hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center;position:relative}
-.eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:.78rem;font-weight:700;letter-spacing:.13em;color:var(--accent-deep);background:var(--accent-soft);border:1px solid #dbeafe;padding:6px 14px;border-radius:999px;margin-bottom:22px}
-.eyebrow .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);animation:pulse 2.2s infinite}
-@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(37,99,235,.35)}55%{box-shadow:0 0 0 7px rgba(37,99,235,0)}}
-h1{font-size:clamp(2.1rem,4.6vw,3.15rem);line-height:1.16;letter-spacing:-.02em;margin-bottom:20px}
-h1 .grad{background:linear-gradient(100deg,#1d4ed8,#2563eb 55%,#0ea5e9);-webkit-background-clip:text;background-clip:text;color:transparent}
-.hero p.lead{color:var(--muted);font-size:1.1rem;max-width:540px;margin-bottom:28px}
-.hero-cta{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:26px}
-.btn{display:inline-flex;align-items:center;gap:9px;font-weight:700;font-size:.98rem;padding:12px 22px;border-radius:12px;transition:transform .15s,box-shadow .15s,background .15s}
-.btn:hover{text-decoration:none;transform:translateY(-2px)}
-.btn-primary{background:var(--accent);color:#fff;box-shadow:0 8px 20px -8px rgba(37,99,235,.55)}
-.btn-primary:hover{background:var(--accent-deep)}
-.btn-ghost{border:1.5px solid var(--line);color:var(--ink);background:#fff}
-.btn-ghost:hover{border-color:#bfdbfe;background:var(--accent-soft)}
-.btn svg{width:17px;height:17px}
-.hero-note{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:.88rem}
-.hero-note svg{width:16px;height:16px;color:var(--ok);flex:none}
+    html {
+      scroll-behavior: smooth
+    }
 
-/* install snippet */
-.snippet{background:#0f172a;color:#e2e8f0;border-radius:14px;padding:18px 20px;font-family:var(--mono);font-size:.88rem;line-height:1.9;position:relative;margin-bottom:22px;box-shadow:var(--shadow-md);max-width:540px}
-.snippet .cm{color:#64748b;user-select:none}
-.copy{position:absolute;top:10px;right:10px;border:1px solid #334155;background:rgba(255,255,255,.06);color:#cbd5e1;border-radius:8px;padding:5px 11px;font-size:.76rem;font-weight:600;cursor:pointer;font-family:var(--font);transition:background .15s}
-.copy:hover{background:rgba(255,255,255,.14)}
-.copy.done{background:var(--ok);border-color:var(--ok);color:#fff}
+    body {
+      font-family: var(--font);
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.65;
+      font-size: 16.5px;
+      -webkit-font-smoothing: antialiased
+    }
 
-/* ---------- Browser mock ---------- */
-.mock{background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:0 24px 60px -22px rgba(15,23,42,.25);overflow:hidden}
-.mock-bar{display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--line);background:var(--bg-soft)}
-.dots{display:flex;gap:6px}
-.dots i{width:11px;height:11px;border-radius:50%}
-.dots i:nth-child(1){background:#fca5a5}.dots i:nth-child(2){background:#fcd34d}.dots i:nth-child(3){background:#86efac}
-.url{flex:1;background:#fff;border:1px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:.74rem;color:var(--muted);padding:5px 12px;display:flex;align-items:center;gap:7px}
-.url svg{width:12px;height:12px;color:var(--ok);flex:none}
-.mock-body{display:grid;grid-template-columns:168px 1fr;min-height:340px}
-.mock-side{border-right:1px solid var(--line);padding:16px 12px;background:#fcfdff}
-.side-brand{display:flex;align-items:center;gap:8px;font-weight:800;font-size:.9rem;padding:2px 8px 14px;border-bottom:1px solid var(--line);margin-bottom:12px}
-.side-brand svg{width:22px;height:22px}
-.side-item{display:flex;align-items:center;gap:9px;font-size:.82rem;color:var(--muted);padding:7px 10px;border-radius:8px;margin-bottom:2px}
-.side-item svg{width:15px;height:15px;flex:none}
-.side-item.on{background:var(--accent-soft);color:var(--accent-deep);font-weight:700}
-.mock-main{padding:18px}
-.mock-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
-.mock-h b{font-size:.95rem}
-.pill{font-size:.7rem;font-weight:700;color:var(--ok);background:#ecfdf5;border:1px solid #d1fae5;border-radius:999px;padding:3px 10px;display:inline-flex;align-items:center;gap:5px}
-.pill i{width:6px;height:6px;border-radius:50%;background:var(--ok);animation:pulse 2s infinite}
-.mock-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
-.mstat{border:1px solid var(--line);border-radius:12px;padding:10px 12px}
-.mstat .lb{font-size:.68rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em}
-.mstat .vl{font-size:1.02rem;font-weight:800;margin-top:2px}
-.mstat .vl small{font-size:.68rem;color:var(--muted);font-weight:600}
-.mbar{height:4px;background:var(--line);border-radius:4px;margin-top:7px;overflow:hidden}
-.mbar i{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,#3b82f6,#2563eb);width:0;transition:width 1.2s cubic-bezier(.2,.7,.3,1)}
-.in .mbar i{width:var(--w)}
-.mock-chart{border:1px solid var(--line);border-radius:12px;padding:12px 14px 8px;margin-bottom:14px}
-.chart-lb{font-size:.7rem;color:var(--muted);font-weight:600;margin-bottom:8px;display:flex;justify-content:space-between}
-.bars{display:flex;align-items:flex-end;gap:5px;height:64px}
-.bars i{flex:1;background:linear-gradient(180deg,#93c5fd,#3b82f6);border-radius:3px 3px 0 0;height:0;transition:height .9s cubic-bezier(.2,.7,.3,1)}
-.in .bars i{height:var(--h)}
-.mock-table{border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:.78rem}
-.mrow{display:grid;grid-template-columns:1.5fr .8fr .7fr .6fr;gap:6px;padding:8px 12px;border-bottom:1px solid var(--line);align-items:center}
-.mrow:last-child{border-bottom:0}
-.mrow.hd{background:var(--bg-soft);color:var(--muted);font-weight:700;font-size:.68rem;text-transform:uppercase;letter-spacing:.05em}
-.mrow b{font-weight:700}
-.tag{display:inline-block;font-size:.66rem;font-weight:700;border-radius:6px;padding:2px 8px}
-.tag.nx{background:#eff6ff;color:#1d4ed8}
-.tag.ap{background:#fdf4ff;color:#86198f}
-.tag.php{background:#f8fafc;color:#475569;border:1px solid var(--line)}
-.ssl{color:var(--ok);font-weight:700;font-size:.72rem;display:inline-flex;align-items:center;gap:4px;justify-self:end}
-.ssl svg{width:12px;height:12px}
-.ssl.off{color:#f59e0b}
+    ::selection {
+      background: #bfdbfe;
+      color: #0f172a
+    }
 
-/* ---------- Stats strip ---------- */
-.stats{border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--bg-soft)}
-.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;padding:34px 0}
-.stat .n{font-size:2rem;font-weight:800;letter-spacing:-.02em;color:var(--accent-deep);line-height:1.1}
-.stat .t{font-weight:700;margin-top:2px}
-.stat .d{color:var(--muted);font-size:.86rem;line-height:1.5}
+    img,
+    svg {
+      vertical-align: middle
+    }
 
-/* ---------- Feature cards ---------- */
-.grid{display:grid;gap:18px;margin-top:44px}
-.grid-3{grid-template-columns:repeat(3,1fr)}
-.grid-2{grid-template-columns:repeat(2,1fr)}
-.card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:26px;transition:transform .18s,box-shadow .18s,border-color .18s}
-.card:hover{transform:translateY(-4px);box-shadow:var(--shadow-md);border-color:#c7d7f5}
-.card .ic{width:46px;height:46px;border-radius:12px;background:var(--accent-soft);color:var(--accent-deep);display:flex;align-items:center;justify-content:center;margin-bottom:16px}
-.card .ic svg{width:22px;height:22px}
-.card h3{font-size:1.06rem;margin-bottom:7px;letter-spacing:-.01em}
-.card p{color:var(--muted);font-size:.92rem}
+    a {
+      color: var(--accent-deep);
+      text-decoration: none
+    }
 
-/* ---------- Architecture ---------- */
-.arch{background:var(--bg-soft)}
-.diagram{margin-top:44px;display:flex;flex-direction:column;gap:0;max-width:860px}
-.layer{background:#fff;border:1px solid var(--line);border-radius:14px;padding:20px 24px;box-shadow:var(--shadow-sm)}
-.layer .tag-line{display:flex;align-items:center;gap:10px;font-weight:800;font-size:.95rem;margin-bottom:4px}
-.lnum{font-size:.68rem;font-weight:800;letter-spacing:.08em;border-radius:6px;padding:3px 9px}
-.l1 .lnum{background:var(--accent-soft);color:var(--accent-deep)}
-.l2 .lnum{background:#fdf2f8;color:#9d174d}
-.l3 .lnum{background:#f1f5f9;color:#334155}
-.layer .sub{color:var(--muted);font-size:.85rem;margin-bottom:12px}
-.chips{display:flex;flex-wrap:wrap;gap:8px}
-.chip{font-size:.78rem;font-weight:600;color:var(--ink);background:var(--bg-soft);border:1px solid var(--line);border-radius:999px;padding:4px 12px}
-.chip.dark{background:#0f172a;color:#e2e8f0;border-color:#0f172a}
-.flow{display:flex;justify-content:center;padding:8px 0}
-.flow .arr{display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--muted);font-size:.72rem;font-weight:700}
-.flow .arr svg{width:20px;height:20px;color:var(--accent)}
-.flow .arr .sock{background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:999px;padding:3px 12px;font-size:.72rem;font-weight:700}
+    a:hover {
+      text-decoration: underline
+    }
 
-/* ---------- Security ---------- */
-.sec-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:44px}
-.sec-item{display:flex;gap:14px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px 20px;transition:border-color .15s,box-shadow .15s}
-.sec-item:hover{border-color:#c7d7f5;box-shadow:var(--shadow-sm)}
-.sec-item .ck{flex:none;width:26px;height:26px;border-radius:50%;background:#ecfdf5;color:var(--ok);display:flex;align-items:center;justify-content:center;margin-top:2px}
-.sec-item .ck svg{width:14px;height:14px}
-.sec-item b{display:block;font-size:.97rem;margin-bottom:2px}
-.sec-item span{color:var(--muted);font-size:.88rem}
-.callout{margin-top:26px;display:flex;gap:14px;background:var(--accent-soft);border:1px solid #dbeafe;border-radius:14px;padding:18px 22px;font-size:.92rem;color:#1e3a8a}
-.callout svg{flex:none;width:20px;height:20px;margin-top:2px;color:var(--accent-deep)}
+    code {
+      font-family: var(--mono);
+      font-size: .92em
+    }
 
-/* ---------- Install ---------- */
-.inst-grid{display:grid;grid-template-columns:1.1fr .9fr;gap:44px;margin-top:44px;align-items:start}
-.steps{display:flex;flex-direction:column;gap:0}
-.step{display:flex;gap:18px;position:relative;padding-bottom:30px}
-.step:last-child{padding-bottom:0;}
-.step div:last-child{display:grid}
-.step::before{content:"";position:absolute;left:17px;top:38px;bottom:2px;width:2px;background:var(--line)}
-.step:last-child::before{display:none}
-.step .sn{flex:none;width:36px;height:36px;border-radius:50%;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:.92rem;box-shadow:0 6px 14px -6px rgba(37,99,235,.6)}
-.step h4{font-size:1.02rem;margin-bottom:6px}
-.step p{color:var(--muted);font-size:.92rem;max-width:460px}
-.step .code-inline{display:grid;background:#0f172a;color:#e2e8f0;font-family:var(--mono);font-size:.84rem;border-radius:10px;padding:11px 16px;margin-top:10px;position:relative;overflow-x:auto;white-space:nowrap}
-.req{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:26px}
-.req h3{font-size:1.05rem;margin-bottom:16px;display:flex;align-items:center;gap:10px}
-.req h3 svg{width:19px;height:19px;color:var(--accent-deep)}
-.req ul{list-style:none;display:flex;flex-direction:column;gap:11px}
-.req li{display:flex;gap:11px;font-size:.93rem;color:var(--ink)}
-.req li svg{flex:none;width:17px;height:17px;color:var(--accent);margin-top:3px}
-.req li span b{display:block}
-.req li span small{color:var(--muted)}
-.ci-note{margin-top:18px;display:flex;gap:10px;background:var(--bg-soft);border:1px dashed #cbd5e1;border-radius:12px;padding:13px 16px;font-size:.84rem;color:var(--muted)}
-.ci-note svg{flex:none;width:16px;height:16px;margin-top:3px;color:var(--accent-deep)}
+    .wrap {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 0 24px
+    }
 
-/* CLI strip */
-.cli{margin-top:54px;background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--radius);padding:28px}
-.cli h3{font-size:1.05rem;margin-bottom:6px}
-.cli>p{color:var(--muted);font-size:.92rem;margin-bottom:20px}
-.cli-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
-.cli-item{display:flex;flex-direction:column;gap:3px;background:#fff;border:1px solid var(--line);border-radius:11px;padding:14px 18px}
-.cli-item code{color:var(--accent-deep);font-weight:700;font-size:.87rem}
-.cli-item span{color:var(--muted);font-size:.84rem}
+    section {
+      padding: 88px 0;
+      scroll-margin-top: 76px
+    }
 
-/* ---------- Docs ---------- */
-.docs{background:var(--bg-soft)}
-.docs-table{margin-top:40px;background:#fff;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
-.doc-row{display:grid;grid-template-columns:44px 1fr auto;gap:16px;align-items:center;padding:17px 24px;border-bottom:1px solid var(--line);transition:background .13s}
-.doc-row:last-child{border-bottom:0}
-.doc-row:hover{background:var(--accent-soft)}
-.doc-row .di{width:38px;height:38px;border-radius:10px;background:var(--accent-soft);color:var(--accent-deep);display:flex;align-items:center;justify-content:center}
-.doc-row .di svg{width:18px;height:18px}
-.doc-row b{font-size:.96rem}
-.doc-row p{color:var(--muted);font-size:.85rem}
-.doc-row .go{color:var(--accent-deep);font-weight:700;font-size:.86rem;display:inline-flex;gap:6px;align-items:center;white-space:nowrap}
-.doc-row .go svg{width:14px;height:14px;transition:transform .15s}
-.doc-row:hover .go svg{transform:translateX(3px)}
+    .kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: .78rem;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--accent-deep);
+      margin-bottom: 14px
+    }
 
-/* ---------- Footer ---------- */
-footer{border-top:1px solid var(--line);padding:52px 0 40px;background:#fff}
-.foot-grid{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:36px;margin-bottom:36px}
-.foot-grid h4{font-size:.85rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:14px}
-.foot-grid ul{list-style:none;display:flex;flex-direction:column;gap:9px}
-.foot-grid ul a{color:var(--ink);font-weight:600;font-size:.93rem}
-.foot-grid ul a:hover{color:var(--accent-deep)}
-.foot-brand p{color:var(--muted);font-size:.9rem;max-width:320px;margin-top:12px}
-.foot-bottom{border-top:1px solid var(--line);padding-top:24px;display:flex;flex-wrap:wrap;gap:12px;justify-content:center;color:var(--muted);font-size:.85rem}
+    .kicker::before {
+      content: "";
+      width: 22px;
+      height: 2px;
+      background: var(--accent);
+      border-radius: 2px
+    }
 
-/* ---------- Reveal ---------- */
-.reveal{opacity:0;transform:translateY(18px);transition:opacity .6s ease,transform .6s ease}
-.reveal.in{opacity:1;transform:none}
-@media (prefers-reduced-motion:reduce){
-  html{scroll-behavior:auto}
-  .reveal{opacity:1;transform:none;transition:none}
-  .mbar i,.bars i{transition:none}
-}
+    h2 {
+      font-size: clamp(1.7rem, 3.4vw, 2.3rem);
+      line-height: 1.25;
+      letter-spacing: -.01em;
+      margin-bottom: 14px
+    }
 
-/* ---------- Responsive ---------- */
-@media (max-width:980px){
-  .hero-grid{grid-template-columns:1fr;gap:44px}
-  .grid-3{grid-template-columns:repeat(2,1fr)}
-  .stats-grid{grid-template-columns:repeat(2,1fr);gap:26px}
-  .inst-grid{grid-template-columns:1fr}
-  .foot-grid{grid-template-columns:1fr 1fr}
-}
-@media (max-width:720px){
-  section{padding:64px 0}
-  .nav-links{display:none;position:absolute;top:64px;left:0;right:0;background:#fff;border-bottom:1px solid var(--line);flex-direction:column;align-items:stretch;padding:12px 20px 18px;gap:2px}
-  .nav-links.open{display:flex}
-  .nav-links a{padding:12px 14px}
-  .burger{display:block}
-  .nav-actions{margin-left:auto}
-  .gh-btn span{display:none}
-  .gh-btn{padding:8px 11px}
-  .grid-3,.grid-2,.sec-grid,.cli-grid{grid-template-columns:1fr}
-  .mock-body{grid-template-columns:1fr}
-  .mock-side{display:none}
-  .foot-grid{grid-template-columns:1fr}
-  .doc-row{grid-template-columns:1fr auto}
-  .doc-row .di{display:none}
-}
-</style>
+    .sec-lead {
+      color: var(--muted);
+      max-width: 640px;
+      font-size: 1.05rem
+    }
+
+    /* ---------- Nav ---------- */
+    .nav {
+      position: sticky;
+      top: 0;
+      z-index: 60;
+      background: rgba(255, 255, 255, .86);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--line)
+    }
+
+    .nav-inner {
+      display: flex;
+      align-items: center;
+      gap: 28px;
+      height: 64px
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 800;
+      font-size: 1.14rem;
+      color: var(--ink);
+      letter-spacing: -.01em
+    }
+
+    .brand:hover {
+      text-decoration: none
+    }
+
+    .brand svg {
+      width: 30px;
+      height: 30px
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: auto;
+      list-style: none
+    }
+
+    .nav-links a {
+      color: var(--muted);
+      font-weight: 600;
+      font-size: .95rem;
+      padding: 8px 13px;
+      border-radius: 9px;
+      transition: color .15s, background .15s
+    }
+
+    .nav-links a:hover {
+      color: var(--ink);
+      background: var(--accent-soft);
+      text-decoration: none
+    }
+
+    .nav-links a[aria-current="true"] {
+      color: var(--accent-deep);
+      background: var(--accent-soft)
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px
+    }
+
+    .lang {
+      display: flex;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      overflow: hidden;
+      font-size: .85rem;
+      font-weight: 700
+    }
+
+    .lang button {
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      padding: 6px 13px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background .15s, color .15s
+    }
+
+    .lang button.on {
+      background: var(--accent);
+      color: #fff
+    }
+
+    .gh-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--ink);
+      color: #fff;
+      font-weight: 600;
+      font-size: .9rem;
+      padding: 8px 16px;
+      border-radius: 10px;
+      transition: background .15s, transform .15s
+    }
+
+    .gh-btn:hover {
+      background: #1e293b;
+      text-decoration: none;
+      transform: translateY(-1px)
+    }
+
+    .gh-btn svg {
+      width: 17px;
+      height: 17px
+    }
+
+    .burger {
+      display: none;
+      border: 0;
+      background: none;
+      cursor: pointer;
+      padding: 8px;
+      margin-left: auto
+    }
+
+    .burger svg {
+      width: 24px;
+      height: 24px;
+      stroke: var(--ink)
+    }
+
+    /* ---------- Hero ---------- */
+    .hero {
+      padding: 84px 0 70px;
+      position: relative;
+      overflow: hidden
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(700px 340px at 12% -8%, rgba(37, 99, 235, .075), transparent 60%),
+        radial-gradient(600px 300px at 95% 0%, rgba(37, 99, 235, .05), transparent 55%);
+      pointer-events: none
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1.05fr .95fr;
+      gap: 56px;
+      align-items: center;
+      position: relative
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: .7rem;
+      letter-spacing: .13em;
+      color: var(--accent-deep);
+      background: var(--accent-soft);
+      border: 1px solid #dbeafe;
+      padding: 6px 14px;
+      border-radius: 999px;
+      margin-bottom: 22px
+    }
+
+    .eyebrow.dot::before {
+      content: '';
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: pulse 2.2s infinite
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        box-shadow: 0 0 0 0 rgba(37, 99, 235, .35)
+      }
+
+      55% {
+        box-shadow: 0 0 0 7px rgba(37, 99, 235, 0)
+      }
+    }
+
+    h1 {
+      font-size: clamp(2.1rem, 4.6vw, 3.15rem);
+      line-height: 1.16;
+      letter-spacing: -.02em;
+      margin-bottom: 20px
+    }
+
+    h1 .grad {
+      background: linear-gradient(100deg, #1d4ed8, #2563eb 55%, #0ea5e9);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent
+    }
+
+    .hero p.lead {
+      color: var(--muted);
+      font-size: 1.1rem;
+      max-width: 540px;
+      margin-bottom: 28px
+    }
+
+    .hero-cta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 26px
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      font-weight: 700;
+      font-size: .98rem;
+      padding: 12px 22px;
+      border-radius: 12px;
+      transition: transform .15s, box-shadow .15s, background .15s
+    }
+
+    .btn:hover {
+      text-decoration: none;
+      transform: translateY(-2px)
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 8px 20px -8px rgba(37, 99, 235, .55)
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-deep)
+    }
+
+    .btn-ghost {
+      border: 1.5px solid var(--line);
+      color: var(--ink);
+      background: #fff
+    }
+
+    .btn-ghost:hover {
+      border-color: #bfdbfe;
+      background: var(--accent-soft)
+    }
+
+    .btn svg {
+      width: 17px;
+      height: 17px
+    }
+
+    .hero-note {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: .88rem
+    }
+
+    .hero-note svg {
+      width: 16px;
+      height: 16px;
+      color: var(--ok);
+      flex: none
+    }
+
+    /* install snippet */
+    .snippet {
+      background: #0f172a;
+      color: #e2e8f0;
+      border-radius: 14px;
+      padding: 18px 20px;
+      font-family: var(--mono);
+      font-size: .88rem;
+      line-height: 1.9;
+      position: relative;
+      margin-bottom: 22px;
+      box-shadow: var(--shadow-md);
+      max-width: 540px;
+      overflow-y: auto;
+    }
+
+    .snippet .cm {
+      color: #64748b;
+      user-select: none
+    }
+
+    .copy {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      border: 1px solid #334155;
+      background: rgba(255, 255, 255, .06);
+      color: #cbd5e1;
+      border-radius: 8px;
+      padding: 5px 11px;
+      font-size: .76rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: var(--font);
+      transition: background .15s
+    }
+
+    .copy:hover {
+      background: rgba(255, 255, 255, .14)
+    }
+
+    .copy.done {
+      background: var(--ok);
+      border-color: var(--ok);
+      color: #fff
+    }
+
+    /* ---------- Browser mock ---------- */
+    .mock {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: 0 24px 60px -22px rgba(15, 23, 42, .25);
+      overflow: hidden
+    }
+
+    .mock-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 11px 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--bg-soft)
+    }
+
+    .dots {
+      display: flex;
+      gap: 6px
+    }
+
+    .dots i {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%
+    }
+
+    .dots i:nth-child(1) {
+      background: #fca5a5
+    }
+
+    .dots i:nth-child(2) {
+      background: #fcd34d
+    }
+
+    .dots i:nth-child(3) {
+      background: #86efac
+    }
+
+    .url {
+      flex: 1;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font-family: var(--mono);
+      font-size: .74rem;
+      color: var(--muted);
+      padding: 5px 12px;
+      display: flex;
+      align-items: center;
+      gap: 7px
+    }
+
+    .url svg {
+      width: 12px;
+      height: 12px;
+      color: var(--ok);
+      flex: none
+    }
+
+    .mock-body {
+      display: grid;
+      grid-template-columns: 168px 1fr;
+      min-height: 340px
+    }
+
+    .mock-side {
+      border-right: 1px solid var(--line);
+      padding: 16px 12px;
+      background: #fcfdff
+    }
+
+    .side-brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 800;
+      font-size: .9rem;
+      padding: 2px 8px 14px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 12px
+    }
+
+    .side-brand svg {
+      width: 22px;
+      height: 22px
+    }
+
+    .side-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: .82rem;
+      color: var(--muted);
+      padding: 7px 10px;
+      border-radius: 8px;
+      margin-bottom: 2px
+    }
+
+    .side-item svg {
+      width: 15px;
+      height: 15px;
+      flex: none
+    }
+
+    .side-item.on {
+      background: var(--accent-soft);
+      color: var(--accent-deep);
+      font-weight: 700
+    }
+
+    .mock-main {
+      padding: 18px
+    }
+
+    .mock-h {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px
+    }
+
+    .mock-h b {
+      font-size: .95rem
+    }
+
+    .pill {
+      font-size: .7rem;
+      font-weight: 700;
+      color: var(--ok);
+      background: #ecfdf5;
+      border: 1px solid #d1fae5;
+      border-radius: 999px;
+      padding: 3px 10px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px
+    }
+
+    .pill i {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--ok);
+      animation: pulse 2s infinite
+    }
+
+    .mock-stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 14px
+    }
+
+    .mstat {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px
+    }
+
+    .mstat .lb {
+      font-size: .68rem;
+      color: var(--muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .06em
+    }
+
+    .mstat .vl {
+      font-size: 1.02rem;
+      font-weight: 800;
+      margin-top: 2px
+    }
+
+    .mstat .vl small {
+      font-size: .68rem;
+      color: var(--muted);
+      font-weight: 600
+    }
+
+    .mbar {
+      height: 4px;
+      background: var(--line);
+      border-radius: 4px;
+      margin-top: 7px;
+      overflow: hidden
+    }
+
+    .mbar i {
+      display: block;
+      height: 100%;
+      border-radius: 4px;
+      background: linear-gradient(90deg, #3b82f6, #2563eb);
+      width: 0;
+      transition: width 1.2s cubic-bezier(.2, .7, .3, 1)
+    }
+
+    .in .mbar i {
+      width: var(--w)
+    }
+
+    .mock-chart {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 14px 8px;
+      margin-bottom: 14px
+    }
+
+    .chart-lb {
+      font-size: .7rem;
+      color: var(--muted);
+      font-weight: 600;
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between
+    }
+
+    .bars {
+      display: flex;
+      align-items: flex-end;
+      gap: 5px;
+      height: 64px
+    }
+
+    .bars i {
+      flex: 1;
+      background: linear-gradient(180deg, #93c5fd, #3b82f6);
+      border-radius: 3px 3px 0 0;
+      height: 0;
+      transition: height .9s cubic-bezier(.2, .7, .3, 1)
+    }
+
+    .in .bars i {
+      height: var(--h)
+    }
+
+    .mock-table {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      font-size: .78rem
+    }
+
+    .mrow {
+      display: grid;
+      grid-template-columns: 1.5fr .8fr .7fr .6fr;
+      gap: 6px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--line);
+      align-items: center
+    }
+
+    .mrow:last-child {
+      border-bottom: 0
+    }
+
+    .mrow.hd {
+      background: var(--bg-soft);
+      color: var(--muted);
+      font-weight: 700;
+      font-size: .68rem;
+      text-transform: uppercase;
+      letter-spacing: .05em
+    }
+
+    .mrow b {
+      font-weight: 700
+    }
+
+    .tag {
+      display: inline-block;
+      font-size: .66rem;
+      font-weight: 700;
+      border-radius: 6px;
+      padding: 2px 8px
+    }
+
+    .tag.nx {
+      background: #eff6ff;
+      color: #1d4ed8
+    }
+
+    .tag.ap {
+      background: #fdf4ff;
+      color: #86198f
+    }
+
+    .tag.php {
+      background: #f8fafc;
+      color: #475569;
+      border: 1px solid var(--line)
+    }
+
+    .ssl {
+      color: var(--ok);
+      font-weight: 700;
+      font-size: .72rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      justify-self: end
+    }
+
+    .ssl svg {
+      width: 12px;
+      height: 12px
+    }
+
+    .ssl.off {
+      color: #f59e0b
+    }
+
+    /* ---------- Stats strip ---------- */
+    .stats {
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      background: var(--bg-soft)
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 18px;
+      padding: 34px 16px
+    }
+
+    .stat .n {
+      font-size: 2rem;
+      font-weight: 800;
+      letter-spacing: -.02em;
+      color: var(--accent-deep);
+      line-height: 1.1
+    }
+
+    .stat .t {
+      font-weight: 700;
+      margin-top: 2px
+    }
+
+    .stat .d {
+      color: var(--muted);
+      font-size: .86rem;
+      line-height: 1.5
+    }
+
+    /* ---------- Feature cards ---------- */
+    .grid {
+      display: grid;
+      gap: 18px;
+      margin-top: 44px
+    }
+
+    .grid-3 {
+      grid-template-columns: repeat(3, 1fr)
+    }
+
+    .grid-2 {
+      grid-template-columns: repeat(2, 1fr)
+    }
+
+    .card {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 26px;
+      transition: transform .18s, box-shadow .18s, border-color .18s
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+      box-shadow: var(--shadow-md);
+      border-color: #c7d7f5
+    }
+
+    .card .ic {
+      width: 46px;
+      height: 46px;
+      border-radius: 12px;
+      background: var(--accent-soft);
+      color: var(--accent-deep);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px
+    }
+
+    .card .ic svg {
+      width: 22px;
+      height: 22px
+    }
+
+    .card h3 {
+      font-size: 1.06rem;
+      margin-bottom: 7px;
+      letter-spacing: -.01em
+    }
+
+    .card p {
+      color: var(--muted);
+      font-size: .92rem
+    }
+
+    /* ---------- Architecture ---------- */
+    .arch {
+      background: var(--bg-soft)
+    }
+
+    .diagram {
+      margin-top: 44px;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      max-width: 860px
+    }
+
+    .layer {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 20px 24px;
+      box-shadow: var(--shadow-sm)
+    }
+
+    .layer .tag-line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 800;
+      font-size: .95rem;
+      margin-bottom: 4px
+    }
+
+    .lnum {
+      font-size: .68rem;
+      font-weight: 800;
+      letter-spacing: .08em;
+      border-radius: 6px;
+      padding: 3px 9px
+    }
+
+    .l1 .lnum {
+      background: var(--accent-soft);
+      color: var(--accent-deep)
+    }
+
+    .l2 .lnum {
+      background: #fdf2f8;
+      color: #9d174d
+    }
+
+    .l3 .lnum {
+      background: #f1f5f9;
+      color: #334155
+    }
+
+    .layer .sub {
+      color: var(--muted);
+      font-size: .85rem;
+      margin-bottom: 12px
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px
+    }
+
+    .chip {
+      font-size: .78rem;
+      font-weight: 600;
+      color: var(--ink);
+      background: var(--bg-soft);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 12px
+    }
+
+    .chip.dark {
+      background: #0f172a;
+      color: #e2e8f0;
+      border-color: #0f172a
+    }
+
+    .flow {
+      display: flex;
+      justify-content: center;
+      padding: 8px 0
+    }
+
+    .flow .arr {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      color: var(--muted);
+      font-size: .72rem;
+      font-weight: 700
+    }
+
+    .flow .arr svg {
+      width: 20px;
+      height: 20px;
+      color: var(--accent)
+    }
+
+    .flow .arr .sock {
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      color: #92400e;
+      border-radius: 999px;
+      padding: 3px 12px;
+      font-size: .72rem;
+      font-weight: 700
+    }
+
+    /* ---------- Security ---------- */
+    .sec-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 14px;
+      margin-top: 44px
+    }
+
+    .sec-item {
+      display: flex;
+      gap: 14px;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 18px 20px;
+      transition: border-color .15s, box-shadow .15s
+    }
+
+    .sec-item:hover {
+      border-color: #c7d7f5;
+      box-shadow: var(--shadow-sm)
+    }
+
+    .sec-item .ck {
+      flex: none;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: #ecfdf5;
+      color: var(--ok);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 2px
+    }
+
+    .sec-item .ck svg {
+      width: 14px;
+      height: 14px
+    }
+
+    .sec-item b {
+      display: block;
+      font-size: .97rem;
+      margin-bottom: 2px
+    }
+
+    .sec-item span {
+      color: var(--muted);
+      font-size: .88rem
+    }
+
+    .callout {
+      margin-top: 26px;
+      display: flex;
+      gap: 14px;
+      background: var(--accent-soft);
+      border: 1px solid #dbeafe;
+      border-radius: 14px;
+      padding: 18px 22px;
+      font-size: .92rem;
+      color: #1e3a8a
+    }
+
+    .callout svg {
+      flex: none;
+      width: 20px;
+      height: 20px;
+      margin-top: 2px;
+      color: var(--accent-deep)
+    }
+
+    /* ---------- Install ---------- */
+    .inst-grid {
+      display: grid;
+      grid-template-columns: 1.1fr .9fr;
+      gap: 44px;
+      margin-top: 44px;
+      align-items: start
+    }
+
+    .steps {
+      display: flex;
+      flex-direction: column;
+      gap: 0
+    }
+
+    .step {
+      display: flex;
+      gap: 18px;
+      position: relative;
+      padding-bottom: 30px
+    }
+
+    .step:last-child {
+      padding-bottom: 0;
+    }
+
+    .step div:last-child {
+      display: grid
+    }
+
+    .step::before {
+      content: "";
+      position: absolute;
+      left: 17px;
+      top: 38px;
+      bottom: 2px;
+      width: 2px;
+      background: var(--line)
+    }
+
+    .step:last-child::before {
+      display: none
+    }
+
+    .step .sn {
+      flex: none;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: .92rem;
+      box-shadow: 0 6px 14px -6px rgba(37, 99, 235, .6)
+    }
+
+    .step h4 {
+      font-size: 1.02rem;
+      margin-bottom: 6px
+    }
+
+    .step p {
+      color: var(--muted);
+      font-size: .92rem;
+      max-width: 460px
+    }
+
+    .step .code-inline {
+      display: grid;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-family: var(--mono);
+      font-size: .84rem;
+      border-radius: 10px;
+      padding: 11px 16px;
+      margin-top: 10px;
+      position: relative;
+      overflow-x: auto;
+      white-space: nowrap
+    }
+
+    .req {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 26px
+    }
+
+    .req h3 {
+      font-size: 1.05rem;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px
+    }
+
+    .req h3 svg {
+      width: 19px;
+      height: 19px;
+      color: var(--accent-deep)
+    }
+
+    .req ul {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 11px
+    }
+
+    .req li {
+      display: flex;
+      gap: 11px;
+      font-size: .93rem;
+      color: var(--ink)
+    }
+
+    .req li svg {
+      flex: none;
+      width: 17px;
+      height: 17px;
+      color: var(--accent);
+      margin-top: 3px
+    }
+
+    .req li span b {
+      display: block
+    }
+
+    .req li span small {
+      color: var(--muted)
+    }
+
+    .ci-note {
+      margin-top: 18px;
+      display: flex;
+      gap: 10px;
+      background: var(--bg-soft);
+      border: 1px dashed #cbd5e1;
+      border-radius: 12px;
+      padding: 13px 16px;
+      font-size: .84rem;
+      color: var(--muted)
+    }
+
+    .ci-note svg {
+      flex: none;
+      width: 16px;
+      height: 16px;
+      margin-top: 3px;
+      color: var(--accent-deep)
+    }
+
+    /* CLI strip */
+    .cli {
+      margin-top: 54px;
+      background: var(--bg-soft);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 28px
+    }
+
+    .cli h3 {
+      font-size: 1.05rem;
+      margin-bottom: 6px
+    }
+
+    .cli>p {
+      color: var(--muted);
+      font-size: .92rem;
+      margin-bottom: 20px
+    }
+
+    .cli-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px
+    }
+
+    .cli-item {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      padding: 14px 18px
+    }
+
+    .cli-item code {
+      color: var(--accent-deep);
+      font-weight: 700;
+      font-size: .87rem
+    }
+
+    .cli-item span {
+      color: var(--muted);
+      font-size: .84rem
+    }
+
+    /* ---------- Docs ---------- */
+    .docs {
+      background: var(--bg-soft)
+    }
+
+    .docs-table {
+      margin-top: 40px;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden
+    }
+
+    .doc-row {
+      display: grid;
+      grid-template-columns: 44px 1fr auto;
+      gap: 16px;
+      align-items: center;
+      padding: 17px 24px;
+      border-bottom: 1px solid var(--line);
+      transition: background .13s
+    }
+
+    .doc-row:last-child {
+      border-bottom: 0
+    }
+
+    .doc-row:hover {
+      background: var(--accent-soft)
+    }
+
+    .doc-row .di {
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      background: var(--accent-soft);
+      color: var(--accent-deep);
+      display: flex;
+      align-items: center;
+      justify-content: center
+    }
+
+    .doc-row .di svg {
+      width: 18px;
+      height: 18px
+    }
+
+    .doc-row b {
+      font-size: .96rem
+    }
+
+    .doc-row p {
+      color: var(--muted);
+      font-size: .85rem
+    }
+
+    .doc-row .go {
+      color: var(--accent-deep);
+      font-weight: 700;
+      font-size: .86rem;
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+      white-space: nowrap
+    }
+
+    .doc-row .go svg {
+      width: 14px;
+      height: 14px;
+      transition: transform .15s
+    }
+
+    .doc-row:hover .go svg {
+      transform: translateX(3px)
+    }
+
+    /* ---------- Footer ---------- */
+    footer {
+      border-top: 1px solid var(--line);
+      padding: 52px 0 40px;
+      background: #fff
+    }
+
+    .foot-grid {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr 1fr;
+      gap: 36px;
+      margin-bottom: 36px
+    }
+
+    .foot-grid h4 {
+      font-size: .85rem;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: var(--muted);
+      margin-bottom: 14px
+    }
+
+    .foot-grid ul {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 9px
+    }
+
+    .foot-grid ul a {
+      color: var(--ink);
+      font-weight: 600;
+      font-size: .93rem
+    }
+
+    .foot-grid ul a:hover {
+      color: var(--accent-deep)
+    }
+
+    .foot-brand p {
+      color: var(--muted);
+      font-size: .9rem;
+      max-width: 320px;
+      margin-top: 12px
+    }
+
+    .foot-bottom {
+      border-top: 1px solid var(--line);
+      padding-top: 24px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: center;
+      color: var(--muted);
+      font-size: .85rem
+    }
+
+    /* ---------- Reveal ---------- */
+    .reveal {
+      opacity: 0;
+      transform: translateY(18px);
+      transition: opacity .6s ease, transform .6s ease;
+      display: grid;
+    }
+
+    .reveal.in {
+      opacity: 1;
+      transform: none
+    }
+
+    @media (prefers-reduced-motion:reduce) {
+      html {
+        scroll-behavior: auto
+      }
+
+      .reveal {
+        opacity: 1;
+        transform: none;
+        transition: none
+      }
+
+      .mbar i,
+      .bars i {
+        transition: none
+      }
+    }
+
+    /* ---------- Responsive ---------- */
+    @media (max-width:980px) {
+      .hero-grid {
+        grid-template-columns: 1fr;
+        gap: 44px
+      }
+
+      .grid-3 {
+        grid-template-columns: repeat(2, 1fr)
+      }
+
+      .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 26px
+      }
+
+      .inst-grid {
+        grid-template-columns: 1fr
+      }
+
+      .foot-grid {
+        grid-template-columns: 1fr 1fr
+      }
+    }
+
+    @media (max-width:720px) {
+      section {
+        padding: 64px 0
+      }
+
+      .nav-links {
+        display: none;
+        position: absolute;
+        top: 64px;
+        left: 0;
+        right: 0;
+        background: #fff;
+        border-bottom: 1px solid var(--line);
+        flex-direction: column;
+        align-items: stretch;
+        padding: 12px 20px 18px;
+        gap: 2px
+      }
+
+      .nav-links.open {
+        display: flex
+      }
+
+      .nav-links a {
+        padding: 12px 14px
+      }
+
+      .burger {
+        display: block
+      }
+
+      .nav-actions {
+        margin-left: auto
+      }
+
+      .gh-btn span {
+        display: none
+      }
+
+      .gh-btn {
+        padding: 8px 11px
+      }
+
+      .grid-3,
+      .grid-2,
+      .sec-grid,
+      .cli-grid {
+        grid-template-columns: 1fr
+      }
+
+      .mock-body {
+        grid-template-columns: 1fr
+      }
+
+      .mock-side {
+        display: none
+      }
+
+      .foot-grid {
+        grid-template-columns: 1fr
+      }
+
+      .doc-row {
+        grid-template-columns: 1fr auto
+      }
+
+      .doc-row .di {
+        display: none
+      }
+    }
+  </style>
 </head>
+
 <body>
-
-<!-- ═══════════════ NAV ═══════════════ -->
-<nav class="nav" aria-label="Main">
-  <div class="wrap nav-inner">
-    <a class="brand" href="#top" aria-label="BluPanel">
-      <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#2563eb"/><rect x="14" y="16" width="36" height="8" rx="4" fill="#fff" opacity=".55"/><rect x="14" y="28" width="36" height="8" rx="4" fill="#fff" opacity=".8"/><rect x="14" y="40" width="24" height="8" rx="4" fill="#fff"/></svg>
-      BluPanel
-    </a>
-    <ul class="nav-links" id="navLinks">
-      <li><a href="#features" data-th="ความสามารถ" data-en="Features">ความสามารถ</a></li>
-      <li><a href="#architecture" data-th="สถาปัตยกรรม" data-en="Architecture">สถาปัตยกรรม</a></li>
-      <li><a href="#security" data-th="ความปลอดภัย" data-en="Security">ความปลอดภัย</a></li>
-      <li><a href="#install" data-th="ติดตั้ง" data-en="Get started">ติดตั้ง</a></li>
-      <li><a href="#docs" data-th="เอกสาร" data-en="Docs">เอกสาร</a></li>
-    </ul>
-    <div class="nav-actions">
-      <div class="lang" role="group" aria-label="Language">
-        <button type="button" id="btnTh" class="on">ไทย</button>
-        <button type="button" id="btnEn">EN</button>
+  <!-- ═══════════════ NAV ═══════════════ -->
+  <nav class="nav" aria-label="Main">
+    <div class="wrap nav-inner">
+      <a class="brand" href="#top" aria-label="BluPanel">
+        <svg viewBox="0 0 64 64" aria-hidden="true">
+          <rect width="64" height="64" rx="14" fill="#2563eb" />
+          <rect x="14" y="16" width="36" height="8" rx="4" fill="#fff" opacity=".55" />
+          <rect x="14" y="28" width="36" height="8" rx="4" fill="#fff" opacity=".8" />
+          <rect x="14" y="40" width="24" height="8" rx="4" fill="#fff" />
+        </svg> BluPanel </a>
+      <ul class="nav-links" id="navLinks">
+        <li><a href="#features" data-th="ความสามารถ" data-en="Features">ความสามารถ</a></li>
+        <li><a href="#architecture" data-th="สถาปัตยกรรม" data-en="Architecture">สถาปัตยกรรม</a></li>
+        <li><a href="#security" data-th="ความปลอดภัย" data-en="Security">ความปลอดภัย</a></li>
+        <li><a href="#install" data-th="ติดตั้ง" data-en="Get started">ติดตั้ง</a></li>
+        <li><a href="#docs" data-th="เอกสาร" data-en="Docs">เอกสาร</a></li>
+      </ul>
+      <div class="nav-actions">
+        <div class="lang" role="group" aria-label="Language">
+          <button type="button" id="btnTh" class="on">ไทย</button>
+          <button type="button" id="btnEn">EN</button>
+        </div>
+        <a class="gh-btn" href="https://github.com/goragodwiriya/blupanel" target="_blank" rel="noopener">
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path
+                  d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+          </svg>
+          <span data-th="GitHub" data-en="GitHub">GitHub</span>
+        </a>
+        <button class="burger" id="burger" aria-label="Menu" aria-expanded="false">
+          <svg fill="none" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24">
+            <path d="M4 7h16M4 12h16M4 17h16" />
+          </svg>
+        </button>
       </div>
-      <a class="gh-btn" href="https://github.com/goragodwiriya/blupanel" target="_blank" rel="noopener">
-        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
-        <span data-th="GitHub" data-en="GitHub">GitHub</span>
-      </a>
-      <button class="burger" id="burger" aria-label="Menu" aria-expanded="false">
-        <svg fill="none" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
-      </button>
     </div>
-  </div>
-</nav>
-
-<!-- ═══════════════ HERO ═══════════════ -->
-<header class="hero" id="top">
-  <div class="wrap hero-grid">
-    <div class="reveal">
-      <span class="eyebrow"><span class="dot"></span>PHP&nbsp;SERVER&nbsp;CONTROL&nbsp;PANEL&nbsp;·&nbsp;OPEN&nbsp;SOURCE</span>
-      <h1 data-th='เซิร์ฟเวอร์เว็บ PHP ทั้งเครื่อง
-        <br><span class="grad">จัดการจากหน้าจอเดียว</span>'
-        data-en='Your entire PHP server,
-        <br><span class="grad">managed from one screen</span>'>
-        เซิร์ฟเวอร์เว็บ PHP ทั้งเครื่อง<br><span class="grad">จัดการจากหน้าจอเดียว</span>
-      </h1>
-      <p class="lead" data-th="BluPanel คือแผงควบคุมโฮสติ้งโอเพนซอร์สสำหรับ Linux — สร้างเว็บไซต์พร้อม HTTPS ได้ในไม่กี่คลิก ครอบคลุมโดเมน DNS ฐานข้อมูล อีเมล การสำรองข้อมูล และการเฝ้าระวังระบบ ออกแบบโดยให้ความปลอดภัยมาก่อนเป็นอย่างแรก"
-        data-en="BluPanel is an open-source hosting control panel for Linux — spin up HTTPS-ready websites in a few clicks, with domains, DNS, databases, mail, backups and monitoring built in. Designed security-first.">
-        BluPanel คือแผงควบคุมโฮสติ้งโอเพนซอร์สสำหรับ Linux — สร้างเว็บไซต์พร้อม HTTPS ได้ในไม่กี่คลิก ครอบคลุมโดเมน DNS ฐานข้อมูล อีเมล การสำรองข้อมูล และการเฝ้าระวังระบบ ออกแบบโดยให้ความปลอดภัยมาก่อนเป็นอย่างแรก
-      </p>
-      <div class="snippet">
-        <button class="copy" data-copy="git clone https://github.com/goragodwiriya/blupanel.git
+  </nav>
+  <!-- ═══════════════ HERO ═══════════════ -->
+  <header class="hero" id="top">
+    <div class="wrap hero-grid">
+      <div class="reveal">
+        <div>
+          <span class="eyebrow dot">
+            <span>PHP&nbsp;SERVER&nbsp;CONTROL&nbsp;PANEL&nbsp;·&nbsp;OPEN&nbsp;SOURCE</span>
+          </span>
+        </div>
+        <h1 data-th='เซิร์ฟเวอร์เว็บ PHP ทั้งเครื่อง
+        <br><span class="grad">จัดการจากหน้าจอเดียว</span>' data-en='Your entire PHP server,
+        <br><span class="grad">managed from one screen</span>'> เซิร์ฟเวอร์เว็บ PHP ทั้งเครื่อง<br><span class="grad">จัดการจากหน้าจอเดียว</span>
+        </h1>
+        <p class="lead"
+           data-th="BluPanel คือแผงควบคุมโฮสติ้งโอเพนซอร์สสำหรับ Linux — สร้างเว็บไซต์พร้อม HTTPS ได้ในไม่กี่คลิก ครอบคลุมโดเมน DNS ฐานข้อมูล อีเมล การสำรองข้อมูล และการเฝ้าระวังระบบ ออกแบบโดยให้ความปลอดภัยมาก่อนเป็นอย่างแรก"
+           data-en="BluPanel is an open-source hosting control panel for Linux — spin up HTTPS-ready websites in a few clicks, with domains, DNS, databases, mail, backups and monitoring built in. Designed security-first.">
+          BluPanel คือแผงควบคุมโฮสติ้งโอเพนซอร์สสำหรับ Linux — สร้างเว็บไซต์พร้อม HTTPS ได้ในไม่กี่คลิก ครอบคลุมโดเมน DNS ฐานข้อมูล อีเมล การสำรองข้อมูล และการเฝ้าระวังระบบ
+          ออกแบบโดยให้ความปลอดภัยมาก่อนเป็นอย่างแรก </p>
+        <div class="snippet">
+          <button class="copy" data-copy="git clone https://github.com/goragodwiriya/blupanel.git
 cd blupanel
 sudo ./install.sh" data-th="คัดลอก" data-en="Copy">คัดลอก</button>
-        <span class="cm">$</span> git clone https://github.com/goragodwiriya/blupanel.git<br>
-        <span class="cm">$</span> cd blupanel<br>
-        <span class="cm">$</span> sudo ./install.sh
-      </div>
-      <div class="hero-cta">
-        <a class="btn btn-primary" href="#install">
-          <svg fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-          <span data-th="เริ่มติดตั้ง" data-en="Get started">เริ่มติดตั้ง</span>
-        </a>
-        <a class="btn btn-ghost" href="#architecture">
-          <svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3.5"/></svg>
-          <span data-th="ดูสถาปัตยกรรม" data-en="How it works">ดูสถาปัตยกรรม</span>
-        </a>
-      </div>
-      <p class="hero-note">
-        <svg fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
-        <span data-th="รองรับ Debian 12+ · Ubuntu 22.04+ · Linux Mint 21+ — ติดตั้งบนเครื่องเปล่าได้ทันที" data-en="Debian 12+ · Ubuntu 22.04+ · Linux Mint 21+ — runs on a fresh server out of the box">รองรับ Debian 12+ · Ubuntu 22.04+ · Linux Mint 21+ — ติดตั้งบนเครื่องเปล่าได้ทันที</span>
-      </p>
-    </div>
-
-    <!-- Browser mock -->
-    <div class="mock reveal" id="mock" aria-hidden="true">
-      <div class="mock-bar">
-        <div class="dots"><i></i><i></i><i></i></div>
-        <div class="url">
-          <svg fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
-          https://203.0.113.10:8443
+          <span class="cm">$</span> git clone https://github.com/goragodwiriya/blupanel.git<br>
+          <span class="cm">$</span> cd blupanel<br>
+          <span class="cm">$</span> sudo ./install.sh
         </div>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="#install">
+            <svg fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg>
+            <span data-th="เริ่มติดตั้ง" data-en="Get started">เริ่มติดตั้ง</span>
+          </a>
+          <a class="btn btn-ghost" href="#architecture">
+            <svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" />
+              <circle cx="12" cy="12" r="3.5" />
+            </svg>
+            <span data-th="ดูสถาปัตยกรรม" data-en="How it works">ดูสถาปัตยกรรม</span>
+          </a>
+        </div>
+        <p class="hero-note">
+          <svg fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
+          <span data-th="รองรับ Debian 12+ · Ubuntu 22.04+ · Linux Mint 21+ — ติดตั้งบนเครื่องเปล่าได้ทันที"
+                data-en="Debian 12+ · Ubuntu 22.04+ · Linux Mint 21+ — runs on a fresh server out of the box">รองรับ Debian 12+ · Ubuntu 22.04+ · Linux Mint 21+ —
+            ติดตั้งบนเครื่องเปล่าได้ทันที</span>
+        </p>
       </div>
-      <div class="mock-body">
-        <aside class="mock-side">
-          <div class="side-brand">
-            <svg viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#2563eb"/><rect x="14" y="16" width="36" height="8" rx="4" fill="#fff" opacity=".55"/><rect x="14" y="28" width="36" height="8" rx="4" fill="#fff" opacity=".8"/><rect x="14" y="40" width="24" height="8" rx="4" fill="#fff"/></svg>
-            BluPanel
+      <!-- Browser mock -->
+      <div class="mock reveal" id="mock" aria-hidden="true">
+        <div class="mock-bar">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <div class="url">
+            <svg fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <rect x="4" y="11" width="16" height="10" rx="2" />
+              <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+            </svg> https://203.0.113.10:8443
           </div>
-          <div class="side-item on"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg><span data-th="แดชบอร์ด" data-en="Dashboard">แดชบอร์ด</span></div>
-          <div class="side-item"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg><span data-th="เว็บไซต์" data-en="Websites">เว็บไซต์</span></div>
-          <div class="side-item"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Z"/><path d="M4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg><span data-th="ฐานข้อมูล" data-en="Databases">ฐานข้อมูล</span></div>
-          <div class="side-item"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg><span data-th="อีเมล" data-en="Mail">อีเมล</span></div>
-          <div class="side-item"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg><span data-th="สำรองข้อมูล" data-en="Backups">สำรองข้อมูล</span></div>
-          <div class="side-item"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.4 8.3 8 9 4.6-.7 8-4 8-9V6l-8-3Z"/></svg><span data-th="ความปลอดภัย" data-en="Security">ความปลอดภัย</span></div>
-        </aside>
-        <div class="mock-main">
-          <div class="mock-h">
-            <b data-th="ภาพรวมระบบ" data-en="System overview">ภาพรวมระบบ</b>
-            <span class="pill"><i></i>LIVE</span>
-          </div>
-          <div class="mock-stats">
-            <div class="mstat"><div class="lb">CPU</div><div class="vl">23<small>%</small></div><div class="mbar"><i style="--w:23%"></i></div></div>
-            <div class="mstat"><div class="lb">RAM</div><div class="vl">4.1<small>/8 GB</small></div><div class="mbar"><i style="--w:51%"></i></div></div>
-            <div class="mstat"><div class="lb" data-th="ดิสก์" data-en="DISK">ดิสก์</div><div class="vl">3.2<small>/20 GB</small></div><div class="mbar"><i style="--w:16%"></i></div></div>
-          </div>
-          <div class="mock-chart">
-            <div class="chart-lb"><span data-th="โหลด 24 ชั่วโมงล่าสุด" data-en="Load — last 24h">โหลด 24 ชั่วโมงล่าสุด</span><span>SSE</span></div>
-            <div class="bars">
-              <i style="--h:32%"></i><i style="--h:44%"></i><i style="--h:28%"></i><i style="--h:52%"></i><i style="--h:38%"></i><i style="--h:64%"></i><i style="--h:46%"></i><i style="--h:35%"></i><i style="--h:58%"></i><i style="--h:72%"></i><i style="--h:49%"></i><i style="--h:40%"></i>
+        </div>
+        <div class="mock-body">
+          <aside class="mock-side">
+            <div class="side-brand">
+              <svg viewBox="0 0 64 64">
+                <rect width="64" height="64" rx="14" fill="#2563eb" />
+                <rect x="14" y="16" width="36" height="8" rx="4" fill="#fff" opacity=".55" />
+                <rect x="14" y="28" width="36" height="8" rx="4" fill="#fff" opacity=".8" />
+                <rect x="14" y="40" width="24" height="8" rx="4" fill="#fff" />
+              </svg> BluPanel
+            </div>
+            <div class="side-item on"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <rect x="3" y="3" width="7" height="9" rx="1.5" />
+                <rect x="14" y="3" width="7" height="5" rx="1.5" />
+                <rect x="14" y="12" width="7" height="9" rx="1.5" />
+                <rect x="3" y="16" width="7" height="5" rx="1.5" />
+              </svg><span data-th="แดชบอร์ด" data-en="Dashboard">แดชบอร์ด</span></div>
+            <div class="side-item"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+              </svg><span data-th="เว็บไซต์" data-en="Websites">เว็บไซต์</span></div>
+            <div class="side-item"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Z" />
+                <path d="M4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7" />
+                <path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" />
+              </svg><span data-th="ฐานข้อมูล" data-en="Databases">ฐานข้อมูล</span></div>
+            <div class="side-item"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24">
+                <rect x="3" y="5" width="18" height="14" rx="2" />
+                <path d="m4 7 8 6 8-6" />
+              </svg><span data-th="อีเมล" data-en="Mail">อีเมล</span></div>
+            <div class="side-item"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24">
+                <ellipse cx="12" cy="6" rx="8" ry="3" />
+                <path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6" />
+                <path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" />
+              </svg><span data-th="สำรองข้อมูล" data-en="Backups">สำรองข้อมูล</span></div>
+            <div class="side-item"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path d="M12 3 4 6v6c0 5 3.4 8.3 8 9 4.6-.7 8-4 8-9V6l-8-3Z" />
+              </svg><span data-th="ความปลอดภัย" data-en="Security">ความปลอดภัย</span></div>
+          </aside>
+          <div class="mock-main">
+            <div class="mock-h">
+              <b data-th="ภาพรวมระบบ" data-en="System overview">ภาพรวมระบบ</b>
+              <span class="pill"><i></i>LIVE</span>
+            </div>
+            <div class="mock-stats">
+              <div class="mstat">
+                <div class="lb">CPU</div>
+                <div class="vl">23<small>%</small></div>
+                <div class="mbar"><i style="--w:23%"></i></div>
+              </div>
+              <div class="mstat">
+                <div class="lb">RAM</div>
+                <div class="vl">4.1<small>/8 GB</small></div>
+                <div class="mbar"><i style="--w:51%"></i></div>
+              </div>
+              <div class="mstat">
+                <div class="lb" data-th="ดิสก์" data-en="DISK">ดิสก์</div>
+                <div class="vl">3.2<small>/20 GB</small></div>
+                <div class="mbar"><i style="--w:16%"></i></div>
+              </div>
+            </div>
+            <div class="mock-chart">
+              <div class="chart-lb"><span data-th="โหลด 24 ชั่วโมงล่าสุด" data-en="Load — last 24h">โหลด 24 ชั่วโมงล่าสุด</span><span>SSE</span></div>
+              <div class="bars">
+                <i style="--h:32%"></i><i style="--h:44%"></i><i style="--h:28%"></i><i style="--h:52%"></i><i style="--h:38%"></i><i style="--h:64%"></i><i style="--h:46%"></i><i
+                   style="--h:35%"></i><i style="--h:58%"></i><i style="--h:72%"></i><i style="--h:49%"></i><i style="--h:40%"></i>
+              </div>
+            </div>
+            <div class="mock-table">
+              <div class="mrow hd"><span data-th="เว็บไซต์" data-en="Website">เว็บไซต์</span><span>Web</span><span>PHP</span><span>SSL</span></div>
+              <div class="mrow"><b>example.com</b><span><span class="tag nx">nginx</span></span><span><span class="tag php">8.4</span></span><span class="ssl"><svg fill="none"
+                       stroke="currentColor" stroke-width="2.6" viewBox="0 0 24 24">
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>HTTPS</span></div>
+              <div class="mrow"><b>shop.example.co</b><span><span class="tag ap">Apache</span></span><span><span class="tag php">7.4</span></span><span class="ssl"><svg fill="none"
+                       stroke="currentColor" stroke-width="2.6" viewBox="0 0 24 24">
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>HTTPS</span></div>
+              <div class="mrow"><b>dev.example.io</b><span><span class="tag nx">nginx</span></span><span><span class="tag php">8.4</span></span><span class="ssl off"><svg
+                       fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 8v4M12 16h.01" />
+                  </svg><span data-th="พักไว้" data-en="suspended">พักไว้</span></span></div>
             </div>
           </div>
-          <div class="mock-table">
-            <div class="mrow hd"><span data-th="เว็บไซต์" data-en="Website">เว็บไซต์</span><span>Web</span><span>PHP</span><span>SSL</span></div>
-            <div class="mrow"><b>example.com</b><span><span class="tag nx">nginx</span></span><span><span class="tag php">8.4</span></span><span class="ssl"><svg fill="none" stroke="currentColor" stroke-width="2.6" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>HTTPS</span></div>
-            <div class="mrow"><b>shop.example.co</b><span><span class="tag ap">Apache</span></span><span><span class="tag php">7.4</span></span><span class="ssl"><svg fill="none" stroke="currentColor" stroke-width="2.6" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>HTTPS</span></div>
-            <div class="mrow"><b>dev.example.io</b><span><span class="tag nx">nginx</span></span><span><span class="tag php">8.4</span></span><span class="ssl off"><svg fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg><span data-th="พักไว้" data-en="suspended">พักไว้</span></span></div>
+        </div>
+      </div>
+    </div>
+  </header>
+  <!-- ═══════════════ STATS ═══════════════ -->
+  <div class="stats">
+    <div class="wrap stats-grid">
+      <div class="stat reveal">
+        <div class="n">1</div>
+        <div class="t" data-th="คำสั่งเดียว" data-en="One command">คำสั่งเดียว</div>
+        <div class="d" data-th="ติดตั้งทั้งระบบบนเครื่องเปล่า แล้วสร้างเว็บพร้อม HTTPS ได้ทันที" data-en="Full stack on a fresh server — ready to host HTTPS sites right away">
+          ติดตั้งทั้งระบบบนเครื่องเปล่า แล้วสร้างเว็บพร้อม HTTPS ได้ทันที</div>
+      </div>
+      <div class="stat reveal">
+        <div class="n">0</div>
+        <div class="t" data-th="dependency ภายนอก" data-en="External dependencies">dependency ภายนอก</div>
+        <div class="d" data-th="ไม่ใช้ Composer ไม่ดึง CDN ไม่มี build step — ติดตั้งบนเซิร์ฟเวอร์ปิดได้"
+             data-en="No Composer, no CDN, no build step — installs on air-gapped servers">ไม่ใช้ Composer ไม่ดึง CDN ไม่มี build step — ติดตั้งบนเซิร์ฟเวอร์ปิดได้</div>
+      </div>
+      <div class="stat reveal">
+        <div class="n">3</div>
+        <div class="t" data-th="ชั้นแยกสิทธิ์" data-en="Privilege tiers">ชั้นแยกสิทธิ์</div>
+        <div class="d" data-th="เว็บ · เอเจนต์ · ระบบปฏิบัติการ แยกออกจากกันอย่างเคร่งครัด" data-en="Web, agent and OS strictly separated — a UI breach ≠ root">เว็บ · เอเจนต์ ·
+          ระบบปฏิบัติการ แยกออกจากกันอย่างเคร่งครัด</div>
+      </div>
+      <div class="stat reveal">
+        <div class="n">MIT</div>
+        <div class="t" data-th="โอเพนซอร์ส" data-en="Open source">โอเพนซอร์ส</div>
+        <div class="d" data-th="ใช้ ศึกษา และดัดแปลงได้อิสระ ทั้งโค้ด 316 ไฟล์ PHP และเทสต์ 72 ชุด" data-en="Free to use, study and modify — 316 PHP files, 72 test suites">ใช้
+          ศึกษา และดัดแปลงได้อิสระ ทั้งโค้ด 316 ไฟล์ PHP และเทสต์ 72 ชุด</div>
+      </div>
+    </div>
+  </div>
+  <!-- ═══════════════ FEATURES ═══════════════ -->
+  <section id="features">
+    <div class="wrap">
+      <span class="kicker">Features</span>
+      <h2 data-th="ครบทุกงานของเซิร์ฟเวอร์โฮสติ้ง" data-en="Everything a hosting server needs">ครบทุกงานของเซิร์ฟเวอร์โฮสติ้ง</h2>
+      <p class="sec-lead" data-th="จากการสร้างเว็บไซต์แรก ไปจนถึงการดูแลระบบทั้งเครื่อง — ทำได้ครบจากเบราว์เซอร์ ไม่ต้อง SSH เข้าไปแก้ config ด้วยมือ"
+         data-en="From your first website to whole-server care — all from the browser, no manual config editing over SSH.">จากการสร้างเว็บไซต์แรก ไปจนถึงการดูแลระบบทั้งเครื่อง —
+        ทำได้ครบจากเบราว์เซอร์ ไม่ต้อง SSH เข้าไปแก้ config ด้วยมือ</p>
+      <div class="grid grid-3">
+        <div class="card reveal">
+          <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+            </svg></div>
+          <h3 data-th="เว็บไซต์" data-en="Websites">เว็บไซต์</h3>
+          <p data-th="สร้าง พัก ลบเว็บไซต์ — เลือก Apache, nginx หรือ nginx+Apache (ใช้ .htaccess บน nginx ได้) พร้อม PHP หลายเวอร์ชันต่อเว็บ และ Domain Pointer"
+             data-en="Create, suspend and delete sites — Apache, nginx or nginx+Apache (.htaccess works on nginx), multi-PHP per site and domain pointers.">สร้าง พัก ลบเว็บไซต์ —
+            เลือก Apache, nginx หรือ nginx+Apache (ใช้ .htaccess บน nginx ได้) พร้อม PHP หลายเวอร์ชันต่อเว็บ และ Domain Pointer</p>
+        </div>
+        <div class="card reveal">
+          <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24">
+              <path d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Z" />
+              <path d="M4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7" />
+              <path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" />
+            </svg></div>
+          <h3 data-th="ฐานข้อมูล" data-en="Databases">ฐานข้อมูล</h3>
+          <p data-th="สร้างฐานข้อมูล ผู้ใช้ และสิทธิ์บน MariaDB · เข้า phpMyAdmin ต่อจาก panel ได้ทันทีโดยไม่ต้องพิมพ์รหัสผ่าน"
+             data-en="Create databases, users and grants on MariaDB · jump into phpMyAdmin from the panel without typing a password.">สร้างฐานข้อมูล ผู้ใช้ และสิทธิ์บน MariaDB ·
+            เข้า phpMyAdmin ต่อจาก panel ได้ทันทีโดยไม่ต้องพิมพ์รหัสผ่าน</p>
+        </div>
+        <div class="card reveal">
+          <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24">
+              <rect x="4" y="11" width="16" height="10" rx="2" />
+              <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+            </svg></div>
+          <h3 data-th="SSL อัตโนมัติ" data-en="Automatic SSL">SSL อัตโนมัติ</h3>
+          <p data-th="ขอใบรับรอง Let's Encrypt ทั้งแบบ webroot และ DNS-01 สำหรับ wildcard · รองรับ self-signed · ต่ออายุอัตโนมัติ"
+             data-en="Let's Encrypt via webroot and DNS-01 for wildcards · self-signed certificates · automatic renewal.">ขอใบรับรอง Let's Encrypt ทั้งแบบ webroot และ DNS-01 สำหรับ
+            wildcard · รองรับ self-signed · ต่ออายุอัตโนมัติ</p>
+        </div>
+        <div class="card reveal">
+          <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Z" />
+              <path d="M4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7" />
+              <path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" />
+            </svg></div>
+          <h3 data-th="โดเมนและ DNS" data-en="Domains &amp; DNS">โดเมนและ DNS</h3>
+          <p data-th="โดเมนหลัก โดเมนย่อย alias และ wildcard — เขียน zone เข้า BIND9 ของจริง พร้อมตรวจ named-checkzone ทุกครั้งก่อนใช้"
+             data-en="Primary, sub, alias and wildcard domains — written into a real BIND9 zone, validated with named-checkzone before every apply.">โดเมนหลัก โดเมนย่อย alias และ
+            wildcard — เขียน zone เข้า BIND9 ของจริง พร้อมตรวจ named-checkzone ทุกครั้งก่อนใช้</p>
+        </div>
+        <div class="card reveal">
+          <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24">
+              <circle cx="9" cy="8" r="3.5" />
+              <path d="M2.5 20c.8-3.2 3.4-5 6.5-5s5.7 1.8 6.5 5" />
+              <path d="M16 4a3.5 3.5 0 0 1 0 7M21.5 20c-.6-2.4-2-4.1-4-4.8" />
+            </svg></div>
+          <h3 data-th="ผู้ใช้โฮสติ้ง" data-en="Hosting accounts">ผู้ใช้โฮสติ้ง</h3>
+          <p data-th="หนึ่งบัญชี = หนึ่ง uid = หนึ่งบ้าน — ลูกค้าแยกจากกันจริง · โควตาโดเมน/ฐานข้อมูล/อีเมล/พื้นที่ดิสก์ · SFTP แบบ chroot"
+             data-en="One account = one uid = one home — real tenant isolation · quotas for domains, databases, mail and disk · chrooted SFTP.">หนึ่งบัญชี = หนึ่ง uid = หนึ่งบ้าน —
+            ลูกค้าแยกจากกันจริง · โควตาโดเมน/ฐานข้อมูล/อีเมล/พื้นที่ดิสก์ · SFTP แบบ chroot</p>
+        </div>
+        <div class="card reveal">
+          <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24">
+              <rect x="3" y="5" width="18" height="14" rx="2" />
+              <path d="m4 7 8 6 8-6" />
+            </svg></div>
+          <h3 data-th="เมลจริงบนเครื่อง" data-en="Real mail on the box">เมลจริงบนเครื่อง</h3>
+          <p data-th="กล่องจดหมายจริง (Postfix + Dovecot) อ่านผ่าน IMAP ได้ · โควตารายกล่อง · ตัวส่งต่อ · เซ็น DKIM ด้วย rspamd · ดูคิวขาออกและหัวเมลได้โดยไม่มาร์คว่าอ่านแล้ว"
+             data-en="Real mailboxes (Postfix + Dovecot) reachable over IMAP · per-box quotas · forwarders · DKIM signing via rspamd · inspect the outbound queue and headers without marking mail as read.">
+            กล่องจดหมายจริง (Postfix + Dovecot) อ่านผ่าน IMAP ได้ · โควตารายกล่อง · ตัวส่งต่อ · เซ็น DKIM ด้วย rspamd · ดูคิวขาออกและหัวเมลได้โดยไม่มาร์คว่าอ่านแล้ว</p>
+        </div>
+        <div class="card reveal">
+          <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24">
+              <path d="M21 8v13H3V8" />
+              <path d="M23 3H1v5h22zM10 12h4" />
+            </svg></div>
+          <h3 data-th="สำรองข้อมูล" data-en="Backups">สำรองข้อมูล</h3>
+          <p data-th="ตั้งเวลาสำรองอัตโนมัติ · ส่งออกนอกเครื่องผ่าน local / sftp / rsync / S3 · กู้คืนพร้อมตรวจ checksum"
+             data-en="Scheduled backups · ship off-site via local / sftp / rsync / S3 · restore with checksum verification.">ตั้งเวลาสำรองอัตโนมัติ · ส่งออกนอกเครื่องผ่าน local /
+            sftp / rsync / S3 · กู้คืนพร้อมตรวจ checksum</p>
+        </div>
+        <div class="card reveal">
+          <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <path d="M3 12h4l3-8 4 16 3-8h4" />
+            </svg></div>
+          <h3 data-th="เฝ้าระวังระบบ" data-en="Monitoring">เฝ้าระวังระบบ</h3>
+          <p data-th="กราฟย้อนหลัง CPU / RAM / ดิสก์ · เกณฑ์แจ้งเตือน · ส่งแจ้งเตือนทาง Email / Telegram / Webhook · เมตริกสดส่งมาแบบ SSE"
+             data-en="Historical CPU / RAM / disk graphs · alert thresholds · notifications via email, Telegram and webhooks · live metrics over SSE.">กราฟย้อนหลัง CPU / RAM /
+            ดิสก์ · เกณฑ์แจ้งเตือน · ส่งแจ้งเตือนทาง Email / Telegram / Webhook · เมตริกสดส่งมาแบบ SSE</p>
+        </div>
+        <div class="card reveal">
+          <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M12 3 4 6v6c0 5 3.4 8.3 8 9 4.6-.7 8-4 8-9V6l-8-3Z" />
+              <path d="m9 12 2 2 4-4" />
+            </svg></div>
+          <h3 data-th="ศูนย์ความปลอดภัย" data-en="Security Center">ศูนย์ความปลอดภัย</h3>
+          <p data-th="Rate limit รายเว็บผ่าน fail2ban · firewall (ufw) · audit log แบบ hash-chain · ใบรับรอง TLS ของหน้าจัดการเองพร้อมต่ออายุอัตโนมัติ"
+             data-en="Per-site rate limiting via fail2ban · ufw firewall · hash-chain audit log · the panel manages its own TLS certificate with auto-renewal.">Rate limit
+            รายเว็บผ่าน fail2ban · firewall (ufw) · audit log แบบ hash-chain · ใบรับรอง TLS ของหน้าจัดการเองพร้อมต่ออายุอัตโนมัติ</p>
+        </div>
+        <div class="card reveal">
+          <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24">
+              <path d="m8 6-6 6 6 6M16 6l6 6-6 6" />
+            </svg></div>
+          <h3 data-th="แก้ไฟล์ตั้งค่าจากหน้าเว็บ" data-en="Config editor in the UI">แก้ไฟล์ตั้งค่าจากหน้าเว็บ</h3>
+          <p data-th="แก้ไฟล์ส่วนเสริมของ Apache / nginx / Postfix / Dovecot / BIND9 ได้เอง — ตรวจด้วยตัวตรวจของบริการนั้นก่อนใช้เสมอ ไม่ผ่านคืนค่าเดิมให้เอง"
+             data-en="Edit custom Apache / nginx / Postfix / Dovecot / BIND9 snippets in the UI — each is validated by the service's own checker first; a failed check rolls back automatically.">
+            แก้ไฟล์ส่วนเสริมของ Apache / nginx / Postfix / Dovecot / BIND9 ได้เอง — ตรวจด้วยตัวตรวจของบริการนั้นก่อนใช้เสมอ ไม่ผ่านคืนค่าเดิมให้เอง</p>
+        </div>
+        <div class="card reveal">
+          <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <path d="m4 17 6-5-6-5M12 19h8" />
+            </svg></div>
+          <h3 data-th="เครื่องมือระบบ" data-en="System tooling">เครื่องมือระบบ</h3>
+          <p data-th="จัดการบริการและงานตามเวลา · ตัวจัดการไฟล์ · ตั้งค่า SSH · อัปเดตตัวเองโดยตรวจลายเซ็นก่อนติดตั้งทุกครั้ง"
+             data-en="Services and cron jobs · file manager · SSH settings · self-updates with signature verification before install.">จัดการบริการและงานตามเวลา · ตัวจัดการไฟล์ ·
+            ตั้งค่า SSH · อัปเดตตัวเองโดยตรวจลายเซ็นก่อนติดตั้งทุกครั้ง</p>
+        </div>
+        <div class="card reveal">
+          <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24">
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <path d="M7 9h10M7 13h6" />
+            </svg></div>
+          <h3 data-th="REST API และ CLI" data-en="REST API &amp; CLI">REST API และ CLI</h3>
+          <p data-th="REST API v2 แบบ JSON ล้วน (สเปก OpenAPI) · คำสั่ง phpcp สำหรับสถานะ ตรวจสุขภาพ ผู้ใช้ และตรวจ audit log"
+             data-en="Pure-JSON REST API v2 (OpenAPI spec) · the phpcp CLI for status, health checks, users and audit verification.">REST API v2 แบบ JSON ล้วน (สเปก OpenAPI) ·
+            คำสั่ง phpcp สำหรับสถานะ ตรวจสุขภาพ ผู้ใช้ และตรวจ audit log</p>
+        </div>
+      </div>
+    </div>
+  </section>
+  <!-- ═══════════════ ARCHITECTURE ═══════════════ -->
+  <section id="architecture" class="arch">
+    <div class="wrap">
+      <span class="kicker">Architecture</span>
+      <h2 data-th="ออกแบบให้ถูกยึดแล้ว…ก็ยึดได้แค่นั้น" data-en="Built so a breach stays small">ออกแบบให้ถูกยึดแล้ว…ก็ยึดได้แค่นั้น</h2>
+      <p class="sec-lead" data-th="Control panel คือเป้าหมายที่มีค่าที่สุดบนเซิร์ฟเวอร์ — BluPanel จึงแยกสิทธิ์เป็นสามชั้น และบังคับใช้ทุกการทำงานผ่านจุดตรวจเดียว"
+         data-en="A control panel is the most valuable target on a server — BluPanel splits privileges across three tiers and funnels every privileged action through one checkpoint.">
+        Control panel คือเป้าหมายที่มีค่าที่สุดบนเซิร์ฟเวอร์ — BluPanel จึงแยกสิทธิ์เป็นสามชั้น และบังคับใช้ทุกการทำงานผ่านจุดตรวจเดียว</p>
+      <div class="diagram reveal">
+        <div class="layer l1">
+          <div class="tag-line"><span class="lnum" data-th="ชั้นที่ 1" data-en="TIER 1">ชั้นที่ 1</span><span data-th="เว็บ API — ผู้ใช้ phpcp-web ไม่มี sudo ไม่มี shell"
+                  data-en="Web API — runs as phpcp-web: no sudo, no shell">เว็บ API — ผู้ใช้ phpcp-web ไม่มี sudo ไม่มี shell</span></div>
+          <div class="sub" data-th="SPA บน Now.js คุยกับ /api/v2/* ที่ตอบ JSON ล้วน · Router + Middleware: Auth · CSRF · RBAC · RateLimit · เก็บ state ใน SQLite (WAL)"
+               data-en="Now.js SPA talking to a pure-JSON /api/v2/* · Router + middleware: auth, CSRF, RBAC, rate limiting · state in SQLite (WAL)">SPA บน Now.js คุยกับ /api/v2/*
+            ที่ตอบ JSON ล้วน · Router + Middleware: Auth · CSRF · RBAC · RateLimit · เก็บ state ใน SQLite (WAL)</div>
+          <div class="chips"><span class="chip">HTTPS :8443</span><span class="chip">JSON API</span><span class="chip">RBAC</span><span class="chip">SQLite WAL</span></div>
+        </div>
+        <div class="flow">
+          <div class="arr">
+            <svg fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <path d="M12 4v14M6 12l6 6 6-6" />
+            </svg>
+            <span class="sock">unix socket 0660 · /run/phpcp/agent.sock</span>
+          </div>
+        </div>
+        <div class="layer l2">
+          <div class="tag-line"><span class="lnum" data-th="ชั้นที่ 2" data-en="TIER 2">ชั้นที่ 2</span><span
+                  data-th="เอเจนต์ root — phpcp-agentd รับเฉพาะ capability ที่ลงทะเบียนไว้" data-en="Root agent — phpcp-agentd accepts registered capabilities only">เอเจนต์ root —
+              phpcp-agentd รับเฉพาะ capability ที่ลงทะเบียนไว้</span></div>
+          <div class="sub"
+               data-th="ตรวจชนิดข้อมูลทุก argument · สั่งงานด้วย proc_open(argv[]) ไม่ผ่าน shell · ทำงานเป็นเจ้าของเว็บด้วย privilege drop · งานยาวเป็น job (backup / SSL / ติดตั้ง)"
+               data-en="Every argument type-checked · executes via proc_open(argv[]) with no shell · drops privileges to the site owner · long jobs run as background tasks (backups, SSL, installs)">
+            ตรวจชนิดข้อมูลทุก argument · สั่งงานด้วย proc_open(argv[]) ไม่ผ่าน shell · ทำงานเป็นเจ้าของเว็บด้วย privilege drop · งานยาวเป็น job (backup / SSL / ติดตั้ง)</div>
+          <div class="chips"><span class="chip">capability registry</span><span class="chip">typed args</span><span class="chip">no shell strings</span><span class="chip">privilege
+              drop</span></div>
+        </div>
+        <div class="flow">
+          <div class="arr"><svg fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <path d="M12 4v14M6 12l6 6 6-6" />
+            </svg></div>
+        </div>
+        <div class="layer l3">
+          <div class="tag-line"><span class="lnum" data-th="ชั้นที่ 3" data-en="TIER 3">ชั้นที่ 3</span><span data-th="ระบบปฏิบัติการและบริการที่บริหาร"
+                  data-en="The operating system and managed services">ระบบปฏิบัติการและบริการที่บริหาร</span></div>
+          <div class="sub" data-th="ไม่มีเส้นทางจากชั้นเว็บมาชั้นนี้โดยตรง — ทุกอย่างต้องผ่านชั้นเอเจนต์"
+               data-en="There is no direct path from tier 1 to tier 3 — everything goes through the agent.">ไม่มีเส้นทางจากชั้นเว็บมาชั้นนี้โดยตรง — ทุกอย่างต้องผ่านชั้นเอเจนต์
+          </div>
+          <div class="chips"><span class="chip">systemd</span><span class="chip">Apache 2.4 / nginx</span><span class="chip">PHP-FPM multi-version</span><span
+                  class="chip">MariaDB</span><span class="chip">BIND9</span><span class="chip">Postfix + Dovecot</span><span class="chip">ufw · fail2ban</span><span
+                  class="chip">certbot</span></div>
+        </div>
+      </div>
+      <div class="grid grid-3">
+        <div class="card reveal">
+          <h3 data-th="ชั้นเว็บไม่มีสิทธิ์ root เด็ดขาด" data-en="The web layer never runs as root">ชั้นเว็บไม่มีสิทธิ์ root เด็ดขาด</h3>
+          <p data-th="ช่องโหว่ใน UI ต้องไม่กลายเป็น root shell — ยึดชั้นเว็บได้ ก็อ่านไฟล์ระบบไม่ได้"
+             data-en="A UI vulnerability must never become a root shell — take over the web tier and you still can't touch the system.">ช่องโหว่ใน UI ต้องไม่กลายเป็น root shell —
+            ยึดชั้นเว็บได้ ก็อ่านไฟล์ระบบไม่ได้</p>
+        </div>
+        <div class="card reveal">
+          <h3 data-th="ตัด command injection ที่ต้นทาง" data-en="Injection-proof by design">ตัด command injection ที่ต้นทาง</h3>
+          <p data-th="เอเจนต์รับเฉพาะ capability แบบ typed ที่ลงทะเบียนไว้ ไม่ใช่คำสั่งอิสระ — กันเชิงโครงสร้าง ไม่ใช่ด้วยการ escape"
+             data-en="The agent accepts registered, typed capabilities — never free-form commands. Prevention is structural, not escaping.">เอเจนต์รับเฉพาะ capability แบบ typed
+            ที่ลงทะเบียนไว้ ไม่ใช่คำสั่งอิสระ — กันเชิงโครงสร้าง ไม่ใช่ด้วยการ escape</p>
+        </div>
+        <div class="card reveal">
+          <h3 data-th="ตรวจ config ก่อน reload ทุกครั้ง" data-en="Validate before every reload">ตรวจ config ก่อน reload ทุกครั้ง</h3>
+          <p data-th="ทุกการเขียนไฟล์ตั้งค่าผ่าน ConfigTransaction — เขียนแล้วตรวจ (apache2 -t, named-checkzone, sshd -t) ก่อน reload เสมอ ไม่ผ่านคือย้อนกลับอัตโนมัติ"
+             data-en="All writes go through ConfigTransaction — write, validate (apache2 -t, named-checkzone, sshd -t), then reload; any failure auto-rolls-back.">
+            ทุกการเขียนไฟล์ตั้งค่าผ่าน ConfigTransaction — เขียนแล้วตรวจ (apache2 -t, named-checkzone, sshd -t) ก่อน reload เสมอ ไม่ผ่านคือย้อนกลับอัตโนมัติ</p>
+        </div>
+        <div class="card reveal">
+          <h3 data-th="panel มี stack ของตัวเอง" data-en="The panel has its own stack">panel มี stack ของตัวเอง</h3>
+          <p data-th="config tree ของตัวเองที่ /etc/phpcp พร้อม Apache และ PHP-FPM แยก — ไม่เขียนอะไรลง /etc/apache2 หรือ /etc/php แม้แต่ไฟล์เดียว สั่งหยุด Apache ของระบบแล้ว panel ยังต้องเข้าได้"
+             data-en="Its own config tree at /etc/phpcp with a separate Apache + PHP-FPM — it never writes to /etc/apache2 or /etc/php. Stop the system's Apache and the panel still answers.">
+            config tree ของตัวเองที่ /etc/phpcp พร้อม Apache และ PHP-FPM แยก — ไม่เขียนอะไรลง /etc/apache2 หรือ /etc/php แม้แต่ไฟล์เดียว สั่งหยุด Apache ของระบบแล้ว panel
+            ยังต้องเข้าได้</p>
+        </div>
+        <div class="card reveal">
+          <h3 data-th="state เก็บใน SQLite ไม่พึ่ง MariaDB" data-en="State in SQLite, independent of MariaDB">state เก็บใน SQLite ไม่พึ่ง MariaDB</h3>
+          <p data-th="panel เป็นคนคุม MariaDB จึงห้ามพึ่งพามัน — MariaDB ล่มแล้ว panel ต้องยังเข้าได้เพื่อกดสั่ง start กลับ"
+             data-en="The panel manages MariaDB, so it must not depend on it — if MariaDB dies, the panel stays up so you can restart it.">panel เป็นคนคุม MariaDB จึงห้ามพึ่งพามัน
+            — MariaDB ล่มแล้ว panel ต้องยังเข้าได้เพื่อกดสั่ง start กลับ</p>
+        </div>
+        <div class="card reveal">
+          <h3 data-th="3 โหมด: production · sandbox · dryrun" data-en="Three modes: production, sandbox, dryrun">3 โหมด: production · sandbox · dryrun</h3>
+          <p data-th="ทดสอบเต็มรูปแบบบนเครื่องนักพัฒนาได้โดยไม่แตะระบบจริง — ชุดทดสอบทั้งหมดรันโดยไม่ต้องใช้ root"
+             data-en="Full-featured testing on a dev machine without touching the real system — the entire test suite runs without root.">
+            ทดสอบเต็มรูปแบบบนเครื่องนักพัฒนาได้โดยไม่แตะระบบจริง — ชุดทดสอบทั้งหมดรันโดยไม่ต้องใช้ root</p>
+        </div>
+      </div>
+    </div>
+  </section>
+  <!-- ═══════════════ SECURITY ═══════════════ -->
+  <section id="security">
+    <div class="wrap">
+      <span class="kicker">Security</span>
+      <h2 data-th="ความปลอดภัยเป็นสถาปัตยกรรม ไม่ใช่ช่องในเช็กลิสต์" data-en="Security is the architecture, not a checkbox">ความปลอดภัยเป็นสถาปัตยกรรม ไม่ใช่ช่องในเช็กลิสต์</h2>
+      <p class="sec-lead"
+         data-th="มี threat model ที่เขียนไว้เป็นลายลักษณ์อักษร ระบุผู้โจมตี 5 ระดับที่ต้องรับมือ ตั้งแต่คนนอกที่ยังไม่ล็อกอิน จนถึง supply chain — พร้อมรายการตรวจก่อนขึ้น production"
+         data-en="A written threat model covers five attacker classes — from anonymous scanners to the supply chain — plus a pre-production hardening checklist.">มี threat model
+        ที่เขียนไว้เป็นลายลักษณ์อักษร ระบุผู้โจมตี 5 ระดับที่ต้องรับมือ ตั้งแต่คนนอกที่ยังไม่ล็อกอิน จนถึง supply chain — พร้อมรายการตรวจก่อนขึ้น production</p>
+      <div class="sec-grid">
+        <div class="sec-item reveal">
+          <div class="ck"><svg fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <path d="M20 6 9 17l-5-5" />
+            </svg></div>
+          <div><b data-th="HTTPS เท่านั้น + HSTS บนพอร์ตแยก 8443" data-en="HTTPS-only with HSTS on a dedicated port 8443">HTTPS เท่านั้น + HSTS บนพอร์ตแยก 8443</b><span
+                  data-th="ไม่มี default password — รหัสชั่วคราวสุ่มให้แสดงครั้งเดียว แล้วบังคับเปลี่ยนตั้งแต่ล็อกอินแรก"
+                  data-en="No default password — a random temporary one is shown once, with a forced change at first login.">ไม่มี default password —
+              รหัสชั่วคราวสุ่มให้แสดงครั้งเดียว แล้วบังคับเปลี่ยนตั้งแต่ล็อกอินแรก</span></div>
+        </div>
+        <div class="sec-item reveal">
+          <div class="ck"><svg fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <path d="M20 6 9 17l-5-5" />
+            </svg></div>
+          <div><b data-th="Argon2id + ตรวจรายการรหัสยอดนิยม" data-en="Argon2id + breached-password screening">Argon2id + ตรวจรายการรหัสยอดนิยม</b><span
+                  data-th="เก็บรหัสผ่านด้วย Argon2id (64 MB memory cost) และปฏิเสธรหัสจากรายการ 10,000 อันดับที่ถูกแฮ็กบ่อย — ตรวจจากไฟล์ local ไม่ส่งออกเน็ต"
+                  data-en="Passwords hashed with Argon2id (64 MB memory cost) and checked against a local list of the 10,000 most-breached ones — no network lookups.">เก็บรหัสผ่านด้วย
+              Argon2id (64 MB memory cost) และปฏิเสธรหัสจากรายการ 10,000 อันดับที่ถูกแฮ็กบ่อย — ตรวจจากไฟล์ local ไม่ส่งออกเน็ต</span></div>
+        </div>
+        <div class="sec-item reveal">
+          <div class="ck"><svg fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <path d="M20 6 9 17l-5-5" />
+            </svg></div>
+          <div><b data-th="2FA แบบ TOTP บังคับสำหรับผู้ดูแล" data-en="Mandatory TOTP 2FA for admins">2FA แบบ TOTP บังคับสำหรับผู้ดูแล</b><span
+                  data-th="superadmin และ sysadmin ต้องเปิด 2FA เสมอ · secret เข้ารหัสด้วย sodium secretbox · มี recovery code ใช้ได้ครั้งเดียว 10 ชุด"
+                  data-en="superadmin and sysadmin must enable 2FA · secrets encrypted with sodium secretbox · 10 single-use recovery codes.">superadmin และ sysadmin ต้องเปิด 2FA
+              เสมอ · secret เข้ารหัสด้วย sodium secretbox · มี recovery code ใช้ได้ครั้งเดียว 10 ชุด</span></div>
+        </div>
+        <div class="sec-item reveal">
+          <div class="ck"><svg fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <path d="M20 6 9 17l-5-5" />
+            </svg></div>
+          <div><b data-th="Rate limit + ล็อกบัญชีแบบทวีคูณ" data-en="Rate limiting + exponential lockout">Rate limit + ล็อกบัญชีแบบทวีคูณ</b><span
+                  data-th="token bucket ต่อ IP และต่อบัญชี · ผิด 5 ครั้งล็อก 15 นาที ผิดต่อเพิ่มเป็นชั่วโมง · ตอบเหมือนกันเสมอ กัน user enumeration"
+                  data-en="Token buckets per IP and per account · 5 failures = 15-minute lock, more = hours · identical responses prevent user enumeration.">token bucket ต่อ IP
+              และต่อบัญชี · ผิด 5 ครั้งล็อก 15 นาที ผิดต่อเพิ่มเป็นชั่วโมง · ตอบเหมือนกันเสมอ กัน user enumeration</span></div>
+        </div>
+        <div class="sec-item reveal">
+          <div class="ck"><svg fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <path d="M20 6 9 17l-5-5" />
+            </svg></div>
+          <div><b data-th="Session ผูก IP · คุกกี้ __Host- · หมุน id ทุก 15 นาที" data-en="IP-bound sessions, __Host- cookies, 15-min rotation">Session ผูก IP · คุกกี้ __Host- ·
+              หมุน id ทุก 15 นาที</b><span data-th="เก็บเฉพาะ hash ของ session id · Secure · HttpOnly · SameSite=Strict · idle timeout 30 นาที และหมุน id ทันทีหลังล็อกอิน"
+                  data-en="Only the session-id hash is stored · Secure, HttpOnly, SameSite=Strict · 30-min idle timeout, id rotated right after login.">เก็บเฉพาะ hash ของ session
+              id · Secure · HttpOnly · SameSite=Strict · idle timeout 30 นาที และหมุน id ทันทีหลังล็อกอิน</span></div>
+        </div>
+        <div class="sec-item reveal">
+          <div class="ck"><svg fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <path d="M20 6 9 17l-5-5" />
+            </svg></div>
+          <div><b data-th="CSP เข้มงวด ไม่มี unsafe-eval ไม่มี CDN" data-en="Strict CSP — no unsafe-eval, no CDN">CSP เข้มงวด ไม่มี unsafe-eval ไม่มี CDN</b><span
+                  data-th="script-src ใช้ nonce ต่อ request · ไลบรารีฝั่งหน้าเว็บ commit เข้า repo พร้อม SHA256SUMS ที่ phpcp doctor ตรวจทุกครั้ง"
+                  data-en="Per-request nonces · frontend libraries are committed with SHA256SUMS that phpcp doctor verifies.">script-src ใช้ nonce ต่อ request · ไลบรารีฝั่งหน้าเว็บ
+              commit เข้า repo พร้อม SHA256SUMS ที่ phpcp doctor ตรวจทุกครั้ง</span></div>
+        </div>
+        <div class="sec-item reveal">
+          <div class="ck"><svg fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <path d="M20 6 9 17l-5-5" />
+            </svg></div>
+          <div><b data-th="Audit log แบบ hash-chain" data-en="Hash-chain audit log">Audit log แบบ hash-chain</b><span
+                  data-th="ทุกการกระทำสำคัญถูกบันทึกเป็นลูกโซ่ hash ตรวจความต่อเนื่องย้อนหลังได้ด้วย phpcp audit:verify — ลบร่องรอยทำได้ยาก"
+                  data-en="Every significant action is chained by hashes; phpcp audit:verify proves the chain is intact — tampering leaves evidence.">ทุกการกระทำสำคัญถูกบันทึกเป็นลูกโซ่
+              hash ตรวจความต่อเนื่องย้อนหลังได้ด้วย phpcp audit:verify — ลบร่องรอยทำได้ยาก</span></div>
+        </div>
+        <div class="sec-item reveal">
+          <div class="ck"><svg fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <path d="M20 6 9 17l-5-5" />
+            </svg></div>
+          <div><b data-th="แยกลูกค้าด้วย uid ต่อบัญชี + SFTP chroot" data-en="Per-account uid isolation + chrooted SFTP">แยกลูกค้าด้วย uid ต่อบัญชี + SFTP chroot</b><span
+                  data-th="ลูกค้าโดนแฮ็กหนึ่งราย ต้องอ่านไฟล์ของอีกรายไม่ได้ — โควตาและสิทธิ์ผูกกับบัญชี ไม่ใช่เว็บไซต์"
+                  data-en="One hacked account cannot read another's files — quotas and permissions bind to accounts, not websites.">ลูกค้าโดนแฮ็กหนึ่งราย
+              ต้องอ่านไฟล์ของอีกรายไม่ได้ — โควตาและสิทธิ์ผูกกับบัญชี ไม่ใช่เว็บไซต์</span></div>
+        </div>
+      </div>
+      <div class="callout reveal">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M12 3 4 6v6c0 5 3.4 8.3 8 9 4.6-.7 8-4 8-9V6l-8-3Z" />
+        </svg>
+        <div data-th="<b>พบช่องโหว่?</b> อย่าเปิด issue สาธารณะ — ใช้แท็บ Security → Report a vulnerability ของ repository ครับ · อ่าน <a href='https://github.com/goragodwiriya/blupanel/blob/main/docs/SECURITY.md'>เอกสารความปลอดภัย</a> ให้จบก่อนเปิดใช้งานจริง"
+             data-en="<b>Found a vulnerability?</b> Please don't open a public issue — use the repository's Security → Report a vulnerability tab instead · read the <a href='https://github.com/goragodwiriya/blupanel/blob/main/docs/SECURITY.md'>security docs</a> before going to production.">
+          <b>พบช่องโหว่?</b> อย่าเปิด issue สาธารณะ — ใช้แท็บ Security → Report a vulnerability ของ repository ครับ · อ่าน <a
+             href='https://github.com/goragodwiriya/blupanel/blob/main/docs/SECURITY.md'>เอกสารความปลอดภัย</a> ให้จบก่อนเปิดใช้งานจริง</div>
+      </div>
+    </div>
+  </section>
+  <!-- ═══════════════ INSTALL ═══════════════ -->
+  <section id="install">
+    <div class="wrap">
+      <span class="kicker">Get started</span>
+      <h2 data-th="ติดตั้งบนเครื่องเปล่าด้วยคำสั่งเดียว" data-en="One command on a fresh server">ติดตั้งบนเครื่องเปล่าด้วยคำสั่งเดียว</h2>
+      <p class="sec-lead"
+         data-th="ตัวติดตั้งลงและตั้งค่าทั้งก้อนให้เอง — Apache, nginx, MariaDB, BIND9, Postfix, Dovecot, certbot, fail2ban, ufw, phpMyAdmin, logrotate และปิดเป็นรายข้อได้ถ้าเครื่องมีอยู่แล้ว"
+         data-en="The installer sets up the whole stack — Apache, nginx, MariaDB, BIND9, Postfix, Dovecot, certbot, fail2ban, ufw, phpMyAdmin, logrotate — and each part can be skipped if your server already has it.">
+        ตัวติดตั้งลงและตั้งค่าทั้งก้อนให้เอง — Apache, nginx, MariaDB, BIND9, Postfix, Dovecot, certbot, fail2ban, ufw, phpMyAdmin, logrotate
+        และปิดเป็นรายข้อได้ถ้าเครื่องมีอยู่แล้ว</p>
+      <div class="inst-grid">
+        <div class="steps reveal">
+          <div class="step">
+            <div class="sn">1</div>
+            <div>
+              <h4 data-th="โคลน repository" data-en="Clone the repository">โคลน repository</h4>
+              <p data-th="ได้จาก GitHub ภายใต้สัญญาอนุญาต MIT" data-en="From GitHub, MIT licensed.">ได้จาก GitHub ภายใต้สัญญาอนุญาต MIT</p>
+              <code class="code-inline">git clone https://github.com/goragodwiriya/blupanel.git &amp;&amp; cd blupanel</code>
+            </div>
+          </div>
+          <div class="step">
+            <div class="sn">2</div>
+            <div>
+              <h4 data-th="รันตัวติดตั้ง" data-en="Run the installer">รันตัวติดตั้ง</h4>
+              <p data-th="ปลายทางของการติดตั้งจะแสดงรหัสผ่านชั่วคราวของผู้ดูแล — แสดงครั้งเดียว จดไว้ให้ดี"
+                 data-en="At the end, the installer prints the temporary admin password — shown exactly once, write it down.">ปลายทางของการติดตั้งจะแสดงรหัสผ่านชั่วคราวของผู้ดูแล —
+                แสดงครั้งเดียว จดไว้ให้ดี</p>
+              <code class="code-inline">sudo ./install.sh</code>
+            </div>
+          </div>
+          <div class="step">
+            <div class="sn">3</div>
+            <div>
+              <h4 data-th="เปิดหน้าจัดการ" data-en="Open the panel">เปิดหน้าจัดการ</h4>
+              <p data-th="ระบบบังคับเปลี่ยนรหัสผ่านตั้งแต่ล็อกอินครั้งแรก จากนั้นสร้างเว็บไซต์แรกพร้อม HTTPS ได้เลย"
+                 data-en="You're forced to change the password at first login — then create your first HTTPS website right away.">ระบบบังคับเปลี่ยนรหัสผ่านตั้งแต่ล็อกอินครั้งแรก
+                จากนั้นสร้างเว็บไซต์แรกพร้อม HTTPS ได้เลย</p>
+              <code class="code-inline">https://&lt;server-ip&gt;:8443</code>
+            </div>
+          </div>
+        </div>
+        <div class="req reveal">
+          <h3>
+            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <path d="M8 2v4M16 2v4M3 10h18" />
+            </svg>
+            <span data-th="ความต้องการของระบบ" data-en="Requirements">ความต้องการของระบบ</span>
+          </h3>
+          <ul>
+            <li><svg fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+                <path d="M20 6 9 17l-5-5" />
+              </svg><span><b data-th="ระบบปฏิบัติการ" data-en="Operating system">ระบบปฏิบัติการ</b><small data-th="Debian 12+ · Ubuntu 22.04+ · Linux Mint 21+"
+                       data-en="Debian 12+ · Ubuntu 22.04+ · Linux Mint 21+">Debian 12+ · Ubuntu 22.04+ · Linux Mint 21+</small></span></li>
+            <li><svg fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+                <path d="M20 6 9 17l-5-5" />
+              </svg><span><b>PHP 8.2+</b><small data-th="PHP เท่านั้น ไม่มี Composer — ตัวติดตั้งลง PHP 8.4 ให้เอง"
+                       data-en="Plain PHP, no Composer — the installer sets up PHP 8.4 for you.">PHP เท่านั้น ไม่มี Composer — ตัวติดตั้งลง PHP 8.4 ให้เอง</small></span></li>
+            <li><svg fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+                <path d="M20 6 9 17l-5-5" />
+              </svg><span><b data-th="ทรัพยากร" data-en="Resources">ทรัพยากร</b><small data-th="RAM 1 GB · ดิสก์ว่าง 10 GB · สิทธิ์ root"
+                       data-en="1 GB RAM · 10 GB free disk · root access">RAM 1 GB · ดิสก์ว่าง 10 GB · สิทธิ์ root</small></span></li>
+            <li><svg fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+                <path d="M20 6 9 17l-5-5" />
+              </svg><span><b data-th="ทางเลือกสำหรับนักพัฒนา" data-en="For developers">ทางเลือกสำหรับนักพัฒนา</b><small
+                       data-th="./install.sh --mode=sandbox --portable — ทดลองในโฟลเดอร์โปรเจ็กต์ ไม่ต้องใช้ root"
+                       data-en="./install.sh --mode=sandbox --portable — try it inside the project folder, no root needed.">./install.sh --mode=sandbox --portable —
+                  ทดลองในโฟลเดอร์โปรเจ็กต์ ไม่ต้องใช้ root</small></span></li>
+          </ul>
+          <div class="ci-note">
+            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M12 2 3 7v10l9 5 9-5V7l-9-5Z" />
+              <path d="M12 22V12M3 7l9 5 9-5" />
+            </svg>
+            <span data-th='ทดสอบ "ติดตั้งบนเครื่องเปล่า" จริงใน CI ด้วย Docker ทุก push บน Debian 12, Ubuntu 22.04 และ 24.04 — ถ้าตัวติดตั้งพัง build จะล้ม · ติดตั้งบน AWS Lightsail มี <a href="https://github.com/goragodwiriya/blupanel/blob/main/docs/INSTALL-LIGHTSAIL.md">คู่มือแยก</a>'
+                  data-en='A real fresh-install acceptance test runs in Docker CI on every push — Debian 12, Ubuntu 22.04 &amp; 24.04; a broken installer fails the build · deploying to AWS Lightsail? See the <a href="https://github.com/goragodwiriya/blupanel/blob/main/docs/INSTALL-LIGHTSAIL.md">dedicated guide</a>.'>'ทดสอบ
+              "ติดตั้งบนเครื่องเปล่า" จริงใน CI ด้วย Docker ทุก push บน Debian 12, Ubuntu 22.04 และ 24.04 — ถ้าตัวติดตั้งพัง build จะล้ม · ติดตั้งบน AWS Lightsail มี <a
+                 href="https://github.com/goragodwiriya/blupanel/blob/main/docs/INSTALL-LIGHTSAIL.md">คู่มือแยก</a>'</span>
           </div>
         </div>
       </div>
-    </div>
-  </div>
-</header>
-
-<!-- ═══════════════ STATS ═══════════════ -->
-<div class="stats">
-  <div class="wrap stats-grid">
-    <div class="stat reveal"><div class="n">1</div><div class="t" data-th="คำสั่งเดียว" data-en="One command">คำสั่งเดียว</div><div class="d" data-th="ติดตั้งทั้งระบบบนเครื่องเปล่า แล้วสร้างเว็บพร้อม HTTPS ได้ทันที" data-en="Full stack on a fresh server — ready to host HTTPS sites right away">ติดตั้งทั้งระบบบนเครื่องเปล่า แล้วสร้างเว็บพร้อม HTTPS ได้ทันที</div></div>
-    <div class="stat reveal"><div class="n">0</div><div class="t" data-th="dependency ภายนอก" data-en="External dependencies">dependency ภายนอก</div><div class="d" data-th="ไม่ใช้ Composer ไม่ดึง CDN ไม่มี build step — ติดตั้งบนเซิร์ฟเวอร์ปิดได้" data-en="No Composer, no CDN, no build step — installs on air-gapped servers">ไม่ใช้ Composer ไม่ดึง CDN ไม่มี build step — ติดตั้งบนเซิร์ฟเวอร์ปิดได้</div></div>
-    <div class="stat reveal"><div class="n">3</div><div class="t" data-th="ชั้นแยกสิทธิ์" data-en="Privilege tiers">ชั้นแยกสิทธิ์</div><div class="d" data-th="เว็บ · เอเจนต์ · ระบบปฏิบัติการ แยกออกจากกันอย่างเคร่งครัด" data-en="Web, agent and OS strictly separated — a UI breach ≠ root">เว็บ · เอเจนต์ · ระบบปฏิบัติการ แยกออกจากกันอย่างเคร่งครัด</div></div>
-    <div class="stat reveal"><div class="n">MIT</div><div class="t" data-th="โอเพนซอร์ส" data-en="Open source">โอเพนซอร์ส</div><div class="d" data-th="ใช้ ศึกษา และดัดแปลงได้อิสระ ทั้งโค้ด 316 ไฟล์ PHP และเทสต์ 72 ชุด" data-en="Free to use, study and modify — 316 PHP files, 72 test suites">ใช้ ศึกษา และดัดแปลงได้อิสระ ทั้งโค้ด 316 ไฟล์ PHP และเทสต์ 72 ชุด</div></div>
-  </div>
-</div>
-
-<!-- ═══════════════ FEATURES ═══════════════ -->
-<section id="features">
-  <div class="wrap">
-    <span class="kicker">Features</span>
-    <h2 data-th="ครบทุกงานของเซิร์ฟเวอร์โฮสติ้ง" data-en="Everything a hosting server needs">ครบทุกงานของเซิร์ฟเวอร์โฮสติ้ง</h2>
-    <p class="sec-lead" data-th="จากการสร้างเว็บไซต์แรก ไปจนถึงการดูแลระบบทั้งเครื่อง — ทำได้ครบจากเบราว์เซอร์ ไม่ต้อง SSH เข้าไปแก้ config ด้วยมือ" data-en="From your first website to whole-server care — all from the browser, no manual config editing over SSH.">จากการสร้างเว็บไซต์แรก ไปจนถึงการดูแลระบบทั้งเครื่อง — ทำได้ครบจากเบราว์เซอร์ ไม่ต้อง SSH เข้าไปแก้ config ด้วยมือ</p>
-
-    <div class="grid grid-3">
-      <div class="card reveal">
-        <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg></div>
-        <h3 data-th="เว็บไซต์" data-en="Websites">เว็บไซต์</h3>
-        <p data-th="สร้าง พัก ลบเว็บไซต์ — เลือก Apache, nginx หรือ nginx+Apache (ใช้ .htaccess บน nginx ได้) พร้อม PHP หลายเวอร์ชันต่อเว็บ และ Domain Pointer" data-en="Create, suspend and delete sites — Apache, nginx or nginx+Apache (.htaccess works on nginx), multi-PHP per site and domain pointers.">สร้าง พัก ลบเว็บไซต์ — เลือก Apache, nginx หรือ nginx+Apache (ใช้ .htaccess บน nginx ได้) พร้อม PHP หลายเวอร์ชันต่อเว็บ และ Domain Pointer</p>
-      </div>
-      <div class="card reveal">
-        <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><path d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Z"/><path d="M4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></div>
-        <h3 data-th="ฐานข้อมูล" data-en="Databases">ฐานข้อมูล</h3>
-        <p data-th="สร้างฐานข้อมูล ผู้ใช้ และสิทธิ์บน MariaDB · เข้า phpMyAdmin ต่อจาก panel ได้ทันทีโดยไม่ต้องพิมพ์รหัสผ่าน" data-en="Create databases, users and grants on MariaDB · jump into phpMyAdmin from the panel without typing a password.">สร้างฐานข้อมูล ผู้ใช้ และสิทธิ์บน MariaDB · เข้า phpMyAdmin ต่อจาก panel ได้ทันทีโดยไม่ต้องพิมพ์รหัสผ่าน</p>
-      </div>
-      <div class="card reveal">
-        <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
-        <h3 data-th="SSL อัตโนมัติ" data-en="Automatic SSL">SSL อัตโนมัติ</h3>
-        <p data-th="ขอใบรับรอง Let's Encrypt ทั้งแบบ webroot และ DNS-01 สำหรับ wildcard · รองรับ self-signed · ต่ออายุอัตโนมัติ" data-en="Let's Encrypt via webroot and DNS-01 for wildcards · self-signed certificates · automatic renewal.">ขอใบรับรอง Let's Encrypt ทั้งแบบ webroot และ DNS-01 สำหรับ wildcard · รองรับ self-signed · ต่ออายุอัตโนมัติ</p>
-      </div>
-      <div class="card reveal">
-        <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Z"/><path d="M4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></div>
-        <h3 data-th="โดเมนและ DNS" data-en="Domains &amp; DNS">โดเมนและ DNS</h3>
-        <p data-th="โดเมนหลัก โดเมนย่อย alias และ wildcard — เขียน zone เข้า BIND9 ของจริง พร้อมตรวจ named-checkzone ทุกครั้งก่อนใช้" data-en="Primary, sub, alias and wildcard domains — written into a real BIND9 zone, validated with named-checkzone before every apply.">โดเมนหลัก โดเมนย่อย alias และ wildcard — เขียน zone เข้า BIND9 ของจริง พร้อมตรวจ named-checkzone ทุกครั้งก่อนใช้</p>
-      </div>
-      <div class="card reveal">
-        <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.2 3.4-5 6.5-5s5.7 1.8 6.5 5"/><path d="M16 4a3.5 3.5 0 0 1 0 7M21.5 20c-.6-2.4-2-4.1-4-4.8"/></svg></div>
-        <h3 data-th="ผู้ใช้โฮสติ้ง" data-en="Hosting accounts">ผู้ใช้โฮสติ้ง</h3>
-        <p data-th="หนึ่งบัญชี = หนึ่ง uid = หนึ่งบ้าน — ลูกค้าแยกจากกันจริง · โควตาโดเมน/ฐานข้อมูล/อีเมล/พื้นที่ดิสก์ · SFTP แบบ chroot" data-en="One account = one uid = one home — real tenant isolation · quotas for domains, databases, mail and disk · chrooted SFTP.">หนึ่งบัญชี = หนึ่ง uid = หนึ่งบ้าน — ลูกค้าแยกจากกันจริง · โควตาโดเมน/ฐานข้อมูล/อีเมล/พื้นที่ดิสก์ · SFTP แบบ chroot</p>
-      </div>
-      <div class="card reveal">
-        <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg></div>
-        <h3 data-th="เมลจริงบนเครื่อง" data-en="Real mail on the box">เมลจริงบนเครื่อง</h3>
-        <p data-th="กล่องจดหมายจริง (Postfix + Dovecot) อ่านผ่าน IMAP ได้ · โควตารายกล่อง · ตัวส่งต่อ · เซ็น DKIM ด้วย rspamd · ดูคิวขาออกและหัวเมลได้โดยไม่มาร์คว่าอ่านแล้ว" data-en="Real mailboxes (Postfix + Dovecot) reachable over IMAP · per-box quotas · forwarders · DKIM signing via rspamd · inspect the outbound queue and headers without marking mail as read.">กล่องจดหมายจริง (Postfix + Dovecot) อ่านผ่าน IMAP ได้ · โควตารายกล่อง · ตัวส่งต่อ · เซ็น DKIM ด้วย rspamd · ดูคิวขาออกและหัวเมลได้โดยไม่มาร์คว่าอ่านแล้ว</p>
-      </div>
-      <div class="card reveal">
-        <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><path d="M21 8v13H3V8"/><path d="M23 3H1v5h22zM10 12h4"/></svg></div>
-        <h3 data-th="สำรองข้อมูล" data-en="Backups">สำรองข้อมูล</h3>
-        <p data-th="ตั้งเวลาสำรองอัตโนมัติ · ส่งออกนอกเครื่องผ่าน local / sftp / rsync / S3 · กู้คืนพร้อมตรวจ checksum" data-en="Scheduled backups · ship off-site via local / sftp / rsync / S3 · restore with checksum verification.">ตั้งเวลาสำรองอัตโนมัติ · ส่งออกนอกเครื่องผ่าน local / sftp / rsync / S3 · กู้คืนพร้อมตรวจ checksum</p>
-      </div>
-      <div class="card reveal">
-        <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div>
-        <h3 data-th="เฝ้าระวังระบบ" data-en="Monitoring">เฝ้าระวังระบบ</h3>
-        <p data-th="กราฟย้อนหลัง CPU / RAM / ดิสก์ · เกณฑ์แจ้งเตือน · ส่งแจ้งเตือนทาง Email / Telegram / Webhook · เมตริกสดส่งมาแบบ SSE" data-en="Historical CPU / RAM / disk graphs · alert thresholds · notifications via email, Telegram and webhooks · live metrics over SSE.">กราฟย้อนหลัง CPU / RAM / ดิสก์ · เกณฑ์แจ้งเตือน · ส่งแจ้งเตือนทาง Email / Telegram / Webhook · เมตริกสดส่งมาแบบ SSE</p>
-      </div>
-      <div class="card reveal">
-        <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.4 8.3 8 9 4.6-.7 8-4 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4"/></svg></div>
-        <h3 data-th="ศูนย์ความปลอดภัย" data-en="Security Center">ศูนย์ความปลอดภัย</h3>
-        <p data-th="Rate limit รายเว็บผ่าน fail2ban · firewall (ufw) · audit log แบบ hash-chain · ใบรับรอง TLS ของหน้าจัดการเองพร้อมต่ออายุอัตโนมัติ" data-en="Per-site rate limiting via fail2ban · ufw firewall · hash-chain audit log · the panel manages its own TLS certificate with auto-renewal.">Rate limit รายเว็บผ่าน fail2ban · firewall (ufw) · audit log แบบ hash-chain · ใบรับรอง TLS ของหน้าจัดการเองพร้อมต่ออายุอัตโนมัติ</p>
-      </div>
-      <div class="card reveal">
-        <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><path d="m8 6-6 6 6 6M16 6l6 6-6 6"/></svg></div>
-        <h3 data-th="แก้ไฟล์ตั้งค่าจากหน้าเว็บ" data-en="Config editor in the UI">แก้ไฟล์ตั้งค่าจากหน้าเว็บ</h3>
-        <p data-th="แก้ไฟล์ส่วนเสริมของ Apache / nginx / Postfix / Dovecot / BIND9 ได้เอง — ตรวจด้วยตัวตรวจของบริการนั้นก่อนใช้เสมอ ไม่ผ่านคืนค่าเดิมให้เอง" data-en="Edit custom Apache / nginx / Postfix / Dovecot / BIND9 snippets in the UI — each is validated by the service's own checker first; a failed check rolls back automatically.">แก้ไฟล์ส่วนเสริมของ Apache / nginx / Postfix / Dovecot / BIND9 ได้เอง — ตรวจด้วยตัวตรวจของบริการนั้นก่อนใช้เสมอ ไม่ผ่านคืนค่าเดิมให้เอง</p>
-      </div>
-      <div class="card reveal">
-        <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="m4 17 6-5-6-5M12 19h8"/></svg></div>
-        <h3 data-th="เครื่องมือระบบ" data-en="System tooling">เครื่องมือระบบ</h3>
-        <p data-th="จัดการบริการและงานตามเวลา · ตัวจัดการไฟล์ · ตั้งค่า SSH · อัปเดตตัวเองโดยตรวจลายเซ็นก่อนติดตั้งทุกครั้ง" data-en="Services and cron jobs · file manager · SSH settings · self-updates with signature verification before install.">จัดการบริการและงานตามเวลา · ตัวจัดการไฟล์ · ตั้งค่า SSH · อัปเดตตัวเองโดยตรวจลายเซ็นก่อนติดตั้งทุกครั้ง</p>
-      </div>
-      <div class="card reveal">
-        <div class="ic"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 13h6"/></svg></div>
-        <h3 data-th="REST API และ CLI" data-en="REST API &amp; CLI">REST API และ CLI</h3>
-        <p data-th="REST API v2 แบบ JSON ล้วน (สเปก OpenAPI) · คำสั่ง phpcp สำหรับสถานะ ตรวจสุขภาพ ผู้ใช้ และตรวจ audit log" data-en="Pure-JSON REST API v2 (OpenAPI spec) · the phpcp CLI for status, health checks, users and audit verification.">REST API v2 แบบ JSON ล้วน (สเปก OpenAPI) · คำสั่ง phpcp สำหรับสถานะ ตรวจสุขภาพ ผู้ใช้ และตรวจ audit log</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ═══════════════ ARCHITECTURE ═══════════════ -->
-<section id="architecture" class="arch">
-  <div class="wrap">
-    <span class="kicker">Architecture</span>
-    <h2 data-th="ออกแบบให้ถูกยึดแล้ว…ก็ยึดได้แค่นั้น" data-en="Built so a breach stays small">ออกแบบให้ถูกยึดแล้ว…ก็ยึดได้แค่นั้น</h2>
-    <p class="sec-lead" data-th="Control panel คือเป้าหมายที่มีค่าที่สุดบนเซิร์ฟเวอร์ — BluPanel จึงแยกสิทธิ์เป็นสามชั้น และบังคับใช้ทุกการทำงานผ่านจุดตรวจเดียว" data-en="A control panel is the most valuable target on a server — BluPanel splits privileges across three tiers and funnels every privileged action through one checkpoint.">Control panel คือเป้าหมายที่มีค่าที่สุดบนเซิร์ฟเวอร์ — BluPanel จึงแยกสิทธิ์เป็นสามชั้น และบังคับใช้ทุกการทำงานผ่านจุดตรวจเดียว</p>
-
-    <div class="diagram reveal">
-      <div class="layer l1">
-        <div class="tag-line"><span class="lnum" data-th="ชั้นที่ 1" data-en="TIER 1">ชั้นที่ 1</span><span data-th="เว็บ API — ผู้ใช้ phpcp-web ไม่มี sudo ไม่มี shell" data-en="Web API — runs as phpcp-web: no sudo, no shell">เว็บ API — ผู้ใช้ phpcp-web ไม่มี sudo ไม่มี shell</span></div>
-        <div class="sub" data-th="SPA บน Now.js คุยกับ /api/v2/* ที่ตอบ JSON ล้วน · Router + Middleware: Auth · CSRF · RBAC · RateLimit · เก็บ state ใน SQLite (WAL)" data-en="Now.js SPA talking to a pure-JSON /api/v2/* · Router + middleware: auth, CSRF, RBAC, rate limiting · state in SQLite (WAL)">SPA บน Now.js คุยกับ /api/v2/* ที่ตอบ JSON ล้วน · Router + Middleware: Auth · CSRF · RBAC · RateLimit · เก็บ state ใน SQLite (WAL)</div>
-        <div class="chips"><span class="chip">HTTPS :8443</span><span class="chip">JSON API</span><span class="chip">RBAC</span><span class="chip">SQLite WAL</span></div>
-      </div>
-      <div class="flow">
-        <div class="arr">
-          <svg fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 4v14M6 12l6 6 6-6"/></svg>
-          <span class="sock">unix socket 0660 · /run/phpcp/agent.sock</span>
-        </div>
-      </div>
-      <div class="layer l2">
-        <div class="tag-line"><span class="lnum" data-th="ชั้นที่ 2" data-en="TIER 2">ชั้นที่ 2</span><span data-th="เอเจนต์ root — phpcp-agentd รับเฉพาะ capability ที่ลงทะเบียนไว้" data-en="Root agent — phpcp-agentd accepts registered capabilities only">เอเจนต์ root — phpcp-agentd รับเฉพาะ capability ที่ลงทะเบียนไว้</span></div>
-        <div class="sub" data-th="ตรวจชนิดข้อมูลทุก argument · สั่งงานด้วย proc_open(argv[]) ไม่ผ่าน shell · ทำงานเป็นเจ้าของเว็บด้วย privilege drop · งานยาวเป็น job (backup / SSL / ติดตั้ง)" data-en="Every argument type-checked · executes via proc_open(argv[]) with no shell · drops privileges to the site owner · long jobs run as background tasks (backups, SSL, installs)">ตรวจชนิดข้อมูลทุก argument · สั่งงานด้วย proc_open(argv[]) ไม่ผ่าน shell · ทำงานเป็นเจ้าของเว็บด้วย privilege drop · งานยาวเป็น job (backup / SSL / ติดตั้ง)</div>
-        <div class="chips"><span class="chip">capability registry</span><span class="chip">typed args</span><span class="chip">no shell strings</span><span class="chip">privilege drop</span></div>
-      </div>
-      <div class="flow">
-        <div class="arr"><svg fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 4v14M6 12l6 6 6-6"/></svg></div>
-      </div>
-      <div class="layer l3">
-        <div class="tag-line"><span class="lnum" data-th="ชั้นที่ 3" data-en="TIER 3">ชั้นที่ 3</span><span data-th="ระบบปฏิบัติการและบริการที่บริหาร" data-en="The operating system and managed services">ระบบปฏิบัติการและบริการที่บริหาร</span></div>
-        <div class="sub" data-th="ไม่มีเส้นทางจากชั้นเว็บมาชั้นนี้โดยตรง — ทุกอย่างต้องผ่านชั้นเอเจนต์" data-en="There is no direct path from tier 1 to tier 3 — everything goes through the agent.">ไม่มีเส้นทางจากชั้นเว็บมาชั้นนี้โดยตรง — ทุกอย่างต้องผ่านชั้นเอเจนต์</div>
-        <div class="chips"><span class="chip">systemd</span><span class="chip">Apache 2.4 / nginx</span><span class="chip">PHP-FPM multi-version</span><span class="chip">MariaDB</span><span class="chip">BIND9</span><span class="chip">Postfix + Dovecot</span><span class="chip">ufw · fail2ban</span><span class="chip">certbot</span></div>
-      </div>
-    </div>
-
-    <div class="grid grid-3">
-      <div class="card reveal">
-        <h3 data-th="ชั้นเว็บไม่มีสิทธิ์ root เด็ดขาด" data-en="The web layer never runs as root">ชั้นเว็บไม่มีสิทธิ์ root เด็ดขาด</h3>
-        <p data-th="ช่องโหว่ใน UI ต้องไม่กลายเป็น root shell — ยึดชั้นเว็บได้ ก็อ่านไฟล์ระบบไม่ได้" data-en="A UI vulnerability must never become a root shell — take over the web tier and you still can't touch the system.">ช่องโหว่ใน UI ต้องไม่กลายเป็น root shell — ยึดชั้นเว็บได้ ก็อ่านไฟล์ระบบไม่ได้</p>
-      </div>
-      <div class="card reveal">
-        <h3 data-th="ตัด command injection ที่ต้นทาง" data-en="Injection-proof by design">ตัด command injection ที่ต้นทาง</h3>
-        <p data-th="เอเจนต์รับเฉพาะ capability แบบ typed ที่ลงทะเบียนไว้ ไม่ใช่คำสั่งอิสระ — กันเชิงโครงสร้าง ไม่ใช่ด้วยการ escape" data-en="The agent accepts registered, typed capabilities — never free-form commands. Prevention is structural, not escaping.">เอเจนต์รับเฉพาะ capability แบบ typed ที่ลงทะเบียนไว้ ไม่ใช่คำสั่งอิสระ — กันเชิงโครงสร้าง ไม่ใช่ด้วยการ escape</p>
-      </div>
-      <div class="card reveal">
-        <h3 data-th="ตรวจ config ก่อน reload ทุกครั้ง" data-en="Validate before every reload">ตรวจ config ก่อน reload ทุกครั้ง</h3>
-        <p data-th="ทุกการเขียนไฟล์ตั้งค่าผ่าน ConfigTransaction — เขียนแล้วตรวจ (apache2 -t, named-checkzone, sshd -t) ก่อน reload เสมอ ไม่ผ่านคือย้อนกลับอัตโนมัติ" data-en="All writes go through ConfigTransaction — write, validate (apache2 -t, named-checkzone, sshd -t), then reload; any failure auto-rolls-back.">ทุกการเขียนไฟล์ตั้งค่าผ่าน ConfigTransaction — เขียนแล้วตรวจ (apache2 -t, named-checkzone, sshd -t) ก่อน reload เสมอ ไม่ผ่านคือย้อนกลับอัตโนมัติ</p>
-      </div>
-      <div class="card reveal">
-        <h3 data-th="panel มี stack ของตัวเอง" data-en="The panel has its own stack">panel มี stack ของตัวเอง</h3>
-        <p data-th="config tree ของตัวเองที่ /etc/phpcp พร้อม Apache และ PHP-FPM แยก — ไม่เขียนอะไรลง /etc/apache2 หรือ /etc/php แม้แต่ไฟล์เดียว สั่งหยุด Apache ของระบบแล้ว panel ยังต้องเข้าได้" data-en="Its own config tree at /etc/phpcp with a separate Apache + PHP-FPM — it never writes to /etc/apache2 or /etc/php. Stop the system's Apache and the panel still answers.">config tree ของตัวเองที่ /etc/phpcp พร้อม Apache และ PHP-FPM แยก — ไม่เขียนอะไรลง /etc/apache2 หรือ /etc/php แม้แต่ไฟล์เดียว สั่งหยุด Apache ของระบบแล้ว panel ยังต้องเข้าได้</p>
-      </div>
-      <div class="card reveal">
-        <h3 data-th="state เก็บใน SQLite ไม่พึ่ง MariaDB" data-en="State in SQLite, independent of MariaDB">state เก็บใน SQLite ไม่พึ่ง MariaDB</h3>
-        <p data-th="panel เป็นคนคุม MariaDB จึงห้ามพึ่งพามัน — MariaDB ล่มแล้ว panel ต้องยังเข้าได้เพื่อกดสั่ง start กลับ" data-en="The panel manages MariaDB, so it must not depend on it — if MariaDB dies, the panel stays up so you can restart it.">panel เป็นคนคุม MariaDB จึงห้ามพึ่งพามัน — MariaDB ล่มแล้ว panel ต้องยังเข้าได้เพื่อกดสั่ง start กลับ</p>
-      </div>
-      <div class="card reveal">
-        <h3 data-th="3 โหมด: production · sandbox · dryrun" data-en="Three modes: production, sandbox, dryrun">3 โหมด: production · sandbox · dryrun</h3>
-        <p data-th="ทดสอบเต็มรูปแบบบนเครื่องนักพัฒนาได้โดยไม่แตะระบบจริง — ชุดทดสอบทั้งหมดรันโดยไม่ต้องใช้ root" data-en="Full-featured testing on a dev machine without touching the real system — the entire test suite runs without root.">ทดสอบเต็มรูปแบบบนเครื่องนักพัฒนาได้โดยไม่แตะระบบจริง — ชุดทดสอบทั้งหมดรันโดยไม่ต้องใช้ root</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ═══════════════ SECURITY ═══════════════ -->
-<section id="security">
-  <div class="wrap">
-    <span class="kicker">Security</span>
-    <h2 data-th="ความปลอดภัยเป็นสถาปัตยกรรม ไม่ใช่ช่องในเช็กลิสต์" data-en="Security is the architecture, not a checkbox">ความปลอดภัยเป็นสถาปัตยกรรม ไม่ใช่ช่องในเช็กลิสต์</h2>
-    <p class="sec-lead" data-th="มี threat model ที่เขียนไว้เป็นลายลักษณ์อักษร ระบุผู้โจมตี 5 ระดับที่ต้องรับมือ ตั้งแต่คนนอกที่ยังไม่ล็อกอิน จนถึง supply chain — พร้อมรายการตรวจก่อนขึ้น production" data-en="A written threat model covers five attacker classes — from anonymous scanners to the supply chain — plus a pre-production hardening checklist.">มี threat model ที่เขียนไว้เป็นลายลักษณ์อักษร ระบุผู้โจมตี 5 ระดับที่ต้องรับมือ ตั้งแต่คนนอกที่ยังไม่ล็อกอิน จนถึง supply chain — พร้อมรายการตรวจก่อนขึ้น production</p>
-
-    <div class="sec-grid">
-      <div class="sec-item reveal"><div class="ck"><svg fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></div><div><b data-th="HTTPS เท่านั้น + HSTS บนพอร์ตแยก 8443" data-en="HTTPS-only with HSTS on a dedicated port 8443">HTTPS เท่านั้น + HSTS บนพอร์ตแยก 8443</b><span data-th="ไม่มี default password — รหัสชั่วคราวสุ่มให้แสดงครั้งเดียว แล้วบังคับเปลี่ยนตั้งแต่ล็อกอินแรก" data-en="No default password — a random temporary one is shown once, with a forced change at first login.">ไม่มี default password — รหัสชั่วคราวสุ่มให้แสดงครั้งเดียว แล้วบังคับเปลี่ยนตั้งแต่ล็อกอินแรก</span></div></div>
-      <div class="sec-item reveal"><div class="ck"><svg fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></div><div><b data-th="Argon2id + ตรวจรายการรหัสยอดนิยม" data-en="Argon2id + breached-password screening">Argon2id + ตรวจรายการรหัสยอดนิยม</b><span data-th="เก็บรหัสผ่านด้วย Argon2id (64 MB memory cost) และปฏิเสธรหัสจากรายการ 10,000 อันดับที่ถูกแฮ็กบ่อย — ตรวจจากไฟล์ local ไม่ส่งออกเน็ต" data-en="Passwords hashed with Argon2id (64 MB memory cost) and checked against a local list of the 10,000 most-breached ones — no network lookups.">เก็บรหัสผ่านด้วย Argon2id (64 MB memory cost) และปฏิเสธรหัสจากรายการ 10,000 อันดับที่ถูกแฮ็กบ่อย — ตรวจจากไฟล์ local ไม่ส่งออกเน็ต</span></div></div>
-      <div class="sec-item reveal"><div class="ck"><svg fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></div><div><b data-th="2FA แบบ TOTP บังคับสำหรับผู้ดูแล" data-en="Mandatory TOTP 2FA for admins">2FA แบบ TOTP บังคับสำหรับผู้ดูแล</b><span data-th="superadmin และ sysadmin ต้องเปิด 2FA เสมอ · secret เข้ารหัสด้วย sodium secretbox · มี recovery code ใช้ได้ครั้งเดียว 10 ชุด" data-en="superadmin and sysadmin must enable 2FA · secrets encrypted with sodium secretbox · 10 single-use recovery codes.">superadmin และ sysadmin ต้องเปิด 2FA เสมอ · secret เข้ารหัสด้วย sodium secretbox · มี recovery code ใช้ได้ครั้งเดียว 10 ชุด</span></div></div>
-      <div class="sec-item reveal"><div class="ck"><svg fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></div><div><b data-th="Rate limit + ล็อกบัญชีแบบทวีคูณ" data-en="Rate limiting + exponential lockout">Rate limit + ล็อกบัญชีแบบทวีคูณ</b><span data-th="token bucket ต่อ IP และต่อบัญชี · ผิด 5 ครั้งล็อก 15 นาที ผิดต่อเพิ่มเป็นชั่วโมง · ตอบเหมือนกันเสมอ กัน user enumeration" data-en="Token buckets per IP and per account · 5 failures = 15-minute lock, more = hours · identical responses prevent user enumeration.">token bucket ต่อ IP และต่อบัญชี · ผิด 5 ครั้งล็อก 15 นาที ผิดต่อเพิ่มเป็นชั่วโมง · ตอบเหมือนกันเสมอ กัน user enumeration</span></div></div>
-      <div class="sec-item reveal"><div class="ck"><svg fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></div><div><b data-th="Session ผูก IP · คุกกี้ __Host- · หมุน id ทุก 15 นาที" data-en="IP-bound sessions, __Host- cookies, 15-min rotation">Session ผูก IP · คุกกี้ __Host- · หมุน id ทุก 15 นาที</b><span data-th="เก็บเฉพาะ hash ของ session id · Secure · HttpOnly · SameSite=Strict · idle timeout 30 นาที และหมุน id ทันทีหลังล็อกอิน" data-en="Only the session-id hash is stored · Secure, HttpOnly, SameSite=Strict · 30-min idle timeout, id rotated right after login.">เก็บเฉพาะ hash ของ session id · Secure · HttpOnly · SameSite=Strict · idle timeout 30 นาที และหมุน id ทันทีหลังล็อกอิน</span></div></div>
-      <div class="sec-item reveal"><div class="ck"><svg fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></div><div><b data-th="CSP เข้มงวด ไม่มี unsafe-eval ไม่มี CDN" data-en="Strict CSP — no unsafe-eval, no CDN">CSP เข้มงวด ไม่มี unsafe-eval ไม่มี CDN</b><span data-th="script-src ใช้ nonce ต่อ request · ไลบรารีฝั่งหน้าเว็บ commit เข้า repo พร้อม SHA256SUMS ที่ phpcp doctor ตรวจทุกครั้ง" data-en="Per-request nonces · frontend libraries are committed with SHA256SUMS that phpcp doctor verifies.">script-src ใช้ nonce ต่อ request · ไลบรารีฝั่งหน้าเว็บ commit เข้า repo พร้อม SHA256SUMS ที่ phpcp doctor ตรวจทุกครั้ง</span></div></div>
-      <div class="sec-item reveal"><div class="ck"><svg fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></div><div><b data-th="Audit log แบบ hash-chain" data-en="Hash-chain audit log">Audit log แบบ hash-chain</b><span data-th="ทุกการกระทำสำคัญถูกบันทึกเป็นลูกโซ่ hash ตรวจความต่อเนื่องย้อนหลังได้ด้วย phpcp audit:verify — ลบร่องรอยทำได้ยาก" data-en="Every significant action is chained by hashes; phpcp audit:verify proves the chain is intact — tampering leaves evidence.">ทุกการกระทำสำคัญถูกบันทึกเป็นลูกโซ่ hash ตรวจความต่อเนื่องย้อนหลังได้ด้วย phpcp audit:verify — ลบร่องรอยทำได้ยาก</span></div></div>
-      <div class="sec-item reveal"><div class="ck"><svg fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></div><div><b data-th="แยกลูกค้าด้วย uid ต่อบัญชี + SFTP chroot" data-en="Per-account uid isolation + chrooted SFTP">แยกลูกค้าด้วย uid ต่อบัญชี + SFTP chroot</b><span data-th="ลูกค้าโดนแฮ็กหนึ่งราย ต้องอ่านไฟล์ของอีกรายไม่ได้ — โควตาและสิทธิ์ผูกกับบัญชี ไม่ใช่เว็บไซต์" data-en="One hacked account cannot read another's files — quotas and permissions bind to accounts, not websites.">ลูกค้าโดนแฮ็กหนึ่งราย ต้องอ่านไฟล์ของอีกรายไม่ได้ — โควตาและสิทธิ์ผูกกับบัญชี ไม่ใช่เว็บไซต์</span></div></div>
-    </div>
-
-    <div class="callout reveal">
-      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.4 8.3 8 9 4.6-.7 8-4 8-9V6l-8-3Z"/></svg>
-      <div data-th="<b>พบช่องโหว่?</b> อย่าเปิด issue สาธารณะ — ใช้แท็บ Security → Report a vulnerability ของ repository ครับ · อ่าน <a href='https://github.com/goragodwiriya/blupanel/blob/main/docs/SECURITY.md'>เอกสารความปลอดภัย</a> ให้จบก่อนเปิดใช้งานจริง" data-en="<b>Found a vulnerability?</b> Please don't open a public issue — use the repository's Security → Report a vulnerability tab instead · read the <a href='https://github.com/goragodwiriya/blupanel/blob/main/docs/SECURITY.md'>security docs</a> before going to production."><b>พบช่องโหว่?</b> อย่าเปิด issue สาธารณะ — ใช้แท็บ Security → Report a vulnerability ของ repository ครับ · อ่าน <a href='https://github.com/goragodwiriya/blupanel/blob/main/docs/SECURITY.md'>เอกสารความปลอดภัย</a> ให้จบก่อนเปิดใช้งานจริง</div>
-    </div>
-  </div>
-</section>
-
-<!-- ═══════════════ INSTALL ═══════════════ -->
-<section id="install">
-  <div class="wrap">
-    <span class="kicker">Get started</span>
-    <h2 data-th="ติดตั้งบนเครื่องเปล่าด้วยคำสั่งเดียว" data-en="One command on a fresh server">ติดตั้งบนเครื่องเปล่าด้วยคำสั่งเดียว</h2>
-    <p class="sec-lead" data-th="ตัวติดตั้งลงและตั้งค่าทั้งก้อนให้เอง — Apache, nginx, MariaDB, BIND9, Postfix, Dovecot, certbot, fail2ban, ufw, phpMyAdmin, logrotate และปิดเป็นรายข้อได้ถ้าเครื่องมีอยู่แล้ว" data-en="The installer sets up the whole stack — Apache, nginx, MariaDB, BIND9, Postfix, Dovecot, certbot, fail2ban, ufw, phpMyAdmin, logrotate — and each part can be skipped if your server already has it.">ตัวติดตั้งลงและตั้งค่าทั้งก้อนให้เอง — Apache, nginx, MariaDB, BIND9, Postfix, Dovecot, certbot, fail2ban, ufw, phpMyAdmin, logrotate และปิดเป็นรายข้อได้ถ้าเครื่องมีอยู่แล้ว</p>
-
-    <div class="inst-grid">
-      <div class="steps reveal">
-        <div class="step">
-          <div class="sn">1</div>
-          <div>
-            <h4 data-th="โคลน repository" data-en="Clone the repository">โคลน repository</h4>
-            <p data-th="ได้จาก GitHub ภายใต้สัญญาอนุญาต MIT" data-en="From GitHub, MIT licensed.">ได้จาก GitHub ภายใต้สัญญาอนุญาต MIT</p>
-            <code class="code-inline">git clone https://github.com/goragodwiriya/blupanel.git &amp;&amp; cd blupanel</code>
-          </div>
-        </div>
-        <div class="step">
-          <div class="sn">2</div>
-          <div>
-            <h4 data-th="รันตัวติดตั้ง" data-en="Run the installer">รันตัวติดตั้ง</h4>
-            <p data-th="ปลายทางของการติดตั้งจะแสดงรหัสผ่านชั่วคราวของผู้ดูแล — แสดงครั้งเดียว จดไว้ให้ดี" data-en="At the end, the installer prints the temporary admin password — shown exactly once, write it down.">ปลายทางของการติดตั้งจะแสดงรหัสผ่านชั่วคราวของผู้ดูแล — แสดงครั้งเดียว จดไว้ให้ดี</p>
-            <code class="code-inline">sudo ./install.sh</code>
-          </div>
-        </div>
-        <div class="step">
-          <div class="sn">3</div>
-          <div>
-            <h4 data-th="เปิดหน้าจัดการ" data-en="Open the panel">เปิดหน้าจัดการ</h4>
-            <p data-th="ระบบบังคับเปลี่ยนรหัสผ่านตั้งแต่ล็อกอินครั้งแรก จากนั้นสร้างเว็บไซต์แรกพร้อม HTTPS ได้เลย" data-en="You're forced to change the password at first login — then create your first HTTPS website right away.">ระบบบังคับเปลี่ยนรหัสผ่านตั้งแต่ล็อกอินครั้งแรก จากนั้นสร้างเว็บไซต์แรกพร้อม HTTPS ได้เลย</p>
-            <code class="code-inline">https://&lt;server-ip&gt;:8443</code>
-          </div>
-        </div>
-      </div>
-
-      <div class="req reveal">
-        <h3>
-          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/></svg>
-          <span data-th="ความต้องการของระบบ" data-en="Requirements">ความต้องการของระบบ</span>
-        </h3>
-        <ul>
-          <li><svg fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><span><b data-th="ระบบปฏิบัติการ" data-en="Operating system">ระบบปฏิบัติการ</b><small data-th="Debian 12+ · Ubuntu 22.04+ · Linux Mint 21+" data-en="Debian 12+ · Ubuntu 22.04+ · Linux Mint 21+">Debian 12+ · Ubuntu 22.04+ · Linux Mint 21+</small></span></li>
-          <li><svg fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><span><b>PHP 8.2+</b><small data-th="PHP เท่านั้น ไม่มี Composer — ตัวติดตั้งลง PHP 8.4 ให้เอง" data-en="Plain PHP, no Composer — the installer sets up PHP 8.4 for you.">PHP เท่านั้น ไม่มี Composer — ตัวติดตั้งลง PHP 8.4 ให้เอง</small></span></li>
-          <li><svg fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><span><b data-th="ทรัพยากร" data-en="Resources">ทรัพยากร</b><small data-th="RAM 1 GB · ดิสก์ว่าง 10 GB · สิทธิ์ root" data-en="1 GB RAM · 10 GB free disk · root access">RAM 1 GB · ดิสก์ว่าง 10 GB · สิทธิ์ root</small></span></li>
-          <li><svg fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg><span><b data-th="ทางเลือกสำหรับนักพัฒนา" data-en="For developers">ทางเลือกสำหรับนักพัฒนา</b><small data-th="./install.sh --mode=sandbox --portable — ทดลองในโฟลเดอร์โปรเจ็กต์ ไม่ต้องใช้ root" data-en="./install.sh --mode=sandbox --portable — try it inside the project folder, no root needed.">./install.sh --mode=sandbox --portable — ทดลองในโฟลเดอร์โปรเจ็กต์ ไม่ต้องใช้ root</small></span></li>
-        </ul>
-        <div class="ci-note">
-          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2 3 7v10l9 5 9-5V7l-9-5Z"/><path d="M12 22V12M3 7l9 5 9-5"/></svg>
-          <span data-th='ทดสอบ "ติดตั้งบนเครื่องเปล่า" จริงใน CI ด้วย Docker ทุก push บน Debian 12, Ubuntu 22.04 และ 24.04 — ถ้าตัวติดตั้งพัง build จะล้ม · ติดตั้งบน AWS Lightsail มี <a href="https://github.com/goragodwiriya/blupanel/blob/main/docs/INSTALL-LIGHTSAIL.md">คู่มือแยก</a>' data-en='A real fresh-install acceptance test runs in Docker CI on every push — Debian 12, Ubuntu 22.04 &amp; 24.04; a broken installer fails the build · deploying to AWS Lightsail? See the <a href="https://github.com/goragodwiriya/blupanel/blob/main/docs/INSTALL-LIGHTSAIL.md">dedicated guide</a>.'>'ทดสอบ "ติดตั้งบนเครื่องเปล่า" จริงใน CI ด้วย Docker ทุก push บน Debian 12, Ubuntu 22.04 และ 24.04 — ถ้าตัวติดตั้งพัง build จะล้ม · ติดตั้งบน AWS Lightsail มี <a href="https://github.com/goragodwiriya/blupanel/blob/main/docs/INSTALL-LIGHTSAIL.md">คู่มือแยก</a>'</span>
+      <div class="cli reveal">
+        <h3 data-th="ทำงานกับ CLI ได้ทั้งหมด" data-en="Everything works from the CLI too">ทำงานกับ CLI ได้ทั้งหมด</h3>
+        <p data-th="เหมาะกับ ssh เข้าไปดูเร็ว ๆ หรือเขียนสคริปต์ครอบทุกอย่าง" data-en="Quick checks over SSH, or script everything.">เหมาะกับ ssh เข้าไปดูเร็ว ๆ
+          หรือเขียนสคริปต์ครอบทุกอย่าง</p>
+        <div class="cli-grid">
+          <div class="cli-item"><code>phpcp status</code><span data-th="สถานะระบบโดยรวมในภาพเดียว" data-en="Whole-system status at a glance">สถานะระบบโดยรวมในภาพเดียว</span></div>
+          <div class="cli-item"><code>phpcp doctor</code><span data-th="ตรวจสิทธิ์ ไฟล์ตั้งค่า scheduler และ checksum ของไลบรารี"
+                  data-en="Checks permissions, config files, scheduler and library checksums">ตรวจสิทธิ์ ไฟล์ตั้งค่า scheduler และ checksum ของไลบรารี</span></div>
+          <div class="cli-item"><code>phpcp-scheduler --list</code><span data-th="งานตามเวลาและผลรอบล่าสุด"
+                  data-en="Scheduled jobs and their latest results">งานตามเวลาและผลรอบล่าสุด</span></div>
+          <div class="cli-item"><code>phpcp audit:verify</code><span data-th="ตรวจความต่อเนื่องของ hash-chain ใน audit log"
+                  data-en="Verifies the audit log's hash-chain integrity">ตรวจความต่อเนื่องของ hash-chain ใน audit log</span></div>
         </div>
       </div>
     </div>
-
-    <div class="cli reveal">
-      <h3 data-th="ทำงานกับ CLI ได้ทั้งหมด" data-en="Everything works from the CLI too">ทำงานกับ CLI ได้ทั้งหมด</h3>
-      <p data-th="เหมาะกับ ssh เข้าไปดูเร็ว ๆ หรือเขียนสคริปต์ครอบทุกอย่าง" data-en="Quick checks over SSH, or script everything.">เหมาะกับ ssh เข้าไปดูเร็ว ๆ หรือเขียนสคริปต์ครอบทุกอย่าง</p>
-      <div class="cli-grid">
-        <div class="cli-item"><code>phpcp status</code><span data-th="สถานะระบบโดยรวมในภาพเดียว" data-en="Whole-system status at a glance">สถานะระบบโดยรวมในภาพเดียว</span></div>
-        <div class="cli-item"><code>phpcp doctor</code><span data-th="ตรวจสิทธิ์ ไฟล์ตั้งค่า scheduler และ checksum ของไลบรารี" data-en="Checks permissions, config files, scheduler and library checksums">ตรวจสิทธิ์ ไฟล์ตั้งค่า scheduler และ checksum ของไลบรารี</span></div>
-        <div class="cli-item"><code>phpcp-scheduler --list</code><span data-th="งานตามเวลาและผลรอบล่าสุด" data-en="Scheduled jobs and their latest results">งานตามเวลาและผลรอบล่าสุด</span></div>
-        <div class="cli-item"><code>phpcp audit:verify</code><span data-th="ตรวจความต่อเนื่องของ hash-chain ใน audit log" data-en="Verifies the audit log's hash-chain integrity">ตรวจความต่อเนื่องของ hash-chain ใน audit log</span></div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ═══════════════ DOCS ═══════════════ -->
-<section id="docs" class="docs">
-  <div class="wrap">
-    <span class="kicker">Documentation</span>
-    <h2 data-th="เอกสารครบ ตั้งแต่ติดตั้งถึง threat model" data-en="Docs from first install to threat model">เอกสารครบ ตั้งแต่ติดตั้งถึง threat model</h2>
-    <p class="sec-lead" data-th="ทุกเอกสารอยู่ใน repository เดียวกับโค้ด อัปเดตพร้อมกันเสมอ" data-en="Every document lives in the same repository as the code and moves with it.">ทุกเอกสารอยู่ใน repository เดียวกับโค้ด อัปเดตพร้อมกันเสมอ</p>
-
-    <div class="docs-table reveal">
-      <a class="doc-row" href="https://github.com/goragodwiriya/blupanel/blob/main/docs/INSTALL.md" target="_blank" rel="noopener">
-        <span class="di"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 3h9l5 5v13H5V3Z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg></span>
-        <span><b data-th="คู่มือติดตั้ง" data-en="Installation guide">คู่มือติดตั้ง</b><p data-th="ติดตั้ง อัปเดต ถอนการติดตั้ง และแก้ปัญหาที่พบบ่อย" data-en="Install, update, uninstall and troubleshooting.">ติดตั้ง อัปเดต ถอนการติดตั้ง และแก้ปัญหาที่พบบ่อย</p></span>
-        <span class="go">docs/INSTALL.md <svg fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-      </a>
-      <a class="doc-row" href="https://github.com/goragodwiriya/blupanel/blob/main/docs/ARCHITECTURE.md" target="_blank" rel="noopener">
-        <span class="di"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Z"/><path d="M4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></span>
-        <span><b data-th="สถาปัตยกรรม" data-en="Architecture">สถาปัตยกรรม</b><p data-th="โครงสร้างภายใน ชั้น agent โหมดการทำงาน และการตัดสินใจออกแบบ" data-en="Internals, the agent tier, run modes and design decisions.">โครงสร้างภายใน ชั้น agent โหมดการทำงาน และการตัดสินใจออกแบบ</p></span>
-        <span class="go">docs/ARCHITECTURE.md <svg fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-      </a>
-      <a class="doc-row" href="https://github.com/goragodwiriya/blupanel/blob/main/docs/SECURITY.md" target="_blank" rel="noopener">
-        <span class="di"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.4 8.3 8 9 4.6-.7 8-4 8-9V6l-8-3Z"/></svg></span>
-        <span><b data-th="ความปลอดภัย" data-en="Security">ความปลอดภัย</b><p data-th="Threat model ชั้นการป้องกัน และรายการตรวจก่อนขึ้น production" data-en="Threat model, defense layers and a pre-production checklist.">Threat model ชั้นการป้องกัน และรายการตรวจก่อนขึ้น production</p></span>
-        <span class="go">docs/SECURITY.md <svg fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-      </a>
-      <a class="doc-row" href="https://github.com/goragodwiriya/blupanel/blob/main/docs/USER-GUIDE.md" target="_blank" rel="noopener">
-        <span class="di"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c.9-4 4.1-6 8-6s7.1 2 8 6"/></svg></span>
-        <span><b data-th="คู่มือใช้งาน" data-en="User guide">คู่มือใช้งาน</b><p data-th="วิธีใช้แต่ละหน้าจอของ panel" data-en="How to use every screen of the panel.">วิธีใช้แต่ละหน้าจอของ panel</p></span>
-        <span class="go">docs/USER-GUIDE.md <svg fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-      </a>
-      <a class="doc-row" href="https://github.com/goragodwiriya/blupanel/blob/main/docs/CUSTOMERS.md" target="_blank" rel="noopener">
-        <span class="di"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.2 3.4-5 6.5-5s5.7 1.8 6.5 5"/><path d="M16 4a3.5 3.5 0 0 1 0 7M21.5 20c-.6-2.4-2-4.1-4-4.8"/></svg></span>
-        <span><b data-th="บัญชีลูกค้าและโควตา" data-en="Accounts &amp; quotas">บัญชีลูกค้าและโควตา</b><p data-th="บัญชีโฮสติ้ง โควตา และการหมดอายุ" data-en="Hosting accounts, quotas and expiry handling.">บัญชีโฮสติ้ง โควตา และการหมดอายุ</p></span>
-        <span class="go">docs/CUSTOMERS.md <svg fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-      </a>
-      <a class="doc-row" href="https://github.com/goragodwiriya/blupanel/blob/main/docs/INSTALL-LIGHTSAIL.md" target="_blank" rel="noopener">
-        <span class="di"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 18a5 5 0 0 0-10 0M12 9a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7.5 3a3.5 3.5 0 1 0-1-6.9M19.5 12a3.5 3.5 0 1 0 1-6.9"/></svg></span>
-        <span><b>AWS Lightsail</b><p data-th="ไฟร์วอลล์สองชั้น พอร์ต 25 และ swap — ข้อจำกัดที่ต้องจัดการก่อน" data-en="Dual firewalls, port 25 and swap — the gotchas to handle first.">ไฟร์วอลล์สองชั้น พอร์ต 25 และ swap — ข้อจำกัดที่ต้องจัดการก่อน</p></span>
-        <span class="go">docs/INSTALL-LIGHTSAIL.md <svg fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-      </a>
-      <a class="doc-row" href="https://github.com/goragodwiriya/blupanel/blob/main/docs/openapi.yaml" target="_blank" rel="noopener">
-        <span class="di"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24"><path d="m8 6-6 6 6 6M16 6l6 6-6 6"/></svg></span>
-        <span><b>REST API v2</b><p data-th="สเปก OpenAPI ของ /api/v2/* ทั้งหมด" data-en="The OpenAPI spec for the entire /api/v2/* surface.">สเปก OpenAPI ของ /api/v2/* ทั้งหมด</p></span>
-        <span class="go">docs/openapi.yaml <svg fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-      </a>
-    </div>
-  </div>
-</section>
-
-<!-- ═══════════════ FOOTER ═══════════════ -->
-<footer>
-  <div class="wrap">
-    <div class="foot-grid">
-      <div class="foot-brand">
-        <a class="brand" href="#top">
-          <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#2563eb"/><rect x="14" y="16" width="36" height="8" rx="4" fill="#fff" opacity=".55"/><rect x="14" y="28" width="36" height="8" rx="4" fill="#fff" opacity=".8"/><rect x="14" y="40" width="24" height="8" rx="4" fill="#fff"/></svg>
-          BluPanel
+  </section>
+  <!-- ═══════════════ DOCS ═══════════════ -->
+  <section id="docs" class="docs">
+    <div class="wrap">
+      <span class="kicker">Documentation</span>
+      <h2 data-th="เอกสารครบ ตั้งแต่ติดตั้งถึง threat model" data-en="Docs from first install to threat model">เอกสารครบ ตั้งแต่ติดตั้งถึง threat model</h2>
+      <p class="sec-lead" data-th="ทุกเอกสารอยู่ใน repository เดียวกับโค้ด อัปเดตพร้อมกันเสมอ" data-en="Every document lives in the same repository as the code and moves with it.">
+        ทุกเอกสารอยู่ใน repository เดียวกับโค้ด อัปเดตพร้อมกันเสมอ</p>
+      <div class="docs-table reveal">
+        <a class="doc-row" href="https://github.com/goragodwiriya/blupanel/blob/main/docs/INSTALL.md" target="_blank" rel="noopener">
+          <span class="di"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M5 3h9l5 5v13H5V3Z" />
+              <path d="M14 3v5h5M9 13h6M9 17h6" />
+            </svg></span>
+          <span><b data-th="คู่มือติดตั้ง" data-en="Installation guide">คู่มือติดตั้ง</b>
+            <p data-th="ติดตั้ง อัปเดต ถอนการติดตั้ง และแก้ปัญหาที่พบบ่อย" data-en="Install, update, uninstall and troubleshooting.">ติดตั้ง อัปเดต ถอนการติดตั้ง
+              และแก้ปัญหาที่พบบ่อย</p>
+          </span>
+          <span class="go">docs/INSTALL.md <svg fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg></span>
         </a>
-        <p data-th="แผงควบคุมเซิร์ฟเวอร์ PHP โอเพนซอร์ส — เขียนด้วย PHP ธรรมดา ไม่มี dependency ภายนอกแม้แต่ตัวเดียว (ชื่อระบบภายใน: phpcp)" data-en="Open-source PHP server control panel — plain PHP, zero external dependencies. (Internal codename: phpcp)">แผงควบคุมเซิร์ฟเวอร์ PHP โอเพนซอร์ส — เขียนด้วย PHP ธรรมดา ไม่มี dependency ภายนอกแม้แต่ตัวเดียว (ชื่อระบบภายใน: phpcp)</p>
-      </div>
-      <div>
-        <h4 data-th="โปรเจ็กต์" data-en="Project">โปรเจ็กต์</h4>
-        <ul>
-          <li><a href="https://github.com/goragodwiriya/blupanel" target="_blank" rel="noopener" data-th="โค้ดบน GitHub" data-en="Source on GitHub">โค้ดบน GitHub</a></li>
-          <li><a href="https://github.com/goragodwiriya/blupanel/issues" target="_blank" rel="noopener" data-th="รายงานปัญหา" data-en="Issue tracker">รายงานปัญหา</a></li>
-          <li><a href="https://github.com/goragodwiriya/blupanel/security" target="_blank" rel="noopener" data-th="รายงานช่องโหว่" data-en="Report a vulnerability">รายงานช่องโหว่</a></li>
-          <li><a href="https://github.com/goragodwiriya/blupanel/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a></li>
-        </ul>
-      </div>
-      <div>
-        <h4 data-th="หน้านี้" data-en="On this page">หน้านี้</h4>
-        <ul>
-          <li><a href="#features" data-th="ความสามารถ" data-en="Features">ความสามารถ</a></li>
-          <li><a href="#architecture" data-th="สถาปัตยกรรม" data-en="Architecture">สถาปัตยกรรม</a></li>
-          <li><a href="#security" data-th="ความปลอดภัย" data-en="Security">ความปลอดภัย</a></li>
-          <li><a href="#install" data-th="ติดตั้ง" data-en="Get started">ติดตั้ง</a></li>
-          <li><a href="#docs" data-th="เอกสาร" data-en="Docs">เอกสาร</a></li>
-        </ul>
+        <a class="doc-row" href="https://github.com/goragodwiriya/blupanel/blob/main/docs/ARCHITECTURE.md" target="_blank" rel="noopener">
+          <span class="di"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Z" />
+              <path d="M4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7" />
+              <path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" />
+            </svg></span>
+          <span><b data-th="สถาปัตยกรรม" data-en="Architecture">สถาปัตยกรรม</b>
+            <p data-th="โครงสร้างภายใน ชั้น agent โหมดการทำงาน และการตัดสินใจออกแบบ" data-en="Internals, the agent tier, run modes and design decisions.">โครงสร้างภายใน ชั้น agent
+              โหมดการทำงาน และการตัดสินใจออกแบบ</p>
+          </span>
+          <span class="go">docs/ARCHITECTURE.md <svg fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg></span>
+        </a>
+        <a class="doc-row" href="https://github.com/goragodwiriya/blupanel/blob/main/docs/SECURITY.md" target="_blank" rel="noopener">
+          <span class="di"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M12 3 4 6v6c0 5 3.4 8.3 8 9 4.6-.7 8-4 8-9V6l-8-3Z" />
+            </svg></span>
+          <span><b data-th="ความปลอดภัย" data-en="Security">ความปลอดภัย</b>
+            <p data-th="Threat model ชั้นการป้องกัน และรายการตรวจก่อนขึ้น production" data-en="Threat model, defense layers and a pre-production checklist.">Threat model
+              ชั้นการป้องกัน และรายการตรวจก่อนขึ้น production</p>
+          </span>
+          <span class="go">docs/SECURITY.md <svg fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg></span>
+        </a>
+        <a class="doc-row" href="https://github.com/goragodwiriya/blupanel/blob/main/docs/USER-GUIDE.md" target="_blank" rel="noopener">
+          <span class="di"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <circle cx="12" cy="8" r="4" />
+              <path d="M4 21c.9-4 4.1-6 8-6s7.1 2 8 6" />
+            </svg></span>
+          <span><b data-th="คู่มือใช้งาน" data-en="User guide">คู่มือใช้งาน</b>
+            <p data-th="วิธีใช้แต่ละหน้าจอของ panel" data-en="How to use every screen of the panel.">วิธีใช้แต่ละหน้าจอของ panel</p>
+          </span>
+          <span class="go">docs/USER-GUIDE.md <svg fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg></span>
+        </a>
+        <a class="doc-row" href="https://github.com/goragodwiriya/blupanel/blob/main/docs/CUSTOMERS.md" target="_blank" rel="noopener">
+          <span class="di"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24">
+              <circle cx="9" cy="8" r="3.5" />
+              <path d="M2.5 20c.8-3.2 3.4-5 6.5-5s5.7 1.8 6.5 5" />
+              <path d="M16 4a3.5 3.5 0 0 1 0 7M21.5 20c-.6-2.4-2-4.1-4-4.8" />
+            </svg></span>
+          <span><b data-th="บัญชีลูกค้าและโควตา" data-en="Accounts &amp; quotas">บัญชีลูกค้าและโควตา</b>
+            <p data-th="บัญชีโฮสติ้ง โควตา และการหมดอายุ" data-en="Hosting accounts, quotas and expiry handling.">บัญชีโฮสติ้ง โควตา และการหมดอายุ</p>
+          </span>
+          <span class="go">docs/CUSTOMERS.md <svg fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg></span>
+        </a>
+        <a class="doc-row" href="https://github.com/goragodwiriya/blupanel/blob/main/docs/INSTALL-LIGHTSAIL.md" target="_blank" rel="noopener">
+          <span class="di"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path d="M17 18a5 5 0 0 0-10 0M12 9a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7.5 3a3.5 3.5 0 1 0-1-6.9M19.5 12a3.5 3.5 0 1 0 1-6.9" />
+            </svg></span>
+          <span><b>AWS Lightsail</b>
+            <p data-th="ไฟร์วอลล์สองชั้น พอร์ต 25 และ swap — ข้อจำกัดที่ต้องจัดการก่อน" data-en="Dual firewalls, port 25 and swap — the gotchas to handle first.">ไฟร์วอลล์สองชั้น
+              พอร์ต 25 และ swap — ข้อจำกัดที่ต้องจัดการก่อน</p>
+          </span>
+          <span class="go">docs/INSTALL-LIGHTSAIL.md <svg fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg></span>
+        </a>
+        <a class="doc-row" href="https://github.com/goragodwiriya/blupanel/blob/main/docs/openapi.yaml" target="_blank" rel="noopener">
+          <span class="di"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" viewBox="0 0 24 24">
+              <path d="m8 6-6 6 6 6M16 6l6 6-6 6" />
+            </svg></span>
+          <span><b>REST API v2</b>
+            <p data-th="สเปก OpenAPI ของ /api/v2/* ทั้งหมด" data-en="The OpenAPI spec for the entire /api/v2/* surface.">สเปก OpenAPI ของ /api/v2/* ทั้งหมด</p>
+          </span>
+          <span class="go">docs/openapi.yaml <svg fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg></span>
+        </a>
       </div>
     </div>
-    <div class="foot-bottom">
-      <span>© 2026 Goragod Wiriya · MIT License</span>
+  </section>
+  <!-- ═══════════════ FOOTER ═══════════════ -->
+  <footer>
+    <div class="wrap">
+      <div class="foot-grid">
+        <div class="foot-brand">
+          <a class="brand" href="#top">
+            <svg viewBox="0 0 64 64" aria-hidden="true">
+              <rect width="64" height="64" rx="14" fill="#2563eb" />
+              <rect x="14" y="16" width="36" height="8" rx="4" fill="#fff" opacity=".55" />
+              <rect x="14" y="28" width="36" height="8" rx="4" fill="#fff" opacity=".8" />
+              <rect x="14" y="40" width="24" height="8" rx="4" fill="#fff" />
+            </svg> BluPanel </a>
+          <p data-th="แผงควบคุมเซิร์ฟเวอร์ PHP โอเพนซอร์ส — เขียนด้วย PHP ธรรมดา ไม่มี dependency ภายนอกแม้แต่ตัวเดียว (ชื่อระบบภายใน: phpcp)"
+             data-en="Open-source PHP server control panel — plain PHP, zero external dependencies. (Internal codename: phpcp)">แผงควบคุมเซิร์ฟเวอร์ PHP โอเพนซอร์ส — เขียนด้วย PHP
+            ธรรมดา ไม่มี dependency ภายนอกแม้แต่ตัวเดียว (ชื่อระบบภายใน: phpcp)</p>
+        </div>
+        <div>
+          <h4 data-th="โปรเจ็กต์" data-en="Project">โปรเจ็กต์</h4>
+          <ul>
+            <li><a href="https://github.com/goragodwiriya/blupanel" target="_blank" rel="noopener" data-th="โค้ดบน GitHub" data-en="Source on GitHub">โค้ดบน GitHub</a></li>
+            <li><a href="https://github.com/goragodwiriya/blupanel/issues" target="_blank" rel="noopener" data-th="รายงานปัญหา" data-en="Issue tracker">รายงานปัญหา</a></li>
+            <li><a href="https://github.com/goragodwiriya/blupanel/security" target="_blank" rel="noopener" data-th="รายงานช่องโหว่"
+                 data-en="Report a vulnerability">รายงานช่องโหว่</a></li>
+            <li><a href="https://github.com/goragodwiriya/blupanel/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a></li>
+          </ul>
+        </div>
+        <div>
+          <h4 data-th="หน้านี้" data-en="On this page">หน้านี้</h4>
+          <ul>
+            <li><a href="#features" data-th="ความสามารถ" data-en="Features">ความสามารถ</a></li>
+            <li><a href="#architecture" data-th="สถาปัตยกรรม" data-en="Architecture">สถาปัตยกรรม</a></li>
+            <li><a href="#security" data-th="ความปลอดภัย" data-en="Security">ความปลอดภัย</a></li>
+            <li><a href="#install" data-th="ติดตั้ง" data-en="Get started">ติดตั้ง</a></li>
+            <li><a href="#docs" data-th="เอกสาร" data-en="Docs">เอกสาร</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="foot-bottom">
+        <span>© 2026 Goragod Wiriya · MIT License</span>
+      </div>
     </div>
-  </div>
-</footer>
+  </footer>
+  <script>
+    (function () {
+      "use strict";
 
-<script>
-(function(){
-  "use strict";
+      /* ---------- i18n ---------- */
+      var TITLES = {
+        th: "BluPanel — แผงควบคุมเซิร์ฟเวอร์ PHP บน Linux",
+        en: "BluPanel — the PHP server control panel for Linux"
+      };
+      var METAS = {
+        th: "BluPanel — แผงควบคุมโฮสติ้งโอเพนซอร์สสำหรับ Linux จัดการเว็บไซต์ โดเมน DNS ฐานข้อมูล SSL อีเมล สำรองข้อมูล จากหน้าจอเดียว ติดตั้งด้วยคำสั่งเดียว",
+        en: "BluPanel — open-source hosting control panel for Linux. Websites, domains, DNS, databases, SSL, mail and backups from one screen, installed with a single command."
+      };
+      var KEY = "blupanel-lang";
+      var btnTh = document.getElementById("btnTh");
+      var btnEn = document.getElementById("btnEn");
 
-  /* ---------- i18n ---------- */
-  var TITLES = {
-    th: "BluPanel — แผงควบคุมเซิร์ฟเวอร์ PHP บน Linux",
-    en: "BluPanel — the PHP server control panel for Linux"
-  };
-  var METAS = {
-    th: "BluPanel — แผงควบคุมโฮสติ้งโอเพนซอร์สสำหรับ Linux จัดการเว็บไซต์ โดเมน DNS ฐานข้อมูล SSL อีเมล สำรองข้อมูล จากหน้าจอเดียว ติดตั้งด้วยคำสั่งเดียว",
-    en: "BluPanel — open-source hosting control panel for Linux. Websites, domains, DNS, databases, SSL, mail and backups from one screen, installed with a single command."
-  };
-  var KEY = "blupanel-lang";
-  var btnTh = document.getElementById("btnTh");
-  var btnEn = document.getElementById("btnEn");
-
-  function setLang(lang){
-    document.documentElement.lang = lang;
-    document.title = TITLES[lang];
-    var md = document.querySelector('meta[name="description"]');
-    if (md) md.setAttribute("content", METAS[lang]);
-    var nodes = document.querySelectorAll("[data-th]");
-    for (var i = 0; i < nodes.length; i++){
-      var el = nodes[i];
-      // skip elements whose ancestor is also translatable — the ancestor's
-      // innerHTML swap already covers them, and swapping the child first
-      // would be overwritten anyway.
-      var p = el.parentElement, covered = false;
-      while (p){
-        if (p.hasAttribute && p.hasAttribute("data-th")){ covered = true; break; }
-        p = p.parentElement;
-      }
-      if (!covered) el.innerHTML = el.getAttribute("data-" + lang);
-    }
-    btnTh.classList.toggle("on", lang === "th");
-    btnEn.classList.toggle("on", lang === "en");
-    try { localStorage.setItem(KEY, lang); } catch(e){}
-  }
-
-  btnTh.addEventListener("click", function(){ setLang("th"); });
-  btnEn.addEventListener("click", function(){ setLang("en"); });
-
-  var saved = "th";
-  try { saved = localStorage.getItem(KEY) || "th"; } catch(e){}
-  if (saved !== "th" && saved !== "en") saved = "th";
-  if (saved !== "th") setLang(saved); else setLang("th");
-
-  /* ---------- copy buttons ---------- */
-  var copies = document.querySelectorAll(".copy");
-  for (var c = 0; c < copies.length; c++){
-    copies[c].addEventListener("click", function(){
-      var btn = this;
-      var txt = btn.getAttribute("data-copy");
-      function done(){
-        btn.classList.add("done");
-        btn.textContent = btn.getAttribute("data-en") && document.documentElement.lang === "en" ? "Copied" : "คัดลอกแล้ว";
-        setTimeout(function(){
-          btn.classList.remove("done");
-          setLang(document.documentElement.lang);
-        }, 1600);
-      }
-      if (navigator.clipboard && navigator.clipboard.writeText){
-        navigator.clipboard.writeText(txt).then(done, done);
-      } else {
-        var ta = document.createElement("textarea");
-        ta.value = txt; document.body.appendChild(ta); ta.select();
-        try { document.execCommand("copy"); } catch(e){}
-        document.body.removeChild(ta); done();
-      }
-    });
-  }
-
-  /* ---------- reveal on scroll ---------- */
-  var reveals = document.querySelectorAll(".reveal");
-  if ("IntersectionObserver" in window){
-    var io = new IntersectionObserver(function(entries){
-      entries.forEach(function(en){
-        if (en.isIntersecting){ en.target.classList.add("in"); io.unobserve(en.target); }
-      });
-    }, { threshold: 0.08 });
-    reveals.forEach(function(el){ io.observe(el); });
-    var mock = document.getElementById("mock");
-    if (mock && !mock.classList.contains("reveal")) mock.classList.add("in");
-    if (mock) io.observe(mock);
-  } else {
-    reveals.forEach(function(el){ el.classList.add("in"); });
-    var m2 = document.getElementById("mock");
-    if (m2) m2.classList.add("in");
-  }
-
-  /* ---------- mobile menu ---------- */
-  var burger = document.getElementById("burger");
-  var links = document.getElementById("navLinks");
-  burger.addEventListener("click", function(){
-    var open = links.classList.toggle("open");
-    burger.setAttribute("aria-expanded", open ? "true" : "false");
-  });
-  links.addEventListener("click", function(e){
-    if (e.target.tagName === "A"){ links.classList.remove("open"); burger.setAttribute("aria-expanded","false"); }
-  });
-
-  /* ---------- active nav link ---------- */
-  var secs = document.querySelectorAll("section[id]");
-  var navAs = document.querySelectorAll(".nav-links a");
-  if ("IntersectionObserver" in window){
-    var so = new IntersectionObserver(function(entries){
-      entries.forEach(function(en){
-        if (en.isIntersecting){
-          navAs.forEach(function(a){ a.removeAttribute("aria-current"); });
-          var id = "#" + en.target.id;
-          navAs.forEach(function(a){ if (a.getAttribute("href") === id) a.setAttribute("aria-current","true"); });
+      function setLang(lang) {
+        document.documentElement.lang = lang;
+        document.title = TITLES[lang];
+        var md = document.querySelector('meta[name="description"]');
+        if (md) md.setAttribute("content", METAS[lang]);
+        var nodes = document.querySelectorAll("[data-th]");
+        for (var i = 0; i < nodes.length; i++) {
+          var el = nodes[i];
+          // skip elements whose ancestor is also translatable — the ancestor's
+          // innerHTML swap already covers them, and swapping the child first
+          // would be overwritten anyway.
+          var p = el.parentElement, covered = false;
+          while (p) {
+            if (p.hasAttribute && p.hasAttribute("data-th")) { covered = true; break; }
+            p = p.parentElement;
+          }
+          if (!covered) el.innerHTML = el.getAttribute("data-" + lang);
         }
+        btnTh.classList.toggle("on", lang === "th");
+        btnEn.classList.toggle("on", lang === "en");
+        try { localStorage.setItem(KEY, lang); } catch (e) { }
+      }
+
+      btnTh.addEventListener("click", function () { setLang("th"); });
+      btnEn.addEventListener("click", function () { setLang("en"); });
+
+      var saved = "th";
+      try { saved = localStorage.getItem(KEY) || "th"; } catch (e) { }
+      if (saved !== "th" && saved !== "en") saved = "th";
+      if (saved !== "th") setLang(saved); else setLang("th");
+
+      /* ---------- copy buttons ---------- */
+      var copies = document.querySelectorAll(".copy");
+      for (var c = 0; c < copies.length; c++) {
+        copies[c].addEventListener("click", function () {
+          var btn = this;
+          var txt = btn.getAttribute("data-copy");
+          function done() {
+            btn.classList.add("done");
+            btn.textContent = btn.getAttribute("data-en") && document.documentElement.lang === "en" ? "Copied" : "คัดลอกแล้ว";
+            setTimeout(function () {
+              btn.classList.remove("done");
+              setLang(document.documentElement.lang);
+            }, 1600);
+          }
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(txt).then(done, done);
+          } else {
+            var ta = document.createElement("textarea");
+            ta.value = txt; document.body.appendChild(ta); ta.select();
+            try { document.execCommand("copy"); } catch (e) { }
+            document.body.removeChild(ta); done();
+          }
+        });
+      }
+
+      /* ---------- reveal on scroll ---------- */
+      var reveals = document.querySelectorAll(".reveal");
+      if ("IntersectionObserver" in window) {
+        var io = new IntersectionObserver(function (entries) {
+          entries.forEach(function (en) {
+            if (en.isIntersecting) { en.target.classList.add("in"); io.unobserve(en.target); }
+          });
+        }, { threshold: 0.08 });
+        reveals.forEach(function (el) { io.observe(el); });
+        var mock = document.getElementById("mock");
+        if (mock && !mock.classList.contains("reveal")) mock.classList.add("in");
+        if (mock) io.observe(mock);
+      } else {
+        reveals.forEach(function (el) { el.classList.add("in"); });
+        var m2 = document.getElementById("mock");
+        if (m2) m2.classList.add("in");
+      }
+
+      /* ---------- mobile menu ---------- */
+      var burger = document.getElementById("burger");
+      var links = document.getElementById("navLinks");
+      burger.addEventListener("click", function () {
+        var open = links.classList.toggle("open");
+        burger.setAttribute("aria-expanded", open ? "true" : "false");
       });
-    }, { rootMargin: "-40% 0px -55% 0px" });
-    secs.forEach(function(s){ so.observe(s); });
-  }
-})();
-</script>
+      links.addEventListener("click", function (e) {
+        if (e.target.tagName === "A") { links.classList.remove("open"); burger.setAttribute("aria-expanded", "false"); }
+      });
+
+      /* ---------- active nav link ---------- */
+      var secs = document.querySelectorAll("section[id]");
+      var navAs = document.querySelectorAll(".nav-links a");
+      if ("IntersectionObserver" in window) {
+        var so = new IntersectionObserver(function (entries) {
+          entries.forEach(function (en) {
+            if (en.isIntersecting) {
+              navAs.forEach(function (a) { a.removeAttribute("aria-current"); });
+              var id = "#" + en.target.id;
+              navAs.forEach(function (a) { if (a.getAttribute("href") === id) a.setAttribute("aria-current", "true"); });
+            }
+          });
+        }, { rootMargin: "-40% 0px -55% 0px" });
+        secs.forEach(function (s) { so.observe(s); });
+      }
+    })();
+  </script>
 </body>
+
 </html>
