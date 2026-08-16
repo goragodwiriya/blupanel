@@ -12,36 +12,41 @@ use Phpcp\Support\PathGuard;
 use Phpcp\Support\Validator;
 
 /**
- * แตกไฟล์บีบอัดในโฟลเดอร์ — `.zip`, `.tar.gz`/`.tgz`/`.tar` และ `.gz` ไฟล์เดี่ยว
+ * Extracts a compressed archive into a folder — `.zip`, `.tar.gz`/`.tgz`/`.tar`, and a single `.gz` file
  *
- * ## ทำไมต้องรองรับมากกว่า zip
+ * ## Why more than zip has to be supported
  *
- * ไฟล์สำรองของระบบเป็น `.tar.gz` (และ `.sql.gz` สำหรับฐานข้อมูล) ซึ่งอยู่ในบ้านของ
- * ลูกค้าตั้งแต่ PLAN-BACKUP-V2 · ถ้าแตกผ่านหน้าเว็บไม่ได้ ลูกค้าที่อยากได้ไฟล์เดียว
- * คืนจากสำเนาเมื่อวาน ต้องกู้คืนทั้งเว็บทับของปัจจุบัน ซึ่งเป็นการใช้ค้อนทุบมด —
- * และเป็นคำสั่งที่อันตรายที่สุดในระบบ
+ * The system's own backup files are `.tar.gz` (and `.sql.gz` for a
+ * database), which have lived in the customer's own home since
+ * PLAN-BACKUP-V2 · if this couldn't extract those through the web page, a
+ * customer who wants just one file back from yesterday's copy would have to
+ * restore the entire site over the current one — using a sledgehammer to
+ * kill a fly, and the single most dangerous command in the system.
  *
- * ## การกันเส้นทางไต่ออกนอกโฟลเดอร์
+ * ## Blocking a path from climbing outside its folder
  *
- * zip: อยู่ที่ชั้น executor (`safeEntryPath`) ชื่อรายการไม่เคยผ่านมือ capability เลย
+ * zip: handled at the executor layer (`safeEntryPath`) — an entry name never passes through the capability's hands at all.
  *
- * tar: **ตรวจรายชื่อข้างในก่อนแตะดิสก์** ด้วย `--list` แล้วปฏิเสธทั้งไฟล์ถ้ามีรายการ
- * ที่ขึ้นต้นด้วย `/` หรือมี `..` · GNU tar ตัดสองอย่างนี้ทิ้งให้เองอยู่แล้วในทางปฏิบัติ
- * แต่นั่นเป็นพฤติกรรมของเครื่องมือที่เราไม่ได้ควบคุม — ด่านของเราต้องเป็นของเราเอง
- * (บทเรียนเดียวกับ `--exclude backup.json` ใน BackupManager::restoreSite)
+ * tar: **the list of entries is checked before disk is ever touched**, via
+ * `--list`, rejecting the whole file if any entry starts with `/` or
+ * contains `..` · GNU tar already strips both of those on its own in
+ * practice, but that's a behavior of a tool we don't control — our own gate
+ * has to be our own (the same lesson as `--exclude backup.json` in
+ * BackupManager::restoreSite).
  *
- * ปฏิเสธทั้งไฟล์ ไม่ใช่ข้ามรายการ เพราะ archive ที่มีรายการแบบนั้นคือ archive ที่
- * ตั้งใจร้าย ไม่ใช่ archive ปกติที่บังเอิญมีไฟล์แปลก ๆ ปนมาหนึ่งไฟล์
+ * Rejects the whole file, not just skips the entry, because an archive with
+ * an entry like that is a deliberately malicious archive, not a normal one
+ * that happens to have one odd file mixed in.
  */
 final class FileUnzip extends FileCapability
 {
     private const TAR = '/usr/bin/tar';
     private const GZIP = '/usr/bin/gzip';
 
-    /** เพดานจำนวนรายการใน tar — ชุดเดียวกับที่ executor ใช้กับ zip */
+    /** The ceiling on entry count in a tar — the same one the executor uses for zip */
     private const MAX_ENTRIES = 10_000;
 
-    /** นามสกุลที่เป็น tar (บีบหรือไม่บีบก็ตาม) → tar อ่านออกเองจากเนื้อไฟล์ */
+    /** Extensions that are tar (compressed or not) → tar reads its own kind from the file's content */
     private const TAR_SUFFIXES = ['.tar.gz', '.tgz', '.tar'];
 
     public static function name(): string
@@ -56,7 +61,7 @@ final class FileUnzip extends FileCapability
 
     public function summary(): string
     {
-        return 'แตกไฟล์บีบอัด (.zip, .tar.gz, .gz)';
+        return 'Extract a compressed archive (.zip, .tar.gz, .gz)';
     }
 
     /**
@@ -68,15 +73,15 @@ final class FileUnzip extends FileCapability
         $base = self::baseArgs($args);
 
         if ($base['path'] === '') {
-            throw new ValidationError('ต้องระบุไฟล์บีบอัดที่จะแตก');
+            throw new ValidationError('An archive to extract must be specified');
         }
 
         if (self::kindOf($base['path']) === null) {
-            throw new ValidationError('รองรับเฉพาะไฟล์ .zip, .tar.gz, .tgz, .tar และ .gz');
+            throw new ValidationError('Only .zip, .tar.gz, .tgz, .tar, and .gz files are supported');
         }
 
         return $base + [
-            // ค่าว่างหมายถึงแตกลงโฟลเดอร์เดียวกับที่ไฟล์บีบอัดอยู่
+            // Empty means extract into the same folder the archive itself is in
             'destination' => Validator::optionalString($args, 'destination') !== ''
                 ? PathGuard::name((string) $args['destination'], 'ชื่อโฟลเดอร์ปลายทาง')
                 : ''
@@ -84,10 +89,11 @@ final class FileUnzip extends FileCapability
     }
 
     /**
-     * ชนิดของไฟล์จากนามสกุล — null = แตกไม่ได้
+     * The file's kind, from its extension — null = cannot be extracted
      *
-     * `.tar.gz` ต้องถูกตรวจก่อน `.gz` เสมอ ไม่งั้นไฟล์สำรองของเว็บจะถูกมองเป็น
-     * "ไฟล์เดียวที่บีบอัด" แล้วได้ `.tar` กองไว้แทนที่จะได้โฟลเดอร์ของเว็บกลับมา
+     * `.tar.gz` must always be checked before `.gz` — otherwise a website
+     * backup file would be seen as "a single compressed file" and produce a
+     * loose `.tar` instead of the site's folder coming back.
      */
     public static function kindOf(string $path): ?string
     {
@@ -119,14 +125,17 @@ final class FileUnzip extends FileCapability
         $kind = self::kindOf($archive);
         $folder = PathGuard::parent($archive);
 
-        // ขนาดหลังแตกไฟล์รู้ล่วงหน้าไม่ได้ — ตรวจได้แค่ว่าโควตายังไม่เต็ม · ยังจำเป็น
-        // เพราะเส้นทาง tar ไม่มีเพดานไบต์ของตัวเองแบบที่ `RealExecutor::unzip()` มี
+        // The size after extraction can't be known ahead of time — the only
+        // check available is that quota isn't already full · still
+        // necessary, since the tar path has no byte ceiling of its own the
+        // way `RealExecutor::unzip()` does
         $this->assertQuotaAllows($context, $scope);
 
         /*
-         * `.gz` ไฟล์เดี่ยวไม่มี "โฟลเดอร์ปลายทาง" — มันคลายออกมาเป็นไฟล์ข้าง ๆ ตัวเอง
-         * (`x.sql.gz` → `x.sql`) · การสร้างโฟลเดอร์ให้มันจะได้โฟลเดอร์ที่มีไฟล์เดียว
-         * ซึ่งไม่ใช่สิ่งที่ใครคาดหวังจากการกด "แตกไฟล์" บนไฟล์ dump
+         * A single `.gz` file has no "destination folder" — it decompresses
+         * into a file right next to itself (`x.sql.gz` → `x.sql`) · creating
+         * a folder for it would produce a folder containing a single file,
+         * which isn't what anyone expects from clicking "extract" on a dump file.
          */
         $destination = $kind === 'gz' || $args['destination'] === ''
             ? $folder
@@ -136,11 +145,12 @@ final class FileUnzip extends FileCapability
             $source = $resolve($archive);
 
             if (($executor->stat($source)['type'] ?? '') !== 'file') {
-                throw new ValidationError('ไม่พบไฟล์บีบอัดที่ระบุ');
+                throw new ValidationError('The specified archive was not found');
             }
 
-            // สร้างโฟลเดอร์ปลายทางก่อนแล้วค่อย resolve ซ้ำ — resolve ต้องได้เส้นทาง
-            // ที่คลาย symlink แล้วจริง ๆ ซึ่งทำได้ต่อเมื่อโฟลเดอร์มีอยู่บนดิสก์แล้ว
+            // The destination folder is created first, then resolved again
+            // — resolve needs a genuinely symlink-resolved path, which is
+            // only possible once the folder already exists on disk
             $prepared = $resolve($destination, false);
             if ($executor->stat($prepared) === null) {
                 $executor->makeDirectory($prepared, 0o750);
@@ -155,9 +165,9 @@ final class FileUnzip extends FileCapability
             };
         });
 
-        $message = sprintf('แตกไฟล์ %d รายการแล้ว', $result['entries']);
+        $message = sprintf('Extracted %d entries', $result['entries']);
         if ($result['skipped'] > 0) {
-            $message .= sprintf(' (ข้าม %d รายการที่ไม่ปลอดภัย)', $result['skipped']);
+            $message .= sprintf(' (skipped %d unsafe entries)', $result['skipped']);
         }
 
         return [
@@ -173,53 +183,61 @@ final class FileUnzip extends FileCapability
     }
 
     /**
-     * แตก tar หลังตรวจรายชื่อข้างในแล้ว
+     * Extracts a tar, after checking what's listed inside it
      *
-     * `--no-same-owner`/`--no-same-permissions` ใส่ไว้เสมอแม้จะทำงานในสิทธิ์ของลูกค้า
-     * อยู่แล้ว (ดู `withSite`) — เจ้าของกับสิทธิ์ที่ฝังใน archive เป็นของ**เครื่องต้นทาง**
-     * ซึ่ง uid ไม่ตรงกับเครื่องนี้ · บทเรียนเดียวกับที่ `BackupManager::restoreSite()`
-     * ต้อง chown เองหลังแตกไฟล์
+     * `--no-same-owner`/`--no-same-permissions` are always included even
+     * though this already runs under the customer's own privileges (see
+     * `withSite`) — the ownership and permissions embedded in the archive
+     * belong to **the machine it came from**, whose uid numbers don't match
+     * this one · the same lesson `BackupManager::restoreSite()` learned,
+     * needing to chown by hand after extracting.
      *
      * @return array{entries:int,skipped:int,bytes:int}
      */
     private function extractTar(Executor $executor, string $source, string $destination): array
     {
         if (!$executor->exists(self::TAR)) {
-            throw new ExecutionFailed('เครื่องนี้ไม่มีคำสั่ง tar จึงแตกไฟล์ชนิดนี้ไม่ได้');
+            throw new ExecutionFailed('This machine has no tar command, so this file type cannot be extracted');
         }
 
         $list = $executor->exec([self::TAR, '--list', '--file', $source], timeout: 120);
 
         if (!$list->ok()) {
-            throw new ExecutionFailed('อ่านรายชื่อในไฟล์บีบอัดไม่ได้: ' . trim($list->stderr));
+            throw new ExecutionFailed('Failed to read the archive\'s entry list: ' . trim($list->stderr));
         }
 
         /*
-         * **ปฏิเสธเมื่อรายชื่อยาวชนเพดานของ exec()** — ไม่ใช่ตรวจเท่าที่ได้มา
+         * **Rejects when the listing hits exec()'s own ceiling** — not just
+         * checks whatever came back.
          *
-         * `exec()` ตัดผลลัพธ์ทิ้งที่ {@see Executor::MAX_OUTPUT_BYTES} · ด่านข้างล่างที่
-         * เดินทีละบรรทัดจึงเคยตรวจแค่ส่วนหัวของ archive ที่ยาวเกินนั้น แล้วปล่อยส่วนที่
-         * เหลือผ่านไปเงียบ ๆ — รายการที่ไต่ออกนอกโฟลเดอร์เพียงแค่ต้องอยู่ท้าย ๆ ก็รอด
-         * · และ `count()` ข้างล่างก็นับจากของที่ถูกตัดแล้ว เพดาน MAX_ENTRIES จึงไม่เคย
-         * ทำงานเลยกับ archive ที่ใหญ่จริง ซึ่งเป็นกรณีเดียวที่มันมีอยู่เพื่อกัน
+         * `exec()` truncates its output at {@see Executor::MAX_OUTPUT_BYTES}
+         * · the check below, which walks line by line, used to only see the
+         * head of an archive longer than that, letting the rest through
+         * silently — an entry that climbs outside the folder just had to
+         * sit near the end to get through · and the `count()` below was
+         * also counting from the already-truncated list, so the
+         * MAX_ENTRIES ceiling never actually engaged against a genuinely
+         * large archive — the one case it exists to guard against.
          *
-         * archive ที่ยาวขนาดนั้นเกินเพดานรายการอยู่แล้วในทางปฏิบัติ ข้อความจึงเป็น
-         * ข้อความเดียวกัน — "ตรวจไม่ครบ" กับ "เกินกำหนด" นำไปสู่คำตอบเดียวกันคือไม่แตกให้
+         * An archive that long is already past the entry-count ceiling in
+         * practice anyway, so the message is the same one either way —
+         * "couldn't check it all" and "too many entries" both lead to the
+         * same answer: it isn't extracted.
          */
         if (strlen($list->stdout) >= Executor::MAX_OUTPUT_BYTES) {
-            throw new ExecutionFailed('ไฟล์บีบอัดมีรายการมากเกินกำหนด');
+            throw new ExecutionFailed('This archive has too many entries');
         }
 
         $entries = array_values(array_filter(array_map('trim', explode("\n", $list->stdout)), static fn (string $l): bool => $l !== ''));
 
         if (count($entries) > self::MAX_ENTRIES) {
-            throw new ExecutionFailed('ไฟล์บีบอัดมีรายการมากเกินกำหนด');
+            throw new ExecutionFailed('This archive has too many entries');
         }
 
         foreach ($entries as $entry) {
             if (str_starts_with($entry, '/') || in_array('..', explode('/', $entry), true)) {
                 throw new ExecutionFailed(
-                    'ไฟล์บีบอัดนี้มีรายการที่ชี้ออกนอกโฟลเดอร์ปลายทาง (' . $entry . ') จึงไม่แตกให้',
+                    'This archive has an entry that points outside the destination folder (' . $entry . '), so it was not extracted',
                 );
             }
         }
@@ -232,40 +250,42 @@ final class FileUnzip extends FileCapability
         ], timeout: 900);
 
         if (!$result->ok()) {
-            throw new ExecutionFailed('แตกไฟล์ไม่สำเร็จ: ' . trim($result->stderr));
+            throw new ExecutionFailed('Failed to extract: ' . trim($result->stderr));
         }
 
         return ['entries' => count($entries), 'skipped' => 0, 'bytes' => 0];
     }
 
     /**
-     * คลาย `.gz` ที่เป็นไฟล์เดียว (เช่น `.sql.gz` ของฐานข้อมูล)
+     * Decompresses a single `.gz` file (e.g. a database's `.sql.gz`)
      *
-     * ใช้ `gzip -dk` ให้มันเขียนไฟล์ปลายทางเอง — ไม่ดึงเนื้อผ่าน PHP เพราะไฟล์ dump
-     * ของฐานข้อมูลจริงมีขนาดระดับกิกะไบต์ การอ่านเข้าหน่วยความจำก่อนเขียนคือการทำให้
-     * คำสั่งนี้ล้มด้วย memory_limit ในกรณีที่คนใช้มันจริง ๆ
+     * Uses `gzip -dk` and lets it write the destination file itself —
+     * content is never pulled through PHP, because a genuine database dump
+     * file can run into gigabytes, and reading it all into memory before
+     * writing would make this command fail on memory_limit exactly when
+     * someone actually needs it.
      *
-     * `-k` เก็บไฟล์ต้นฉบับไว้ — คนกด "แตกไฟล์" ไม่ได้ขอให้ลบสำเนาที่บีบไว้ทิ้ง
+     * `-k` keeps the original file — clicking "extract" was never a request to delete the compressed copy.
      *
      * @return array{entries:int,skipped:int,bytes:int}
      */
     private function extractGz(Executor $executor, string $source): array
     {
         if (!$executor->exists(self::GZIP)) {
-            throw new ExecutionFailed('เครื่องนี้ไม่มีคำสั่ง gzip จึงคลายไฟล์ชนิดนี้ไม่ได้');
+            throw new ExecutionFailed('This machine has no gzip command, so this file type cannot be decompressed');
         }
 
         $target = substr($source, 0, -3);
 
-        // ไม่เขียนทับของที่มีอยู่ — ผู้ใช้อาจแก้ไฟล์นั้นไปแล้วหลังคลายครั้งก่อน
+        // Never overwrites an existing file — the user may have already edited it since the last time it was extracted
         if ($executor->exists($target)) {
-            throw new ValidationError('มีไฟล์ ' . basename($target) . ' อยู่แล้ว — เปลี่ยนชื่อหรือลบก่อนคลายไฟล์นี้');
+            throw new ValidationError('File ' . basename($target) . ' already exists — rename or delete it before extracting this one');
         }
 
         $result = $executor->exec([self::GZIP, '--decompress', '--keep', $source], timeout: 900);
 
         if (!$result->ok()) {
-            throw new ExecutionFailed('คลายไฟล์ไม่สำเร็จ: ' . trim($result->stderr));
+            throw new ExecutionFailed('Failed to decompress: ' . trim($result->stderr));
         }
 
         $stat = $executor->stat($target);

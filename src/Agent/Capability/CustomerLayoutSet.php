@@ -17,31 +17,36 @@ use Phpcp\Driver\ConfigTransaction;
 use Phpcp\Support\Validator;
 
 /**
- * เปลี่ยนรูปทรงไฟล์ของบัญชีหนึ่ง — **ย้ายไฟล์จริงให้ด้วย ไม่ใช่แค่เปลี่ยนค่า**
+ * Switches a single account's file layout — **genuinely moves the files too, not just the setting**
  *
- * ## ทำไมการเปลี่ยนค่าเฉย ๆ ใช้ไม่ได้
+ * ## Why changing the setting alone wouldn't work
  *
- * เส้นทางของเว็บถูก**คำนวณ**จากเลย์เอาต์ทุกครั้งที่อ่าน ไม่ได้เก็บไว้ · การเปลี่ยน
- * `users.site_layout` อย่างเดียวจึงทำให้ทั้งระบบชี้ไปที่เส้นทางใหม่ทันทีในขณะที่ไฟล์
- * ยังอยู่ที่เดิม — เว็บที่ให้บริการอยู่จะ 404 ทันทีที่กดบันทึก และ log ของเว็บจะขาดหาย
- * โดยไม่มีข้อความผิดพลาดใด ๆ บอกว่าเกิดอะไรขึ้น
+ * A website's path is **computed** from the layout every time it's read,
+ * never stored · changing `users.site_layout` alone would make the whole
+ * system point at the new path immediately while the files are still at the
+ * old one — a site currently being served would 404 the instant it's saved,
+ * and the site's logs would go missing with no error message anywhere
+ * explaining why.
  *
- * ที่นี่จึงทำสามอย่างให้ครบในคำสั่งเดียว: ย้ายไฟล์ → เปลี่ยนค่า → เขียน vhost/pool ใหม่
+ * So this does all three things in a single command: move the files → change the setting → rewrite vhost/pool.
  *
- * ## ลำดับและการย้อนกลับ
+ * ## Order and reversal
  *
- * ย้ายไฟล์ก่อน เพราะเป็นขั้นที่ย้อนยากที่สุดและต้องรู้ผลก่อนแตะอย่างอื่น · ทุกการย้าย
- * ถูกจำไว้ ถ้าขั้นใดล้มจะย้ายกลับทั้งหมดตามลำดับย้อน แล้วโยนข้อผิดพลาดออกไป
- * ไฟล์ตั้งค่าของเว็บเซิร์ฟเวอร์ใช้ {@see ConfigTransaction} ซึ่งคืนไฟล์เดิมให้เองอยู่แล้ว
+ * Files are moved first, since that's the hardest step to reverse and its
+ * outcome has to be known before touching anything else · every move is
+ * recorded, and if any step fails, everything is moved back in reverse
+ * order before the error is thrown · the web server's config files use
+ * {@see ConfigTransaction}, which already restores the original file on its own.
  *
- * `rename()` ภายในบ้านเดียวกันอยู่บน filesystem เดียวกันเสมอ จึงเป็นการย้ายแบบอะตอม
- * ไม่ใช่การคัดลอกทีละไฟล์ที่ค้างกลางทางได้
+ * `rename()` within the same home is always on the same filesystem, so it's
+ * an atomic move — never a copy-file-by-file that could get stuck halfway.
  *
- * ## สิ่งที่ยังต้องระวังและบอกผู้เรียกให้รู้
+ * ## What's still worth watching for, and telling the caller
  *
- * เว็บของบัญชีนี้จะหยุดให้บริการชั่วขณะระหว่างย้าย (เสี้ยววินาทีต่อเว็บ) และ
- * **เส้นทางในสคริปต์ของลูกค้าที่เขียนเส้นทางเต็มไว้จะพัง** — จึงต้องเป็นคำสั่งที่
- * ผู้ดูแลตั้งใจกด ไม่ใช่ผลข้างเคียงของการบันทึกฟอร์มอื่น
+ * This account's sites go offline briefly while moving (a fraction of a
+ * second per site), and **any path a customer's own script hardcoded as a
+ * full path will break** — so this has to be a command an admin
+ * deliberately clicks, never a side effect of saving some other form.
  */
 final class CustomerLayoutSet extends CustomerCapability implements Capability
 {
@@ -62,7 +67,7 @@ final class CustomerLayoutSet extends CustomerCapability implements Capability
 
     public function summary(): string
     {
-        return 'เปลี่ยนรูปทรงไฟล์ของบัญชีโฮสติ้ง พร้อมย้ายไฟล์ให้';
+        return "Switch a hosting account's file layout, moving files to match";
     }
 
     /**
@@ -73,10 +78,10 @@ final class CustomerLayoutSet extends CustomerCapability implements Capability
     {
         $layout = trim((string) ($args['layout'] ?? ''));
 
-        // ค่าว่าง = ตามค่าเริ่มต้นของระบบ ซึ่งเป็นตัวเลือกที่ถูกต้อง ไม่ใช่การไม่ส่งค่า
+        // An empty value = follow the system default, which is itself a valid choice, not a missing value
         if ($layout !== '' && SiteLayout::tryFrom($layout) === null) {
             throw new ValidationError(
-                'รูปทรงไฟล์ต้องเป็น phpcp, cpanel หรือค่าว่าง (ตามค่าเริ่มต้นของระบบ)',
+                'File layout must be phpcp, cpanel, or empty (follows the system default)',
             );
         }
 
@@ -103,7 +108,7 @@ final class CustomerLayoutSet extends CustomerCapability implements Capability
                 'user_id' => $owner->userId,
                 'layout' => $args['layout'],
                 'moved' => 0,
-                'message' => 'บัญชีนี้ใช้รูปทรงนี้อยู่แล้ว ไม่มีอะไรต้องเปลี่ยน',
+                'message' => 'This account already uses this layout — nothing to change',
             ];
         }
 
@@ -113,7 +118,7 @@ final class CustomerLayoutSet extends CustomerCapability implements Capability
             ['u' => $owner->userId],
         );
 
-        // บัญชีที่ยังไม่มีเว็บไม่มีไฟล์ให้ย้าย — เปลี่ยนค่าแล้วจบ
+        // An account with no site yet has no files to move — just change the setting and finish
         if ($sites === []) {
             $this->save($context, $owner->userId, $args['layout']);
 
@@ -121,7 +126,7 @@ final class CustomerLayoutSet extends CustomerCapability implements Capability
                 'user_id' => $owner->userId,
                 'layout' => $args['layout'],
                 'moved' => 0,
-                'message' => sprintf('ตั้งรูปทรงไฟล์เป็น %s แล้ว (ยังไม่มีเว็บไซต์ จึงไม่ต้องย้ายไฟล์)', $effective->value),
+                'message' => sprintf('Set file layout to %s (no website yet, so no files needed moving)', $effective->value),
             ];
         }
 
@@ -129,8 +134,9 @@ final class CustomerLayoutSet extends CustomerCapability implements Capability
 
         $this->save($context, $owner->userId, $args['layout']);
 
-        // เขียน vhost/pool ใหม่หลังค่าถูกบันทึกแล้ว — ต้องอ่านเส้นทางใหม่จากฐานข้อมูล
-        // ไม่ใช่จาก UserAccount ตัวเดิมที่ยังถือเลย์เอาต์เก่าอยู่ในหน่วยความจำ
+        // vhost/pool are rewritten after the setting is saved — the new
+        // paths have to be read back from the database, not from this same
+        // UserAccount instance, which still holds the old layout in memory
         $rebuilt = $this->rebuild($executor, $context, array_column($sites, 'id'));
 
         return [
@@ -140,7 +146,7 @@ final class CustomerLayoutSet extends CustomerCapability implements Capability
             'sites' => $rebuilt,
             'paths' => $moved,
             'message' => sprintf(
-                'เปลี่ยนรูปทรงไฟล์เป็น %s · ย้าย %d ไดเรกทอรีและเขียนค่าตั้งของ %d เว็บใหม่แล้ว',
+                'Switched file layout to %s · moved %d folder(s) and rewrote configuration for %d website(s)',
                 $effective->value,
                 count($moved),
                 count($rebuilt),
@@ -149,7 +155,7 @@ final class CustomerLayoutSet extends CustomerCapability implements Capability
     }
 
     /**
-     * ย้ายไดเรกทอรีของทุกเว็บไปยังรูปทรงใหม่ · ล้มที่ไหนย้ายกลับทั้งหมด
+     * Moves every site's directory to the new layout · a failure anywhere moves everything back
      *
      * @param  list<int> $siteIds
      * @return list<array{from:string,to:string}>
@@ -175,20 +181,27 @@ final class CustomerLayoutSet extends CustomerCapability implements Capability
 
                     if ($executor->exists($executor->path($to))) {
                         /*
-                         * ไดเรกทอรีเปล่าที่ปลายทางคือเศษจากรอบที่ล้มไปก่อนหน้า — เกิดขึ้นเอง
-                         * เพราะ `createDirectories()` สร้างโครงของเลย์เอาต์ใหม่ไว้ก่อนแล้ว
-                         * · ปฏิเสธทั้งหมดในกรณีนี้แปลว่าผู้ดูแลต้อง ssh เข้าไปลบโฟลเดอร์เปล่า
-                         * ด้วยมือก่อนถึงจะลองใหม่ได้ ซึ่งเป็นงานที่ระบบทำเองได้อย่างปลอดภัย
+                         * An empty directory at the destination is leftover
+                         * scaffolding from a previously failed run — this
+                         * happens naturally, since `createDirectories()`
+                         * already builds the new layout's skeleton ahead of
+                         * time · rejecting all of these unconditionally
+                         * would mean an admin has to ssh in and delete an
+                         * empty folder by hand before they can even retry —
+                         * work the system can do safely on its own.
                          *
-                         * ที่มี**ไฟล์อยู่ข้างใน**ยังปฏิเสธเหมือนเดิม — นั่นคือข้อมูลของใครบางคน
-                         * และการเดาว่าทับได้คือการลบไฟล์ลูกค้าโดยที่ไม่มีใครสั่ง
+                         * A destination that has **files inside it** is
+                         * still rejected exactly as before — that's someone's
+                         * actual data, and assuming it's safe to overwrite
+                         * would mean deleting a customer's files with
+                         * nobody having asked for that.
                          */
                         if ($this->isEmptyDir($executor, $to)) {
                             $executor->removePath($executor->path($to));
                         } else {
                             throw new ExecutionFailed(
-                                "ปลายทาง {$to} มีไฟล์อยู่แล้ว — ย้ายไม่ได้เพราะจะทับของเดิม\n\n"
-                                . 'ตรวจว่าเป็นไฟล์ที่เหลือจากการย้ายครั้งก่อนหรือไม่ แล้วย้ายออกก่อนลองใหม่',
+                                "Destination {$to} already has files in it — cannot move, it would overwrite them\n\n"
+                                . 'Check whether these are leftovers from a previous move, then move them out of the way before retrying',
                             );
                         }
                     }
@@ -200,13 +213,13 @@ final class CustomerLayoutSet extends CustomerCapability implements Capability
                 }
             }
         } catch (\Throwable $e) {
-            // ย้อนตามลำดับกลับ — ไฟล์ต้องกลับไปอยู่ที่เดิมครบก่อนโยนข้อผิดพลาดออกไป
+            // Reverted in reverse order — every file has to be back in its original place before the error is thrown
             foreach (array_reverse($done) as $step) {
                 $executor->rename($executor->path($step['to']), $executor->path($step['from']));
             }
 
             throw new ExecutionFailed(
-                "ย้ายไฟล์ไม่สำเร็จ จึงย้ายทุกอย่างกลับที่เดิมแล้ว ไม่มีเว็บใดเสียหาย\n\n"
+                "Failed to move files, so everything was moved back to its original place — no site was damaged\n\n"
                 . $e->getMessage(),
             );
         }
@@ -215,10 +228,11 @@ final class CustomerLayoutSet extends CustomerCapability implements Capability
     }
 
     /**
-     * เส้นทางเก่า => เส้นทางใหม่ ของเว็บหนึ่งแห่ง
+     * Old path => new path for a single site
      *
-     * เว็บที่ตั้ง Domain Pointer ไว้ไม่ย้าย docroot เพราะไฟล์อยู่นอกบ้านตามที่ผู้ดูแล
-     * ตั้งใจ — แต่ log กับ backup ยังต้องย้ายตามรูปทรงใหม่
+     * A site with a Domain Pointer set doesn't move its docroot, since its
+     * files sit outside its home deliberately, on the admin's own choice —
+     * but its logs and backups still need to move to match the new layout.
      *
      * @return array<string,string>
      */
@@ -242,19 +256,22 @@ final class CustomerLayoutSet extends CustomerCapability implements Capability
         $stateTo = $target->stateDir($home, $domain);
 
         /*
-         * ลำดับของ stateDir สลับทิศตามว่ามันเป็น "แม่" ของฝั่งไหน
+         * stateDir's move order flips depending on which side it's the "parent" of
          *
-         * เลย์เอาต์ phpcp วาง log/backup/docroot ไว้**ใต้** stateDir ส่วน cpanel วางแยกกัน
-         * · สองทิศทางจึงต้องการลำดับตรงข้ามกัน และการใช้ลำดับเดียวทั้งสองทางพังเสมอ
-         * ในทิศใดทิศหนึ่ง:
+         * The phpcp layout places log/backup/docroot **underneath**
+         * stateDir, while cpanel places them separately · the two
+         * directions therefore need opposite orders, and using a single
+         * fixed order always breaks one direction or the other:
          *
-         *   phpcp → cpanel  ย้ายลูกออกก่อน แล้วค่อยย้ายแม่ที่เหลือ
-         *                   (ย้ายแม่ก่อน = ลูกที่คำนวณไว้ชี้ไปยังที่ที่ไม่มีอยู่แล้ว)
+         *   phpcp → cpanel  move the children out first, then the now-empty parent
+         *                   (moving the parent first = the already-computed children point at a location that no longer exists)
          *
-         *   cpanel → phpcp  ย้ายแม่ก่อน แล้วลูกจึงมีที่ลง
-         *                   (ย้ายลูกก่อน = ระบบสร้างโฟลเดอร์แม่ให้เองเพื่อรองรับลูก
-         *                    แล้วการย้ายแม่ตัวจริงถูกปฏิเสธเพราะปลายทางมีอยู่แล้ว
-         *                    — เจอบนเซิร์ฟเวอร์จริงตอนย้ายกลับ 2026-08-13)
+         *   cpanel → phpcp  move the parent first, so the children have somewhere to land
+         *                   (moving the children first = the system creates
+         *                   the parent folder on its own to hold them, then
+         *                   the real parent move gets rejected because the
+         *                   destination already exists — found on the real
+         *                   server while reverting a move, 2026-08-13)
          */
         $stateIsParentOfTarget = self::isUnder(reset($children) ?: '', $stateTo);
 
@@ -264,22 +281,23 @@ final class CustomerLayoutSet extends CustomerCapability implements Capability
     }
 
     /**
-     * ไดเรกทอรีนี้ว่างเปล่าจริงหรือไม่ — ว่าง = ลบทิ้งได้โดยไม่ทำใครเสียหาย
+     * Is this directory genuinely empty? — empty = safe to delete without damaging anything
      *
-     * นับไฟล์ซ่อนด้วย · `listDirectory()` ของโปรเจกต์นี้คืนรายการที่ไม่รวม `.` กับ `..`
-     * อยู่แล้ว รายการว่างจึงแปลว่าว่างจริง ไม่ใช่ว่างเพราะกรองผิด
+     * Counts hidden files too · this project's `listDirectory()` already
+     * excludes `.` and `..` from its result, so an empty list genuinely
+     * means empty, not empty because of a filtering mistake.
      */
     private function isEmptyDir(Executor $executor, string $path): bool
     {
         try {
             return $executor->listDirectory($executor->path($path)) === [];
         } catch (\Throwable) {
-            // อ่านไม่ได้ = ไม่รู้ว่าข้างในมีอะไร จึงต้องไม่ลบ
+            // Unreadable = unknown what's inside, so it must not be deleted
             return false;
         }
     }
 
-    /** $path อยู่ใต้ $parent หรือไม่ (เทียบเป็นเส้นทาง ไม่ใช่เป็นข้อความ) */
+    /** Is $path under $parent? (compared as paths, not as text) */
     private static function isUnder(string $path, string $parent): bool
     {
         $parent = rtrim($parent, '/');
@@ -320,7 +338,7 @@ final class CustomerLayoutSet extends CustomerCapability implements Capability
             $provisioner->reload($executor, $last);
         }
 
-        // เส้นทางที่เก็บไว้ในคอลัมน์ต้องตรงกับความจริงใหม่ ไม่งั้นรายงานกับหน้าจอโกหก
+        // The path stored in the column must match the new reality, or the screen ends up reporting a lie
         foreach ($siteIds as $siteId) {
             $site = $repository->load((int) $siteId);
             $context->db->update('sites', ['docroot' => $site->docroot(), 'updated_at' => time()], ['id' => (int) $siteId]);
