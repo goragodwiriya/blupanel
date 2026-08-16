@@ -17,6 +17,7 @@ use Phpcp\Agent\Capability\FileList;
 use Phpcp\Agent\Capability\FileMkdir;
 use Phpcp\Agent\Capability\FileMove;
 use Phpcp\Agent\Capability\FileRead;
+use Phpcp\Agent\Capability\FileRootsList;
 use Phpcp\Agent\Capability\FileSearch;
 use Phpcp\Agent\Capability\FileTree;
 use Phpcp\Agent\Capability\FileUnzip;
@@ -156,6 +157,7 @@ final class CapabilityRegistry
             LogTail::class,
             PhpList::class,
             DbList::class,
+            FileRootsList::class,
             FileList::class,
             FileTree::class,
             FileSearch::class,

@@ -5,6 +5,7 @@ declare (strict_types = 1);
 namespace Phpcp\Http\V2;
 
 use Phpcp\Agent\Actor;
+use Phpcp\Agent\AgentException;
 use Phpcp\Domain\FileCatalog;
 use Phpcp\Domain\FileRoots;
 use Phpcp\Domain\FileScope;
@@ -40,15 +41,39 @@ final class FilesController extends ApiController
      */
     public function roots(Request $request): Response
     {
+        /*
+         * Prefers the agent's `file.roots` over FileRoots::forActor() directly,
+         * because telling whether a scope's folder genuinely exists needs
+         * privilege-dropped filesystem access (the same asUser() every other
+         * file capability already uses) — the web tier has no executor of its
+         * own to check with. Offering a scope that immediately errors the
+         * moment it's opened (an old site carried over from before a layout
+         * change, provisioning that never finished) is worse than not listing
+         * it at all.
+         *
+         * Falls back to the unfiltered list when the agent can't be reached —
+         * this page must still open even with the agent down, same principle
+         * as the dashboard (DashboardController). Unfiltered-but-available beats
+         * a file manager that can't be opened at all.
+         */
+        try {
+            $scopeRows = $this->agent()->data('file.roots', [], $this->ctx->actor($request))['scopes'];
+        } catch (AgentException) {
+            $scopeRows = array_map(
+                static fn (FileScope $scope): array => $scope->toArray(),
+                array_values($this->scopes()),
+            );
+        }
+
         $scopes = [];
 
-        foreach ($this->scopes() as $key => $scope) {
+        foreach ($scopeRows as $scope) {
             $scopes[] = [
-                'key' => $key,
-                'label' => $this->t($scope->label),
-                'kind' => $scope->kind,
-                'site_id' => $scope->siteId,
-                'writable' => $scope->writable
+                'key' => $scope['key'],
+                'label' => $this->t($scope['label']),
+                'kind' => $scope['kind'],
+                'site_id' => $scope['site_id'],
+                'writable' => $scope['writable']
                 // `root` (the real machine path) is never sent to the browser — the
                 // frontend has nothing to do with it, and needlessly exposing the
                 // machine's directory structure is a free gift to an attacker

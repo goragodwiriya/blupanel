@@ -577,3 +577,75 @@ test('เว็บไซต์ที่ตั้ง docroot_override (Domain Poi
     assertTrue(isset($scopes[$docrootKey]), "ต้องมี scope {$docrootKey}");
     assertSame($override, $scopes[$docrootKey]->root, 'ต้องใช้ docroot_override ตรง ๆ ไม่คำนวณจาก layout เอง');
 });
+
+test('FileRootsList (agent) กรอง scope ที่ไม่มีโฟลเดอร์จริงบนเครื่องออกจากรายการ', static function (): void {
+    /*
+     * เกี่ยวเนื่องกับบั๊กเดียวกับ FileScope::forSiteDocroot() — เว็บไซต์เก่า/
+     * ไม่สมบูรณ์บางเว็บมี state dir (logs/backup/tmp) แต่ไม่มี public_html จริง
+     * บนดิสก์เลย (provisioning ไม่จบ หรือมาจากเวอร์ชันก่อนหน้า) ก่อนแก้ ตัวเลือก
+     * "ไฟล์เว็บ" จะยังโผล่ในตัวเลือกให้กด ทั้งที่กดแล้วเจอแค่ error
+     * "ยังไม่มีไดเรกทอรีนี้บนเครื่อง" — FileRootsList ต้องกรองสิ่งที่ไม่มีจริง
+     * ออกไปตั้งแต่ตอนส่งรายการ ไม่ใช่ปล่อยให้ผู้ใช้ไปเจอ error เอาตอนกด
+     */
+    $db = migratedDb();
+    $users = new Phpcp\Domain\UserRepository($db);
+    $now = time();
+
+    $ownerId = $users->createHostingAccount('rootslistowner', 'RootsList-Owner-Password-11', 'owner@example.com');
+    $db->update(
+        'users',
+        ['system_user' => 'rootslistowner', 'main_domain' => 'rootslist.example.com'],
+        ['id' => $ownerId],
+    );
+
+    $siteId = $db->insert('sites', [
+        'primary_domain' => 'rootslist.example.com',
+        'docroot' => '',
+        'php_version' => '8.4',
+        'owner_user_id' => $ownerId,
+        'docroot_override' => '',
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+
+    $tempUsersDir = sys_get_temp_dir().'/phpcp-rootslist-test-'.getmypid();
+    fileTestRemove($tempUsersDir);
+    // สร้างแค่ state dir จริง (มี tmp/ ข้างใน) ไม่สร้าง public_html จริงเลย — จำลองเว็บเก่า/ไม่สมบูรณ์
+    mkdir($tempUsersDir.'/rootslistowner/.phpcp/rootslist.example.com/tmp', 0o755, true);
+
+    // โหลด Config ไว้ก่อนสลับ Paths::usersDir() — Config::load() เองก็ตั้งค่า
+    // usersDir กลับตามไฟล์ config ทุกครั้งที่เรียก ถ้าเรียกมันซ้ำข้างในภายหลัง
+    // จะไปทับค่าที่ withUsersDir ตั้งไว้เงียบ ๆ
+    $config = Phpcp\Kernel\Config::load(PHPCP_ROOT);
+
+    try {
+        // ยืมตัวช่วยจาก SitePathsTest.php — เทสต์ทุกไฟล์ถูก require เข้ากระบวนการ
+        // เดียวกัน ฟังก์ชันนี้จึงมีอยู่จริงแล้วตอนที่ closure นี้ถูกเรียก แม้ไฟล์นี้
+        // (F...) จะถูก require ก่อนไฟล์นั้น (S...) ตามลำดับตัวอักษรก็ตาม
+        withUsersDir($tempUsersDir, function () use ($db, $ownerId, $siteId, $config): void {
+            $actor = new Phpcp\Agent\Actor(
+                $ownerId,
+                'rootslistowner',
+                Phpcp\Security\Permissions::WEBADMIN,
+                '127.0.0.1',
+                'test',
+            );
+            $context = new Phpcp\Agent\Context($actor, $config, $db);
+
+            $capability = new Phpcp\Agent\Capability\FileRootsList();
+            $result = $capability->run([], new RealExecutor(), $context);
+            $keys = array_column($result['scopes'], 'key');
+
+            assertTrue(
+                in_array('site-'.$siteId, $keys, true),
+                'state dir มีอยู่จริง (มี tmp/) ต้องยังอยู่ในรายการ: '.implode(', ', $keys),
+            );
+            assertTrue(
+                !in_array('site-'.$siteId.'-docroot', $keys, true),
+                'scope ไฟล์เว็บที่ไม่มีโฟลเดอร์จริงบนดิสก์ต้องถูกกรองออก: '.implode(', ', $keys),
+            );
+        });
+    } finally {
+        fileTestRemove($tempUsersDir);
+    }
+});
