@@ -11,28 +11,32 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * รอบสำรองอัตโนมัติ — `/api/v2/backup-schedule` · **ตัวเดียวทั้งเครื่อง** (ข้อ B10)
+ * The automatic backup round — `/api/v2/backup-schedule` · **one single one for the whole machine** (item B10)
  *
- * ## ทำไมเหลือตัวเดียว
+ * ## Why there's only one
  *
- * ของเดิมเป็น CRUD ของตารางเวลาหลายชุด หนึ่งแถวต่อหนึ่งเว็บหนึ่งชนิด · เครื่องที่มี
- * ลูกค้าห้าสิบรายต้องมีตารางเวลาเป็นร้อยชุดที่ผู้ดูแลสร้างและดูแลเอง แล้ว**เว็บที่สร้าง
- * ใหม่จะไม่ถูกสำรองเลย**จนกว่าจะมีใครนึกได้ว่าต้องไปเพิ่มให้มัน — ความล้มเหลวที่เงียบ
- * จนถึงวันที่ต้องใช้ไฟล์สำรอง
+ * The old version was CRUD over many schedules, one row per website per type ·
+ * a machine with fifty customers needed hundreds of schedules an admin created
+ * and maintained by hand, and **a newly created website got no backups at
+ * all** until someone remembered to add one for it — a silent failure until
+ * the day the backup file is actually needed
  *
- * ตอนนี้คำถาม "สำรองอะไรบ้าง" ตอบที่สวิตช์รายบัญชี ({@see BackupTargetsController})
- * ส่วนที่นี่เหลือคำถามเดียว: **รอบนั้นเดินตอนไหน**
+ * The question "what gets backed up" is now answered by the per-account
+ * switches ({@see BackupTargetsController}) · what's left here is one single
+ * question: **when does that round run**
  *
- * เก็บเป็นแถวในตาราง `scheduled_jobs` เดิม ไม่มีตารางใหม่ · ชื่อคงที่ `backup.auto`
- * และ capability ถูกตรึงไว้ที่ `backup.run` — ผู้เรียกเลือกไม่ได้ ถ้าเลือกได้ก็เท่ากับ
- * ตั้งเวลาให้ระบบรันคำสั่งอะไรก็ได้ในนามของ "ระบบ" ซึ่งเป็นสิทธิ์สูงสุดที่มี
+ * Stored as a row in the existing `scheduled_jobs` table, no new table · the
+ * fixed name `backup.auto`, and the capability is pinned to `backup.run` — the
+ * caller can't choose it, since choosing it would mean scheduling the system
+ * to run any command at all in the name of "the system," the highest
+ * privilege there is
  */
 final class BackupSchedulesController extends ApiController
 {
-    /** ชื่อคงที่ของงานเดียวนั้น — เป็นกุญแจ UNIQUE ในตาราง */
+    /** The fixed name of that one job — a UNIQUE key in the table */
     public const JOB = 'backup.auto';
 
-    /** ค่าเริ่มต้นเมื่อยังไม่เคยตั้ง — ตีหนึ่งของทุกคืน ตอนที่เว็บว่างที่สุด */
+    /** The default when never configured — 1 AM every night, when websites are quietest */
     private const DEFAULT_SCHEDULE = '0 1 * * *';
 
     public function show(Request $request): Response
@@ -41,10 +45,10 @@ final class BackupSchedulesController extends ApiController
     }
 
     /**
-     * โครงของฟอร์มตั้งเวลา พร้อมคำสั่งเปิด modal
+     * The schedule form's shell, with the command to open its modal
      *
-     * เป็นค่าปัจจุบันเสมอ ไม่ใช่ฟอร์มเปล่า — งานนี้มีตัวเดียวและมีอยู่ตลอด สิ่งที่ผู้ใช้
-     * ทำได้คือแก้ค่าของมัน ไม่ใช่สร้างของใหม่
+     * Always the current values, never an empty form — there's only one of
+     * this job and it always exists; what a user can do is edit its values, not create a new one
      */
     public function form(Request $request): Response
     {
@@ -94,7 +98,7 @@ final class BackupSchedulesController extends ApiController
         }
 
         $this->app->db()->update('scheduled_jobs', $fields, ['id' => (int) $row['id']]);
-        // ทรัพยากรนี้ไม่ผ่าน Dispatcher จึงไม่มีใครเขียน audit ให้อัตโนมัติ
+        // This resource doesn't go through the Dispatcher, so nothing writes the audit entry automatically
         $this->app->audit()->write($this->ctx->actor($request), 'backup.schedule_update', self::JOB, 'ok', $fields);
 
         return $this->done(
@@ -109,10 +113,11 @@ final class BackupSchedulesController extends ApiController
     }
 
     /**
-     * เดินรอบเดี๋ยวนี้
+     * Run the round right now
      *
-     * ผู้ดูแลต้องพิสูจน์ได้ว่าสิ่งที่ตั้งไว้ทำงานจริง **ก่อน**คืนแรก — ไม่ใช่รู้ตอนที่
-     * ไฟล์สำรองควรจะมีแล้วแต่ไม่มี · เป็นคำสั่งเดียวกับที่ cron เรียกทุกประการ
+     * An admin needs to be able to prove what was configured genuinely works
+     * **before** the first night — not find out when a backup file should
+     * exist but doesn't · this is the exact same command cron itself calls
      */
     public function runNow(Request $request): Response
     {
@@ -126,12 +131,14 @@ final class BackupSchedulesController extends ApiController
     }
 
     /**
-     * แถวของงานเดียวนั้น — สร้างให้ถ้ายังไม่มี
+     * That one job's row — created if it doesn't exist yet
      *
-     * **สร้างตอนอ่านโดยเจตนา** · งานนี้เป็นส่วนหนึ่งของระบบ ไม่ใช่ของที่ผู้ใช้เพิ่มเอง
-     * เครื่องที่ติดตั้งก่อน migration นี้จึงต้องได้แถวของมันโดยไม่ต้องให้ใครไปกดสร้าง
-     * · ค่าเริ่มต้น `enabled = 0` เพราะการเปิดรอบสำรองให้ทั้งเครื่องโดยที่ผู้ดูแลยังไม่ได้
-     * เลือกว่าบัญชีไหนบ้าง แปลว่ารอบแรกจะไม่ทำอะไรเลยอยู่ดี (สวิตช์ทุกบัญชีเริ่มที่ปิด)
+     * **Deliberately created on read** · this job is part of the system, not
+     * something a user adds themselves, so a machine installed before this
+     * migration must get its row without anyone having to click create · the
+     * default is `enabled = 0`, because turning on a machine-wide backup round
+     * before an admin has chosen which accounts to include means the first
+     * round would do nothing at all anyway (every account's switch starts off)
      *
      * @return array<string,mixed>
      */
@@ -168,18 +175,21 @@ final class BackupSchedulesController extends ApiController
         return [
             'id' => (int) ($row['id'] ?? 0),
             'schedule' => (string) ($row['schedule'] ?? self::DEFAULT_SCHEDULE),
-            // คำอธิบายภาษาไทยของตารางเวลา — หน้าจอไม่ต้องแปล cron เอง
+            // A human-readable description of the schedule, so the screen never
+            // needs to parse cron syntax itself — always in English for now, see
+            // the translator-access note at CronSchedule::describe()
             'schedule_label' => CronSchedule::describe((string) ($row['schedule'] ?? self::DEFAULT_SCHEDULE)),
             'enabled' => (int) ($row['enabled'] ?? 0) === 1,
             'days' => (int) ($args['days'] ?? 30),
             'keep' => (int) ($args['keep'] ?? 7),
-            // null = ยังไม่เคยรัน — ตัวจัดรูปแบบมาตรฐานของตาราง (data-format="datetime"
-            // + data-empty-text) แสดง "—" ให้เองเฉพาะค่า null เท่านั้น ค่า 0 จะถูกตีความ
-            // เป็นวันที่จริง (1 ม.ค. 1970) ไม่ใช่ "ยังไม่เคยรัน"
+            // null = never run yet — the table's standard formatter
+            // (data-format="datetime" + data-empty-text) shows "—" only for a
+            // null value · a 0 would be interpreted as a real date (Jan 1,
+            // 1970), not "never run"
             'last_run_at' => empty($row['last_run_at']) ? null : (int) $row['last_run_at'],
             'last_status' => (string) ($row['last_status'] ?? ''),
             'last_error' => (string) ($row['last_error'] ?? ''),
-            // สีของป้ายมาจากฝั่งเซิร์ฟเวอร์ เทมเพลตจึงเขียน `pill-${run_tone}` ได้ตรง ๆ
+            // The pill's color comes from the server, so the template can write `pill-${run_tone}` directly
             'run_status' => match (true) {
                 empty($row['last_run_at']) => 'never',
                 (string) ($row['last_status'] ?? '') !== 'ok' => 'failed',
