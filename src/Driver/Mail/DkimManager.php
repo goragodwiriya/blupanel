@@ -10,24 +10,28 @@ use Phpcp\Driver\ConfigTransaction;
 use Phpcp\Driver\Template;
 
 /**
- * เซ็น DKIM ให้เมลขาออก — PLAN-MAIL เฟส M3
+ * Signs outbound mail with DKIM — PLAN-MAIL phase M3
  *
- * ## ทำไมต้องมี
+ * ## Why this needs to exist
  *
- * เมลที่ไม่ได้เซ็น DKIM เข้าถังขยะของ Gmail/Outlook แทบทุกฉบับ ไม่ว่า SPF จะถูกแค่ไหน ·
- * DKIM คือลายเซ็นดิจิทัลที่แนบไปกับเมล ปลายทางเอากุญแจสาธารณะจาก DNS ของโดเมนมาตรวจ
- * ว่าเมลออกจากเครื่องที่เจ้าของโดเมนอนุญาตจริงและไม่ถูกแก้ระหว่างทาง
+ * Mail with no DKIM signature lands in Gmail's/Outlook's spam folder almost
+ * every time, no matter how correct SPF is · DKIM is a digital signature
+ * attached to the mail — the destination fetches a public key from the
+ * domain's DNS to verify the mail genuinely left a machine the domain owner
+ * authorized, and wasn't altered along the way.
  *
- * ## ทำไม rspamd ไม่ใช่ OpenDKIM
+ * ## Why rspamd, not OpenDKIM
  *
- * rspamd เดมอนเดียวทำครบทั้งเซ็น DKIM กรองสแปม และจำกัดอัตราส่ง — สามอย่างที่เดิม
- * ต้องสามโปรแกรม สามไฟล์ตั้งค่า และสามจุดที่พังได้ · ที่สำคัญกว่าคือ rspamd อ่าน
- * กุญแจจาก**เส้นทางที่มีตัวแปร** (`/var/lib/rspamd/dkim/$domain.key`) จึงเพิ่มโดเมน
- * ใหม่ได้โดยไม่ต้องแก้ไฟล์ตั้งค่าเลย — วางไฟล์กุญแจแล้วจบ
+ * rspamd is a single daemon that does DKIM signing, spam filtering, and
+ * rate limiting all at once — three things that used to need three
+ * programs, three config files, and three separate places to break · more
+ * importantly, rspamd reads its key from **a path containing a variable**
+ * (`/var/lib/rspamd/dkim/$domain.key`), so adding a new domain never
+ * requires editing a config file at all — just drop the key file in place and it's done.
  */
 final class DkimManager
 {
-    /** ชื่อ selector ที่ใช้กับทุกโดเมน — เป็นส่วนหนึ่งของชื่อเรกคอร์ด DNS */
+    /** The selector name used for every domain — part of the DNS record's own name */
     public const SELECTOR = 'phpcp';
 
     private const KEY_DIR = '/var/lib/rspamd/dkim';
@@ -48,10 +52,11 @@ final class DkimManager
     }
 
     /**
-     * สร้างกุญแจของโดเมนถ้ายังไม่มี แล้วคืนค่าที่ต้องใส่ใน DNS
+     * Creates a domain's key if it doesn't have one yet, and returns the value that needs to go into DNS
      *
-     * **ไม่สร้างทับของเดิม** — กุญแจใหม่แปลว่าเรกคอร์ดใน DNS ต้องเปลี่ยนตาม และ
-     * ระหว่างที่ยังไม่เปลี่ยน เมลทุกฉบับจะตรวจลายเซ็นไม่ผ่าน ซึ่งแย่กว่าไม่เซ็นเลย
+     * **Never overwrites an existing key** — a new key means the DNS record
+     * has to change to match, and until it does, every mail's signature
+     * check fails, which is worse than not signing at all.
      *
      * @return array{selector:string,record:string,created:bool}
      */
@@ -64,17 +69,20 @@ final class DkimManager
             $executor->makeDirectory($executor->path(self::KEY_DIR), 0750);
 
             /*
-             * **สร้างด้วย openssl ไม่ใช่ `rspamadm dkim_keygen`**
+             * **Generated with openssl, never `rspamadm dkim_keygen`**
              *
-             * `rspamadm` เขียนด้วย LuaJIT ซึ่งต้องขอหน่วยความจำที่ทั้งเขียนและรันได้ ·
-             * agent รันภายใต้ `MemoryDenyWriteExecute=yes` จึงระเบิดเป็น
-             * "PANIC: unprotected error in call to Lua API (runtime code generation
-             * failed, restricted kernel?)" ทันที (เจอจริงบนเครื่องจริง 2026-08-12)
+             * `rspamadm` is written in LuaJIT, which needs to request
+             * memory that's both writable and executable · the agent runs
+             * under `MemoryDenyWriteExecute=yes`, so this instantly blows
+             * up with "PANIC: unprotected error in call to Lua API
+             * (runtime code generation failed, restricted kernel?)" (found
+             * on the real production machine, 2026-08-12).
              *
-             * ผ่อน MemoryDenyWriteExecute เพื่อเครื่องมือตัวเดียวไม่คุ้ม — กุญแจ DKIM
-             * เป็นกุญแจ RSA ธรรมดา `openssl genrsa` สร้างได้เหมือนกันทุกประการ และ
-             * rspamd อ่านไฟล์ PEM นั้นได้ตรง ๆ อยู่แล้ว · เหตุผลเดียวกับที่ agent ปิด
-             * pcre.jit แทนที่จะผ่อนกฎเดียวกันนี้
+             * Relaxing MemoryDenyWriteExecute for one single tool isn't
+             * worth it — a DKIM key is just an ordinary RSA key, which
+             * `openssl genrsa` produces identically, and rspamd already
+             * reads that PEM file directly · the same reasoning behind why
+             * the agent disables pcre.jit instead of relaxing this same rule.
              */
             $result = $executor->exec([
                 $executor->path('/usr/bin/openssl'), 'genrsa',
@@ -83,10 +91,10 @@ final class DkimManager
             ], timeout: 60);
 
             if (!$result->ok()) {
-                throw new ExecutionFailed('สร้างกุญแจ DKIM ไม่สำเร็จ: ' . trim($result->stderr));
+                throw new ExecutionFailed('Failed to generate a DKIM key: ' . trim($result->stderr));
             }
 
-            // rspamd อ่านกุญแจด้วยผู้ใช้ของตัวเอง — ไฟล์นี้คือความลับที่ปลอมลายเซ็นได้ถ้าหลุด
+            // rspamd reads the key as its own user — this file is a secret that could forge signatures if it leaked
             $executor->exec(['/bin/chown', '-R', '_rspamd:_rspamd', $executor->path(self::KEY_DIR)], timeout: 15);
             $executor->changeMode($path, 0600);
 
@@ -100,7 +108,7 @@ final class DkimManager
         ];
     }
 
-    /** ลบกุญแจของโดเมนที่ปิดเมลไปแล้ว */
+    /** Deletes the key of a domain that's had mail turned off */
     public function removeKey(Executor $executor, string $domain): void
     {
         $path = $executor->path($this->keyPath($domain));
@@ -111,11 +119,12 @@ final class DkimManager
     }
 
     /**
-     * ค่าที่ต้องใส่ใน TXT ของ `<selector>._domainkey.<โดเมน>`
+     * The value that needs to go into the TXT record of `<selector>._domainkey.<domain>`
      *
-     * อ่านกุญแจสาธารณะจากไฟล์ส่วนตัวโดยตรง แทนที่จะเก็บไฟล์ `.txt` ที่ rspamadm
-     * สร้างให้ — ไฟล์นั้นหายได้ แต่กุญแจส่วนตัวหายไม่ได้ (ลายเซ็นทั้งหมดจะใช้ไม่ได้)
-     * จึงอนุมานจากแหล่งที่เชื่อถือได้กว่าเสมอ
+     * Reads the public key directly from the private key file, instead of
+     * keeping the `.txt` file rspamadm generates — that file can go
+     * missing, but the private key can't (every signature would stop
+     * working), so this always derives it from the more trustworthy source.
      */
     private function publicRecord(Executor $executor, string $domain): string
     {
@@ -135,7 +144,7 @@ final class DkimManager
     }
 
     /**
-     * ไฟล์ตั้งค่าของ rspamd — เขียนครั้งเดียว ไม่ต้องแก้เมื่อเพิ่มโดเมน
+     * rspamd's config file — written once, never needs editing when a domain is added
      *
      * @return array<string,string>
      */
@@ -161,16 +170,19 @@ final class DkimManager
         $transaction->commit(static fn (): array => [true, '']);
 
         /*
-         * ใช้คำสั่งของ rspamd เองก่อน — เสร็จในเสี้ยววินาทีและไม่ตัดการเชื่อมต่อ
-         * `systemctl restart` ของ rspamd ใช้เวลานานกว่าที่ agent รอไหวบนเครื่องที่
-         * ทรัพยากรจำกัด แล้วคำสั่งเปิดเมลทั้งคำสั่งล้มทั้งที่ไฟล์ถูกเขียนครบแล้ว
-         * (บทเรียนเดียวกับ postfix/dovecot ในเฟส M1)
+         * rspamd's own command is tried first — finishes in a fraction of a
+         * second and doesn't cut any connection · `systemctl restart` for
+         * rspamd can take longer than the agent is willing to wait on a
+         * resource-limited machine, and the whole "turn on mail" command
+         * would then fail even though the files were already written completely
+         * (the same lesson learned from postfix/dovecot in phase M1).
          */
-        // `systemctl reload` ส่ง SIGHUP ให้ rspamd อ่านค่าใหม่ — เร็วและไม่หยุดบริการ
+        // `systemctl reload` sends rspamd a SIGHUP to re-read its config — fast, and doesn't stop the service
         //
-        // **ห้ามใช้ `rspamadm control reload`** — ในการทดสอบจริงมันทำให้ rspamd
-        // ปิดตัวเองทั้งกระบวนการ แล้วเมลที่ส่งหลังจากนั้นออกไปโดยไม่มีลายเซ็นเงียบ ๆ
-        // (milter_default_action = accept แปลว่าเมลยังส่งได้ แค่ไม่ถูกเซ็น)
+        // **Never use `rspamadm control reload`** — in real testing it made
+        // rspamd shut its whole process down, and mail sent after that went
+        // out silently unsigned (milter_default_action = accept means mail
+        // still gets sent, just without a signature)
         if ($executor->exec([$executor->path('/usr/bin/systemctl'), 'reload', 'rspamd'], timeout: 15)->ok()) {
             return;
         }
