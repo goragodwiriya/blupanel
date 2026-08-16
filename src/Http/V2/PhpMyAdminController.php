@@ -11,30 +11,33 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * สะพานเข้า phpMyAdmin แบบไม่ต้องพิมพ์รหัส — PLAN-V2 เฟส M5
+ * A password-free bridge into phpMyAdmin — PLAN-V2 Phase M5
  *
- * phpMyAdmin รองรับ `$cfg['Servers'][$i]['auth_type'] = 'signon'` ซึ่งอ่านชื่อผู้ใช้และ
- * รหัสผ่านจาก session ของ PHP ที่แอปอื่นเตรียมไว้ให้ · เราจึงขอบัญชี MariaDB ประจำผู้ใช้
- * จาก agent (ที่เดียวที่ถอดรหัสได้) แล้วยัดลง session นั้น
+ * phpMyAdmin supports `$cfg['Servers'][$i]['auth_type'] = 'signon'`, which reads a
+ * username and password from a PHP session another app has prepared for it · so we
+ * request the user's own dedicated MariaDB account from the agent (the only place
+ * that can decrypt it), and stuff it into that session.
  *
- * **ทำไมยังเป็น POST ทั้งที่ย้ายมาเป็น REST แล้ว**
- * นี่คือ "การล็อกอิน" ไม่ใช่การอ่านข้อมูล — ถ้าเป็น GET เว็บใดก็ตามที่ผู้ใช้เปิดอยู่
- * สามารถฝัง `<img src="https://panel:8443/api/v2/phpmyadmin/session">` แล้วทำให้เบราว์เซอร์
- * ของเหยื่อสร้าง session ของ phpMyAdmin ขึ้นมาเงียบ ๆ ได้ · POST บังคับให้ผ่านด่าน CSRF
+ * **Why this is still POST even after moving to REST**
+ * This is "logging in," not reading data — if it were GET, any website the user has
+ * open could embed `<img src="https://panel:8443/api/v2/phpmyadmin/session">` and
+ * silently make the victim's browser create a phpMyAdmin session · POST forces it
+ * through the CSRF guard.
  *
- * **ต่างจากตัวเดิมตรงเดียว: ตอบ JSON แทนที่จะ redirect**
- * SPA ยิงคำขอนี้ด้วย `fetch` จึงตาม 302 เองไม่ได้อย่างมีประโยชน์ · คุกกี้ signon ยัง
- * ถูกตั้งจากคำตอบนี้ตามปกติเพราะเป็น origin เดียวกัน หน้าเว็บจึงแค่พาไปที่ `data.url`
- * ต่อได้ทันที · **รหัสผ่านยังไม่เคยออกไปที่หน้าเว็บเลยแม้แต่ครั้งเดียว** — มันเดินจาก
- * agent → session ของ phpMyAdmin เท่านั้น ไม่ผ่าน HTML ไม่ผ่าน query string
- * และไม่ผ่าน JSON ที่ JavaScript อ่านได้
+ * **The one difference from the original: answers with JSON instead of redirecting**
+ * The SPA fires this request with `fetch`, so it can't usefully follow a 302 itself
+ * · the signon cookie still gets set from this response normally, since it's the
+ * same origin — the page just navigates to `data.url` afterward · **the password
+ * itself never once reaches the web page** — it travels agent → phpMyAdmin's own
+ * session only, never through HTML, never through a query string, and never
+ * through JSON that JavaScript can read.
  */
 final class PhpMyAdminController extends ApiController
 {
     /**
-     * ชื่อ session ที่ phpMyAdmin จะไปอ่าน — ต้องตรงกับ `SignonSession` ใน config.inc.php
+     * The session name phpMyAdmin reads from — must match `SignonSession` in config.inc.php
      *
-     * ตั้งชื่อไม่ให้ชนกับ session ของ panel เอง เพราะทั้งสองอยู่บนโดเมนเดียวกัน
+     * Named so it never collides with the panel's own session, since both live on the same domain.
      */
     private const SIGNON_SESSION = 'phpcp_pma_signon';
 
@@ -48,18 +51,19 @@ final class PhpMyAdminController extends ApiController
             $credentials = $this->agent()->data('db.account_credentials', [], $this->ctx->actor($request));
         } catch (AgentException $e) {
             /*
-             * **ไม่ส่งข้อความดิบกลับไปให้ผู้เรียก**
+             * **Never send the raw message back to the caller**
              *
-             * เส้นทางนี้เปิดให้ทุกคนที่มีสิทธิ์ `db.view` ซึ่งรวมลูกค้าด้วย · ข้อความของ
-             * `ExecutionFailed` ที่ห่อขึ้นมาจากชั้นล่างคือ stderr ของ MariaDB ตรง ๆ
-             * ซึ่งบอกเส้นทาง socket, รุ่นของเซิร์ฟเวอร์ และบางครั้งก็ชื่อผู้ใช้ระบบ
-             * — ข้อมูลตั้งต้นชั้นดีของการเลือกวิธีโจมตี แลกกับการที่ลูกค้าอ่านแล้ว
-             * ก็ทำอะไรกับมันไม่ได้อยู่ดี
+             * This route is open to anyone with `db.view`, which includes customers ·
+             * the message on an `ExecutionFailed` wrapped up from the layer below is
+             * MariaDB's own stderr, verbatim — it names the socket path, the server
+             * version, and sometimes even the system username — great initial
+             * reconnaissance for choosing an attack, in exchange for nothing the
+             * customer could actually do with it anyway.
              *
-             * รายละเอียดไปอยู่ใน log ของเครื่องแทน ซึ่งเป็นที่ที่ผู้ดูแลหาอยู่แล้วเวลา
-             * มีคนแจ้งว่าเปิด phpMyAdmin ไม่ได้
+             * The detail goes to the machine's own log instead, which is where the
+             * admin already looks when someone reports they can't open phpMyAdmin.
              */
-            $this->app->logger()->error('เตรียมบัญชีฐานข้อมูลสำหรับ phpMyAdmin ไม่สำเร็จ', [
+            $this->app->logger()->error('Failed to prepare the database account for phpMyAdmin', [
                 'user' => $this->ctx->username(),
                 'error' => $e->getMessage(),
                 'request_id' => $request->requestId,
@@ -75,12 +79,11 @@ final class PhpMyAdminController extends ApiController
         if (!$this->writeSignonSession((string) $credentials['user'], (string) $credentials['password'])) {
             return $this->problem(
                 ApiProblem::InternalError,
-                $this->t('The phpMyAdmin session could not be opened — check that session.save_path of pool ')
-                .'ชี้ไปยังโฟลเดอร์ที่อยู่ใน open_basedir และเขียนได้',
+                $this->t('The phpMyAdmin session could not be opened — check that session.save_path for this pool points to a folder inside open_basedir and is writable'),
             );
         }
 
-        // ไปที่หน้าโครงสร้างของฐานข้อมูลที่ระบุ ถ้าไม่ระบุก็หน้าแรก
+        // Go to the structure page of the given database, or the front page if none was given
         $database = $request->payloadString('db');
         $url = '/phpmyadmin/';
 
@@ -88,16 +91,34 @@ final class PhpMyAdminController extends ApiController
             $url .= 'index.php?route=/database/structure&db='.rawurlencode($database);
         }
 
-        return $this->ok(['url' => $url]);
+        /*
+         * `actions` is here **specifically so a table row action can call this
+         * endpoint declaratively** — a `data-row-actions` entry with
+         * `"method": "post"` and `"target": "_blank"` goes through
+         * `ResponseHandler`'s `redirect` handler, which already supports opening
+         * a URL in a new tab. The header button's own bespoke JS
+         * (`openPhpMyAdmin` in ui.js) still reads `data.url` directly and never
+         * looks at `actions`, so it keeps working unchanged either way.
+         *
+         * This is deliberately never a bare GET-able redirect at the HTTP level
+         * — the URL only ever reaches the browser inside a POST response body,
+         * after the CSRF-guarded signon session above has already been created.
+         */
+        return $this->ok(
+            ['url' => $url],
+            [],
+            [['type' => 'redirect', 'url' => $url, 'target' => '_blank', 'delay' => 0]],
+        );
     }
 
     /**
-     * เขียนชื่อผู้ใช้และรหัสผ่านลง session ที่ phpMyAdmin จะมาอ่าน
+     * Write the username and password into the session phpMyAdmin will read from
      *
-     * ต้องปิด session ทันทีหลังเขียน — ถ้าเปิดค้างไว้ คำขอถัดไปของผู้ใช้คนเดียวกัน
-     * (ซึ่งคือการเปิด phpMyAdmin นั่นเอง) จะถูกล็อกรอจนหมดเวลา
+     * Must close the session immediately after writing — leaving it open would
+     * lock the same user's next request (which is opening phpMyAdmin itself) until
+     * it times out.
      *
-     * session ของ panel ต้องถูกปิดก่อนสลับชื่อ ไม่งั้นข้อมูลของทั้งสองจะปนกัน
+     * The panel's own session must be closed before switching names, otherwise the two get mixed together.
      */
     private function writeSignonSession(string $user, string $password): bool
     {
@@ -116,16 +137,18 @@ final class PhpMyAdminController extends ApiController
             'samesite' => 'Strict',
         ]);
 
-        // session ของ PHP เขียนไม่ได้เมื่อ session.save_path อยู่นอก open_basedir ซึ่งเป็น
-        // ค่าปริยายบน Debian (/var/lib/php/sessions) · ต้องจับเองแล้วบอกให้ชัด ไม่ใช่ปล่อย
-        // ให้กลายเป็น 500 ที่ไม่มีใครเดาสาเหตุถูก — เจอจากการทดสอบบนเครื่องจริง
+        // A PHP session can't be written when session.save_path sits outside
+        // open_basedir, which is the default on Debian (/var/lib/php/sessions) ·
+        // this has to be caught explicitly and reported clearly, instead of
+        // turning into a 500 nobody can guess the cause of — found through
+        // testing on a real machine.
         if (!@session_start()) {
             session_name($previousName);
 
             return false;
         }
 
-        // หมุน id ทุกครั้งที่ออกบัตรใหม่ — กัน session fixation แบบเดียวกับตอนล็อกอิน panel
+        // Rotate the id every time a new ticket is issued — the same session-fixation guard used at panel login
         session_regenerate_id(true);
 
         $_SESSION['PMA_single_signon_user'] = $user;

@@ -18,8 +18,37 @@
       </header>
       <div class="content-body">
         <div class="tablebody">
+          <!--
+            The "Open phpMyAdmin" row button is a plain POST `data-row-actions`
+            entry — safe here specifically because opening phpMyAdmin is a POST
+            to `/api/v2/phpmyadmin/session` (CSRF-guarded, creates a signon
+            session) whose JSON response carries `actions: [{type: "redirect",
+            url, target: "_blank"}]`; `target: "_blank"` on a POST goes through
+            ResponseHandler's own redirect handler, which already knows how to
+            open a URL in a new tab. This is different from a bare `"method":
+            "get"` pointing straight at `/phpmyadmin/index.php` (never do
+            that): a GET like that has no session of its own and either fails
+            outright or silently rides on a session an earlier click already
+            created elsewhere on the page — see
+            tests/security/DbAccountTest.php's phpMyAdmin route test for the
+            guard that catches this regression.
+
+            `condition` is tied to `exists_on_server` because the button
+            should only appear for a database that genuinely exists on
+            MariaDB — a row the panel still knows about but the machine no
+            longer has would just lead to phpMyAdmin's own error page.
+          -->
           <table class="table border fullwidth" data-table="databases" data-source="/api/v2/databases" data-default-sort="name asc" data-page-size="25" data-search-columns="name"
                  data-row-actions='{
+                   "phpmyadmin": {
+                     "title": "Open phpMyAdmin",
+                     "className": "btn btn-success icon-database",
+                     "method": "post",
+                     "url": "/api/v2/phpmyadmin/session",
+                     "params": {"db": "{name}"},
+                     "target": "_blank",
+                     "condition": "${exists_on_server}"
+                   },
                    "delete": {
                      "title": "Delete",
                      "className": "btn btn-danger icon-delete",
@@ -43,28 +72,6 @@
                 -->
                 <th data-field="status" class="center" data-cell-class="center"
                     data-template="<span class='pill pill-${status_tone}'>${status_label}</span>" data-i18n>{LNG_Status}</th>
-                <!--
-                  The "Open phpMyAdmin" button must be a formatter, not a
-                  `data-row-actions` entry.
-
-                  Opening it is two steps that can't be split apart: a POST
-                  carrying a CSRF token to create a session on phpMyAdmin's
-                  side (auth_type = signon), then navigating to the URL that
-                  returns · `data-row-actions` (which can only build a single
-                  link or request) can't do this. The old direct link to
-                  `/phpmyadmin/index.php?...` was a bare GET with no session,
-                  so the user landed on phpMyAdmin's own login screen instead
-                  of their own database — the "clicked the table button and
-                  nothing happened" symptom.
-
-                  Tied to `exists_on_server` because the button should only
-                  appear for a database that genuinely exists on MariaDB — a
-                  row the panel still knows about but the machine no longer
-                  has would just lead to phpMyAdmin's own error page (and the
-                  `name` column is already used for the database name, so the
-                  same table can't have a duplicate data-field).
-                -->
-                <th data-field="exists_on_server" data-formatter="formatDatabaseActions" data-i18n>{LNG_Open}</th>
               </tr>
             </thead>
             <tbody></tbody>

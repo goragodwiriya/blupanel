@@ -1,13 +1,15 @@
 /**
- * ตัวจัดรูปแบบค่าที่เทมเพลตเรียกใช้ได้โดยตรง — ไม่ต้องเขียน JS ต่อหน้า
+ * Value formatters templates can call directly — no page-specific JS needed.
  *
- * `window.formatters` ใช้กับ **ทุก element** ผ่านไปป์ใน data-text
- * `<span data-text="memory.used | bytes"></span>` — รับ argument ต่อท้ายด้วย `:` ได้
- * เช่น `| fixed:1`
+ * `window.formatters` applies to **every element** through the pipe in data-text:
+ * `<span data-text="memory.used | bytes"></span>` — takes a trailing `:` argument,
+ * e.g. `| fixed:1`.
  *
- * เกือบทุกตารางในระบบตอนนี้ใช้ `data-row-actions`/`data-template`/`data-format` แบบ
- * ประกาศล้วนแล้ว (ดู site.html/users.html เป็นต้นแบบ) — ที่เหลือในไฟล์นี้คือปุ่มเดียว
- * ที่ประกาศไม่ได้จริง ๆ เพราะปลายทางถูกเลือกไว้นอกแถว (ดูคอมเมนต์ที่ formatBackupActions)
+ * Almost every table in the system now uses declarative
+ * `data-row-actions`/`data-template`/`data-format` (see site.html/users.html as the
+ * model) — what remains in this file is the one button that genuinely can't be
+ * declared, because its destination is chosen outside the row (see the comment at
+ * formatBackupActions).
  */
 (function() {
   'use strict';
@@ -160,34 +162,6 @@
       cell.appendChild(box);
     };
   }
-
-  /**
-   * The "Open phpMyAdmin" button for each row in the databases table
-   *
-   * **Must be a formatter, not `data-row-actions`** · opening it is two steps
-   * that can't be split apart: a POST carrying a CSRF token to create a
-   * session on phpMyAdmin's side, then navigating to the URL that returns —
-   * which `data-row-actions` (which can only build a single link or request)
-   * can't do · the old direct link to `/phpmyadmin/index.php?...` was a bare
-   * GET with no session, so the user landed on phpMyAdmin's own login screen
-   * instead of their own database.
-   *
-   * The same button the page header uses, just with `data-db` attached too.
-   */
-  window.formatDatabaseActions = (cell, existsOnServer, row) => {
-    cell.textContent = '';
-
-    // A database the panel knows about but the machine no longer has — clicking it would only reach an error page
-    if (existsOnServer === false) return;
-
-    const open = document.createElement('button');
-    open.type = 'button';
-    open.className = 'btn small btn-success icon-database';
-    open.dataset.action = 'click.prevent:openPhpMyAdmin';
-    open.dataset.db = String((row && row.name) || '');
-    open.title = t('Open phpMyAdmin');
-    cell.appendChild(open);
-  };
 
   window.formatBackupFilesToggle = backupTargetToggle('backup_files');
   window.formatBackupDatabaseToggle = backupTargetToggle('backup_database');
