@@ -499,3 +499,65 @@ test('รายการฐานข้อมูลต้องเห็นฐ�
 
     assertTrue($thrown === null, 'เจ้าของฐานที่ไม่ผูกเว็บไซต์ต้องผ่านการตรวจสิทธิ์ก่อนลบฐานตัวเองได้');
 });
+
+test('รายการฐานข้อมูลต้องเห็นฐานที่มีอยู่จริงบนเครื่องแต่ panel ไม่เคยรู้จัก ถ้าคำนำหน้าชื่อตรงกับบัญชีตัวเอง', static function (): void {
+    /*
+     * เจอจากรายงานจริง (2026-08-16): ฐานข้อมูลของลูกค้าถูกสร้างตรงผ่าน
+     * phpMyAdmin ไม่เคยผ่าน db.create เลย — databases_ จึงไม่มีแถวให้เลยแม้
+     * แต่แถวเดียว migration 0025 (owner_user_id) ช่วยไม่ได้เพราะไม่มีแถวให้ใส่
+     * owner_user_id ตั้งแต่แรก — ทางเดียวที่เห็นเจ้าของได้คือคำนำหน้าชื่อฐาน
+     * ข้อมูล เหมือนที่ DbList ใช้แสดงฐาน "ไม่รู้จัก" ให้แอดมินอยู่แล้ว แต่ก่อนแก้
+     * ไม่เคยแสดงให้ลูกค้าเจ้าของเองเห็นเลย (เห็นแต่แอดมิน)
+     */
+    $db = migratedDb();
+    $users = new Phpcp\Domain\UserRepository($db);
+
+    $ownerId = $users->createHostingAccount('dblistowner', 'DbList-Owner-Password-11', 'owner@example.com');
+    $db->update('users', ['system_user' => 'dblistowner'], ['id' => $ownerId]);
+
+    $otherId = $users->createHostingAccount('dblistother', 'DbList-Other-Password-11', 'other@example.com');
+    $db->update('users', ['system_user' => 'dblistother'], ['id' => $otherId]);
+
+    $manager = new Phpcp\Driver\Db\MariaDbManager();
+    $executor = new Phpcp\Agent\Executor\SandboxExecutor(sys_get_temp_dir() . '/phpcp-dblist-unmanaged-' . getmypid());
+
+    if (!$manager->isInstalled($executor)) {
+        return; // ไม่มี mariadb ในเครื่องทดสอบนี้ — ส่วนอื่นของ DbList ยังถูกทดสอบผ่านที่อื่นได้
+    }
+
+    $dbName = 'dblistowner_phpmyadmin_made';
+    $manager->createDatabase($executor, $dbName);
+
+    try {
+        $ownerContext = new Context(
+            new Actor($ownerId, 'dblistowner', Permissions::WEBADMIN, '127.0.0.1', 'test'),
+            Config::load(PHPCP_ROOT),
+            $db,
+        );
+        $otherContext = new Context(
+            new Actor($otherId, 'dblistother', Permissions::WEBADMIN, '127.0.0.1', 'test'),
+            Config::load(PHPCP_ROOT),
+            $db,
+        );
+
+        $ownerNames = array_column(
+            (new Phpcp\Agent\Capability\DbList())->run([], $executor, $ownerContext)['databases'],
+            'name',
+        );
+        assertTrue(
+            in_array($dbName, $ownerNames, true),
+            'เจ้าของต้องเห็นฐานที่ panel ไม่รู้จักแต่คำนำหน้าตรงกับบัญชีตัวเอง: ' . implode(', ', $ownerNames),
+        );
+
+        $otherNames = array_column(
+            (new Phpcp\Agent\Capability\DbList())->run([], $executor, $otherContext)['databases'],
+            'name',
+        );
+        assertTrue(
+            !in_array($dbName, $otherNames, true),
+            'คนอื่นต้องไม่เห็นฐานที่คำนำหน้าไม่ตรงกับบัญชีตัวเอง: ' . implode(', ', $otherNames),
+        );
+    } finally {
+        $manager->dropDatabase($executor, $dbName);
+    }
+});

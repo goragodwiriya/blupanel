@@ -16,8 +16,10 @@ use Phpcp\Security\Permissions;
  *   server — databases that genuinely exist on MariaDB
  *
  * A database that exists on the machine but is unknown to the panel gets flagged
- * "not managed by the panel" instead of hidden — an admin should see the whole
- * truth of the machine.
+ * "not managed by the panel" instead of hidden — an admin sees every such
+ * database, a customer sees only the ones their own account's name prefix
+ * matches (created outside the panel — phpMyAdmin, the mysql client — against
+ * their own dedicated account is still genuinely theirs).
  */
 final class DbList extends DbCapability
 {
@@ -107,24 +109,49 @@ final class DbList extends DbCapability
             ];
         }
 
-        // Databases that exist on the machine but the panel doesn't know about — shown to the admin too
+        /*
+         * Databases that exist on the machine but the panel doesn't know
+         * about — an admin sees every one. A non-admin only sees the ones
+         * whose name starts with their own account's prefix (the same
+         * `<system_user>_` DbCreate always qualifies names with) — real on a
+         * report (2026-08-16): a customer's database created directly through
+         * phpMyAdmin, never through `db.create`, so `databases_` never got a
+         * row for it at all. `owner_user_id` (migration 0025) only covers
+         * databases the panel itself recorded — this covers the ones it didn't.
+         */
         if ($isAdmin) {
             foreach ($onServer as $name) {
                 if (in_array($name, $known, true)) {
                     continue;
                 }
 
-                $databases[] = [
-                    'name' => $name,
-                    'site_id' => 0,
-                    'site' => null,
-                    'charset' => '',
-                    'size' => $sizes[$name] ?? 0,
-                    'created_at' => 0,
-                    'exists_on_server' => true,
-                    'managed' => false,
-                    'users' => [],
-                ];
+                $databases[] = $this->unmanagedRow($name, $sizes);
+            }
+        } else {
+            $prefix = (string) $context->db->value(
+                'SELECT system_user FROM users WHERE id = :id',
+                ['id' => $context->actor->userId],
+                '',
+            );
+
+            if ($prefix !== '') {
+                $webadmins = $context->db->all(
+                    "SELECT id, system_user FROM users WHERE role = 'webadmin' AND system_user IS NOT NULL",
+                );
+
+                foreach ($onServer as $name) {
+                    if (in_array($name, $known, true)) {
+                        continue;
+                    }
+
+                    // The longest matching account prefix wins — the same
+                    // rule DbDrop::ownerAccountFor() uses, so "alice" and
+                    // "alice_bob" (both real accounts) never both claim
+                    // "alice_bob_secret" as theirs.
+                    if ($this->bestPrefixOwner($webadmins, $name) === $context->actor->userId) {
+                        $databases[] = $this->unmanagedRow($name, $sizes);
+                    }
+                }
             }
         }
 
@@ -137,6 +164,46 @@ final class DbList extends DbCapability
             'error' => $error,
             'total_size' => array_sum(array_column($databases, 'size')),
         ];
+    }
+
+    /** @return array{name:string,site_id:int,site:null,charset:string,size:int,created_at:int,exists_on_server:bool,managed:bool,users:array<never>} */
+    private function unmanagedRow(string $name, array $sizes): array
+    {
+        return [
+            'name' => $name,
+            'site_id' => 0,
+            'site' => null,
+            'charset' => '',
+            'size' => $sizes[$name] ?? 0,
+            'created_at' => 0,
+            'exists_on_server' => true,
+            'managed' => false,
+            'users' => [],
+        ];
+    }
+
+    /**
+     * The webadmin whose account prefix most specifically matches this
+     * database name — mirrors `DbDrop::ownerAccountFor()`'s tie-break so the
+     * two paths can never disagree about who an unmanaged database belongs to
+     *
+     * @param list<array{id:int,system_user:string}> $webadmins
+     */
+    private function bestPrefixOwner(array $webadmins, string $name): ?int
+    {
+        $best = null;
+        $bestPrefixLen = 0;
+
+        foreach ($webadmins as $row) {
+            $prefix = $row['system_user'] . '_';
+
+            if (str_starts_with($name, $prefix) && strlen($prefix) > $bestPrefixLen) {
+                $best = (int) $row['id'];
+                $bestPrefixLen = strlen($prefix);
+            }
+        }
+
+        return $best;
     }
 
     /**
