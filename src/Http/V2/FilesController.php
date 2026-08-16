@@ -14,26 +14,29 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * ตัวจัดการไฟล์ — `/api/v2/files` (PLAN-V2 §4.6, ทรัพยากรที่ซับซ้อนที่สุดของเฟส B)
+ * The file manager — `/api/v2/files` (PLAN-V2 §4.6, phase B's most complex resource)
  *
- * **ทุก endpoint ที่นี่ไม่แตะไฟล์เองแม้แต่ไบต์เดียว** — ส่งต่อให้ capability ทั้งหมด
- * ซึ่งเป็นที่ที่ `PathGuard` ตรวจสองชั้น (lexical แล้วตามด้วย realpath หลังลดสิทธิ์)
- * และเป็นที่ที่งานไฟล์ถูกทำในสิทธิ์ของเจ้าของเว็บผ่าน `Executor::asUser()`
- * ตาม ARCHITECTURE §4.4 · ชั้นนี้มีหน้าที่แค่ตรวจว่าผู้เรียกเปิดขอบเขตนี้ได้ไหม
- * แล้วแปลงคำขอ HTTP เป็น argument
+ * **No endpoint here touches a file's bytes directly** — everything goes through
+ * the capability layer, which is where `PathGuard` checks twice (lexically, then
+ * by realpath after privileges are dropped) and where file work actually runs
+ * under the website owner's own privileges via `Executor::asUser()` per
+ * ARCHITECTURE §4.4 · this layer's only job is to check whether the caller may
+ * open this scope, then turn the HTTP request into arguments
  *
- * ทุกคำสั่งอ้าง `root` (คีย์ของขอบเขต) + `path` (เส้นทางสัมพัทธ์ในขอบเขตนั้น) เสมอ
- * ไม่มี endpoint ไหนรับเส้นทางสัมบูรณ์ของเครื่อง — นั่นคือสิ่งที่ทำให้ traversal
- * ออกนอกขอบเขตเป็นไปไม่ได้ตั้งแต่รูปแบบของ API ไม่ใช่แค่จากการตรวจค่า
+ * Every command always references `root` (the scope's key) + `path` (a path
+ * relative to that scope) — no endpoint ever accepts an absolute machine path.
+ * That's what makes traversal out of the scope impossible by the API's shape
+ * itself, not just from value checking
  */
 final class FilesController extends ApiController
 {
     /**
-     * ขอบเขตไฟล์ที่ผู้เรียกเปิดได้
+     * The file scopes the caller may open
      *
-     * SPA ต้องเรียกอันนี้ก่อนเสมอเพื่อรู้ว่ามีอะไรให้เปิดบ้าง — endpoint นี้ไม่ได้อยู่ใน
-     * ตารางแปลงเส้นทางของ §4.6 เพราะ UI เดิมได้ข้อมูลนี้มาพร้อมหน้า HTML
-     * แต่ SPA ไม่มีหน้า HTML ให้แนบมาด้วย จึงต้องมีทางขอแยก
+     * The SPA must always call this first to know what's available to open — this
+     * endpoint isn't in §4.6's route table because the old UI got this data
+     * bundled with the HTML page, but the SPA has no HTML page to attach it to,
+     * so it needs its own way to ask
      */
     public function roots(Request $request): Response
     {
@@ -46,8 +49,9 @@ final class FilesController extends ApiController
                 'kind' => $scope->kind,
                 'site_id' => $scope->siteId,
                 'writable' => $scope->writable
-                // ไม่ส่ง `root` (เส้นทางจริงบนเครื่อง) ให้ฝั่งหน้าเว็บ — มันไม่มีอะไรให้ทำกับค่านั้น
-                // และการเปิดเผยโครงสร้างไดเรกทอรีของเครื่องโดยไม่จำเป็นคือการช่วยผู้โจมตีฟรี ๆ
+                // `root` (the real machine path) is never sent to the browser — the
+                // frontend has nothing to do with it, and needlessly exposing the
+                // machine's directory structure is a free gift to an attacker
             ];
         }
 
@@ -57,7 +61,7 @@ final class FilesController extends ApiController
         ]);
     }
 
-    /** รายการไฟล์ในโฟลเดอร์ */
+    /** List the files in a folder */
     public function index(Request $request): Response
     {
         $root = $this->resolveRoot($request->get('root'));
@@ -73,7 +77,7 @@ final class FilesController extends ApiController
             'per_page' => $request->get('per_page')
         ], $this->ctx->actor($request));
 
-        // capability แบ่งหน้ามาให้แล้ว — ยกค่าที่มันคำนวณไว้ขึ้นเป็น meta ตามรูปแบบ §4.2
+        // The capability already paginated this — lift its computed values up to meta per §4.2's shape
         $entries = $data['entries'] ?? [];
         unset($data['entries']);
 
@@ -81,10 +85,11 @@ final class FilesController extends ApiController
     }
 
     /**
-     * โครงโฟลเดอร์สำหรับแถบนำทางด้านซ้าย
+     * The folder tree for the left-hand navigation panel
      *
-     * ใช้ `resolveRoot` เหมือน `index` เพราะแถบนำทางถูกวาดพร้อมหน้าจอ ก่อนที่คำตอบของ
-     * `/files/roots` (คนละคำขอ) จะมาถึง — คำขอแรกจึงยังไม่มี `root` ติดมาด้วยเสมอ
+     * Uses `resolveRoot` just like `index` does, because the navigation panel is
+     * drawn along with the screen, before the answer to `/files/roots` (a separate
+     * request) arrives — so this first request never has a `root` attached yet
      */
     public function tree(Request $request): Response
     {
@@ -106,7 +111,7 @@ final class FilesController extends ApiController
         return $this->ok($nodes, $data);
     }
 
-    /** ค้นหาไฟล์ตามชื่อใต้โฟลเดอร์ที่เปิดอยู่ */
+    /** Search for files by name under the open folder */
     public function search(Request $request): Response
     {
         $root = $this->resolveRoot($request->get('root'));
@@ -118,7 +123,7 @@ final class FilesController extends ApiController
         $data = $this->agent()->data('file.search', [
             'root' => $root,
             'path' => $request->get('path'),
-            // `q` คือชื่อในสัญญา §4.5 · `searchTerm` รับชื่อที่ตารางของ Now.js ส่งมาด้วย
+            // `q` is §4.5's contract name · `searchTerm` also accepts the name Now.js's table sends
             'q' => $this->searchTerm($request)
         ], $this->ctx->actor($request));
 
@@ -128,7 +133,7 @@ final class FilesController extends ApiController
         return $this->ok($entries, $data);
     }
 
-    /** ข้อมูลของไฟล์หรือโฟลเดอร์เดียว — กล่องคุณสมบัติ */
+    /** A single file or folder's details — the properties box */
     public function info(Request $request): Response
     {
         $root = $request->get('root');
@@ -143,7 +148,7 @@ final class FilesController extends ApiController
         ], $this->ctx->actor($request)));
     }
 
-    /** เนื้อหาไฟล์ข้อความสำหรับแก้ไข */
+    /** A text file's content, for editing */
     public function read(Request $request): Response
     {
         $root = $request->get('root');
@@ -159,10 +164,11 @@ final class FilesController extends ApiController
     }
 
     /**
-     * บันทึกเนื้อหาไฟล์
+     * Save a file's content
      *
-     * `create` แยกจากการเขียนทับโดยเจตนา — ค่าปริยายคือ "เขียนทับไฟล์ที่มีอยู่เท่านั้น"
-     * การพิมพ์ชื่อไฟล์ผิดจึงได้ error ไม่ใช่สร้างไฟล์เปล่าไว้ในที่ที่ไม่ตั้งใจ
+     * `create` is deliberately separate from overwriting — the default is "only
+     * overwrite a file that already exists," so a mistyped filename gets an error
+     * instead of quietly creating an empty file somewhere unintended
      */
     public function write(Request $request): Response
     {
@@ -186,20 +192,23 @@ final class FilesController extends ApiController
     }
 
     /**
-     * ดาวน์โหลดไฟล์
+     * Download a file
      *
-     * **ข้อยกเว้นเดียวของกฎ "ทุก endpoint ตอบ JSON"** — ไฟล์ไบนารีที่ห่อด้วย base64
-     * ใน JSON จะโตขึ้น 33% และบังคับให้ฝั่ง client ถอดรหัสทั้งไฟล์ในหน่วยความจำก่อน
-     * บันทึกได้ ซึ่งใช้ไม่ได้จริงกับไฟล์ขนาดหลายสิบเมกะไบต์ · ข้อยกเว้นนี้ระบุไว้ใน
-     * `docs/openapi.yaml` อย่างชัดเจนแล้ว
+     * **The one exception to "every endpoint answers JSON"** — a binary file
+     * wrapped in base64 inside JSON grows by 33% and forces the client to decode
+     * the whole file in memory before it can be saved, which doesn't work for
+     * files tens of megabytes in size · this exception is documented explicitly
+     * in `docs/openapi.yaml`
      *
-     * ส่งเป็น octet-stream + nosniff เสมอ — ถ้าปล่อยให้เบราว์เซอร์เดาชนิดเอง
-     * ไฟล์ .html ของผู้ใช้จะถูกเรนเดอร์ในโดเมนของ panel แล้วกลายเป็น stored XSS
-     * ที่ขโมย session ของผู้ดูแลได้ทันที
+     * Always sent as octet-stream + nosniff — letting the browser guess the type
+     * itself would mean a user's .html file gets rendered on the panel's own
+     * domain, an instant stored XSS that can steal an admin's session
      *
-     * **ไม่มีเพดานขนาดแล้ว** — เดิมปฏิเสธไฟล์ที่ใหญ่กว่า 2.5 MB (ขนาดเฟรมของโปรโตคอล)
-     * พร้อมบอกให้ไปบีบอัดเป็น zip ก่อน ซึ่งเป็นคำแนะนำที่ใช้ไม่ได้กับไฟล์สำรองที่บีบ
-     * มาแล้วและใหญ่กว่านั้นเสมอ · ตอนนี้ขอจาก agent ทีละก้อนแล้วสตรีมต่อออกไปเลย
+     * **No size ceiling anymore** — this used to reject anything larger than
+     * 2.5 MB (the protocol's frame size) and suggest zipping it first, advice
+     * that's useless for a backup file that's already compressed and always
+     * larger than that · now it asks the agent for one chunk at a time and
+     * streams each one straight through
      */
     public function download(Request $request): Response
     {
@@ -212,8 +221,9 @@ final class FilesController extends ApiController
         $path = $request->get('path');
         $actor = $this->ctx->actor($request);
 
-        // ก้อนแรกทำสองหน้าที่: บอกขนาดทั้งไฟล์ และตรวจสิทธิ์/ความมีอยู่จริงก่อนที่
-        // เราจะส่ง header ออกไป · ล้มตรงนี้ยังตอบเป็น JSON ที่มีรหัสข้อผิดพลาดได้อยู่
+        // The first chunk does two jobs at once: reports the file's total size,
+        // and checks permission/existence before any headers are sent · a failure
+        // here can still answer as JSON carrying an error code
         $first = $this->agent()->data('file.download', [
             'root' => $root,
             'path' => $path,
@@ -228,14 +238,17 @@ final class FilesController extends ApiController
         $agent = $this->agent();
 
         /*
-         * ทยอยขอทีละก้อนจนหมดไฟล์ แล้วส่งออกทันทีทีละก้อน
+         * Requests one chunk at a time until the file is exhausted, sending each
+         * one out immediately
          *
-         * **ห้ามประกอบทั้งไฟล์ก่อนส่ง** — ไฟล์สำรองของเว็บจริงมีขนาดระดับกิกะไบต์
-         * การถือไว้ทั้งไฟล์คือการทำให้ PHP ตายด้วย memory_limit ในงานที่ผู้ใช้ต้องการ
-         * มันที่สุด · ก้อนละ 2.5 MB ตามเพดานของเฟรมโปรโตคอล (ดู FileDownload)
+         * **Never assemble the whole file before sending** — real website backups
+         * run into the gigabytes, and holding the whole thing in memory is exactly
+         * how to kill PHP with memory_limit on the one job users need it most for
+         * · each chunk is 2.5 MB per the protocol frame's ceiling (see FileDownload)
          *
-         * `Content-Length` ส่งได้เพราะรู้ขนาดตั้งแต่ก้อนแรก — เบราว์เซอร์จึงขึ้นแถบ
-         * ความคืบหน้าจริง ไม่ใช่ตัวเลขที่ไต่ขึ้นไปเรื่อย ๆ โดยไม่รู้ปลายทาง
+         * `Content-Length` can be sent because the size is known from the first
+         * chunk — so the browser shows a real progress bar, not a number that
+         * just climbs with no known destination
          */
         $stream = static function (callable $emit) use ($first, $agent, $root, $path, $actor): void {
             $chunk = $first;
@@ -263,14 +276,16 @@ final class FilesController extends ApiController
     }
 
     /**
-     * อัปโหลดไฟล์
+     * Upload a file
      *
-     * รับได้สองแบบ: multipart (`files[]`) จากเบราว์เซอร์ และ JSON ที่มี `name` +
-     * `content_base64` สำหรับสคริปต์และ curl · แบบที่สองจำเป็นเพราะเกณฑ์รับงานเฟส B
-     * คือ "เรียกได้ครบทุกทรัพยากรด้วย curl โดยไม่ต้องเปิดเบราว์เซอร์เลย"
+     * Accepts two shapes: multipart (`files[]`) from the browser, and JSON
+     * carrying `name` + `content_base64` for scripts and curl · the second shape
+     * is required because phase B's acceptance criteria is "every resource is
+     * reachable by curl alone, with no browser ever opened"
      *
-     * ส่งให้ agent ทีละไฟล์เพราะโปรโตคอลมีเพดานขนาดต่อหนึ่งคำสั่ง — การรวมหลายไฟล์
-     * เป็นคำสั่งเดียวจะทำให้อัปโหลดไฟล์เล็ก ๆ หลายไฟล์ล้มทั้งชุด
+     * Sent to the agent one file at a time because the protocol has a per-command
+     * size ceiling — bundling several files into one command would fail the whole
+     * batch over a single small file
      */
     public function upload(Request $request): Response
     {
@@ -285,13 +300,13 @@ final class FilesController extends ApiController
         $uploaded = [];
 
         foreach ($request->files('files') as $file) {
-            $error = self::uploadError($file);
+            $error = $this->uploadError($file);
 
             if ($error !== null) {
                 return $this->problem(ApiProblem::ValidationError, $error, ['files' => $error]);
             }
 
-            // is_uploaded_file กันไม่ให้ tmp_name ที่ถูกปลอมชี้ไปยังไฟล์อื่นบนเครื่อง
+            // is_uploaded_file stops a forged tmp_name from pointing at some other file on the machine
             if (!is_uploaded_file($file['tmp_name'])) {
                 return $this->problem(ApiProblem::ValidationError, 'The uploaded file is not valid');
             }
@@ -305,7 +320,7 @@ final class FilesController extends ApiController
             $uploaded[] = $this->sendFile($request, $root, $path, (string) $file['name'], base64_encode($content), $overwrite);
         }
 
-        // แบบ JSON — ไฟล์เดียวต่อคำขอ
+        // The JSON shape — one file per request
         $name = trim($request->payloadString('name'));
         if ($uploaded === [] && $name !== '') {
             $uploaded[] = $this->sendFile(
@@ -322,7 +337,7 @@ final class FilesController extends ApiController
             return $this->problem(
                 ApiProblem::ValidationError,
                 'No uploaded file was received',
-                ['files' => 'ส่งไฟล์มาทาง multipart `files[]` หรือส่ง `name` + `content_base64` มาทาง JSON'],
+                ['files' => 'Send the file via multipart `files[]`, or send `name` + `content_base64` via JSON'],
             );
         }
 
@@ -333,7 +348,7 @@ final class FilesController extends ApiController
         );
     }
 
-    /** สร้างโฟลเดอร์ */
+    /** Create a folder */
     public function makeDirectory(Request $request): Response
     {
         $root = $request->payloadString('root');
@@ -351,25 +366,26 @@ final class FilesController extends ApiController
         return $this->completed((string) ($result['message'] ?? 'Folder created'), 'files', $result);
     }
 
-    /** ย้ายหรือเปลี่ยนชื่อ */
+    /** Move or rename */
     public function move(Request $request): Response
     {
         return $this->transfer($request, copy: false);
     }
 
     /**
-     * คัดลอก
+     * Copy
      *
-     * ใช้ capability เดียวกับการย้ายโดยตั้ง `copy` — แยกเป็นคนละ endpoint เพราะ
-     * "คัดลอก" กับ "ย้าย" เป็นคนละการกระทำในสายตาผู้ใช้ และการซ่อนความต่างไว้ในแฟล็ก
-     * ของ body ทำให้อ่าน log ย้อนหลังแล้วแยกไม่ออกว่าเกิดอะไรขึ้น
+     * Uses the same capability as move, with `copy` set — kept as a separate
+     * endpoint because "copy" and "move" are different actions in the user's
+     * eyes, and hiding the difference in a body flag makes reading the log later
+     * unable to tell what actually happened
      */
     public function copy(Request $request): Response
     {
         return $this->transfer($request, copy: true);
     }
 
-    /** ลบไฟล์หรือโฟลเดอร์ที่เลือก */
+    /** Delete the selected files or folders */
     public function destroy(Request $request): Response
     {
         $root = $request->payloadString('root');
@@ -392,7 +408,7 @@ final class FilesController extends ApiController
         );
     }
 
-    /** เปลี่ยนสิทธิ์ไฟล์ */
+    /** Change file permissions */
     public function setPermissions(Request $request): Response
     {
         $root = $request->payloadString('root');
@@ -411,7 +427,7 @@ final class FilesController extends ApiController
         return $this->completed((string) ($result['message'] ?? 'Permissions changed'), 'files', is_array($result) ? $result : []);
     }
 
-    /** สร้างไฟล์บีบอัดจากรายการที่เลือก */
+    /** Create an archive from the selected items */
     public function archive(Request $request): Response
     {
         $root = $request->payloadString('root');
@@ -430,7 +446,7 @@ final class FilesController extends ApiController
         return $this->completed((string) ($result['message'] ?? 'Files compressed'), 'files', $result);
     }
 
-    /** แตกไฟล์บีบอัด */
+    /** Extract an archive */
     public function extract(Request $request): Response
     {
         $root = $request->payloadString('root');
@@ -448,7 +464,7 @@ final class FilesController extends ApiController
         return $this->completed((string) ($result['message'] ?? 'Archive extracted'), 'files', is_array($result) ? $result : []);
     }
 
-    /** ย้าย/คัดลอก — ต่างกันแค่แฟล็กเดียวที่ส่งให้ capability */
+    /** Move/copy — differ by only the one flag sent to the capability */
     private function transfer(Request $request, bool $copy): Response
     {
         $root = $request->payloadString('root');
@@ -473,7 +489,7 @@ final class FilesController extends ApiController
         );
     }
 
-    /** ส่งไฟล์หนึ่งไฟล์ให้ agent — คืนชื่อที่บันทึกจริง */
+    /** Send one file to the agent — returns the name it was actually saved under */
     private function sendFile(
         Request $request,
         string $root,
@@ -494,7 +510,7 @@ final class FilesController extends ApiController
     }
 
     /**
-     * รายการไฟล์ที่ถูกเลือก — รับได้ทั้ง array (JSON) และข้อความคั่นบรรทัด (ฟอร์ม)
+     * The list of selected files — accepts either an array (JSON) or newline-separated text (a form)
      *
      * @return list<string>
      */
@@ -517,11 +533,12 @@ final class FilesController extends ApiController
     }
 
     /**
-     * แฟล็กแบบ boolean ที่ capability คาดหวังเป็นสตริง
+     * A boolean flag the capability expects as a string
      *
-     * capability ชุดไฟล์รับ '' = ไม่ · อะไรก็ตามที่ไม่ว่าง = ใช่ (มาจากฟอร์ม HTML)
-     * SPA ส่ง true/false มาเป็น JSON จึงต้องแปลงตรงนี้ ไม่ใช่ไปแก้ที่ capability
-     * ซึ่งเป็นชั้นที่แผนกำหนดว่าห้ามแตะ
+     * The file capabilities accept '' = no · anything non-empty = yes (this comes
+     * from HTML forms) · the SPA sends true/false as JSON, so it has to be
+     * converted here, not by changing the capability, which is a layer the plan
+     * says must not be touched
      */
     private function flag(Request $request, string $key): string
     {
@@ -540,21 +557,23 @@ final class FilesController extends ApiController
     }
 
     /**
-     * ผู้เรียกเปิดขอบเขตนี้ได้จริงหรือไม่
+     * Whether the caller may actually open this scope
      *
-     * ตรวจที่นี่เพื่อให้ได้ข้อความที่เข้าใจง่าย · agent ตรวจซ้ำอีกชั้นเสมอเพราะต้อง
-     * ยืนหยัดได้ลำพังถ้าชั้นเว็บถูกเจาะ (ARCHITECTURE §4.2)
+     * Checked here to produce an understandable message · the agent always
+     * checks again on its own, because it must stand on its own if the web layer
+     * is ever breached (ARCHITECTURE §4.2)
      */
     /**
-     * ขอบเขตที่จะใช้จริง — ไม่ระบุมา = ขอบเขตแรกที่ผู้เรียกเปิดได้
+     * The scope to actually use — unspecified = the first scope the caller may open
      *
-     * เหตุผลเดียวกับ `GET /logs` ที่ไม่ระบุ `source`: endpoint รายการที่เรียกเปล่า ๆ
-     * ควรได้ค่าเริ่มต้นที่ใช้งานได้ ไม่ใช่ข้อผิดพลาด · หน้าจอของ SPA โหลดตารางก่อนที่
-     * ตัวเลือกขอบเขต (ซึ่งมาจาก `/files/roots` อีกคำขอหนึ่ง) จะมาถึง คำขอแรกจึงไม่มี
-     * `root` ติดไปด้วยเสมอ
+     * Same reasoning as `GET /logs` leaving `source` unspecified: a list endpoint
+     * called with no arguments should get a usable default, not an error · the
+     * SPA's screen loads the table before the scope choices (which come from
+     * `/files/roots`, a separate request) arrive, so this first request never has
+     * a `root` attached
      *
-     * ระบุขอบเขตที่ไม่มีสิทธิ์เข้าถึงยังเป็น 403 เหมือนเดิม — "ยังไม่ได้เลือก" กับ
-     * "เลือกสิ่งที่แตะไม่ได้" เป็นคนละเรื่องกัน
+     * Naming a scope the caller can't access is still a 403 as usual — "nothing
+     * chosen yet" and "chose something out of reach" are different things
      */
     private function resolveRoot(string $rootKey): string
     {
@@ -581,28 +600,29 @@ final class FilesController extends ApiController
      */
     private function deniedScope(): Response
     {
-        // 403 ไม่ใช่ 404 — คีย์ของขอบเขตไม่ใช่ความลับ (มันคือ site-<id> ที่เดาได้อยู่แล้ว)
-        // และการบอกให้ชัดว่า "ไม่มีสิทธิ์" ช่วยให้ผู้ดูแลรู้ว่าต้องไปแก้ที่สิทธิ์ ไม่ใช่ที่ URL
+        // 403, not 404 — a scope key isn't a secret (it's site-<id>, already guessable)
+        // and stating plainly "not permitted" tells the admin to fix permissions, not the URL
         return $this->problem(ApiProblem::Forbidden, 'You may not access this file area');
     }
 
     /** @param array{name:string,error:int,size:int} $file */
-    private static function uploadError(array $file): ?string
+    private function uploadError(array $file): ?string
     {
         return match ($file['error']) {
             UPLOAD_ERR_OK => null,
-            UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => 'ไฟล์ใหญ่เกินที่เซิร์ฟเวอร์รับได้',
-            UPLOAD_ERR_PARTIAL => 'อัปโหลดไม่ครบไฟล์',
-            UPLOAD_ERR_NO_FILE => 'No uploaded file was received',
-            default => 'อัปโหลดไม่สำเร็จ (รหัส '.$file['error'].')',
+            UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => $this->t('The file is larger than the server accepts'),
+            UPLOAD_ERR_PARTIAL => $this->t('The upload was incomplete'),
+            UPLOAD_ERR_NO_FILE => $this->t('No uploaded file was received'),
+            default => $this->t('Upload failed (code {code})', ['code' => $file['error']]),
         };
     }
 
     /**
-     * ส่วนหัว Content-Disposition ที่ปลอดภัยกับชื่อไฟล์ภาษาไทย
+     * A Content-Disposition header that's safe with non-ASCII filenames
      *
-     * ชื่อไฟล์ที่ผู้ใช้ตั้งเองอาจมีอัญประกาศหรือขึ้นบรรทัดใหม่ ซึ่งใช้ฉีด header อื่นได้
-     * — ส่ง ASCII ที่ถูกล้างแล้วเป็นค่าหลัก และชื่อจริงใน filename* ตาม RFC 5987
+     * A user-chosen filename can contain quotes or newlines, which can be used to
+     * inject other headers — the ASCII value is sent sanitized as the primary
+     * value, with the real name in filename* per RFC 5987
      */
     private static function disposition(string $name): string
     {
