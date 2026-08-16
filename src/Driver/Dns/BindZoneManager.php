@@ -14,66 +14,84 @@ use Phpcp\Kernel\Db;
 use Phpcp\Support\BinaryPath;
 
 /**
- * เขียน zone file ของโดเมนแล้วสั่ง BIND9 โหลดใหม่จริง — PLAN-V2 เฟส E3
+ * Writes a domain's zone file and genuinely tells BIND9 to reload it — PLAN-V2 phase E3
  *
- * **ทำไมเพิ่งเชื่อมตอนนี้:** `dns_records` มีมาตั้งแต่ migration แรก แต่เดิมเป็นแค่ "ค่าที่
- * ตั้งใจให้เป็น" ที่ส่งออกเป็นข้อความให้ผู้ใช้ไปวางที่ DNS provider ภายนอกเอง
- * ({@see DnsRecord::toZoneFile()}) — `install.sh` ติดตั้งแพ็กเกจ `bind9` ให้แต่ไม่มีโค้ด
- * จุดไหนเขียนไฟล์หรือสั่ง reload เลย ผู้ดูแลเข้าใจผิดได้ง่ายว่า "มี DNS server ใช้งานได้แล้ว"
- * ทั้งที่ยังไม่มี
+ * **Why this only just got connected:** `dns_records` has existed since the
+ * first migration, but used to only be "the value it's meant to be",
+ * exported as text for a user to go paste at an external DNS provider
+ * themselves ({@see DnsRecord::toZoneFile()}) — `install.sh` installs the
+ * `bind9` package but there was no code anywhere that wrote a file or
+ * triggered a reload, so an admin could easily believe "a DNS server is
+ * already working" when it wasn't.
  *
- * **ปิดไว้เป็นค่าเริ่มต้นเสมอ (`dns.enabled = false`)** — เหตุผลเดียวกับ
- * `Config::sharedOwner()`: เป็นการตัดสินใจเชิงโครงสร้างพื้นฐานที่ต้องเปิดเองหลังตรวจสอบ
- * ด้วยมือว่าเครื่องนี้พร้อมจริง ทุก endpoint ที่เรียกคลาสนี้ต้องบอกชัดเจนเมื่อปิดอยู่
- * ไม่ใช่ทำเหมือนสำเร็จแล้วเงียบ ๆ (ARCHITECTURE §10, กฎ fail-closed แบบ `sites.shared_owner`)
+ * **Always off by default (`dns.enabled = false`)** — the same reasoning
+ * as `Config::sharedOwner()`: an infrastructure-level decision that has to
+ * be turned on deliberately after manually confirming this machine is
+ * genuinely ready, and every endpoint calling this class must state
+ * plainly when it's off, never behave as if it succeeded silently
+ * (ARCHITECTURE §10, the same fail-closed rule as `sites.shared_owner`).
  *
- * **ลำดับการตรวจก่อนบังคับใช้จริงเสมอ (ผ่าน {@see ConfigTransaction}):**
- *   1. เขียนไฟล์ zone (และ `named.conf.local` ทั้งไฟล์ถ้าเป็นโดเมนที่ยังไม่เคยมี zone)
- *   2. `named-checkzone` ตรวจไฟล์ zone
- *   3. ถ้าเป็นโดเมนใหม่ `named-checkconf` ตรวจทั้งชุด (จับ stanza ซ้ำ/ผิดไวยากรณ์ข้ามไฟล์)
- *   4. ไม่ผ่านข้อใดข้อหนึ่ง → คืนไฟล์เดิมทั้งหมดอัตโนมัติ ไม่ reload ไม่ทำลาย zone เดิม
- *   5. ผ่านครบ → `rndc reload` แล้วบันทึก serial ใหม่ลงฐานข้อมูล
+ * **The order always validated before genuinely enforcing anything (through {@see ConfigTransaction}):**
+ *   1. Write the zone file (and the whole `named.conf.local` file if this domain never had a zone before)
+ *   2. `named-checkzone` validates the zone file
+ *   3. If it's a new domain, `named-checkconf` validates the entire set (catches duplicate stanzas / cross-file syntax errors)
+ *   4. Either check fails → every file is automatically restored, no reload, the existing zone is never damaged
+ *   5. Both pass → `rndc reload`, then the new serial is saved to the database
  *
- * **`named.conf.local` เป็นไฟล์ที่ phpcp จัดการทั้งไฟล์** ไม่ใช่แค่เติม stanza — เขียนทับ
- * ใหม่ทั้งไฟล์จากรายชื่อโดเมนที่มี `zone_serial > 0` ในฐานข้อมูลทุกครั้ง (แบบเดียวกับที่
- * vhost/FPM pool ถูก derive จากฐานข้อมูลเสมอ ไม่ใช่ patch ทีละจุด) — **ถ้าเครื่องนี้เคยมี
- * zone ที่ตั้งเองด้วยมือมาก่อนเปิด `dns.enabled` zone เหล่านั้นจะหายไปจาก
- * `named.conf.local`** ต้องเตือนผู้ดูแลเรื่องนี้ก่อนเปิดใช้งานเสมอ
+ * **`named.conf.local` is a file phpcp manages in full**, never just
+ * appending a stanza — the whole file is rewritten every time, from the
+ * list of domains with `zone_serial > 0` in the database (the same
+ * approach vhosts/FPM pools always take, derived from the database rather
+ * than patched piecemeal) — **if this machine ever had a zone configured by
+ * hand before `dns.enabled` was turned on, that zone disappears from
+ * `named.conf.local`** — an admin must always be warned about this before turning it on.
  *
- * ## ไฟล์ส่วนเสริมของผู้ดูแล — ทำไมของ BIND ต้องระวังกว่าบริการอื่น
+ * ## An admin's supplementary file — why BIND needs more care than other services
  *
- * บริการอื่นในโปรเจกต์นี้ผูกไฟล์ของผู้ดูแลด้วย include ที่ทนไฟล์หาย (`IncludeOptional`
- * ของ Apache, `!include_try` ของ Dovecot) หรือไม่ใช้ include เลย (Postfix ผนวกเนื้อไฟล์
- * ลงท้าย `main.cf`) · **BIND ไม่มีทางเลือกทั้งสองแบบ** — `include` ของมันเข้มงวด ไฟล์หาย
- * แปลว่า `parsing failed: file not found` แล้ว named ไม่สตาร์ต (ทดสอบกับ named-checkconf
- * 9.18 แล้ว ยืนยันว่าไม่มี `include_try`)
+ * Every other service in this project attaches an admin's own file through
+ * an include that tolerates a missing file (Apache's `IncludeOptional`,
+ * Dovecot's `!include_try`), or doesn't use include at all (Postfix appends
+ * the content directly at the end of `main.cf`) · **BIND offers neither
+ * option** — its `include` is strict, and a missing referenced file means
+ * `parsing failed: file not found`, and named refuses to start at all
+ * (tested against named-checkconf 9.18, confirmed there is no `include_try`).
  *
- * ที่นี่จึงทำสองอย่างที่บริการอื่นไม่ต้องทำ:
+ * So this does two things no other service here has to:
  *
- *   1. **บรรทัด include เป็นค่าที่ derive จากการมีอยู่ของไฟล์** ไม่ใช่บรรทัดตายตัว —
- *      ไม่มีไฟล์ก็ไม่มี include · ผลคือเครื่องที่ยังไม่เคยใช้ฟีเจอร์นี้ไม่มีอะไรให้พังเลย
- *      และถ้าไฟล์ถูกลบทิ้งด้วยมือ การเขียน zone ครั้งถัดไปจะถอด include ออกให้เอง
- *   2. **การคืนค่าต้องคืนสองไฟล์พร้อมกัน** ({@see writeCustomConfig()}) — RollbackGuard
- *      *ลบ* ไฟล์ทิ้งเมื่อเดิมไม่มีไฟล์นั้น แล้วสั่ง `systemctl reload-or-restart` ต่อ
- *      ถ้าคืนแค่ไฟล์ส่วนเสริมโดยไม่คืน `named.conf.local` ด้วย บรรทัด include จะชี้ไป
- *      ไฟล์ที่เพิ่งถูกลบ แล้ว **การคืนค่าเพื่อความปลอดภัยจะกลายเป็นตัวที่ทำ DNS ทั้งเครื่องล่ม**
+ *   1. **The include line is derived from whether the file exists**, never
+ *      a fixed line — no file, no include · the result is a machine that's
+ *      never used this feature has nothing that can ever break, and a
+ *      machine whose file was deleted by hand gets it repaired automatically the next time a zone is written.
+ *   2. **A restore must restore both files together** ({@see
+ *      writeCustomConfig()}) — RollbackGuard *deletes* a file when it
+ *      didn't originally exist, then triggers `systemctl
+ *      reload-or-restart` · restoring only the supplementary file without
+ *      also restoring `named.conf.local` would leave the include line
+ *      pointing at a file that was just deleted, and **the safety restore
+ *      itself would become what takes down DNS for the entire machine**.
  *
- * **ข้อจำกัดที่ยังไม่ได้ทำ:** glue record (A/AAAA ของ nameserver ที่อยู่ในโซนเดียวกัน) ไม่ได้
- * สร้างให้อัตโนมัติ — ถ้าตั้ง `dns.nameservers` เป็นชื่อที่อยู่ในโซนที่กำลังจะสร้าง ผู้ดูแล
- * ต้องเพิ่มเรกคอร์ด A ของ nameserver นั้นเป็น DNS record ปกติเอง ไม่งั้น `named-checkzone`
- * จะเตือน (ไม่ถึงกับปฏิเสธ) ว่า "has no address records"
+ * **A limitation not yet addressed:** a glue record (the A/AAAA of a
+ * nameserver that lives in the same zone) is never generated automatically
+ * — if `dns.nameservers` is set to a name that lives inside the zone about
+ * to be created, an admin has to add that nameserver's A record as an
+ * ordinary DNS record themselves, or `named-checkzone` warns (though
+ * doesn't outright reject) with "has no address records".
  */
 final class BindZoneManager
 {
     /**
-     * เครื่องมือของ BIND9 อยู่คนละที่กันตาม distro — Debian/Ubuntu วาง `named-checkzone`
-     * และ `named-checkconf` ไว้ที่ `/usr/bin` (แพ็กเกจ `bind9-utils`) ส่วน RHEL/Alma/Rocky
-     * วางไว้ที่ `/usr/sbin` · `rndc` อยู่ `/usr/sbin` ทั้งสองฝั่ง
+     * BIND9's own tools live in different places depending on the distro —
+     * Debian/Ubuntu puts `named-checkzone` and `named-checkconf` at
+     * `/usr/bin` (the `bind9-utils` package), while RHEL/Alma/Rocky puts
+     * them at `/usr/sbin` · `rndc` lives at `/usr/sbin` on both.
      *
-     * เคยฮาร์ดโค้ดเป็น `/usr/sbin` ทั้งสามตัวแล้วพังบน Ubuntu จริง — เทสต์จับไม่ได้เพราะ
-     * `DryRunExecutor` ไม่รันคำสั่งจริง และเทสต์ที่ยิง `named-checkzone` จริงเรียกผ่าน PATH
-     * ไม่ได้ผ่านค่าคงที่พวกนี้ · ตอนนี้ไล่หาจากรายการเหมือนที่ `MariaDbManager` ทำ
-     * และมีเทสต์ตรึงไว้ว่าไฟล์ที่ระบุต้องมีอยู่จริงบนเครื่องที่รันเทสต์
+     * This used to be hardcoded to `/usr/sbin` for all three and broke on
+     * a real Ubuntu machine — the test suite never caught it, since
+     * `DryRunExecutor` never runs a genuine command, and the test that does
+     * genuinely invoke `named-checkzone` calls it through PATH, never
+     * through these constants · this now searches a list, the same
+     * approach `MariaDbManager` takes, with a test pinning that the path
+     * specified genuinely exists on the machine running the test.
      *
      * @var list<string>
      */
@@ -93,10 +111,11 @@ final class BindZoneManager
     }
 
     /**
-     * ที่อยู่ของ zone file ของโดเมนหนึ่ง
+     * A single domain's zone file location
      *
-     * เป็น static เพื่อให้ capability ที่แค่ต้อง "อ่าน" ไฟล์ไม่ต้องสร้างตัวจัดการทั้งตัว
-     * (ซึ่งต้องมี Db) · และทำให้มีที่เดียวที่ตอบว่าไฟล์ของโดเมนหนึ่งอยู่ตรงไหน
+     * Kept static so a capability that only needs to "read" the file
+     * doesn't have to construct the whole manager (which requires a Db) ·
+     * and it means there's exactly one place that answers where a domain's file lives.
      */
     public static function zonePath(Config $config, string $domain): string
     {
@@ -104,21 +123,24 @@ final class BindZoneManager
     }
 
     /**
-     * ไฟล์ส่วนเสริมของผู้ดูแล — อยู่ **ข้าง `named.conf.local`** ไม่ใช่ใต้ `/etc/phpcp`
+     * An admin's supplementary file — lives **next to `named.conf.local`**, never under `/etc/phpcp`
      *
-     * เหตุผลเป็นเรื่องสิทธิ์การอ่านล้วน ๆ และวัดจากเครื่องจริงมาแล้ว: named ทิ้งสิทธิ์ root
-     * ทันทีที่สตาร์ต (`named -u bind`) เหลือความสามารถแค่ `cap_net_bind_service` กับ
-     * `cap_sys_resource` — **ไม่มี `cap_dac_read_search`** · `/etc/phpcp` เป็น
-     * 750 root:phpcp มันจึงเดินผ่านไดเรกทอรีไม่ได้เลย แล้ว `rndc reload` จะล้มด้วย
-     * permission denied ทุกครั้ง ทั้งที่ไฟล์ถูกเขียนสำเร็จและเทสต์ผ่านหมด
+     * Purely a matter of read permission, and measured against a real
+     * machine: named drops root the instant it starts (`named -u bind`),
+     * left with only `cap_net_bind_service` and `cap_sys_resource` —
+     * **no `cap_dac_read_search`** · `/etc/phpcp` is 750 root:phpcp, so it
+     * can never traverse into that directory at all, and `rndc reload`
+     * would fail with permission denied every single time, even though the
+     * file was written successfully and every check passed.
      *
-     * การเปิดสิทธิ์ `/etc/phpcp` ให้ bind อ่านได้แลกไม่คุ้ม — ที่นั่นมี `config.php`
-     * ที่เก็บกุญแจของ panel · ไดเรกทอรีของ BIND เป็นที่ที่ panel เขียน zone file
-     * กับ `named.conf.local` ลงไปอยู่แล้ว การวางไฟล์นี้ไว้ด้วยกันจึงไม่ได้เพิ่ม
-     * ขอบเขตอะไรใหม่เลย
+     * Opening up `/etc/phpcp` for bind to read isn't a trade worth making —
+     * that directory holds `config.php`, which stores the panel's own
+     * secret key · BIND's own directory is already where the panel writes
+     * zone files and `named.conf.local`, so placing this file there adds no new exposure at all.
      *
-     * อิงจากที่อยู่ของ `named.conf.local` ไม่ใช่ `/etc/bind` ตายตัว — เครื่องที่ย้าย
-     * ที่อยู่ผ่าน `dns.named_conf_local` ต้องได้ไฟล์ทั้งสองอยู่ด้วยกันเสมอ
+     * Based on `named.conf.local`'s own location, never a hardcoded
+     * `/etc/bind` — a machine that moved that location through
+     * `dns.named_conf_local` must always get both files living together.
      */
     public static function customConfigPath(Config $config): string
     {
@@ -126,9 +148,9 @@ final class BindZoneManager
     }
 
     /**
-     * เขียน zone ของโดเมนเดียวจากเรกคอร์ดปัจจุบันในฐานข้อมูล แล้วสั่งโหลดใหม่
+     * Writes a single domain's zone from the current records in the database, then triggers a reload
      *
-     * @param array<string,mixed> $domain แถวจากตาราง `domains`
+     * @param array<string,mixed> $domain a row from the `domains` table
      * @return array{pushed:bool,message:string,domain?:string,serial?:int,record_count?:int}
      */
     public function writeZone(array $domain): array
@@ -136,8 +158,8 @@ final class BindZoneManager
         if (!$this->config->dnsEnabled()) {
             return [
                 'pushed' => false,
-                'message' => 'ยังไม่ได้เปิดใช้งานการเชื่อม BIND9 (dns.enabled = false) — '
-                    . 'เรกคอร์ดถูกบันทึกไว้ในระบบแล้ว แต่ยังไม่ถูกส่งออกไปยัง DNS server จริง',
+                'message' => 'The BIND9 connection is not turned on yet (dns.enabled = false) — '
+                    . 'the record has already been saved in the system, but has not been pushed out to a real DNS server yet',
             ];
         }
 
@@ -145,8 +167,8 @@ final class BindZoneManager
 
         if ($nameservers === []) {
             throw new ValidationError(
-                'ยังไม่ได้ตั้งค่า dns.nameservers — ต้องมีอย่างน้อยหนึ่งเครื่องก่อนสร้าง zone ได้ '
-                . '(BIND9 ปฏิเสธ zone ที่ไม่มี NS record เสมอ)',
+                'dns.nameservers is not set yet — at least one is required before a zone can be created '
+                . '(BIND9 always rejects a zone with no NS record)',
             );
         }
 
@@ -193,14 +215,15 @@ final class BindZoneManager
             'domain' => $domainName,
             'serial' => $serial,
             'record_count' => count($records),
-            'message' => sprintf('ส่ง zone ของ %s ไปยัง BIND9 แล้ว (serial %d)', $domainName, $serial),
+            'message' => sprintf("Pushed %s's zone to BIND9 (serial %d)", $domainName, $serial),
         ];
     }
 
     /**
-     * เขียน zone ของทุกโดเมนที่มีอยู่ใหม่ทั้งหมดแล้วสั่งโหลดครั้งเดียวตอนจบ — ใช้เมื่อผู้ดูแล
-     * แก้ไขอะไรที่ฝั่ง BIND9 ตรง ๆ แล้วต้องการให้ panel เขียนทับคืนสภาพที่ควรจะเป็น หรือใช้ครั้ง
-     * แรกหลังเปิด `dns.enabled` เพื่อผลักเรกคอร์ดที่มีอยู่ก่อนแล้วทั้งหมดออกไปให้ครบ
+     * Rewrites every existing domain's zone entirely, then reloads once at
+     * the end — used when an admin edited something directly on the BIND9
+     * side and wants the panel to overwrite it back to what it should be,
+     * or used the first time after turning on `dns.enabled`, to fully push out every record that already existed
      *
      * @return array{pushed:bool,message:string,domains?:int,failed?:list<array{domain:string,error:string}>}
      */
@@ -209,11 +232,11 @@ final class BindZoneManager
         if (!$this->config->dnsEnabled()) {
             return [
                 'pushed' => false,
-                'message' => 'ยังไม่ได้เปิดใช้งานการเชื่อม BIND9 (dns.enabled = false)',
+                'message' => 'The BIND9 connection is not turned on yet (dns.enabled = false)',
             ];
         }
 
-        // เฉพาะโดเมนที่มีเรกคอร์ด DNS อยู่จริง — โดเมนที่ไม่เคยเพิ่มเรกคอร์ดเลยไม่ต้องมี zone
+        // Only domains that genuinely have a DNS record — a domain that never had a record added needs no zone at all
         $domains = $this->db->all(
             'SELECT DISTINCT d.* FROM domains d
              JOIN dns_records r ON r.domain_id = d.id',
@@ -227,21 +250,24 @@ final class BindZoneManager
                 $this->writeZone($domain);
                 $pushed++;
             } catch (\Throwable $e) {
-                // โดเมนเดียวที่ผิดพลาด (เช่นเรกคอร์ดเก่าที่ข้อมูลเพี้ยน) ต้องไม่ทำให้โดเมนอื่น
-                // ที่เหลือไม่ถูกซิงก์ไปด้วย
+                // One domain's failure (e.g. an old record with corrupted
+                // data) must not stop every other domain from being synced too
                 $failed[] = ['domain' => (string) $domain['domain'], 'error' => $e->getMessage()];
             }
         }
 
-        // ล้มทั้งหมด = ล้มเหลว ไม่ใช่ "สำเร็จบางส่วน" — เคยคืน pushed=true เสมอ ทำให้หน้าจอ
-        // ขึ้นแถบเขียว "สำเร็จ" ทั้งที่ซิงก์ไม่ได้สักโดเมน ซึ่งเป็นการล้มเงียบแบบเดียวกับที่
-        // เฟส E1 เตือนไว้เองว่า "ปลายทางที่ล้มเงียบอันตรายพอ ๆ กับไม่มีปลายทางเลย"
-        // (เจอจากการทดสอบบนเซิร์ฟเวอร์จริง 2026-08-10)
+        // Every domain failing = a genuine failure, never "partial
+        // success" — this used to always return pushed=true, making the
+        // screen show a green "success" banner even though not a single
+        // domain synced, the exact same kind of silent failure phase E1's
+        // own reasoning warned against: "a destination that fails silently
+        // is just as dangerous as no destination at all" (found through
+        // testing on the real production server, 2026-08-10).
         $allFailed = $pushed === 0 && $failed !== [];
 
         if ($allFailed) {
             throw new ExecutionFailed(sprintf(
-                "ซิงก์ zone ไม่สำเร็จสักโดเมน (%d โดเมน)\n\n%s",
+                "Failed to sync any zone at all (%d domain(s))\n\n%s",
                 count($failed),
                 implode("\n", array_map(
                     static fn (array $f): string => "· {$f['domain']}: {$f['error']}",
@@ -255,16 +281,18 @@ final class BindZoneManager
             'domains' => $pushed,
             'failed' => $failed,
             'message' => $failed === []
-                ? sprintf('ซิงก์ zone ครบ %d โดเมนแล้ว', $pushed)
-                : sprintf('ซิงก์ zone สำเร็จ %d โดเมน · ล้มเหลว %d โดเมน', $pushed, count($failed)),
+                ? sprintf('Synced all %d domain(s)', $pushed)
+                : sprintf('Synced %d domain(s) · %d domain(s) failed', $pushed, count($failed)),
         ];
     }
 
     /**
-     * เลข serial ถัดไป — เพิ่มขึ้นอย่างเดียวเสมอ (ห้ามซ้ำ/ย้อนกลับ ไม่งั้น secondary/resolver
-     * บางตัวจะไม่ดึงข้อมูลใหม่ไปเพราะคิดว่าเป็นสำเนาที่เก่ากว่าที่ถืออยู่) เริ่มจากรูปแบบ
-     * YYYYMMDDnn ตามธรรมเนียมของ DNS เพื่อให้อ่านแล้วรู้วันที่แก้ล่าสุดได้ทันที แต่ไม่ยึดติด
-     * กับรูปแบบนั้นถ้าแก้มากกว่า 100 ครั้งในวันเดียว (`+1` ตรง ๆ ยังถูกต้องเสมอ)
+     * The next serial number — always increases only (never repeats or
+     * goes backward, or some secondaries/resolvers won't pull the new data
+     * at all, believing it's an older copy than what they already hold) ·
+     * starts from the YYYYMMDDnn shape DNS convention uses, so reading it
+     * immediately shows the last edit date, but isn't tied to that shape if
+     * something is edited more than 100 times in a single day (a plain `+1` is always still correct).
      */
     private function nextSerial(int $current): int
     {
@@ -274,18 +302,19 @@ final class BindZoneManager
     }
 
     /**
-     * เขียนทั้งไฟล์ `named.conf.local` ใหม่จากรายชื่อโดเมนที่มี zone อยู่แล้วในฐานข้อมูล
-     * (`zone_serial > 0`) รวมกับโดเมนที่กำลังจะสร้างใหม่ (ยังไม่ commit จึง zone_serial
-     * เป็น 0 อยู่ ต้อง union เข้าไปเอง)
+     * Rewrites the entire `named.conf.local` file from the list of domains
+     * that already have a zone in the database (`zone_serial > 0`), unioned
+     * with the domain currently being created (not committed yet, so its
+     * zone_serial is still 0 — has to be added in by hand).
      */
     private function buildNamedConfLocal(int $newDomainId = 0, string $newDomainName = '', string $newZonePath = '', ?bool $withCustom = null): string
     {
         $existing = $this->db->all('SELECT domain FROM domains WHERE zone_serial > 0 AND id != :id', ['id' => $newDomainId]);
 
         $lines = [
-            '// จัดการโดย phpcp โดยอัตโนมัติทั้งไฟล์ — ห้ามแก้ไขด้วยมือ',
-            '// การแก้จะหายไปทันทีที่มีการเพิ่ม/ลบ zone ครั้งถัดไปผ่าน panel',
-            '// เพิ่ม/แก้ zone ผ่านหน้า DNS ของ panel เท่านั้น',
+            '// Managed entirely and automatically by phpcp — do not edit by hand',
+            '// Any edit disappears the instant a zone is next added or removed through the panel',
+            '// Add or edit a zone only through the panel\'s DNS page',
             '',
         ];
 
@@ -299,20 +328,23 @@ final class BindZoneManager
         }
 
         /*
-         * บรรทัด include ของไฟล์ส่วนเสริม — **มีได้ก็ต่อเมื่อไฟล์นั้นมีอยู่จริง**
+         * The supplementary file's include line — **only exists when that file genuinely does**
          *
-         * `include` ของ BIND ไม่ทนไฟล์หาย ไฟล์ที่ถูกอ้างแต่ไม่มีอยู่ทำให้ named ไม่สตาร์ต
-         * ทั้งเครื่อง · การผูกกับสภาพจริงบนดิสก์แทนที่จะเขียนบรรทัดนี้ตายตัวทำให้เครื่อง
-         * ที่ไม่เคยใช้ฟีเจอร์นี้ไม่มีอะไรให้พัง และเครื่องที่ไฟล์ถูกลบทิ้งด้วยมือได้รับ
-         * การซ่อมให้เองในการเขียน zone ครั้งถัดไป
+         * BIND's `include` doesn't tolerate a missing file — a referenced
+         * file that doesn't exist stops named from starting on the whole
+         * machine · deriving this from the genuine state on disk, instead
+         * of writing a fixed line, means a machine that's never used this
+         * feature has nothing that can ever break, and a machine whose
+         * file was deleted by hand gets it repaired automatically the next time a zone is written.
          *
-         * `$withCustom` ระบุตรง ๆ ได้สำหรับผู้เรียกที่กำลังเขียนไฟล์นั้นอยู่ในทรานแซกชัน
-         * เดียวกัน — ตอนประกอบข้อความไฟล์ยังไม่ถูกเขียนลงดิสก์ การถามดิสก์จึงได้คำตอบผิด
+         * `$withCustom` can be stated directly for a caller that's writing
+         * that same file within the same transaction — while the text is
+         * being assembled the file hasn't been written to disk yet, so asking disk would give the wrong answer.
          */
         $customPath = self::customConfigPath($this->config);
 
         if ($withCustom ?? $this->executor->exists($this->executor->path($customPath))) {
-            $lines[] = '// ค่าตั้งเพิ่มเติมของผู้ดูแล — อ่านท้ายสุด แก้จากหน้าโดเมนของ panel';
+            $lines[] = "// An admin's own supplementary settings — read last, edited from the panel's domain page";
             $lines[] = sprintf('include "%s";', $customPath);
             $lines[] = '';
         }
@@ -321,14 +353,16 @@ final class BindZoneManager
     }
 
     /**
-     * เขียนไฟล์ส่วนเสริมของผู้ดูแล แล้วผูกบรรทัด include ใน `named.conf.local` ให้ตรงกัน
+     * Writes an admin's supplementary file, then keeps `named.conf.local`'s include line in sync with it
      *
-     * ทั้งสองไฟล์อยู่ในทรานแซกชันเดียวกันเพราะมันถูกต้องหรือผิดพร้อมกันเสมอ — ไฟล์ที่ถูก
-     * include แต่ไม่มีอยู่ทำให้ named ไม่สตาร์ต และบรรทัด include ที่หายไปทำให้ค่าที่
-     * ผู้ดูแลเพิ่งเขียนไม่มีผลโดยไม่มีอะไรฟ้อง
+     * Both files live in the same transaction, because they're always
+     * correct or wrong together — a file that's included but doesn't exist
+     * stops named from starting, and a missing include line means what an
+     * admin just wrote has no effect with nothing complaining.
      *
-     * คืน**สภาพเดิมของทั้งสองไฟล์**ให้ผู้เรียกไปตั้ง RollbackGuard — ดูเหตุผลที่หัวคลาส
-     * ว่าทำไมการคืนแค่ไฟล์เดียวถึงอันตรายกว่าไม่คืนเลย
+     * Returns **both files' previous state** for the caller to arm a
+     * RollbackGuard with — see the class docblock for why restoring only
+     * one file is more dangerous than restoring neither.
      *
      * @return array{path:string,files:array<string,string|null>}
      */
@@ -336,16 +370,16 @@ final class BindZoneManager
     {
         if (!$this->config->dnsEnabled()) {
             throw new ValidationError(
-                'ยังไม่ได้เปิดใช้งานการเชื่อม BIND9 (dns.enabled = false) — '
-                . 'panel ยังไม่ได้จัดการ named.conf.local ของเครื่องนี้ จึงยังผูกไฟล์ส่วนเสริมเข้าไปไม่ได้ '
-                . 'เปิดใช้งาน DNS จากหน้าตั้งค่าก่อน',
+                'The BIND9 connection is not turned on yet (dns.enabled = false) — '
+                . "the panel doesn't manage this machine's named.conf.local yet, so a supplementary file "
+                . 'cannot be attached — turn on DNS from the settings page first',
             );
         }
 
         $customPath = self::customConfigPath($this->config);
         $namedConfLocal = $this->config->dnsNamedConfLocal();
 
-        // เก็บสภาพเดิมก่อนแตะอะไรทั้งสิ้น · null = เดิมไม่มีไฟล์นี้ (RollbackGuard จะลบทิ้ง)
+        // The previous state is saved before touching anything at all · null = this file didn't exist (RollbackGuard will delete it)
         $previous = [
             $customPath => $this->currentContents($customPath),
             $namedConfLocal => $this->currentContents($namedConfLocal),
@@ -357,8 +391,9 @@ final class BindZoneManager
         $transaction->write($customPath, $content, 0644);
         $transaction->write($namedConfLocal, $this->buildNamedConfLocal(withCustom: true));
 
-        // ตัวตรวจของ BIND เองอ่านทั้งชุดตั้งแต่ named.conf ลงมา จึงเห็นทั้งไฟล์ที่เพิ่งเขียน
-        // และ zone เดิมทุกตัว — จับ zone ซ้ำและ options ซ้ำที่ข้ามไฟล์กันได้
+        // BIND's own validator reads the entire chain starting from
+        // named.conf, so it sees both the file just written and every
+        // existing zone — catching a duplicate zone or duplicate option across files
         $transaction->commit(fn (): array => $this->checkConf());
 
         $this->reload();
@@ -366,7 +401,7 @@ final class BindZoneManager
         return ['path' => $customPath, 'files' => $previous];
     }
 
-    /** เนื้อไฟล์ปัจจุบัน — null เมื่อยังไม่มีไฟล์ ซึ่งต่างจากไฟล์ว่างอย่างมีความหมาย */
+    /** The file's current content — null when the file doesn't exist yet, meaningfully different from an empty file */
     private function currentContents(string $path): ?string
     {
         $resolved = $this->executor->path($path);
@@ -392,7 +427,7 @@ final class BindZoneManager
     }
 
     /**
-     * หาไฟล์โปรแกรมตัวแรกที่มีอยู่จริงจากรายการ
+     * Finds the first genuinely-existing binary from a list of candidates
      *
      * @param list<string> $candidates
      */
@@ -413,17 +448,20 @@ final class BindZoneManager
             return [false, 'named-checkzone: ' . trim($zoneCheck->output() . $zoneCheck->stderr)];
         }
 
-        // ตรวจทั้งชุด (named.conf หลักซึ่ง include named.conf.local อยู่แล้ว) เสมอ ไม่ใช่แค่
-        // ตอนโดเมนใหม่ — การแก้ไฟล์ zone เดิมไม่ควรกระทบ แต่ตรวจฟรีไม่มีต้นทุนเพิ่มที่คุ้มจะข้าม
+        // The entire set (the main named.conf, which already includes
+        // named.conf.local) is always validated, not just for a new domain
+        // — editing an existing zone file shouldn't affect anything else,
+        // but this check is free, and skipping it saves nothing worth the risk
         return $this->checkConf();
     }
 
     /**
-     * ตรวจค่าตั้งทั้งชุดด้วย `named-checkconf`
+     * Validates the entire configuration with `named-checkconf`
      *
-     * ไม่รับพารามิเตอร์เส้นทางโดยตั้งใจ — มันอ่านจาก `named.conf` หลักลงมาเองทั้งลำดับชั้น
-     * จึงเห็นทุกไฟล์ที่ named จะเห็นจริงตอนสตาร์ต รวมถึงไฟล์ส่วนเสริมที่ถูก include
-     * และ zone ของโดเมนอื่นที่อาจชนกัน · การตรวจทีละไฟล์แยกกันมองไม่เห็นการชนกันแบบนั้น
+     * Deliberately accepts no path parameter — it reads the whole chain
+     * starting from the main `named.conf` on its own, so it sees every
+     * file named would genuinely see at start time, including an included
+     * supplementary file and another domain's zone that might collide · checking one file at a time can never see that kind of collision.
      *
      * @return array{0:bool,1:string}
      */
@@ -444,9 +482,9 @@ final class BindZoneManager
 
         if (!$result->ok()) {
             throw new ExecutionFailed(
-                'เขียนไฟล์ zone ผ่านการตรวจสอบแล้ว แต่สั่ง BIND9 โหลดค่าใหม่ไม่สำเร็จ: '
+                'The zone file passed validation, but telling BIND9 to reload failed: '
                 . trim($result->output() . $result->stderr)
-                . "\n\nไฟล์บนดิสก์ถูกต้องแล้ว ลองสั่งซิงก์ใหม่อีกครั้งภายหลัง",
+                . "\n\nThe file on disk is already correct — try syncing again later",
             );
         }
     }

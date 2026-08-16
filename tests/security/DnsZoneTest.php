@@ -339,7 +339,7 @@ test('dns.enabled = false ทำให้ writeZone() เป็น no-op ที�
     $result = $manager->writeZone(['id' => $domain['id'], 'domain' => 'off.test', 'zone_serial' => 0]);
 
     assertSame(false, $result['pushed'], 'ปิด dns.enabled ต้องไม่ถือว่า push สำเร็จ');
-    assertTrue(str_contains($result['message'], 'ยังไม่ได้เปิดใช้งาน'), 'ข้อความต้องบอกเหตุผลชัดเจน: ' . $result['message']);
+    assertTrue(str_contains($result['message'], 'not turned on yet'), 'ข้อความต้องบอกเหตุผลชัดเจน: ' . $result['message']);
 });
 
 test('เปิด dns.enabled แต่ไม่ตั้ง nameservers ต้องถูกปฏิเสธก่อนแตะไฟล์ใด ๆ เลย', static function (): void {
