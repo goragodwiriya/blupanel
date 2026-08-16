@@ -8,47 +8,54 @@ use Phpcp\Agent\ValidationError;
 use Phpcp\Kernel\Db;
 
 /**
- * ค่าตั้งที่แก้ได้จากหน้าเว็บ — เก็บในตาราง `settings`
+ * Settings editable from the web page — stored in the `settings` table
  *
- * แยกจาก `/etc/phpcp/config.php` โดยเจตนา สองที่นี้ทำคนละหน้าที่:
+ * Deliberately separate from `/etc/phpcp/config.php`; the two serve different jobs:
  *
- *   config.php  ค่าที่ต้องมีก่อน panel จะทำงานได้ (พอร์ต, secret key, layout)
- *               ผู้ดูแลแก้ที่ไฟล์ ต้องรีสตาร์ตบริการ — และ web tier เขียนไม่ได้เลย
+ *   config.php  Values the panel needs before it can even work at all (port, secret
+ *               key, layout). The admin edits the file directly, and it requires a
+ *               service restart — the web tier can never write to it.
  *
- *   settings    ค่าที่เปลี่ยนได้ระหว่างใช้งานและไม่กระทบการบูต (การแจ้งเตือน, เมล)
- *               แก้จากหน้าเว็บได้ มีผลทันที
+ *   settings    Values that can change while the panel is running, without affecting
+ *               boot (notifications, mail). Editable from the web page, takes effect
+ *               immediately.
  *
- * เหตุผลที่ไม่ยุบรวม: ถ้าให้หน้าเว็บเขียน config.php ได้ ก็เท่ากับให้ web tier
- * เขียนไฟล์ที่ตัวเองอ่านตอนบูต — ช่องโหว่เดียวในหน้าตั้งค่าจะกลายเป็นการรันโค้ดทันที
- * เพราะ config.php เป็นไฟล์ PHP ที่ถูก include
+ * Why these aren't merged: letting the web page write config.php would mean letting
+ * the web tier write a file it reads at boot — a single vulnerability in the settings
+ * page would turn into immediate code execution, since config.php is a PHP file that
+ * gets included.
  */
 final class SettingsRepository
 {
     /**
-     * คีย์ที่ยอมให้เก็บ พร้อมชนิดของค่า
+     * Keys allowed to be stored, along with each value's type
      *
-     * allowlist ตายตัวเหมือนทะเบียน capability — คีย์ที่ไม่อยู่ในนี้ถูกปฏิเสธ
-     * ไม่ใช่เก็บไว้เฉย ๆ ป้องกันการยัดค่าแปลกปลอมเข้าฐานข้อมูลผ่านฟอร์มที่ถูกดัดแปลง
+     * A hardcoded allowlist, like the capability registry — a key not on this list is
+     * rejected, not silently stored, preventing a modified form from injecting
+     * arbitrary values into the database.
      *
      * @var array<string,string>
      */
     private const KEYS = [
         /*
-         * ใบรับรองของ **หน้าจัดการเอง** — เก็บแค่ชื่อโดเมนที่ผูกอยู่ (ว่าง = ใบที่เซ็นเอง)
+         * **The management page's own** certificate — stores only the domain name
+         * it's bound to (empty = self-signed)
          *
-         * **แก้จากฟอร์มตั้งค่าทั่วไปไม่ได้โดยตั้งใจ** เหมือน `webserver.*` — การเปลี่ยนค่านี้
-         * ต้องคัดลอกไฟล์ ตรวจคู่กุญแจ ผ่านตัวตรวจของ Apache และตั้งเวลาถอนคืน ซึ่งทำได้
-         * ที่ `panel.cert_set` เท่านั้น · ถ้าเปิดให้เขียนตรง ๆ ค่าจะเปลี่ยนโดยไฟล์ไม่เปลี่ยนตาม
-         * แล้วหน้าจอจะรายงานสิ่งที่ไม่ตรงกับความจริง
+         * **Deliberately not editable through the general settings form**, same as
+         * `webserver.*` — changing this value requires copying the file, verifying
+         * the key pair, passing it through Apache's own validator, and scheduling a
+         * rollback, all of which only `panel.cert_set` can do · writing it directly
+         * would let the value change without the file changing to match, and the
+         * screen would then report something that doesn't reflect reality.
          */
         'panel.cert_domain' => 'string',
 
-        // การแจ้งเตือนผ่าน Telegram
+        // Telegram notifications
         'notify.telegram.enabled' => 'bool',
         'notify.telegram.token' => 'secret',
         'notify.telegram.chat_id' => 'string',
 
-        // เลือกว่าเรื่องไหนควรแจ้ง — ไม่ใช่แจ้งทุกอย่างจนคนเลิกอ่าน
+        // Which events should notify — not everything, or people stop reading
         'notify.events.security' => 'bool',
         'notify.events.ssl' => 'bool',
         'notify.events.service' => 'bool',
@@ -57,17 +64,18 @@ final class SettingsRepository
         'notify.events.quota' => 'bool',
         'notify.events.alert' => 'bool',
 
-        // แจ้งเตือนทางอีเมล — ใช้ Postfix ที่มีอยู่ · ผู้ส่งใช้ `mail.from` ร่วมกับเมลขาออก
+        // Email notifications — uses the existing Postfix · the sender shares
+        // `mail.from` with outbound mail
         'notify.email.enabled' => 'bool',
         'notify.email.to' => 'string',
 
-        // แจ้งเตือนผ่าน webhook — ต่อเข้า Slack/Discord/ระบบ ticket ที่ผู้ดูแลใช้อยู่แล้ว
+        // Webhook notifications — connects into Slack/Discord/whatever ticket system the admin already uses
         'notify.webhook.enabled' => 'bool',
         'notify.webhook.url' => 'string',
-        // ใช้ลงลายเซ็น HMAC ให้ปลายทางตรวจว่าข้อความมาจากเครื่องนี้จริง
+        // Used to HMAC-sign the payload so the destination can verify it really came from this machine
         'notify.webhook.secret' => 'secret',
 
-        // เมลขาออก
+        // Outbound mail
         'mail.enabled' => 'bool',
         'mail.mode' => 'string',        // 'local' | 'relay'
         'mail.from' => 'string',
@@ -77,29 +85,33 @@ final class SettingsRepository
         'mail.relay_password' => 'secret',
         'mail.relay_tls' => 'bool',
 
-        // เมลโฮสติ้ง (PLAN-MAIL) — ชื่อโฮสต์ที่ประกาศตัวตอนคุยกับเซิร์ฟเวอร์อื่น และ
-        // ใบรับรองของชื่อนั้น · ว่าง = อนุมานจาก mail.from แล้วใช้ใบของดิสโทรไปก่อน
+        // Hosting mail (PLAN-MAIL) — the hostname it announces itself with when
+        // talking to other servers, and that name's certificate · empty = infer from
+        // mail.from and fall back to the distro's own certificate for now
         'mail.hostname' => 'string',
         'mail.tls_cert' => 'string',
         'mail.tls_key' => 'string',
 
-        // เว็บเซิร์ฟเวอร์ที่โฮสต์เว็บของลูกค้า — ย้ายมาจาก config.php เพื่อให้เปลี่ยนได้
-        // จากหน้าจอ · ค่าว่าง = ใช้ค่าใน config.php (เครื่องที่ติดตั้งไว้ก่อนหน้านี้)
+        // The web server that hosts customer sites — moved out of config.php so it
+        // can be changed from the screen · empty = use the value in config.php
+        // (machines set up before this existed)
         'webserver.mode' => 'string',       // 'apache' | 'nginx' | 'nginx-proxy'
         'webserver.static_by_nginx' => 'bool',
 
-        // DNS — ต้องตั้งจากหน้าจอได้ ไม่ใช่ให้ผู้ดูแลไปแก้ไฟล์เอง
+        // DNS — must be settable from the screen, not something the admin has to edit a file for
         'dns.enabled' => 'bool',
-        'dns.nameservers' => 'string',      // คั่นด้วยคอมมา เช่น ns1.example.com,ns2.example.com
+        'dns.nameservers' => 'string',      // comma-separated, e.g. ns1.example.com,ns2.example.com
         'dns.soa_email' => 'string',
 
         /*
-         * รูปทรงไฟล์เริ่มต้นของบัญชีที่ยังไม่ได้เลือกเอง — 'phpcp' | 'cpanel'
+         * The default file layout for an account that hasn't chosen one itself — 'phpcp' | 'cpanel'
          *
-         * ปลอดภัยที่จะให้แก้จากหน้าเว็บ ต่างจาก `sites.users_dir` ที่ยังต้องอยู่ใน
-         * config.php: ค่านี้ไม่ได้ถูกอ่านตอนบูตเพื่อประกอบเส้นทางของ panel เอง และ
-         * มีผลกับ**บัญชีที่สร้างหลังจากนี้**เท่านั้น · บัญชีที่มีเว็บอยู่แล้วต้องสั่ง
-         * ย้ายเป็นรายคน ซึ่งเป็นคำสั่งที่แตะไฟล์จริงจึงต้องตั้งใจกดเอง
+         * Safe to make editable from the web page, unlike `sites.users_dir`, which
+         * still has to live in config.php: this value isn't read at boot to build the
+         * panel's own paths, and it only affects **accounts created after this
+         * point** · an account that already has sites has to be migrated
+         * individually, a command that touches real files and therefore has to be a
+         * deliberate click.
          */
         'sites.layout' => 'string',
 
@@ -199,9 +211,9 @@ final class SettingsRepository
         'mail.tls_cert' => '',
         'mail.tls_key' => '',
 
-        // ว่าง = ยังไม่เคยเลือกจากหน้าจอ ให้ถอยไปอ่านค่าใน config.php ตามเดิม
+        // Empty = never chosen from the screen yet, fall back to the value in config.php
         'webserver.mode' => '',
-        // ให้ nginx ตอบไฟล์ static เองเป็นค่าเริ่มต้น — นั่นคือเหตุผลที่มี nginx อยู่
+        // Let nginx serve static files itself by default — that's the whole reason nginx is there
         'webserver.static_by_nginx' => '1',
         'dns.enabled' => '0',
         'dns.nameservers' => '',
@@ -209,12 +221,14 @@ final class SettingsRepository
     ];
 
     /**
-     * คีย์ที่ฟอร์มตั้งค่าทั่วไปแก้ได้ — **ไม่รวม `webserver.*`**
+     * Keys the general settings form can edit — **excludes `webserver.*`**
      *
-     * ค่าของเว็บเซิร์ฟเวอร์เปลี่ยนแล้วต้องเขียนไฟล์ vhost ใหม่ทั้งเครื่องและรีสตาร์ต
-     * บริการตามลำดับที่ถูกต้อง · ถ้ายอมให้ PATCH /settings เขียนค่านี้ได้ตรง ๆ
-     * จะได้เครื่องที่ "ค่าตั้งบอกว่า nginx แต่ไฟล์บนดิสก์ยังเป็นของ Apache"
-     * ซึ่งเป็นสภาพที่ผู้ดูแลมองไม่ออกว่าอะไรเป็นอะไร — ต้องผ่าน `webserver.apply` เท่านั้น
+     * Changing the web server value requires rewriting every vhost file on the
+     * machine and restarting services in the correct order · if PATCH /settings were
+     * allowed to write this value directly, the machine could end up with "the
+     * setting says nginx but the files on disk are still Apache's," a state the admin
+     * has no way to tell apart from the truth — this must go through
+     * `webserver.apply` only.
      *
      * @return array<string,string>
      */
@@ -240,7 +254,7 @@ final class SettingsRepository
     {
     }
 
-    /** @return array<string,string> ค่าทั้งหมด รวมค่าเริ่มต้นของคีย์ที่ยังไม่เคยตั้ง */
+    /** @return array<string,string> every value, including defaults for keys never set */
     public function all(): array
     {
         $values = self::DEFAULTS;
@@ -248,8 +262,9 @@ final class SettingsRepository
         foreach ($this->db->all('SELECT key, value FROM settings') as $row) {
             $key = (string) $row['key'];
 
-            // คีย์ที่ไม่รู้จักถูกข้าม ไม่ใช่ส่งต่อไปให้หน้าจอ — กันค่าเก่าที่เลิกใช้แล้ว
-            // หรือค่าที่ถูกยัดเข้าฐานข้อมูลจากทางอื่นโผล่ขึ้นมาบนหน้าเว็บ
+            // An unrecognized key is skipped, not passed through to the screen — this
+            // guards against a retired old value, or a value stuffed into the
+            // database some other way, surfacing on the web page.
             if (isset(self::KEYS[$key])) {
                 $values[$key] = (string) $row['value'];
             }
@@ -261,7 +276,7 @@ final class SettingsRepository
     public function get(string $key, string $default = ''): string
     {
         if (!isset(self::KEYS[$key])) {
-            throw new ValidationError("ไม่รู้จักค่าตั้ง {$key}");
+            throw new ValidationError("Unknown setting {$key}");
         }
 
         $row = $this->db->first('SELECT value FROM settings WHERE key = :k', ['k' => $key]);
@@ -280,7 +295,7 @@ final class SettingsRepository
     }
 
     /**
-     * บันทึกหลายค่าพร้อมกัน
+     * Save multiple values at once
      *
      * @param array<string,string> $values
      */
@@ -288,7 +303,7 @@ final class SettingsRepository
     {
         foreach ($values as $key => $value) {
             if (!isset(self::KEYS[$key])) {
-                throw new ValidationError("ไม่รู้จักค่าตั้ง {$key}");
+                throw new ValidationError("Unknown setting {$key}");
             }
 
             $this->db->run(
@@ -299,7 +314,7 @@ final class SettingsRepository
         }
     }
 
-    /** คีย์ที่เป็นความลับ — ห้ามส่งค่าจริงกลับไปแสดงบนหน้าจอ */
+    /** A key holding a secret — its real value must never be sent back to display on screen */
     public static function isSecret(string $key): bool
     {
         return (self::KEYS[$key] ?? '') === 'secret';
@@ -326,11 +341,11 @@ final class SettingsRepository
     }
 
     /**
-     * ปิดบังค่าที่เป็นความลับก่อนส่งไปหน้าจอ
+     * Mask secret values before sending them to the screen
      *
-     * ส่งเฉพาะ "มีค่าอยู่หรือไม่" ไม่ส่งตัวค่า — token ของบอทที่หลุดออกไปทาง HTML
-     * แปลว่าใครก็ส่งข้อความในนามระบบได้ และมันจะติดอยู่ในแคชของเบราว์เซอร์
-     * กับประวัติของ proxy ไปอีกนาน
+     * Only sends "does a value exist," never the value itself — a bot token leaked
+     * through HTML would mean anyone could send messages as the system, and it would
+     * sit in the browser's cache and the proxy's history for a long time afterward.
      *
      * @param array<string,string> $values
      * @return array<string,string>
