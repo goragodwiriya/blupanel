@@ -10,17 +10,21 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * แดชบอร์ด — `GET /api/v2/dashboard` (PLAN-V2 §4.6 แถว "Dashboard")
+ * The dashboard — `GET /api/v2/dashboard` (PLAN-V2 §4.6, the "Dashboard" row)
  *
- * รวมทุกอย่างที่หน้าแรกต้องใช้ไว้ในคำขอเดียว: ตัวเลขทรัพยากรของเครื่อง สถานะบริการ
- * จำนวนทรัพยากรที่มี และกิจกรรมล่าสุด · เหตุผลที่ไม่ให้ SPA ยิงสี่คำขอเองคือหน้าแรก
- * คือหน้าที่ถูกเปิดบ่อยที่สุด และแต่ละคำขอต้องเดิน middleware เจ็ดตัวใหม่ทั้งชุด
+ * Bundles everything the homepage needs into one request: the machine's
+ * resource numbers, service status, resource counts, and recent activity ·
+ * the reason the SPA doesn't fire four requests of its own is that the
+ * homepage is the most frequently opened page, and every request has to run
+ * the same seven middleware fresh
  *
- * **agent ล่มแล้วหน้านี้ต้องยังขึ้นได้** — ตัวเลขจากฐานข้อมูลของ panel เองยังถูกต้อง
- * และ audit log ก็ยังอ่านได้ · ถ้าปล่อยให้ `AgentException` ลอยขึ้นไปเป็น 503 ผู้ดูแล
- * จะเห็นหน้าเปล่าในจังหวะที่ต้องการรู้ที่สุดว่าเกิดอะไรขึ้น จึงกลืนไว้แล้วบอกผ่าน
- * `agent.available` แทน (นี่คือ **ที่เดียว** ในทั้ง v2 ที่ทำแบบนี้ — เส้นทางที่สั่งงาน
- * ทุกเส้นยังต้องล้มเสียงดังเหมือนเดิม)
+ * **This page must still come up even when the agent is down** — the numbers
+ * from the panel's own database are still correct, and the audit log can
+ * still be read · if `AgentException` were allowed to propagate as a 503, an
+ * admin would see a blank page at exactly the moment they most need to know
+ * what's happening, so it's swallowed and reported through `agent.available`
+ * instead (this is the **one and only place** in all of v2 that does this —
+ * every route that issues a command still fails loudly, exactly as before)
  */
 final class DashboardController extends HostingController
 {
@@ -34,7 +38,7 @@ final class DashboardController extends HostingController
         try {
             $metrics = $this->agent()->data('system.metrics', [], $actor);
 
-            // ลูกค้าไม่มีสิทธิ์ดูบริการของเครื่อง — หน้าเดียวกันจึงแสดงต่างกันตามบทบาท
+            // A customer has no permission to view the machine's services — so the same page displays differently per role
             if ($this->ctx->can('service.view')) {
                 $result = $this->agent()->data(
                     'service.status',
@@ -47,7 +51,7 @@ final class DashboardController extends HostingController
             $agentError = $e->getMessage();
         }
 
-        // สีของป้ายมาจากฝั่งเซิร์ฟเวอร์ เทมเพลตจึงเขียน `pill-${status_tone}` ได้ตรง ๆ
+        // The pill's color comes from the server, so the template can write `pill-${status_tone}` directly
         $services = array_map(static function (array $service): array {
             $service['status_tone'] = match ($service['status'] ?? '') {
                 'running' => 'ok',
@@ -67,25 +71,27 @@ final class DashboardController extends HostingController
             'metrics' => $metrics,
             'services' => array_values($services),
             'counts' => $this->counts(),
-            // ลูกค้าไม่มีสิทธิ์ audit.view — ส่งรายการว่างแทนการซ่อนคีย์ เพื่อให้หน้าจอ
-            // ไม่ต้องแยกกรณี "ไม่มีคีย์" กับ "ไม่มีรายการ" ซึ่งเป็นบ่อเกิดของ undefined
+            // A customer has no audit.view permission — an empty list is sent
+            // instead of hiding the key, so the screen never has to
+            // distinguish "no key" from "empty list," which is where undefined comes from
             'activity' => $this->ctx->can('audit.view') ? $this->activity() : [],
         ]);
     }
 
     /**
-     * กิจกรรมล่าสุดที่ตัดให้เหลือเฉพาะฟิลด์ที่หน้าจอใช้
+     * Recent activity, trimmed down to only the fields the screen uses
      *
-     * ตั้งใจไม่ส่งทั้งแถว: `prev_hash`/`hash` เป็นกลไกภายในของ hash-chain และ
-     * `detail_json` เก็บ argument ดิบของทุกคำสั่ง (ผ่าน `Dispatcher::redact()` มาแล้ว
-     * แต่ก็ยังเป็นข้อมูลที่ไม่มีเหตุผลต้องส่งไปแสดงบนหน้าแรก)
+     * Deliberately not the whole row: `prev_hash`/`hash` are the hash chain's
+     * internal mechanism, and `detail_json` holds every command's raw
+     * arguments (already passed through `Dispatcher::redact()`, but still data
+     * with no reason to be shown on the homepage)
      *
      * @return list<array<string,mixed>>
      */
     private function activity(): array
     {
         return array_map(
-            static function (array $row): array {
+            function (array $row): array {
                 $result = (string) $row['result'];
 
                 return [
@@ -94,7 +100,13 @@ final class DashboardController extends HostingController
                     'action' => (string) $row['action'],
                     'target' => (string) $row['target'],
                     'result' => $result,
-                    // สีของป้ายมาจากฝั่งเซิร์ฟเวอร์ เทมเพลตจึงเขียน `pill-${result_tone}` ได้ตรง ๆ
+                    'result_label' => $this->t(match ($result) {
+                        'ok' => 'OK',
+                        'denied' => 'Denied',
+                        'error' => 'Error',
+                        default => $result,
+                    }),
+                    // The pill's color comes from the server, so the template can write `pill-${result_tone}` directly
                     'result_tone' => match ($result) {
                         'ok' => 'ok',
                         'denied', 'error' => 'danger',
@@ -107,10 +119,11 @@ final class DashboardController extends HostingController
     }
 
     /**
-     * จำนวนทรัพยากรที่ผู้เรียกเห็นได้จริง
+     * The resource counts the caller may actually see
      *
-     * ลูกค้าเห็นเฉพาะของตัวเอง — นับที่ระดับ query เหมือนทุกที่ ไม่ใช่ดึงมาทั้งหมด
-     * แล้วค่อยกรอง เพราะตัวเลขรวมของทั้งเครื่องก็เป็นข้อมูลที่ไม่ควรรั่วเช่นกัน
+     * A customer sees only their own — counted at the query level like
+     * everywhere else, not fetched in full and filtered afterward, because the
+     * machine's overall total is also data that shouldn't leak
      *
      * @return array<string,int>
      */
@@ -133,8 +146,9 @@ final class DashboardController extends HostingController
 
         $scoped = ' WHERE site_id IN (SELECT id FROM sites WHERE owner_user_id = :o)';
 
-        // `certificates` ไม่มีคอลัมน์ site_id — มันผูกกับ **ชื่อโดเมน** ไม่ใช่กับเว็บไซต์
-        // (ดู migration 0001) จึงต้องไล่ผ่านตาราง domains ไม่ใช่กรองด้วย site_id ตรง ๆ
+        // `certificates` has no site_id column — it's bound to a **domain
+        // name**, not a website (see migration 0001), so it must be chased
+        // through the domains table instead of filtering by site_id directly
         $certScope = ' WHERE domain IN (SELECT domain FROM domains'.$scoped.')';
 
         return [
