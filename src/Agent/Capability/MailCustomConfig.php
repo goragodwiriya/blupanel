@@ -15,26 +15,31 @@ use Phpcp\Driver\WebServer\CustomConfig;
 use Phpcp\Support\Validator;
 
 /**
- * เขียนไฟล์ตั้งค่าเพิ่มเติมของระบบเมล — Postfix หรือ Dovecot
+ * Writes the mail system's supplementary config file — Postfix or Dovecot
  *
- * ## ทำไมต้องเขียนไฟล์แล้วสั่ง `sync()` ไม่ใช่เขียนไฟล์เฉย ๆ
+ * ## Why write the file and then call `sync()`, instead of just writing the file
  *
- * สองบริการนี้รับค่าของผู้ดูแลคนละวิธี และความต่างนั้นสำคัญ:
+ * These two services accept an admin's values in different ways, and that
+ * difference matters:
  *
- *   dovecot  `!include_try` ชี้มาที่ไฟล์ตรง ๆ — เขียนไฟล์เสร็จก็มีผลทันทีที่ reload
- *   postfix  **ไม่มีคำสั่ง include สำหรับ `main.cf` เลย** เนื้อไฟล์ต้องถูกผนวกลงท้าย
- *            `main.cf` ตอนที่ panel เขียนไฟล์นั้นใหม่ · เขียนไฟล์เฉย ๆ จึงไม่มีผลอะไร
- *            จนกว่าจะมีการเขียน `main.cf` ใหม่
+ *   dovecot  `!include_try` points straight at the file — writing it takes effect immediately on reload
+ *   postfix  **has no include directive for `main.cf` at all** — its content
+ *            has to be appended to the end of `main.cf` when the panel rewrites
+ *            that file · so just writing the file has no effect at all until
+ *            `main.cf` gets rewritten
  *
- * เรียก `sync()` ทั้งสองกรณีเพื่อให้เส้นทางเดียวกันทำงานเหมือนกัน — และเพราะ `sync()`
- * คือที่เดียวที่รู้ว่าต้องเขียนไฟล์อะไรบ้างให้ตรงกับสถานะจริงของเครื่อง
+ * `sync()` is called in both cases so the same path behaves identically — and
+ * because `sync()` is the one place that knows which files need writing to match
+ * the machine's real state.
  *
- * ## ลำดับการคืนค่าเมื่อผิดพลาด
+ * ## Rollback order on failure
  *
- * ไฟล์ของผู้ดูแลถูกเขียนก่อน แล้วค่อย `sync()` ซึ่งมี `postfix check`/`doveconf -n`
- * อยู่ข้างใน · ถ้าตัวตรวจไม่ผ่าน `sync()` จะโยนออกมาและ **ต้องคืนไฟล์ของผู้ดูแลด้วย**
- * ไม่ใช่แค่คืนไฟล์ที่ generate — ไม่งั้นไฟล์เสียยังค้างอยู่และการ sync ครั้งถัดไป
- * (ซึ่งเกิดจากคนอื่นแก้กล่องจดหมาย) จะล้มตามไปด้วยโดยไม่มีใครรู้ว่าเพราะอะไร
+ * The admin's file is written first, then `sync()` runs, which has `postfix
+ * check`/`doveconf -n` inside it · if validation fails, `sync()` throws, and
+ * **the admin's file has to be reverted too**, not just the generated file —
+ * otherwise the broken file stays in place, and the next sync (triggered by
+ * someone else editing a mailbox) fails right along with it, with nobody
+ * knowing why.
  */
 final class MailCustomConfig extends MailCapability
 {
@@ -43,7 +48,7 @@ final class MailCustomConfig extends MailCapability
         return 'mail.custom_config';
     }
 
-    /** ค่าตั้งของบริการเมลเป็นของทั้งเครื่อง ไม่ใช่ของโดเมนใดโดเมนหนึ่ง */
+    /** Mail service configuration belongs to the whole machine, not to any one domain */
     public function permission(): string
     {
         return 'settings.manage';
@@ -51,7 +56,7 @@ final class MailCustomConfig extends MailCapability
 
     public function summary(): string
     {
-        return 'เขียนไฟล์ตั้งค่าเพิ่มเติมของระบบเมล';
+        return 'Write mail system supplementary config file';
     }
 
     public function validate(array $args): array
@@ -73,16 +78,19 @@ final class MailCustomConfig extends MailCapability
         $service = $args['service'];
 
         /*
-         * ตัดสินจากทะเบียนอีกรอบว่าไฟล์นี้แก้ได้จริง — ปุ่มที่ไม่ขึ้นบนหน้าจอไม่ใช่ด่าน
-         * ความปลอดภัย คำขอที่ประกอบเองยังส่งคีย์ของไฟล์ที่ระบบสร้างมาได้เสมอ
+         * Decided from the registry again whether this file can actually be
+         * edited — a button that doesn't appear on screen is not a security
+         * gate, since a hand-crafted request can still send the key of a
+         * system-generated file
          */
         if ($args['key'] !== '') {
             $file = ConfigFileCatalog::find(ConfigFileCatalog::forMail(), $args['key']);
 
             if ($file === null || $file['kind'] !== ConfigFileCatalog::KIND_WRITABLE) {
                 throw new ValidationError(
-                    'ไฟล์นี้แก้จากหน้าเว็บไม่ได้ — ระบบเขียนทับทั้งไฟล์ทุกครั้งที่ข้อมูลเมลเปลี่ยน '
-                    . 'สิ่งที่แก้ลงไปจะหายไปเงียบ ๆ · เขียนค่าที่ต้องการลงไฟล์ส่วนเสริมแทน',
+                    'This file cannot be edited from the web page — the system overwrites the whole '
+                    . 'file every time mail data changes, so anything edited here would silently '
+                    . 'vanish · write the value into the supplementary file instead',
                 );
             }
         }
@@ -95,25 +103,25 @@ final class MailCustomConfig extends MailCapability
         $transaction = new ConfigTransaction($executor);
         $transaction->write($path, $args['content'], 0644);
 
-        // ไฟล์ของผู้ดูแลเองยังไม่มีอะไรให้ตรวจ ณ จุดนี้ — ตัวตรวจจริงอยู่ใน sync()
+        // Nothing to validate about the admin's own file at this point — the real validation lives in sync()
         $transaction->commitWithoutValidation();
 
         try {
             $this->sync($executor, $context);
         } catch (\Throwable $e) {
-            // คืนไฟล์ของผู้ดูแลด้วย ไม่ใช่แค่ไฟล์ที่ generate — ดูเหตุผลที่หัวคลาส
+            // Reverts the admin's file too, not just the generated one — see the reasoning at the top of this class
             $transaction->rollback();
             $this->sync($executor, $context);
 
             throw new ExecutionFailed(
-                "ค่าตั้งที่เขียนไม่ผ่านการตรวจของ " . $service . " จึงคืนค่าเดิมแล้ว\n\n"
+                "The configuration written failed " . $service . "'s validation and was reverted\n\n"
                 . $e->getMessage(),
             );
         }
 
         $rollbackId = (new RollbackGuard($context->db))->arm(
             action: self::name(),
-            description: sprintf('แก้ค่าตั้งเพิ่มเติมของ %s', $service),
+            description: sprintf('Edit %s supplementary configuration', $service),
             files: [$path => $previous],
             reloadUnits: [$service],
             window: $args['window'],
@@ -126,8 +134,8 @@ final class MailCustomConfig extends MailCapability
             'rollback_id' => $rollbackId,
             'window' => $args['window'],
             'message' => sprintf(
-                'บันทึกค่าตั้งเพิ่มเติมของ %s แล้ว — ทดสอบว่าเมลยังรับส่งได้จริง '
-                . 'แล้วกดยืนยันภายในเวลาที่กำหนด ไม่งั้นระบบจะคืนค่าเดิมให้เอง',
+                'Saved %s\'s supplementary configuration — test that mail still sends and receives, '
+                . 'then confirm within the time given, or the system will revert it automatically',
                 $service,
             ),
         ];

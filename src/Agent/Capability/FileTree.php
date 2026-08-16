@@ -10,30 +10,34 @@ use Phpcp\Agent\ValidationError;
 use Phpcp\Support\Validator;
 
 /**
- * โครงต้นไม้ของ**โฟลเดอร์เท่านั้น** สำหรับแถบนำทางด้านซ้ายของตัวจัดการไฟล์
+ * A tree structure of **folders only**, for the file manager's left-hand navigation panel
  *
- * แยกจาก `file.list` เพราะเป็นคนละคำถาม: `file.list` ตอบ "ในโฟลเดอร์นี้มีอะไรบ้าง"
- * (ไฟล์ด้วย ทีละชั้น) ส่วนอันนี้ตอบ "โครงสร้างโฟลเดอร์รอบ ๆ ตรงนี้เป็นอย่างไร"
- * ถ้าใช้ `file.list` วาดต้นไม้ ต้องยิงคำขอหนึ่งครั้งต่อหนึ่งโฟลเดอร์และได้ข้อมูลไฟล์
- * ที่ไม่ได้ใช้ติดมาทุกครั้ง
+ * Kept separate from `file.list` because it answers a different question:
+ * `file.list` answers "what's inside this folder" (files too, one level at a
+ * time), while this one answers "what does the folder structure around here look
+ * like". Drawing a tree with `file.list` would mean firing one request per
+ * folder and getting unused file data attached every time.
  *
- * **สองเพดานที่ขาดไม่ได้** — เครื่องจริงมีโฟลเดอร์อย่าง `node_modules` และ `/proc`
- * ที่ลึกและกว้างจนไล่ทั้งหมดแล้วค้างเป็นนาที:
+ * **Two ceilings that can't be skipped** — a real machine has folders like
+ * `node_modules` and `/proc` that are deep and wide enough to hang for minutes
+ * if walked entirely:
  *
- *   `depth`     ไม่เกิน 3 ชั้น · ค่าปริยาย 1 ชั้นเพราะแถบนำทางขยายทีละชั้นตามที่ผู้ใช้กด
- *   MAX_NODES   เพดานจำนวนโฟลเดอร์รวมทั้งคำตอบ · ตัดที่ agent เหมือน `file.list`
- *               เพราะข้อความที่โตเกิน MAX_FRAME ของโปรโตคอลจะส่งไม่ออกตั้งแต่ต้นทาง
+ *   `depth`     no more than 3 levels · defaults to 1, since the navigation panel expands one level at a time as the user clicks
+ *   MAX_NODES   a ceiling on the total number of folders in the whole response
+ *               · cut off in the agent, same as `file.list`, because a message
+ *               larger than the protocol's MAX_FRAME can never be sent out in the first place
  *
- * ไม่ลงไปใน symlink เด็ดขาด — `listDirectory` ใช้ lstat ลิงก์จึงมาเป็นชนิด `link`
- * ไม่ใช่ `dir` และถูกข้ามไปพร้อมกับไฟล์ · นี่คือสิ่งที่ทำให้การไล่ต้นไม้ออกนอกขอบเขต
- * ไม่ได้แม้จะเรียก `resolve()` แค่ที่จุดตั้งต้นจุดเดียว
+ * Never descends into a symlink — `listDirectory` uses lstat, so a link comes
+ * back typed as `link`, not `dir`, and gets skipped right along with files ·
+ * this is what keeps the tree walk from escaping its own scope even though
+ * `resolve()` is only ever called at the single starting point.
  */
 final class FileTree extends FileCapability
 {
-    /** เพดานจำนวนโฟลเดอร์ต่อหนึ่งคำตอบ */
+    /** The ceiling on folder count per response */
     private const MAX_NODES = 1500;
 
-    /** ชั้นลึกสุดที่ยอมไล่ในคำขอเดียว */
+    /** The deepest level allowed to be walked in a single request */
     private const MAX_DEPTH = 3;
 
     public static function name(): string
@@ -48,7 +52,7 @@ final class FileTree extends FileCapability
 
     public function summary(): string
     {
-        return 'อ่านโครงโฟลเดอร์';
+        return 'Read folder tree structure';
     }
 
     /**
@@ -75,7 +79,7 @@ final class FileTree extends FileCapability
         $result = $this->withPath($executor, $scope, $relative, static function (string $root, string $target) use ($executor, $relative, $depth): array {
             $info = $executor->stat($target);
             if ($info === null || $info['type'] !== 'dir') {
-                throw new ValidationError('เส้นทางนี้ไม่ใช่โฟลเดอร์');
+                throw new ValidationError('This path is not a folder');
             }
 
             $budget = self::MAX_NODES;
@@ -94,10 +98,11 @@ final class FileTree extends FileCapability
     }
 
     /**
-     * ไล่โฟลเดอร์ลงไปทีละชั้นจนหมด `$depth` หรือหมดโควตา
+     * Walks down folders one level at a time until `$depth` or the budget runs out
      *
-     * `$budget` ส่งเป็น reference เพื่อให้ทุกกิ่งใช้โควตาก้อนเดียวกัน — ถ้าแยกโควตา
-     * ต่อกิ่ง โฟลเดอร์ที่มีลูกหลักพันกิ่งเดียวก็ยังทำให้คำตอบใหญ่เกินได้
+     * `$budget` is passed by reference so every branch shares the same pool — if
+     * each branch had its own budget, a single branch with a thousand children
+     * could still make the response too large.
      *
      * @return list<array<string,mixed>>
      */
@@ -120,9 +125,11 @@ final class FileTree extends FileCapability
             $childRelative = $relative === '' ? $entry['name'] : $relative.'/'.$entry['name'];
             $childAbsolute = $absolute.'/'.$entry['name'];
 
-            // ชั้นสุดท้ายไม่ไล่ต่อ แต่ยัง**ต้องรู้ว่ามีลูกไหม** ไม่งั้นแถบนำทางจะขึ้นลูกศร
-            // ให้ทุกโฟลเดอร์ แล้วผู้ใช้กดแล้วเจอที่ว่างเปล่า · การถามหนึ่งครั้งต่อโฟลเดอร์
-            // ถูกจำกัดด้วย $budget ก้อนเดียวกันอยู่แล้ว
+            // The last level doesn't recurse further, but still **needs to know
+            // whether it has children** — otherwise the navigation panel would
+            // show an expand arrow on every folder, only for the user to click
+            // and find nothing there · one check per folder is already bounded
+            // by the same $budget
             $children = $depth > 1
                 ? self::walk($executor, $childAbsolute, $childRelative, $depth - 1, $budget)
                 : [];
@@ -142,10 +149,11 @@ final class FileTree extends FileCapability
     }
 
     /**
-     * รายการย่อยที่เป็นโฟลเดอร์จริง — โฟลเดอร์ที่เปิดไม่ได้ถือว่าว่าง ไม่ใช่ข้อผิดพลาด
+     * The subentries that are genuinely folders — a folder that can't be opened counts as empty, not an error
      *
-     * ผู้ใช้ที่เห็น `/etc` ย่อมมีโฟลเดอร์ที่ตัวเองเข้าไม่ถึงปนอยู่เสมอ การโยนข้อผิดพลาด
-     * จะทำให้ทั้งแถบนำทางว่างเพราะโฟลเดอร์เดียวที่แตะไม่ได้
+     * A user looking at `/etc` will always have some folders mixed in they can't
+     * access themselves; throwing an error would empty out the whole navigation
+     * panel over a single unreachable folder.
      *
      * @return list<array{name:string,type:string,mtime:int}>
      */

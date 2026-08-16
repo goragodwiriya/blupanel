@@ -12,21 +12,23 @@ use Phpcp\Domain\Site;
 use Phpcp\Domain\SiteRepository;
 
 /**
- * วัดพื้นที่ดิสก์ที่แต่ละเว็บไซต์ใช้จริง แล้วเก็บลง sites.disk_used_mb
+ * Measures each website's real disk usage, then stores it in sites.disk_used_mb
  *
- * คอลัมน์นี้มีมาตั้งแต่ migration แรกแต่ไม่เคยมีใครคำนวณให้ — ตัวเลขบนหน้าจอจึงเป็น 0
- * เสมอบนเครื่องจริง และโควตาดิสก์ (เฟส E2) จะบังคับใช้ไม่ได้เลยถ้าไม่มีค่านี้
+ * This column has existed since the very first migration, but nothing ever
+ * computed it — the number on screen was always 0 on real machines, and the disk
+ * quota (Phase E2) could never be enforced without this value.
  *
- * ทำเครื่องหมายว่า "อ่านอย่างเดียว" โดยเจตนา: มันไม่เปลี่ยนอะไรบนเครื่องเลย
- * สิ่งที่เขียนคือค่าที่วัดได้ลงตารางของ panel เอง ไม่ใช่การกระทำที่ต้องย้อนกลับหรือสอบสวน
- * ผลพลอยได้ที่สำคัญคือมันไม่เติม audit log ทุก 15 นาทีตลอดไป และได้ Executor จริง
- * ในโหมด dryrun จึงยังวัดค่าได้ถูกต้อง
+ * Marked "read-only" on purpose: it changes nothing on the machine at all. What
+ * it writes is the measured value into the panel's own table, not an action that
+ * needs to be reverted or investigated. A useful side effect is that it never
+ * adds an audit log entry every 15 minutes forever, and it gets a real Executor
+ * even in dryrun mode, so it still measures correctly.
  */
 final class DiskUsage implements Capability
 {
     private const DU = '/usr/bin/du';
 
-    /** เว็บใหญ่ ๆ ใช้เวลานาน แต่ต้องมีเพดาน ไม่งั้นงานรอบถัดไปซ้อนกันจนคิวยาว */
+    /** A large site takes a while, but still needs a ceiling, or the next cycle stacks up into a growing queue */
     private const TIMEOUT = 120;
 
     public static function name(): string
@@ -46,7 +48,7 @@ final class DiskUsage implements Capability
 
     public function summary(): string
     {
-        return 'คำนวณพื้นที่ดิสก์ที่เว็บไซต์ใช้';
+        return 'Compute website disk usage';
     }
 
     public function validate(array $args): array
@@ -56,7 +58,7 @@ final class DiskUsage implements Capability
         }
 
         if (!is_int($args['site_id']) && !(is_string($args['site_id']) && ctype_digit($args['site_id']))) {
-            throw new ValidationError('รหัสเว็บไซต์ต้องเป็นตัวเลข');
+            throw new ValidationError('Website id must be a number');
         }
 
         return ['site_id' => (int) $args['site_id']];
@@ -66,9 +68,10 @@ final class DiskUsage implements Capability
     {
         $repository = new SiteRepository($context->db);
 
-        // ตั้งแต่ migration 0006 โควตาดิสก์ย้ายไปอยู่กับ users แล้ว — sites ไม่มีคอลัมน์
-        // disk_quota_mb อีกต่อไป (เดิม query นี้อ้างคอลัมน์ที่ไม่มีอยู่จริง ทำให้ SQL error
-        // ทุกครั้งที่ scheduler เรียก จับได้ตอนเขียนเฟส E2 ที่ต้องพึ่งเลข disk_used_mb นี้)
+        // Since migration 0006, disk quota moved to live on users — sites no
+        // longer has a disk_quota_mb column (this query used to reference a
+        // column that no longer existed, causing an SQL error every time the
+        // scheduler called it — caught while writing Phase E2, which depends on this disk_used_mb value)
         $rows = isset($args['site_id'])
             ? $context->db->all('SELECT id FROM sites WHERE id = :id', ['id' => $args['site_id']])
             : $context->db->all('SELECT id FROM sites ORDER BY id');
@@ -87,7 +90,7 @@ final class DiskUsage implements Capability
             try {
                 $usedMb = $this->measure($executor, $site);
             } catch (\Throwable $e) {
-                // เว็บเดียวที่วัดไม่ได้ (โฟลเดอร์หาย, ผู้ใช้ระบบถูกลบ) ต้องไม่ทำให้ทั้งรอบล้ม
+                // One site that can't be measured (folder gone, system user deleted) must never fail the whole cycle
                 $failed++;
                 $sites[] = [
                     'site_id' => $site->id,
@@ -119,45 +122,48 @@ final class DiskUsage implements Capability
             'measured' => $measured,
             'failed' => $failed,
             'total_mb' => $totalMb,
-            // เว็บที่วัดไม่ได้ต้องอยู่ในข้อความสรุป ไม่ใช่ซ่อนอยู่ในรายการย่อยที่ไม่มีใครเปิดดู —
-            // โฟลเดอร์เว็บไซต์ที่หายไปคือปัญหาจริงที่ต้องมีคนเห็น ไม่ใช่แค่ตัวเลขที่ขาดไป
+            // A site that couldn't be measured has to be in the summary message,
+            // not hidden inside a sub-list nobody opens — a missing website
+            // folder is a real problem someone needs to see, not just a missing number
             'message' => $failed === 0
-                ? sprintf('วัดพื้นที่ดิสก์ %d เว็บไซต์ รวม %d MB', $measured, $totalMb)
-                : sprintf('วัดพื้นที่ดิสก์ %d เว็บไซต์ รวม %d MB · วัดไม่ได้ %d เว็บไซต์', $measured, $totalMb, $failed),
+                ? sprintf('Measured disk usage for %d website(s), %d MB total', $measured, $totalMb)
+                : sprintf('Measured disk usage for %d website(s), %d MB total · %d website(s) could not be measured', $measured, $totalMb, $failed),
         ];
     }
 
     /**
-     * ขนาดรวมของบ้านเว็บไซต์เป็น MB
+     * A website's home's total size in MB
      *
-     * เดินไฟล์ด้วยสิทธิ์ของเจ้าของเว็บไซต์ตาม ARCHITECTURE §4.4 — root ไม่ต้องเดินเข้าไป
-     * ในต้นไม้ไฟล์ที่ผู้ใช้ควบคุมได้เอง และ `du` ไม่เดินตาม symlink อยู่แล้วโดยค่าเริ่มต้น
-     * จึงหลอกให้ไปนับ /var หรือ /home ของคนอื่นด้วยลิงก์ไม่ได้
+     * Walks the files under the site owner's own privileges, per ARCHITECTURE
+     * §4.4 — root never has to walk into a file tree the user controls
+     * themselves, and `du` already doesn't follow symlinks by default, so it
+     * can't be tricked into counting someone else's /var or /home through a link.
      */
     private function measure(Executor $executor, Site $site): int
     {
         $path = $executor->path($site->root());
 
         if (!$executor->exists($path)) {
-            throw new \RuntimeException('ไม่พบไดเรกทอรีของเว็บไซต์');
+            throw new \RuntimeException('The website\'s directory was not found');
         }
 
         $result = $executor->asUser($site->systemUser(), static function () use ($executor, $path): array {
-            // -s สรุปยอดเดียว · -k เป็นกิโลไบต์ (ทุกดิสทริบิวชันเหมือนกัน ไม่ต้องเดา block size)
-            // -x ไม่ข้าม filesystem — ถ้ามีการ mount อะไรไว้ข้างใน จะไม่นับซ้ำเข้ามา
+            // -s a single summary total · -k in kilobytes (the same across every
+            // distro, no need to guess the block size)
+            // -x never crosses a filesystem — if something is mounted inside, it doesn't get double-counted
             $exec = $executor->exec([self::DU, '-sk', '-x', '--', $path], timeout: self::TIMEOUT);
 
             return ['ok' => $exec->ok(), 'out' => $exec->output(), 'err' => trim($exec->stderr)];
         });
 
         if (($result['ok'] ?? false) !== true) {
-            throw new \RuntimeException(mb_substr((string) ($result['err'] ?? 'วัดขนาดไม่สำเร็จ'), 0, 200));
+            throw new \RuntimeException(mb_substr((string) ($result['err'] ?? 'Failed to measure size'), 0, 200));
         }
 
         $out = (string) ($result['out'] ?? '');
 
         if (preg_match('/^(\d+)/', $out, $m) !== 1) {
-            throw new \RuntimeException('อ่านผลลัพธ์ของ du ไม่ได้');
+            throw new \RuntimeException('Failed to read du\'s output');
         }
 
         return (int) ceil(((int) $m[1]) / 1024);
