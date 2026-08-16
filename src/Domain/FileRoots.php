@@ -13,30 +13,35 @@ use Phpcp\Kernel\Paths;
 use Phpcp\Security\Permissions;
 
 /**
- * ขอบเขตไฟล์ที่แต่ละบทบาทเข้าถึงได้ — นโยบายการเข้าถึงไฟล์ทั้งระบบอยู่ที่ไฟล์นี้ไฟล์เดียว
+ * The file scopes each role can access — the whole system's file access policy lives in this one file
  *
- * นโยบาย:
- *   ผู้ดูแลระบบ / ผู้ดูแลเซิร์ฟเวอร์ → ทั้งเครื่อง (/) พร้อมทางลัดที่ใช้บ่อย
- *   ผู้ดูแลเว็บไซต์                  → เฉพาะไดเรกทอรีของเว็บไซต์ที่ตัวเองเป็นเจ้าของ
+ * Policy:
+ *   Superadmin / sysadmin → the whole machine (/), with frequently used shortcuts
+ *   Website admin         → only the directories of the sites they own
  *
- * ต้องพูดให้ตรงว่าการเปิดให้เข้าถึงทั้งเครื่องผ่านหน้าเว็บ เท่ากับให้สิทธิ์ใกล้เคียง
- * root shell กับผู้ที่ล็อกอินเป็นผู้ดูแลระบบได้ มาตรการที่เหลือจึงเป็นเรื่อง
- * "กันพลาด" และ "ตามรอยได้" ไม่ใช่การจำกัดสิทธิ์:
+ * It has to be said plainly: granting access to the whole machine through the web
+ * page is effectively giving anyone who can log in as an admin something close to a
+ * root shell. Everything else here is therefore about "catching mistakes" and
+ * "leaving a trail," not actually restricting privilege:
  *
- *   - ไฟล์ของ Control Panel เองแตะไม่ได้ ทั้งอ่านและเขียน (กันระบบทำลายตัวเองจนกู้ไม่ได้
- *     และกันการอ่าน panel.db ที่มี hash รหัสผ่านกับ session)
- *   - /proc /sys /dev เปิดอ่านได้แต่เขียนไม่ได้ เพราะเป็น filesystem เสมือนของ kernel
- *   - ทุกการกระทำถูกบันทึกลง audit log ที่เป็น hash chain แก้ย้อนหลังแล้วตรวจจับได้
+ *   - The control panel's own files can't be touched, neither read nor written
+ *     (prevents the system from destroying itself beyond recovery, and prevents
+ *     reading panel.db, which holds password hashes and sessions)
+ *   - /proc /sys /dev are open for reading but not writing, since they are the
+ *     kernel's own virtual filesystems
+ *   - Every action is recorded to an audit log built as a hash chain, so any
+ *     after-the-fact edit is detectable
  *
- * ด้วยเหตุนี้ บัญชีผู้ดูแลระบบจึงต้องเปิด 2FA และควรจำกัด IP ตาม SECURITY §5
+ * Because of this, admin accounts must have 2FA enabled and should restrict IPs per
+ * SECURITY §5.
  */
 final class FileRoots
 {
-    /** เปิดอ่านได้ แต่เขียนไม่ได้แม้เป็นผู้ดูแลระบบ */
+    /** Open for reading but not writing, even for a superadmin */
     private const READ_ONLY_PREFIXES = ['/proc', '/sys', '/dev'];
 
     /**
-     * ขอบเขตทั้งหมดที่ actor นี้เปิดได้ เรียงตามลำดับที่ควรแสดงในเมนู
+     * Every scope this actor can open, in the order they should appear in the menu
      *
      * @return array<string,FileScope>
      */
@@ -45,25 +50,29 @@ final class FileRoots
         $scopes = [];
 
         if (self::isServerAdmin($actor)) {
-            $scopes['sites'] = FileScope::forServer('sites', 'เว็บไซต์ทั้งหมด', Paths::usersDir());
-            $scopes['server'] = FileScope::forServer('server', 'ทั้งเซิร์ฟเวอร์', '/');
+            $scopes['sites'] = FileScope::forServer('sites', 'All websites', Paths::usersDir());
+            $scopes['server'] = FileScope::forServer('server', 'Whole server', '/');
             /*
-             * ไม่มีขอบเขต `backups` แล้ว — ไฟล์สำรองอยู่ใน `<บ้าน>/backup` ของลูกค้า
-             * ซึ่งอยู่ใต้ขอบเขต `sites` และขอบเขตของเว็บแต่ละแห่งอยู่แล้ว · ลูกค้าเปิดดู
-             * ของตัวเองได้โดยไม่ต้องมีใครเปิดสิทธิ์อะไรให้เพิ่ม ซึ่งเป็นทั้งหมดที่
-             * PLAN-BACKUP-V2 ต้องการ · ขอบเขตเดิมชี้ไปยังพื้นที่ของ panel และต้องเจาะ
-             * รูใน SelfProtection เพื่อให้เปิดได้ — รูนั้นถูกถมกลับไปแล้ว
+             * There is no longer a `backups` scope — backup files live in the
+             * customer's own `<home>/backup`, which already sits under the
+             * `sites` scope and each site's own scope · a customer can browse
+             * their own files without anyone needing to grant any extra
+             * privilege, which is all PLAN-BACKUP-V2 required · the old scope
+             * pointed into the panel's own space and needed a hole punched into
+             * SelfProtection to open it at all — that hole has since been
+             * filled back in.
              */
-            $scopes['etc'] = FileScope::forServer('etc', 'ค่าตั้งระบบ', '/etc');
-            $scopes['varlog'] = FileScope::forServer('varlog', 'Log ระบบ', '/var/log');
-            $scopes['varwww'] = FileScope::forServer('varwww', 'เว็บรูทของระบบ', '/var/www');
-            $scopes['home'] = FileScope::forServer('home', 'โฮมผู้ใช้', '/home');
-            $scopes['tmp'] = FileScope::forServer('tmp', 'ไฟล์ชั่วคราว', '/tmp');
+            $scopes['etc'] = FileScope::forServer('etc', 'System configuration', '/etc');
+            $scopes['varlog'] = FileScope::forServer('varlog', 'System logs', '/var/log');
+            $scopes['varwww'] = FileScope::forServer('varwww', 'System webroot', '/var/www');
+            $scopes['home'] = FileScope::forServer('home', 'User homes', '/home');
+            $scopes['tmp'] = FileScope::forServer('tmp', 'Temporary files', '/tmp');
         }
 
         foreach (self::visibleSites($actor, $db) as $site) {
-            // ไฟล์เว็บจริงมาก่อนบ้านของเว็บ — เว็บที่ใช้ Domain Pointer เก็บไฟล์ไว้นอกบ้าน
-            // ผู้ใช้เข้าหน้านี้เพื่อแก้ไฟล์เว็บ ไม่ใช่เพื่อดู logs/tmp/backups
+            // The site's real files come before its home — a site using a Domain
+            // Pointer stores files outside its home; the user comes to this page
+            // to edit site files, not to browse logs/tmp/backups.
             $pointer = FileScope::forSiteDocroot($site);
             if ($pointer !== null) {
                 $scopes[$pointer->key] = $pointer;
@@ -77,37 +86,38 @@ final class FileRoots
     }
 
     /**
-     * เลือกขอบเขตตามคีย์ พร้อมตรวจสิทธิ์
+     * Select a scope by key, with a permission check
      *
-     * ตรวจที่นี่คือด่านเดียวที่ตัดสินว่าใครเปิดอะไรได้ — capability ทุกตัวต้องผ่านทางนี้
+     * The check here is the single guard that decides who can open what —
+     * every capability must go through this.
      */
     public static function require(Actor $actor, Db $db, string $key): FileScope
     {
         $scopes = self::forActor($actor, $db);
 
         if (!isset($scopes[$key])) {
-            throw new PermissionDenied('คุณไม่มีสิทธิ์เข้าถึงขอบเขตไฟล์นี้');
+            throw new PermissionDenied('You do not have access to this file scope');
         }
 
         return $scopes[$key];
     }
 
-    /** ขอบเขตที่ควรเปิดให้เห็นก่อนเมื่อเข้าหน้าตัวจัดการไฟล์ */
+    /** The scope that should be shown first when opening the file manager */
     public static function defaultKey(Actor $actor, Db $db): string
     {
         $scopes = self::forActor($actor, $db);
 
         if ($scopes === []) {
-            throw new PermissionDenied('บัญชีของคุณยังไม่มีขอบเขตไฟล์ที่เข้าถึงได้');
+            throw new PermissionDenied('Your account has no accessible file scope yet');
         }
 
-        // ผู้ดูแลระบบเริ่มที่รายการเว็บไซต์เพราะเป็นงานที่ทำบ่อยที่สุด
-        // ผู้ดูแลเว็บไซต์เริ่มที่เว็บของตัวเองซึ่งเป็นขอบเขตเดียวที่มี
+        // An admin starts at the site list, since that's the most frequent task ·
+        // a website admin starts at their own site, the only scope they have.
         return isset($scopes['sites']) ? 'sites' : (string) array_key_first($scopes);
     }
 
     /**
-     * ตรวจว่าเส้นทางนี้เปลี่ยนแปลงได้หรือไม่ — ใช้กับทุกคำสั่งที่เขียน ไม่ใช่แค่ตอนแสดงผล
+     * Check whether this path can be modified — used on every write command, not just when displaying it
      */
     public static function assertWritable(string $absolutePath): void
     {
@@ -115,12 +125,12 @@ final class FileRoots
 
         foreach (self::READ_ONLY_PREFIXES as $prefix) {
             if ($absolutePath === $prefix || str_starts_with($absolutePath, $prefix.'/')) {
-                throw new ValidationError("{$prefix} เป็น filesystem ของ kernel แก้ไขไม่ได้");
+                throw new ValidationError("{$prefix} is a kernel filesystem and cannot be modified");
             }
         }
     }
 
-    /** เส้นทางของ panel เองปิดทั้งอ่านและเขียน เพราะ panel.db มี hash รหัสผ่านและ session */
+    /** The panel's own path is closed to both reading and writing, since panel.db holds password hashes and sessions */
     public static function assertReadable(string $absolutePath): void
     {
         SelfProtection::assertPath($absolutePath);
@@ -137,11 +147,13 @@ final class FileRoots
     /** @return list<array<string,mixed>> */
     private static function visibleSites(Actor $actor, Db $db): array
     {
-        // เส้นทางไฟล์ของเว็บอนุมานจากบ้านของเจ้าของ จึงต้อง join ตาราง users มาด้วยเสมอ
-        // เว็บที่เจ้าของยังไม่มีบัญชีระบบ (system_user เป็น NULL) แปลว่ายัง provision ไม่เสร็จ
-        // — ไม่ต้องแสดงในตัวจัดการไฟล์เพราะโฟลเดอร์ยังไม่มีอยู่จริง
-        // เลย์เอาต์กับโดเมนหลักต้องมาด้วย — FileScope ประกอบเส้นทางจากแถวนี้โดยตรง
-        // ขาดไปแปลว่าเจ้าของที่ใช้ cpanel จะถูกมองเป็น phpcp แล้วเปิดไปที่โฟลเดอร์ที่ไม่มีอยู่
+        // A site's file path is derived from its owner's home, so the users table
+        // must always be joined in. A site whose owner has no system account yet
+        // (system_user is NULL) means provisioning hasn't finished — it must not
+        // be shown in the file manager, since the folder doesn't actually exist yet.
+        // The layout and main domain must come along too — FileScope builds its
+        // path directly from this row; missing them would make a cpanel owner get
+        // treated as phpcp and opened to a folder that doesn't exist.
         $select = "SELECT s.id, s.primary_domain, s.docroot_override, s.owner_user_id,
                           u.system_user, u.site_layout, u.main_domain
                    FROM sites s JOIN users u ON u.id = s.owner_user_id
@@ -151,7 +163,7 @@ final class FileRoots
             return $db->all($select.' ORDER BY s.primary_domain');
         }
 
-        // actor ระบบ (CLI/cron) ไม่มี userId — ไม่ผูกกับเว็บไซต์ใด
+        // A system actor (CLI/cron) has no userId — not tied to any site.
         if ($actor->userId === 0) {
             return [];
         }

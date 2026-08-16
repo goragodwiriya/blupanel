@@ -42,7 +42,7 @@ final class FilesController extends ApiController
         foreach ($this->scopes() as $key => $scope) {
             $scopes[] = [
                 'key' => $key,
-                'label' => $scope->label,
+                'label' => $this->t($scope->label),
                 'kind' => $scope->kind,
                 'site_id' => $scope->siteId,
                 'writable' => $scope->writable
