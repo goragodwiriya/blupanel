@@ -8,38 +8,43 @@ use Phpcp\Agent\ExecutionFailed;
 use Phpcp\Agent\ValidationError;
 
 /**
- * อัปเดตตัวเอง พร้อมตรวจลายเซ็น — ARCHITECTURE §13
+ * Self-updates, with signature verification — ARCHITECTURE §13
  *
- * ตัวอัปเดตของโปรแกรมที่รันด้วยสิทธิ์ root คือช่องทางยึดเครื่องที่ตรงที่สุดที่มี:
- * ใครแทรกไฟล์เข้ามาในขั้นตอนนี้ได้ ก็ได้ root ทันทีบนทุกเครื่องที่ติดตั้งไว้
- * ไฟล์นี้จึงยึดกฎสามข้อ ห้ามผ่อนข้อใดข้อหนึ่งเพื่อความสะดวก:
+ * A root-privileged program's own updater is the single most direct
+ * takeover path that exists: whoever can inject a file into this step gets
+ * root instantly on every machine it's installed on · this file therefore
+ * holds to three rules, none of which are ever relaxed for convenience:
  *
- *  1. **ตรวจลายเซ็นก่อนแตะไฟล์เสมอ** — ไม่ใช่หลังแตกไฟล์ ไม่ใช่ "ตรวจถ้ามีลายเซ็น"
- *     แพ็กเกจที่ไม่มีลายเซ็นคือแพ็กเกจที่ปฏิเสธ ไม่ใช่แพ็กเกจที่ข้ามการตรวจ
+ *  1. **The signature is always checked before a file is ever touched** —
+ *     never after extracting it, never "checked if a signature is present"
+ *     · a package with no signature is a rejected package, not a package that skips the check.
  *
- *  2. **กุญแจสาธารณะฝังอยู่ในโค้ด** ไม่ได้ดาวน์โหลดมาพร้อมแพ็กเกจ
- *     ถ้าดาวน์โหลดกุญแจมาด้วย ผู้โจมตีก็ส่งกุญแจของตัวเองมาคู่กับแพ็กเกจของตัวเอง
- *     แล้วลายเซ็นก็ผ่านทุกครั้ง — การตรวจที่ไม่มีจุดยึดที่เชื่อถือได้ ไม่ใช่การตรวจ
+ *  2. **The public key is embedded in the code**, never downloaded
+ *     alongside a package · if the key were downloaded too, an attacker
+ *     could simply send their own key paired with their own package, and
+ *     the signature would pass every time — a check with no trusted anchor isn't a check at all.
  *
- *  3. **ห้ามลดเวอร์ชัน** — การยัดเวอร์ชันเก่าที่มีช่องโหว่ที่แก้ไปแล้วกลับเข้าไป
- *     เป็นการโจมตีที่ใช้ได้ผลจริงแม้ลายเซ็นจะถูกต้องทุกประการ
+ *  3. **Downgrading is never allowed** — feeding back an old version whose
+ *     already-fixed vulnerability was patched is a genuinely effective
+ *     attack even when the signature is perfectly valid.
  *
- * ใช้ Ed25519 ผ่าน ext-sodium ที่มากับ PHP อยู่แล้ว ไม่ต้องพึ่ง gpg บนเครื่องปลายทาง
+ * Uses Ed25519 through ext-sodium, which already ships with PHP — no dependency on gpg at the destination.
  */
 final class Updater
 {
     /**
-     * กุญแจสาธารณะของผู้เผยแพร่ (base64 ของ 32 ไบต์)
+     * The publisher's public key (base64 of 32 bytes)
      *
-     * ค่าว่าง = ยังไม่ได้ตั้งกุญแจสำหรับ build นี้ ซึ่งทำให้ self-update ใช้ไม่ได้เลย
-     * เป็นค่าเริ่มต้นที่ถูกต้องแล้ว — ปลอดภัยกว่าการแถมกุญแจตัวอย่างที่ใครก็มีคู่ส่วนตัว
+     * Empty = no key has been set for this build yet, which makes
+     * self-update entirely unusable — a correct default in that state,
+     * safer than shipping a sample key whose private half anyone could already hold.
      */
     public const PUBLIC_KEY = '';
 
-    /** เวลาสูงสุดที่ยอมให้ดาวน์โหลด */
+    /** The longest a download is allowed to take */
     private const TIMEOUT = 120;
 
-    /** ขนาดแพ็กเกจสูงสุดที่ยอมรับ กันไฟล์ยักษ์ที่ทำให้ดิสก์เต็ม */
+    /** The largest package size accepted — guards against a giant file filling the disk */
     private const MAX_SIZE = 64 * 1024 * 1024;
 
     public function __construct(private readonly string $publicKey = self::PUBLIC_KEY)
@@ -52,50 +57,51 @@ final class Updater
     }
 
     /**
-     * ตรวจว่าแพ็กเกจนี้เชื่อถือได้และควรติดตั้งหรือไม่
+     * Checks whether this package can be trusted and should be installed
      *
-     * แยกจากการติดตั้งจริงเพื่อให้ทดสอบได้โดยไม่ต้องแตะระบบไฟล์ของเครื่อง
-     * และเพื่อให้ `phpcp self-update --check` บอกผลได้โดยไม่เปลี่ยนอะไรเลย
+     * Kept separate from actually installing it, so this can be tested
+     * without touching the machine's filesystem at all, and so `phpcp
+     * self-update --check` can report the result without changing anything.
      *
-     * @param string $archive   เนื้อไฟล์แพ็กเกจ
-     * @param string $signature ลายเซ็น Ed25519 แบบ base64
+     * @param string $archive   the package's file content
+     * @param string $signature the Ed25519 signature, base64-encoded
      */
     public function verify(string $archive, string $signature, string $version, string $current): void
     {
         if (!$this->isConfigured()) {
             throw new ValidationError(
-                'build นี้ไม่ได้ฝังกุญแจสาธารณะไว้ จึงตรวจลายเซ็นของแพ็กเกจไม่ได้ — '
-                . 'self-update ถูกปิดไว้เพื่อความปลอดภัย ให้อัปเดตด้วยการติดตั้งใหม่จากแหล่งที่เชื่อถือได้แทน',
+                'This build has no public key embedded, so a package signature cannot be verified — '
+                . 'self-update is disabled for safety — update by installing fresh from a trusted source instead',
             );
         }
 
         if (!extension_loaded('sodium')) {
-            throw new ValidationError('ไม่มีส่วนขยาย sodium จึงตรวจลายเซ็นไม่ได้');
+            throw new ValidationError('The sodium extension is not available, so a signature cannot be verified');
         }
 
         if ($archive === '') {
-            throw new ValidationError('แพ็กเกจว่างเปล่า');
+            throw new ValidationError('The package is empty');
         }
 
         if (strlen($archive) > self::MAX_SIZE) {
-            throw new ValidationError('แพ็กเกจใหญ่เกินกว่าที่ยอมรับ');
+            throw new ValidationError('The package exceeds the accepted size');
         }
 
         $key = base64_decode($this->publicKey, true);
         $sig = base64_decode($signature, true);
 
         if ($key === false || strlen($key) !== SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES) {
-            throw new ValidationError('กุญแจสาธารณะที่ฝังไว้ผิดรูปแบบ');
+            throw new ValidationError('The embedded public key is malformed');
         }
 
         if ($sig === false || strlen($sig) !== SODIUM_CRYPTO_SIGN_BYTES) {
-            throw new ValidationError('ลายเซ็นผิดรูปแบบ — ปฏิเสธแพ็กเกจ');
+            throw new ValidationError('Malformed signature — package rejected');
         }
 
         if (!sodium_crypto_sign_verify_detached($sig, $archive, $key)) {
             throw new ValidationError(
-                'ลายเซ็นไม่ตรงกับแพ็กเกจ — ไฟล์อาจถูกแก้ระหว่างทางหรือไม่ได้มาจากผู้เผยแพร่ตัวจริง '
-                . 'ยกเลิกการอัปเดตทั้งหมด',
+                "The signature doesn't match the package — the file may have been altered in transit, "
+                . 'or did not come from the genuine publisher — the entire update was cancelled',
             );
         }
 
@@ -103,59 +109,61 @@ final class Updater
     }
 
     /**
-     * ห้ามลดเวอร์ชัน แม้ลายเซ็นจะถูกต้อง
+     * Downgrading is never allowed, even with a perfectly valid signature
      *
-     * แพ็กเกจเก่าที่เคยเซ็นไว้ยังมีลายเซ็นที่ถูกต้องตลอดไป ผู้โจมตีที่ดักการเชื่อมต่อได้
-     * จึงส่งเวอร์ชันเก่าที่มีช่องโหว่ซึ่งแก้ไปแล้วกลับมาให้ติดตั้งซ้ำได้
-     * ลายเซ็นอย่างเดียวกันเรื่องนี้ไม่ได้ ต้องเทียบเวอร์ชันเพิ่ม
+     * An old package that was once genuinely signed keeps a valid signature
+     * forever — an attacker who can intercept the connection could send
+     * back an old version with an already-patched vulnerability to be
+     * reinstalled · a signature alone can't solve this; the version has to be compared as well.
      */
     public function assertUpgrade(string $version, string $current): void
     {
         if (preg_match('/^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/', $version) !== 1) {
-            throw new ValidationError('หมายเลขเวอร์ชันของแพ็กเกจผิดรูปแบบ');
+            throw new ValidationError("The package's version number is malformed");
         }
 
         if (version_compare($version, $current, '<')) {
             throw new ValidationError(sprintf(
-                'แพ็กเกจเป็นเวอร์ชัน %s ซึ่งเก่ากว่าที่ติดตั้งอยู่ (%s) — ปฏิเสธเพื่อกันการถูกย้อนกลับ'
-                . 'ไปยังเวอร์ชันที่มีช่องโหว่',
+                'The package is version %s, which is older than what is currently installed (%s) — rejected '
+                . 'to prevent reverting to a version with a known vulnerability',
                 $version,
                 $current,
             ));
         }
 
         if (version_compare($version, $current, '=')) {
-            throw new ValidationError(sprintf('ติดตั้งเวอร์ชัน %s อยู่แล้ว', $current));
+            throw new ValidationError(sprintf('Version %s is already installed', $current));
         }
     }
 
     /**
-     * ดาวน์โหลดข้อมูลจาก URL ที่ต้องเป็น HTTPS เท่านั้น
+     * Downloads data from a URL, which must be HTTPS only
      *
-     * บังคับ HTTPS ที่นี่ ไม่ใช่หวังว่าคนตั้งค่าจะใส่ https มาเอง —
-     * ถึงจะมีลายเซ็นกันการแก้ไฟล์อยู่แล้ว แต่ HTTP เปิดช่องให้ผู้ดักฟังรู้ว่า
-     * เครื่องไหนใช้เวอร์ชันอะไร ซึ่งเป็นข้อมูลตั้งต้นของการเลือกเป้าโจมตี
+     * HTTPS is enforced here, rather than hoping whoever configured the URL
+     * used https on their own — even with a signature already guarding
+     * against file tampering, HTTP would let an eavesdropper learn which
+     * machine is running which version, exactly the kind of information used to pick an attack target.
      */
     public function fetch(string $url): string
     {
         if (!str_starts_with($url, 'https://')) {
-            throw new ValidationError('ที่อยู่ของแพ็กเกจต้องเป็น https:// เท่านั้น');
+            throw new ValidationError('The package URL must be https:// only');
         }
 
         if (filter_var($url, FILTER_VALIDATE_URL) === false) {
-            throw new ValidationError('ที่อยู่ของแพ็กเกจผิดรูปแบบ');
+            throw new ValidationError('The package URL is malformed');
         }
 
         $handle = curl_init($url);
 
         if ($handle === false) {
-            throw new ExecutionFailed('เริ่มการดาวน์โหลดไม่สำเร็จ');
+            throw new ExecutionFailed('Failed to start the download');
         }
 
         curl_setopt_array($handle, [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => self::TIMEOUT,
-            CURLOPT_FOLLOWLOCATION => false,   // redirect ไป http:// จะข้ามการบังคับ HTTPS ข้างบน
+            CURLOPT_FOLLOWLOCATION => false,   // A redirect to http:// would bypass the HTTPS enforcement above
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_USERAGENT => 'phpcp/' . PHPCP_VERSION,
@@ -167,18 +175,18 @@ final class Updater
         curl_close($handle);
 
         if ($body === false || $error !== '') {
-            throw new ExecutionFailed('ดาวน์โหลดไม่สำเร็จ: ' . $error);
+            throw new ExecutionFailed('Download failed: ' . $error);
         }
 
         if ($status !== 200) {
-            throw new ExecutionFailed("ดาวน์โหลดไม่สำเร็จ: เซิร์ฟเวอร์ตอบรหัส {$status}");
+            throw new ExecutionFailed("Download failed: server responded with status {$status}");
         }
 
         return (string) $body;
     }
 
     /**
-     * อ่านข้อมูลรุ่นล่าสุดจากไฟล์ manifest
+     * Reads the latest release's data from the manifest file
      *
      * @return array{version:string,url:string,signature:string,notes:string}
      */
@@ -187,12 +195,12 @@ final class Updater
         $data = json_decode($json, true);
 
         if (!is_array($data)) {
-            throw new ValidationError('ข้อมูลรุ่นล่าสุดผิดรูปแบบ');
+            throw new ValidationError('The release manifest is malformed');
         }
 
         foreach (['version', 'url', 'signature'] as $field) {
             if (!isset($data[$field]) || !is_string($data[$field]) || $data[$field] === '') {
-                throw new ValidationError("ข้อมูลรุ่นล่าสุดไม่มีฟิลด์ {$field}");
+                throw new ValidationError("The release manifest is missing field {$field}");
             }
         }
 
