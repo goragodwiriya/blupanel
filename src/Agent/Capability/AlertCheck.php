@@ -12,20 +12,24 @@ use Phpcp\Domain\Notifier;
 use Phpcp\Domain\ServiceCatalog;
 
 /**
- * ตรวจเกณฑ์เตือนทั้งหมดแล้วแจ้งเฉพาะสิ่งที่เปลี่ยนแปลง — PLAN-V2 เฟส E6
+ * Checks every alert threshold and notifies only about what changed — PLAN-V2 phase E6
  *
- * ตรวจสี่เรื่องที่ทำให้เครื่องโฮสติ้งล่มจริงเรียงตามความถี่ที่เกิด:
- *   1. **ดิสก์เต็ม** — MariaDB เขียนไม่ได้ ทุกเว็บล่มพร้อมกัน
- *   2. **หน่วยความจำ/load** — เว็บช้าจนหมดเวลาก่อนตอบ
- *   3. **บริการสำคัญหยุด** — Apache/PHP-FPM/MariaDB ตายแล้วไม่มีใครรู้จนลูกค้าโทรมา
- *   4. **ใบรับรองใกล้หมดอายุ** — เบราว์เซอร์ขึ้นหน้าเตือนสีแดงเต็มจอ
+ * Checks the four things that genuinely take down a hosting machine, in order of how often they happen:
+ *   1. **Disk full** — MariaDB can't write, every site goes down at once
+ *   2. **Memory/load** — sites become slow enough to time out before answering
+ *   3. **A critical service stopped** — Apache/PHP-FPM/MariaDB died and nobody knew until a customer called
+ *   4. **A certificate is about to expire** — the browser shows a full-page red warning
  *
- * **การตัดสินว่า "ควรส่งไหม" อยู่ที่ {@see AlertRules} ทั้งหมด** — ที่นี่แค่วัดค่าแล้วส่งต่อ
- * · แยกกันเพราะกฎการกันสแปม (แจ้งตอนเข้าสู่สถานะ · แจ้งซ้ำเมื่อแย่ลง · เงียบระหว่างนั้น)
- * เป็นตรรกะที่ต้องทดสอบด้วยการเดินเวลา ซึ่งทำไม่ได้ถ้าผูกอยู่กับการอ่านค่าจากเครื่องจริง
+ * **The decision of "should this actually be sent" lives entirely in
+ * {@see AlertRules}** — this class only measures values and passes them
+ * along · kept separate because the anti-spam rules (notify on entering a
+ * bad state · notify again if it gets worse · stay quiet in between) are
+ * logic that needs to be tested by simulating the passage of time, which is
+ * impossible if it's tied to reading live values off the real machine.
  *
- * ทำเครื่องหมายว่า **อ่านอย่างเดียว** เหมือน `disk.usage`/`metrics.record` — ไม่เปลี่ยนอะไร
- * บนเครื่อง เขียนแค่ตารางสถานะของ panel เอง และงานที่รันทุก 5 นาทีต้องไม่เติม audit log
+ * Marked **read-only**, like `disk.usage`/`metrics.record` — changes
+ * nothing on the machine, only writes to the panel's own status table, and
+ * a job that runs every 5 minutes must never add entries to the audit log.
  */
 final class AlertCheck implements Capability
 {
@@ -46,7 +50,7 @@ final class AlertCheck implements Capability
 
     public function summary(): string
     {
-        return 'ตรวจเกณฑ์เตือนของเครื่องและแจ้งเมื่อผิดปกติ';
+        return "Check the machine's alert thresholds and notify on anything abnormal";
     }
 
     public function validate(array $args): array
@@ -57,7 +61,7 @@ final class AlertCheck implements Capability
     public function run(array $args, Executor $executor, Context $context): array
     {
         $rules = new AlertRules($context->db);
-        // ส่ง executor เข้าไปด้วยเพื่อให้แจ้งเตือนทางอีเมลได้ (ต้องเรียก sendmail)
+        // The executor is also passed in so email notifications can be sent (needs to call sendmail)
         $notifier = new Notifier($context->db, $executor);
 
         $checked = [];
@@ -82,19 +86,23 @@ final class AlertCheck implements Capability
 
             $sent += $notifier->send(
                 'alert',
-                ($recovered ? 'กลับสู่ปกติ: ' : '') . $alert['title'],
+                ($recovered ? 'Recovered: ' : '') . $alert['title'],
                 $recovered ? $alert['recovery'] : $alert['body'],
                 $recovered ? 'ok' : ($alert['level'] === 'critical' ? 'danger' : 'warn'),
             ) ? 1 : 0;
         }
 
         /*
-         * เกณฑ์ที่รอบนี้ไม่ได้ตรวจแล้ว ต้องหายไปจากรายการด้วย
+         * A threshold this run didn't check must also disappear from the list.
          *
-         * `collect()` ข้ามบริการที่ไม่ได้ติดตั้งบนเครื่องนี้ (ถูกต้อง — ไม่ใช่ความผิดปกติ)
-         * แต่ถ้าบริการนั้นเคยหยุดทำงานตอนที่ยังลงอยู่ แถวของมันจะค้างในตารางตลอดไป
-         * เพราะไม่มีใครประเมินคีย์นั้นอีกเลย · ผู้ดูแลเห็น "มีปัญหาค้างอยู่" ที่กดยังไง
-         * ก็ไม่หาย แล้วเลิกเชื่อส่วนนี้ทั้งส่วน — อันตรายกว่าไม่มีมันเลย
+         * `collect()` skips services not installed on this machine
+         * (correct — not an abnormality) — but if that service had
+         * previously stopped while it was still installed, its row would
+         * stay stuck in the table forever, since nothing ever evaluates
+         * that key again · an admin would see "a problem stuck there" that
+         * never clears no matter what they click, and eventually stop
+         * trusting this section entirely — more dangerous than not having
+         * it at all.
          */
         $forgotten = $rules->forgetOthers(array_column($checked, 'key'));
 
@@ -104,15 +112,17 @@ final class AlertCheck implements Capability
             'forgotten' => $forgotten,
             'alerts' => $checked,
             'channels' => $notifier->activeChannels(),
-            'message' => sprintf('ตรวจเกณฑ์เตือน %d รายการ · ส่งแจ้งเตือน %d ครั้ง', count($checked), $sent),
+            'message' => sprintf('Checked %d threshold(s) · sent %d notification(s)', count($checked), $sent),
         ];
     }
 
     /**
-     * วัดค่าทุกเกณฑ์แล้วคืนรายการที่ต้องให้ `AlertRules` ตัดสิน
+     * Measures every threshold and returns the list for `AlertRules` to decide on
      *
-     * คืน**ทุกเกณฑ์รวมถึงที่ปกติ** (level = null) โดยตั้งใจ — `AlertRules` ต้องรู้ว่าเกณฑ์
-     * ที่เคยผิดปกติกลับมาปกติแล้ว ถึงจะส่งข้อความ "หายแล้ว" และล้างสถานะได้
+     * Deliberately returns **every threshold, including the ones that are
+     * fine** (level = null) — `AlertRules` needs to know a threshold that
+     * used to be abnormal has gone back to normal, or it can never send a
+     * "recovered" message and clear its own state.
      *
      * @return list<array{key:string,level:string|null,value:float,title:string,body:string,recovery:string}>
      */
@@ -121,7 +131,7 @@ final class AlertCheck implements Capability
         $alerts = [];
         $metrics = (new SystemMetrics())->run([], $executor, $context);
 
-        // --- ทรัพยากรที่วัดเป็นเปอร์เซ็นต์ ---
+        // --- Resources measured as a percentage ---
         foreach (AlertRules::THRESHOLDS as $type => [$warning, , $label]) {
             $percent = (float) ($metrics[$type]['percent'] ?? 0);
             $used = (int) ($metrics[$type]['used'] ?? 0);
@@ -131,20 +141,20 @@ final class AlertCheck implements Capability
                 'key' => $type,
                 'level' => AlertRules::levelForPercent($type, $percent),
                 'value' => $percent,
-                'title' => sprintf('%sใช้ไป %.1f%%', $label, $percent),
+                'title' => sprintf('%s at %.1f%% used', $label, $percent),
                 'body' => sprintf(
-                    "%s: %s จาก %s (%.1f%%)\nเกณฑ์เตือนที่ %.0f%%",
+                    "%s: %s of %s (%.1f%%)\nWarning threshold at %.0f%%",
                     $label,
                     $this->bytes($used),
                     $this->bytes($total),
                     $percent,
                     $warning,
                 ),
-                'recovery' => sprintf('%sกลับมาอยู่ที่ %.1f%% แล้ว', $label, $percent),
+                'recovery' => sprintf('%s is back down to %.1f%%', $label, $percent),
             ];
         }
 
-        // --- load average ต่อคอร์ ---
+        // --- Load average per core ---
         $load1 = (float) ($metrics['load'][1] ?? 0);
         $cores = max(1, (int) ($metrics['cores'] ?? 1));
 
@@ -152,51 +162,61 @@ final class AlertCheck implements Capability
             'key' => 'load',
             'level' => AlertRules::levelForLoad($load1, $cores),
             'value' => $load1,
-            'title' => sprintf('โหลดเฉลี่ย %.2f (%d คอร์)', $load1, $cores),
+            'title' => sprintf('Load average %.2f (%d core(s))', $load1, $cores),
             'body' => sprintf(
-                "โหลดเฉลี่ย 1 นาที: %.2f บนเครื่อง %d คอร์ (%.2f ต่อคอร์)\n"
-                . 'เกินหนึ่งต่อคอร์แปลว่ามีงานรอคิวอยู่จริง',
+                "1-minute load average: %.2f on a %d-core machine (%.2f per core)\n"
+                . 'Above one per core genuinely means work is queued up',
                 $load1,
                 $cores,
                 $load1 / $cores,
             ),
-            'recovery' => sprintf('โหลดกลับมาอยู่ที่ %.2f แล้ว', $load1),
+            'recovery' => sprintf('Load is back down to %.2f', $load1),
         ];
 
-        // --- บริการสำคัญที่หยุดทำงาน ---
+        // --- Critical services that have stopped ---
         //
-        // บริการบางชนิด**ใช้ทีละตัว**: เครื่องหนึ่งเสิร์ฟเว็บด้วย Apache หรือ Nginx
-        // ไม่ใช่ทั้งคู่ · เช่นเดียวกับ MariaDB กับ MySQL ที่ใช้พอร์ตเดียวกัน
+        // Some kinds of service are **used one at a time**: a machine serves
+        // websites with either Apache or Nginx, never both · the same is
+        // true of MariaDB and MySQL, which share the same port.
         //
-        // คำถามที่ต้องเตือนจริงคือ **"ยังมีเว็บเซิร์ฟเวอร์ทำงานอยู่ไหม"** ไม่ใช่
-        // "nginx ทำงานอยู่ไหม" — เครื่องนี้เป็นตัวอย่าง: nginx ถูกติดตั้งไว้และ enabled
-        // แต่สตาร์ตไม่ขึ้นเพราะพอร์ต 80 ถูก Apache ใช้อยู่ ซึ่งเป็น**สภาพปกติ**
-        // ของเครื่อง ไม่ใช่เหตุที่ต้องปลุกใคร · ถ้าเตือนทีละตัวจะเตือนทุก 6 ชั่วโมงตลอดไป
+        // The question that genuinely needs alerting on is **"is a web
+        // server still running at all"**, not "is nginx running" — this
+        // very machine is an example: nginx is installed and enabled, but
+        // fails to start because port 80 is held by Apache, which is this
+        // machine's **normal state**, not a reason to wake anyone up · if
+        // each one alerted separately, it would alert every 6 hours forever.
         //
-        // ตรงข้ามกับ php-fpm ที่แต่ละเวอร์ชันแยกกันจริง — เว็บที่ตั้งไว้ใช้ 8.4
-        // ล่มทันทีที่ 8.4 ตาย ไม่ว่าเวอร์ชันอื่นจะยังทำงานอยู่หรือไม่
+        // The opposite of php-fpm, where each version is genuinely separate
+        // — a site configured to use 8.4 goes down the instant 8.4 dies, no
+        // matter whether other versions are still running.
         $exclusive = [ServiceCatalog::KIND_WEBSERVER, ServiceCatalog::KIND_DATABASE];
-        $groupAlive = [];       // ชนิด → มีอย่างน้อยหนึ่งตัวที่ทำงานอยู่หรือยัง
-        $groupMembers = [];     // ชนิด → รายชื่อที่ติดตั้งจริงบนเครื่องนี้
+        $groupAlive = [];       // kind → is at least one of them running yet
+        $groupMembers = [];     // kind → the names genuinely installed on this machine
         $probes = [];
 
         foreach (ServiceCatalog::all() as $unit => $meta) {
             if (($meta['critical'] ?? false) !== true) {
-                continue;   // บริการที่ไม่สำคัญหยุดได้โดยไม่ต้องปลุกใครกลางดึก
+                continue;   // A non-critical service can stop without waking anyone in the middle of the night
             }
 
             $status = ServiceProbe::read($executor, $unit);
 
-            // ไม่ได้ติดตั้งบนเครื่องนี้ = ไม่ใช่ความผิดปกติ (เช่น nginx บนเครื่องที่ใช้ Apache
-            // หรือ PHP เวอร์ชันที่ ServiceCatalog รู้จักแต่ยังไม่ได้ลงบนเครื่องนี้)
+            // Not installed on this machine = not an abnormality (e.g.
+            // nginx on a machine using Apache, or a PHP version
+            // ServiceCatalog knows about but isn't installed here)
             //
-            // **ตัดสินจาก `status` ไม่ใช่ `installed` เพียงอย่างเดียว** — `probeFallback()`
-            // ของ ServiceProbe คืน `installed => true` แบบเหมารวมเมื่อมันเดาสถานะไม่ออก
-            // ค่านั้นจึงเชื่อไม่ได้ · ส่วน `status` ผ่าน `statusOf()` ที่คำนวณจาก LoadState จริง
+            // **Decided from `status`, never from `installed` alone** —
+            // ServiceProbe's `probeFallback()` returns `installed => true`
+            // as a blanket default whenever it can't guess the real status,
+            // so that value alone can't be trusted · `status` instead goes
+            // through `statusOf()`, computed from a genuine LoadState.
             //
-            // เคยพลาดมาแล้ว: รอบแรกกรองด้วยคีย์ `load` ซึ่ง ServiceProbe **ไม่เคยคืน**
-            // เงื่อนไขจึงไม่มีทางเป็นจริง แล้วระบบยิงแจ้งเตือนรวดเดียว 6 ข้อความเรื่อง
-            // php-fpm เวอร์ชันที่ไม่ได้ลงไว้ — คือสแปมแบบที่ AlertRules ถูกเขียนมาเพื่อกัน
+            // A mistake made once before: the first pass filtered on a
+            // `load` key that ServiceProbe **never actually returns**, so
+            // the condition could never be true, and the system fired off 6
+            // notifications in a row about php-fpm versions that were never
+            // even installed — exactly the kind of spam AlertRules was
+            // written to prevent.
             if (($status['status'] ?? '') === 'not_installed' || ($status['installed'] ?? true) === false) {
                 continue;
             }
@@ -209,46 +229,48 @@ final class AlertCheck implements Capability
                 $groupMembers[$kind][] = $meta['label'] ?? $unit;
                 $probes[$kind][] = $unit;
 
-                continue;   // ตัดสินทั้งกลุ่มทีเดียวหลังวนครบ
+                continue;   // The whole group is decided together after the loop finishes
             }
 
             $alerts[] = [
                 'key' => 'service:' . $unit,
                 'level' => $running ? null : 'critical',
                 'value' => $running ? 1.0 : 0.0,
-                'title' => sprintf('บริการ %s หยุดทำงาน', $meta['label'] ?? $unit),
+                'title' => sprintf('Service %s has stopped', $meta['label'] ?? $unit),
                 'body' => sprintf(
-                    "บริการ %s (%s) ไม่ได้ทำงานอยู่\nสั่งเริ่มใหม่ได้ที่หน้า \"บริการ\" ของ panel",
+                    "Service %s (%s) is not running\nIt can be restarted from the panel's \"Services\" page",
                     $meta['label'] ?? $unit,
                     $unit,
                 ),
-                'recovery' => sprintf('บริการ %s กลับมาทำงานแล้ว', $meta['label'] ?? $unit),
+                'recovery' => sprintf('Service %s is running again', $meta['label'] ?? $unit),
             ];
         }
 
-        // ชนิดที่ใช้ทีละตัว — เตือนเมื่อ**ไม่เหลือตัวไหนทำงานเลย** เพราะนั่นคือจุดที่
-        // เว็บล่มจริง · คีย์เป็นชื่อชนิด ไม่ใช่ชื่อ unit จึงไม่มีทางเตือนซ้ำหลายใบต่อเรื่องเดียว
+        // A kind used one at a time — alerts when **not a single one is
+        // running left at all**, since that's genuinely where sites go down
+        // · the key is the kind's name, not a unit name, so it can never
+        // fire multiple separate alerts for the same underlying problem.
         foreach ($groupAlive as $kind => $alive) {
-            $label = ServiceCatalog::KIND_WEBSERVER === $kind ? 'เว็บเซิร์ฟเวอร์' : 'ฐานข้อมูล';
-            $members = implode(' หรือ ', array_unique($groupMembers[$kind]));
+            $label = ServiceCatalog::KIND_WEBSERVER === $kind ? 'web server' : 'database';
+            $members = implode(' or ', array_unique($groupMembers[$kind]));
 
             $alerts[] = [
                 'key' => 'service-kind:' . $kind,
                 'level' => $alive ? null : 'critical',
                 'value' => $alive ? 1.0 : 0.0,
-                'title' => sprintf('ไม่มี%sทำงานอยู่เลย', $label),
+                'title' => sprintf('No %s is running at all', $label),
                 'body' => sprintf(
-                    "ไม่มี%sตัวไหนทำงานอยู่บนเครื่องนี้ (ตรวจแล้ว: %s)\n"
-                    . "เว็บไซต์ทุกเว็บบนเครื่องนี้เข้าไม่ได้ตอนนี้\n"
-                    . 'สั่งเริ่มใหม่ได้ที่หน้า "บริการ" ของ panel',
+                    "Not a single %s is running on this machine (checked: %s)\n"
+                    . "Every website on this machine is currently unreachable\n"
+                    . 'It can be restarted from the panel\'s "Services" page',
                     $label,
                     $members,
                 ),
-                'recovery' => sprintf('%sกลับมาทำงานแล้ว', $label),
+                'recovery' => sprintf('%s is running again', ucfirst($label)),
             ];
         }
 
-        // --- ใบรับรองที่ใกล้หมดอายุ ---
+        // --- Certificates nearing expiry ---
         $now = time();
         $certificates = $context->db->all(
             "SELECT domain, not_after FROM certificates WHERE not_after IS NOT NULL AND status != 'pending'",
@@ -261,22 +283,22 @@ final class AlertCheck implements Capability
                 'key' => 'cert:' . $certificate['domain'],
                 'level' => AlertRules::levelForCertDays($daysLeft),
                 'value' => (float) $daysLeft,
-                'title' => sprintf('ใบรับรองของ %s เหลือ %d วัน', $certificate['domain'], $daysLeft),
+                'title' => sprintf('%s\'s certificate has %d day(s) left', $certificate['domain'], $daysLeft),
                 'body' => sprintf(
-                    "ใบรับรอง SSL ของ %s จะหมดอายุใน %d วัน (%s)\n"
-                    . 'ปกติ certbot ต่ออายุให้เองที่ 30 วัน — ถ้าเหลือน้อยกว่านี้แปลว่าการต่ออายุอัตโนมัติมีปัญหา',
+                    "%s's SSL certificate expires in %d day(s) (%s)\n"
+                    . 'certbot normally renews it on its own at 30 days out — fewer days than that means automatic renewal has a problem',
                     $certificate['domain'],
                     $daysLeft,
                     date('d/m/Y', (int) $certificate['not_after']),
                 ),
-                'recovery' => sprintf('ใบรับรองของ %s ถูกต่ออายุแล้ว (เหลือ %d วัน)', $certificate['domain'], $daysLeft),
+                'recovery' => sprintf('%s\'s certificate has been renewed (%d day(s) left)', $certificate['domain'], $daysLeft),
             ];
         }
 
         return $alerts;
     }
 
-    /** ขนาดที่คนอ่านได้ — ข้อความแจ้งเตือนต้องอ่านจากมือถือแล้วเข้าใจทันที */
+    /** A human-readable size — a notification message has to be read on a phone and understood immediately */
     private function bytes(int $value): string
     {
         $units = ['B', 'KB', 'MB', 'GB', 'TB'];

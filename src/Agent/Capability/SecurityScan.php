@@ -17,16 +17,20 @@ use Phpcp\Driver\Ssl\CertbotManager;
 use Phpcp\Driver\SshManager;
 
 /**
- * ตรวจความปลอดภัยทั้งเครื่อง — PROMPT.md หัวข้อ Security
+ * Checks security across the whole machine — PROMPT.md's Security section
  *
- * รวบรวมหลักฐานจริงจากระบบ ไม่ใช่จากค่าที่ panel จำไว้ในฐานข้อมูล
- * เพราะสิ่งที่ต้องตอบคือ "ตอนนี้เครื่องปลอดภัยแค่ไหน" ไม่ใช่ "panel คิดว่าปลอดภัยแค่ไหน"
- * ค่าที่ panel เคยตั้งไว้อาจถูกแก้จากบรรทัดคำสั่งไปแล้วโดยไม่ผ่านหน้าเว็บ
+ * Gathers genuine evidence from the system itself, never from a value the
+ * panel merely remembers in its database, because the question that needs
+ * answering is "how secure is the machine right now", not "how secure does
+ * the panel think it is" — a value the panel once set might already have
+ * been changed from the command line, bypassing the web page entirely.
  *
- * ทุกข้อที่ไม่ผ่านต้องบอกทางแก้ที่ทำตามได้จริง ตามที่ PROMPT.md กำหนดว่า
- * "Show actionable recommendations" — คำเตือนที่บอกแต่ปัญหาโดยไม่บอกว่าแก้ที่ไหน
- * สุดท้ายจะถูกเมิน ข้อที่มีหน้าจอรับผิดชอบจะมี `fix_url` ชี้ไปหน้านั้น
- * ส่วนข้อที่แก้ได้ที่เครื่องเท่านั้น (เช่นสิทธิ์ไฟล์) จะบอกคำสั่งไว้ใน `advice` แทน
+ * Every failed item must give advice that can genuinely be followed, per
+ * PROMPT.md's requirement to "show actionable recommendations" — a warning
+ * that states only the problem without saying where to fix it ends up
+ * ignored eventually. An item with a screen responsible for it gets a
+ * `fix_url` pointing there; an item only fixable on the machine itself
+ * (e.g. file permissions) gives a command in `advice` instead.
  */
 final class SecurityScan implements Capability
 {
@@ -47,7 +51,7 @@ final class SecurityScan implements Capability
 
     public function summary(): string
     {
-        return 'ตรวจสถานะความปลอดภัยของเซิร์ฟเวอร์';
+        return "Check the server's security status";
     }
 
     public function validate(array $args): array
@@ -89,8 +93,8 @@ final class SecurityScan implements Capability
                 'Firewall',
                 SecurityScore::FAIL,
                 20,
-                'ไม่ได้ติดตั้ง ufw — เครื่องรับการเชื่อมต่อทุกพอร์ตที่มีบริการเปิดฟังอยู่',
-                'ติดตั้งด้วย apt install ufw แล้วตั้งกฎก่อนเปิดใช้งาน',
+                'ufw is not installed — the machine accepts connections on every port with a service listening',
+                'Install with apt install ufw, then set rules before turning it on',
                 '/server/firewall',
             )];
         }
@@ -103,7 +107,7 @@ final class SecurityScan implements Capability
                 'Firewall',
                 SecurityScore::UNKNOWN,
                 20,
-                'ตรวจสถานะจริงของ firewall ไม่ได้',
+                "Could not check the firewall's real status",
                 $status['note'],
                 '/server/firewall',
             )];
@@ -115,8 +119,8 @@ final class SecurityScan implements Capability
                 'Firewall',
                 SecurityScore::FAIL,
                 20,
-                sprintf('firewall ปิดอยู่ (มีกฎที่ตั้งไว้ %d ข้อแต่ยังไม่มีผล)', count($status['rules'])),
-                'เปิดใช้งาน firewall — ระบบจะเปิดพอร์ตของหน้าเว็บนี้และ SSH ไว้ให้ก่อนเสมอ',
+                sprintf('Firewall is off (%d rule(s) are set but have no effect yet)', count($status['rules'])),
+                "Turn the firewall on — the system always opens this web page's port and SSH first",
                 '/server/firewall',
             )];
         }
@@ -126,10 +130,10 @@ final class SecurityScan implements Capability
             'Firewall',
             SecurityScore::PASS,
             20,
-            sprintf('เปิดใช้งานอยู่ บังคับใช้ %d กฎ', count($status['rules'])),
+            sprintf('Turned on, enforcing %d rule(s)', count($status['rules'])),
         )];
 
-        // เปิดพอร์ตกว้าง ๆ สู่อินเทอร์เน็ตคือความเสี่ยงที่พบบ่อยที่สุดรองจากไม่เปิด firewall เลย
+        // Opening ports broadly to the internet is the most common risk after not having a firewall at all
         $panelPort = (string) $context->config->int('panel.port', 8443);
         $exposed = [];
 
@@ -138,7 +142,7 @@ final class SecurityScan implements Capability
                 continue;
             }
 
-            // พอร์ตที่ไม่ควรเปิดให้ทุกที่เข้าถึง — ฐานข้อมูลและหน้าจัดการ
+            // Ports that shouldn't be open to everywhere — databases and the panel itself
             if (in_array($rule['port'], ['3306', '5432', '6379', '27017', '11211', $panelPort], true)) {
                 $exposed[] = $rule['target'];
             }
@@ -147,21 +151,21 @@ final class SecurityScan implements Capability
         if ($exposed !== []) {
             $checks[] = $this->check(
                 'firewall.exposed',
-                'พอร์ตที่เปิดกว้างเกินจำเป็น',
+                'Ports opened wider than necessary',
                 SecurityScore::WARN,
                 10,
-                'เปิดให้เข้าถึงจากทุกที่: ' . implode(', ', $exposed),
-                'จำกัดต้นทางของกฎเหล่านี้ให้เหลือเฉพาะ IP ที่ต้องใช้จริง '
-                . 'พอร์ตฐานข้อมูลและหน้าจัดการไม่ควรเปิดสู่อินเทอร์เน็ตทั้งหมด',
+                'Open to access from anywhere: ' . implode(', ', $exposed),
+                'Restrict these rules\' sources down to only the IPs that genuinely need them — '
+                . 'database and panel ports should never be open to the entire internet',
                 '/server/firewall',
             );
         } else {
             $checks[] = $this->check(
                 'firewall.exposed',
-                'พอร์ตที่เปิดกว้างเกินจำเป็น',
+                'Ports opened wider than necessary',
                 SecurityScore::PASS,
                 10,
-                'ไม่พบพอร์ตฐานข้อมูลหรือหน้าจัดการที่เปิดให้ทุกที่เข้าถึง',
+                'No database or panel port was found open to everywhere',
             );
         }
 
@@ -174,8 +178,8 @@ final class SecurityScan implements Capability
         $manager = new SshManager();
 
         if (!$manager->isInstalled($executor)) {
-            // ไม่มี SSH ไม่ใช่ปัญหาด้านความปลอดภัย — ยิ่งลดทางเข้าด้วยซ้ำ
-            return [$this->check('ssh.config', 'SSH', SecurityScore::PASS, 15, 'ไม่ได้ติดตั้ง SSH บนเครื่องนี้')];
+            // No SSH isn't a security problem — if anything, it's one less way in
+            return [$this->check('ssh.config', 'SSH', SecurityScore::PASS, 15, 'SSH is not installed on this machine')];
         }
 
         $values = $manager->read($executor);
@@ -183,24 +187,25 @@ final class SecurityScan implements Capability
         $status = SecurityScore::PASS;
 
         if ($values['PermitEmptyPasswords']['value'] === 'yes') {
-            $problems[] = 'อนุญาตรหัสผ่านว่าง';
+            $problems[] = 'Empty passwords are permitted';
             $status = SecurityScore::FAIL;
         }
 
         if ($values['PermitRootLogin']['value'] === 'yes') {
-            $problems[] = 'อนุญาตให้ root เข้าสู่ระบบด้วยรหัสผ่าน';
+            $problems[] = 'Root is permitted to log in with a password';
             $status = SecurityScore::FAIL;
         }
 
         if ($values['PasswordAuthentication']['value'] === 'yes' && $status !== SecurityScore::FAIL) {
-            // เปิดรหัสผ่านอย่างเดียวยังไม่ถึงขั้นอันตราย ถ้ารหัสผ่านแข็งแรงพอ
-            // แต่เป็นเป้าของการเดารหัสอัตโนมัติตลอดเวลา จึงนับเป็นควรปรับปรุง
-            $problems[] = 'เปิดให้เข้าสู่ระบบด้วยรหัสผ่าน';
+            // Password login alone isn't outright dangerous if the password
+            // is strong enough, but it's a constant target of automated
+            // password guessing, so it counts as worth improving
+            $problems[] = 'Password login is enabled';
             $status = SecurityScore::WARN;
         }
 
         if ($values['PubkeyAuthentication']['value'] === 'no') {
-            $problems[] = 'ปิดการเข้าสู่ระบบด้วยกุญแจ';
+            $problems[] = 'Key-based login is disabled';
             $status = SecurityScore::FAIL;
         }
 
@@ -210,9 +215,9 @@ final class SecurityScan implements Capability
             $status,
             15,
             $problems === []
-                ? sprintf('ตั้งค่าเหมาะสม (พอร์ต %s)', $values['Port']['value'])
+                ? sprintf('Configured appropriately (port %s)', $values['Port']['value'])
                 : implode(' · ', $problems),
-            $problems === [] ? '' : 'ปิด PermitRootLogin และ PermitEmptyPasswords แล้วใช้กุญแจแทนรหัสผ่าน',
+            $problems === [] ? '' : 'Turn off PermitRootLogin and PermitEmptyPasswords, and use a key instead of a password',
             $problems === [] ? '' : '/server/ssh',
         )];
     }
@@ -233,7 +238,7 @@ final class SecurityScan implements Capability
         }
 
         if ($sites === []) {
-            return [$this->check('ssl.coverage', 'SSL', SecurityScore::PASS, 15, 'ยังไม่มีเว็บไซต์บนเครื่องนี้')];
+            return [$this->check('ssl.coverage', 'SSL', SecurityScore::PASS, 15, 'No website exists on this machine yet')];
         }
 
         $noCert = [];
@@ -262,54 +267,54 @@ final class SecurityScan implements Capability
         $checks[] = match (true) {
             $expiring !== [] => $this->check(
                 'ssl.coverage',
-                'ใบรับรอง SSL',
+                'SSL certificate',
                 SecurityScore::FAIL,
                 15,
-                'ใบรับรองหมดอายุแล้วหรือใกล้หมด: ' . implode(', ', $expiring),
-                'ต่ออายุใบรับรองก่อนที่ผู้ใช้จะเข้าเว็บไม่ได้',
+                'Certificate already expired or nearly expired: ' . implode(', ', $expiring),
+                'Renew the certificate before users lose the ability to reach the site',
                 '/ssl',
             ),
             $noCert !== [] => $this->check(
                 'ssl.coverage',
-                'ใบรับรอง SSL',
+                'SSL certificate',
                 SecurityScore::FAIL,
                 15,
-                'เว็บไซต์ที่ยังไม่มีใบรับรอง: ' . implode(', ', $noCert),
-                'ติดตั้งใบรับรองให้ครบทุกเว็บไซต์ — ข้อมูลที่ส่งผ่าน HTTP ถูกดักอ่านได้ทั้งหมด',
+                'Website(s) with no certificate yet: ' . implode(', ', $noCert),
+                'Install a certificate for every website — data sent over plain HTTP can be intercepted entirely',
                 '/ssl',
             ),
             default => $this->check(
                 'ssl.coverage',
-                'ใบรับรอง SSL',
+                'SSL certificate',
                 SecurityScore::PASS,
                 15,
-                sprintf('เว็บไซต์ทั้ง %d เว็บมีใบรับรองที่ใช้งานได้', count($sites)),
+                sprintf('All %d website(s) have a working certificate', count($sites)),
             ),
         };
 
         if ($notForced !== []) {
             $checks[] = $this->check(
                 'ssl.forced',
-                'บังคับ HTTPS',
+                'Force HTTPS',
                 SecurityScore::WARN,
                 8,
-                'ยังเข้าผ่าน HTTP ได้: ' . implode(', ', $notForced),
-                'เปิด "บังคับ HTTPS" เพื่อ redirect คำขอทาง HTTP ทั้งหมดไป HTTPS',
+                'Still reachable over HTTP: ' . implode(', ', $notForced),
+                'Turn on "force HTTPS" to redirect every HTTP request to HTTPS',
                 '/ssl',
             );
         } else {
-            $checks[] = $this->check('ssl.forced', 'บังคับ HTTPS', SecurityScore::PASS, 8, 'ทุกเว็บไซต์บังคับ HTTPS แล้ว');
+            $checks[] = $this->check('ssl.forced', 'Force HTTPS', SecurityScore::PASS, 8, 'Every website already forces HTTPS');
         }
 
         $checks[] = $certbot->autoRenewActive($executor)
-            ? $this->check('ssl.autorenew', 'ต่ออายุอัตโนมัติ', SecurityScore::PASS, 7, 'certbot.timer ทำงานอยู่')
+            ? $this->check('ssl.autorenew', 'Automatic renewal', SecurityScore::PASS, 7, 'certbot.timer is running')
             : $this->check(
                 'ssl.autorenew',
-                'ต่ออายุอัตโนมัติ',
+                'Automatic renewal',
                 SecurityScore::WARN,
                 7,
-                'certbot.timer ยังไม่ถูกเปิดใช้งาน',
-                'เปิดด้วย systemctl enable --now certbot.timer — ไม่อย่างนั้นใบรับรองจะหมดอายุใน 90 วัน',
+                'certbot.timer is not turned on yet',
+                'Turn it on with systemctl enable --now certbot.timer — otherwise certificates will expire in 90 days',
                 '/ssl',
             );
 
@@ -331,47 +336,47 @@ final class SecurityScan implements Capability
         }
 
         $checks = [$with2fa === $total
-            ? $this->check('account.2fa', 'การยืนยันสองขั้นตอน', SecurityScore::PASS, 12, sprintf('เปิดใช้งานครบทั้ง %d บัญชี', $total))
+            ? $this->check('account.2fa', 'Two-factor authentication', SecurityScore::PASS, 12, sprintf('Turned on for all %d account(s)', $total))
             : $this->check(
                 'account.2fa',
-                'การยืนยันสองขั้นตอน',
+                'Two-factor authentication',
                 $with2fa === 0 ? SecurityScore::FAIL : SecurityScore::WARN,
                 12,
-                sprintf('เปิดใช้งานแล้ว %d จาก %d บัญชี', $with2fa, $total),
-                'เปิด 2FA ให้ทุกบัญชีที่เข้าถึงหน้าจัดการได้ — รหัสผ่านอย่างเดียวกันการสวมสิทธิ์ไม่ได้',
+                sprintf('Turned on for %d of %d account(s)', $with2fa, $total),
+                'Turn on 2FA for every account that can access the panel — a password alone cannot stop account takeover',
                 '/account/password',
             )];
 
-        // บัญชีที่ล็อกอินไม่สำเร็จซ้ำ ๆ คือสัญญาณว่ามีคนกำลังเดารหัสอยู่
+        // Repeated failed logins on an account are a sign someone is guessing passwords
         $failed = $this->failedLogins($context);
 
         $checks[] = match (true) {
             $failed['last_24h'] >= 50 => $this->check(
                 'account.bruteforce',
-                'ความพยายามเข้าสู่ระบบที่ล้มเหลว',
+                'Failed login attempts',
                 SecurityScore::FAIL,
                 8,
-                sprintf('%d ครั้งใน 24 ชั่วโมง จาก %d ที่อยู่', $failed['last_24h'], $failed['sources']),
-                'ถ้าเป็นการเดารหัสจากภายนอก ให้จำกัดต้นทางของกฎที่เปิดพอร์ตหน้าเว็บนี้ '
-                . 'ให้เหลือเฉพาะ IP ที่ใช้งานจริง',
+                sprintf('%d in the last 24 hours, from %d address(es)', $failed['last_24h'], $failed['sources']),
+                'If this is external password guessing, restrict the source of the rule that opens '
+                . "this web page's port down to only the IPs genuinely in use",
                 '/server/firewall',
             ),
             $failed['last_24h'] >= 10 => $this->check(
                 'account.bruteforce',
-                'ความพยายามเข้าสู่ระบบที่ล้มเหลว',
+                'Failed login attempts',
                 SecurityScore::WARN,
                 8,
-                sprintf('%d ครั้งใน 24 ชั่วโมง', $failed['last_24h']),
-                'ถ้าไม่ใช่การพิมพ์ผิดของผู้ใช้เอง แปลว่ามีคนกำลังเดารหัสอยู่ — '
-                . 'เปิด 2FA ให้ครบทุกบัญชีและจำกัดต้นทางที่เข้าหน้าเว็บนี้ได้',
+                sprintf('%d in the last 24 hours', $failed['last_24h']),
+                "If this isn't a user's own typo, it means someone is guessing passwords — "
+                . 'turn on 2FA for every account and restrict who can reach this web page',
                 '/server/users',
             ),
             default => $this->check(
                 'account.bruteforce',
-                'ความพยายามเข้าสู่ระบบที่ล้มเหลว',
+                'Failed login attempts',
                 SecurityScore::PASS,
                 8,
-                sprintf('%d ครั้งใน 24 ชั่วโมง — อยู่ในระดับปกติ', $failed['last_24h']),
+                sprintf('%d in the last 24 hours — a normal level', $failed['last_24h']),
             ),
         };
 
@@ -444,7 +449,7 @@ final class SecurityScan implements Capability
 
         foreach ($rows as $row) {
             if (in_array((string) $row['php_version'], ServiceCatalog::PHP_EOL_VERSIONS, true)) {
-                $outdated[] = sprintf('PHP %s (%d เว็บ)', $row['php_version'], $row['n']);
+                $outdated[] = sprintf('PHP %s (%d site(s))', $row['php_version'], $row['n']);
             }
         }
 
@@ -453,23 +458,24 @@ final class SecurityScan implements Capability
         }
 
         return [$outdated === []
-            ? $this->check('php.version', 'เวอร์ชัน PHP', SecurityScore::PASS, 10, 'ทุกเว็บไซต์ใช้เวอร์ชันที่ยังได้รับการอัปเดตความปลอดภัย')
+            ? $this->check('php.version', 'PHP version', SecurityScore::PASS, 10, 'Every website uses a version still receiving security updates')
             : $this->check(
                 'php.version',
-                'เวอร์ชัน PHP',
+                'PHP version',
                 SecurityScore::FAIL,
                 10,
-                'ใช้เวอร์ชันที่หมดระยะสนับสนุนแล้ว: ' . implode(', ', $outdated),
-                'ย้ายไปเวอร์ชันที่ยังได้รับการอัปเดต — เวอร์ชันที่หมดอายุจะไม่มีแพตช์ช่องโหว่อีกแล้ว',
+                'Using a version past end of support: ' . implode(', ', $outdated),
+                'Move to a version still receiving updates — an end-of-life version will never get another vulnerability patch',
                 '/php',
             )];
     }
 
     /**
-     * สิทธิ์ไฟล์ที่เปิดกว้างเกินไป
+     * File permissions opened too wide
      *
-     * ตรวจเฉพาะไฟล์ที่ panel เป็นเจ้าของและรู้ว่าควรเป็นเท่าไร ไม่ไล่ scan ทั้งเครื่อง —
-     * การ scan ทั้งเครื่องช้ามากและให้ผลบวกลวงเยอะจนไม่มีใครอ่าน
+     * Only checks files the panel owns and knows the correct mode for —
+     * never scans the whole machine, since a whole-machine scan is very
+     * slow and produces so many false positives that nobody reads it.
      *
      * @return list<array<string,mixed>>
      */
@@ -487,22 +493,25 @@ final class SecurityScan implements Capability
             $stat = $executor->stat($resolved);
             $mode = ((int) ($stat['mode'] ?? 0)) & 0777;
 
-            // ตรวจ "คุณสมบัติ" ไม่ใช่เลขโหมดตายตัว
+            // Checks the "property" that matters, not a fixed mode number
             //
-            // ตัวติดตั้งตั้ง config.php เป็น root:phpcp 0640 โดยเจตนา — ผู้ใช้ของ web tier
-            // ต้องอ่านไฟล์นี้ได้แต่ต้องแก้ไม่ได้และไม่ใช่เจ้าของ ซึ่งแข็งแรงกว่า 0600
-            // ที่ผู้ใช้ของเว็บเป็นเจ้าของเสียอีก ถ้าเทียบกับ 0600 ตรง ๆ การตั้งค่าที่ถูกต้อง
-            // ของตัวติดตั้งเองจะถูกรายงานว่าผิด แล้วคะแนนทั้งหน้าจะหมดความน่าเชื่อถือ
+            // The installer deliberately sets config.php to root:phpcp 0640
+            // — the web tier's user has to be able to read this file but
+            // must not be able to edit it and isn't its owner, which is
+            // actually stronger than a 0600 owned by the web user would be.
+            // Comparing directly against 0600 would report the installer's
+            // own correct setup as wrong, and the whole page's score would
+            // lose all credibility.
             //
-            // สิ่งที่อันตรายจริงมีสองอย่าง: ผู้ใช้อื่นบนเครื่องแตะได้ และกลุ่มเขียนได้
+            // Two things are genuinely dangerous: another user on the machine can touch it, and the group can write to it
             $problems = [];
 
             if (($mode & 0007) !== 0) {
-                $problems[] = 'ผู้ใช้อื่นบนเครื่องเข้าถึงได้';
+                $problems[] = 'Accessible to other users on the machine';
             }
 
             if (($mode & 0020) !== 0) {
-                $problems[] = 'สมาชิกกลุ่มแก้ไขได้';
+                $problems[] = 'Editable by group members';
             }
 
             if ($problems !== []) {
@@ -511,17 +520,17 @@ final class SecurityScan implements Capability
         }
 
         if ($bad === []) {
-            return [$this->check('file.permissions', 'สิทธิ์ไฟล์สำคัญ', SecurityScore::PASS, 10, 'ไฟล์ตั้งค่าและฐานข้อมูลของ panel ตั้งสิทธิ์ถูกต้อง')];
+            return [$this->check('file.permissions', 'Critical file permissions', SecurityScore::PASS, 10, "The panel's config file and database have correct permissions")];
         }
 
         return [$this->check(
             'file.permissions',
-            'สิทธิ์ไฟล์สำคัญ',
+            'Critical file permissions',
             SecurityScore::FAIL,
             10,
-            'เปิดกว้างเกินไป: ' . implode(', ', $bad),
-            'ไฟล์เหล่านี้เก็บรหัสผ่านที่ผ่านการเข้ารหัสและ session ของผู้ดูแล '
-            . 'ผู้ใช้อื่นบนเครื่องต้องแตะไม่ได้เลย — แก้ที่เครื่องด้วย chmod o=,g-w กับไฟล์ที่ระบุ',
+            'Opened too wide: ' . implode(', ', $bad),
+            "These files hold hashed passwords and an admin's session — "
+            . 'no other user on the machine should be able to touch them at all — fix on the machine with chmod o=,g-w on the file(s) listed',
         )];
     }
 
