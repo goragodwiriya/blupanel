@@ -8,26 +8,29 @@ use Phpcp\Agent\ValidationError;
 use Phpcp\Support\Validator;
 
 /**
- * ที่อยู่อีเมลของกล่องบนเครื่องนี้ — PLAN-MAIL เฟส M1
+ * The email address of a mailbox on this machine — PLAN-MAIL Phase M1
  *
- * **ค่าที่ผ่านที่นี่กลายเป็นทั้งชื่อไดเรกทอรีและบรรทัดในตารางของ Postfix** จึงต้อง
- * แคบกว่ากติกาของ RFC มาก · RFC 5321 ยอมให้ local part มีอักขระอย่าง ! # $ % & ' * = ? ^
- * และแม้แต่เว้นวรรคถ้าใส่เครื่องหมายคำพูด ซึ่งใช้ตั้งชื่อโฟลเดอร์ไม่ได้และทำให้
- * ไฟล์ map ของ Postfix อ่านผิดบรรทัด
+ * **A value that passes here becomes both a directory name and a line in
+ * Postfix's own table**, so it has to be far narrower than what the RFC actually
+ * allows · RFC 5321 permits a local part to contain characters like ! # $ % & ' * =
+ * ? ^, and even spaces if quoted, none of which can be used to name a folder and
+ * which would make Postfix's map file read the wrong line.
  *
- * ที่รับ: ตัวอักษร ตัวเลข จุด ขีดกลาง ขีดล่าง บวก — พอสำหรับที่อยู่ที่คนใช้กันจริง
- * และไม่มีอักขระไหนที่มีความหมายพิเศษกับ shell, path หรือรูปแบบไฟล์ map
+ * What's accepted: letters, digits, dot, hyphen, underscore, plus — enough for
+ * every address people actually use in practice, and none of it carries any
+ * special meaning to the shell, a path, or the map file's format.
  */
 final class MailAddress
 {
-    /** ยาวสุดของ local part ตาม RFC 5321 */
+    /** The local part's maximum length per RFC 5321 */
     private const MAX_LOCAL = 64;
 
     /**
-     * ชื่อที่ระบบสงวนไว้ — สร้างเป็นกล่องของลูกค้าไม่ได้
+     * Names the system reserves — can never become a customer mailbox
      *
-     * `postmaster` กับ `abuse` ต้องไปถึงผู้ดูแลเครื่องเสมอตาม RFC 2142 · การให้ลูกค้า
-     * ยึดสองชื่อนี้ของโดเมนตัวเองก็ยังยอมได้ แต่ชื่อที่ชนกับบัญชีของระบบไม่ได้
+     * `postmaster` and `abuse` must always reach the machine's own admin per RFC
+     * 2142 · letting a customer claim those two names on their own domain would
+     * still be acceptable, but a name that collides with a system account cannot be allowed.
      */
     private const RESERVED = ['root', 'daemon', 'mail', 'vmail', 'nobody'];
 
@@ -38,7 +41,7 @@ final class MailAddress
     }
 
     /**
-     * แยกและตรวจที่อยู่เต็ม `ชื่อ@โดเมน`
+     * Split and validate a full `name@domain` address
      */
     public static function parse(string $value): self
     {
@@ -46,7 +49,7 @@ final class MailAddress
         $at = strrpos($value, '@');
 
         if ($at === false) {
-            throw new ValidationError('ที่อยู่อีเมลต้องมี @ คั่นระหว่างชื่อกับโดเมน');
+            throw new ValidationError('Email address must have an @ separating the name from the domain');
         }
 
         return new self(
@@ -56,31 +59,31 @@ final class MailAddress
     }
 
     /**
-     * ตรวจเฉพาะส่วนหน้า @ — ใช้ตอนที่โดเมนมาจากที่อื่นแล้ว (เช่นเลือกจากรายการ)
+     * Validate only the part before @ — used when the domain already came from elsewhere (e.g. chosen from a list)
      */
     public static function assertLocalPart(string $value): string
     {
         $value = strtolower(trim($value));
 
         if ($value === '') {
-            throw new ValidationError('ต้องระบุชื่อกล่องจดหมาย');
+            throw new ValidationError('A mailbox name must be specified');
         }
 
         if (strlen($value) > self::MAX_LOCAL) {
-            throw new ValidationError('ชื่อกล่องจดหมายยาวเกิน ' . self::MAX_LOCAL . ' ตัวอักษร');
+            throw new ValidationError('Mailbox name is longer than ' . self::MAX_LOCAL . ' characters');
         }
 
-        // จุดนำหน้า/ต่อท้าย และจุดติดกันสองตัว ทำให้เกิดชื่อไดเรกทอรีอย่าง `.` หรือ `..`
+        // A leading/trailing dot, or two dots in a row, would produce a directory name like `.` or `..`
         if (str_starts_with($value, '.') || str_ends_with($value, '.') || str_contains($value, '..')) {
-            throw new ValidationError('ชื่อกล่องจดหมายห้ามขึ้นต้น ลงท้าย หรือมีจุดติดกันสองตัว');
+            throw new ValidationError('Mailbox name must not start or end with a dot, or contain two dots in a row');
         }
 
         if (preg_match('/^[a-z0-9._+-]+$/', $value) !== 1) {
-            throw new ValidationError('ชื่อกล่องจดหมายใช้ได้เฉพาะ a-z 0-9 . _ + และ -');
+            throw new ValidationError('Mailbox name may only use a-z 0-9 . _ + and -');
         }
 
         if (in_array($value, self::RESERVED, true)) {
-            throw new ValidationError('ชื่อ ' . $value . ' เป็นชื่อที่ระบบสงวนไว้');
+            throw new ValidationError('The name ' . $value . ' is reserved by the system');
         }
 
         return $value;
@@ -92,11 +95,12 @@ final class MailAddress
     }
 
     /**
-     * เส้นทาง Maildir ของกล่องนี้ — ท้ายด้วย `/` เสมอ
+     * This mailbox's Maildir path — always ends with `/`
      *
-     * เครื่องหมายทับท้ายคือสิ่งที่บอก Postfix ว่าเป็น **Maildir** (โฟลเดอร์ที่มีไฟล์
-     * ละหนึ่งฉบับ) ไม่ใช่ mbox (ไฟล์เดียวที่ทุกฉบับต่อกัน) · ลืมทับท้ายเมื่อไหร่
-     * เมลทุกฉบับจะถูกเขียนต่อท้ายไฟล์เดียวกันจนอ่านผ่าน IMAP ไม่ได้
+     * The trailing slash is what tells Postfix this is a **Maildir** (a folder
+     * with one file per message), not mbox (a single file with every message
+     * appended together) · forget the trailing slash, and every message gets
+     * appended to that same single file until IMAP can no longer read any of it.
      */
     public function maildir(string $root): string
     {
