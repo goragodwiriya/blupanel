@@ -12,51 +12,58 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * ตัวเลขทรัพยากรของเครื่อง — `/api/v2/metrics`
+ * The machine's resource numbers — `/api/v2/metrics`
  *
- * `GET /metrics` อ่านค่าปัจจุบันครั้งเดียว · `GET /metrics/stream` เป็น SSE ที่ส่งค่าใหม่
- * ทุก 2 วินาที ซึ่งเป็น **ข้อยกเว้นที่สองของกฎ "ทุก endpoint ตอบ JSON"** ต่อจาก
- * `files/download` — SSE เป็น `text/event-stream` ตามมาตรฐานของมันเอง และเบราว์เซอร์
- * ต่อกลับให้อัตโนมัติเมื่อหลุด ซึ่งเป็นเหตุผลที่เลือกมันแทน WebSocket ตั้งแต่แรก
- * (แต่ละ event ที่ส่งออกไปยังเป็น JSON อยู่ดี)
+ * `GET /metrics` reads the current value once · `GET /metrics/stream` is an SSE
+ * feed sending a new value every 2 seconds — the **second exception to "every
+ * endpoint answers JSON"**, after `files/download` — SSE is `text/event-stream`
+ * per its own standard, and the browser reconnects automatically when it drops,
+ * which is exactly why it was chosen over WebSocket in the first place (every
+ * event sent out is still JSON regardless)
  *
- * `GET /metrics/history` อ่านค่าย้อนหลังจากตาราง `metrics_history` (เฟส E6) — ไม่ผ่าน agent
- * เพราะเป็นการอ่านตารางของ panel เอง ไม่ได้แตะเครื่อง (แบบเดียวกับ audit log)
+ * `GET /metrics/history` reads historical values from the `metrics_history`
+ * table (phase E6) — doesn't go through the agent, because it's reading the
+ * panel's own table, not touching the machine (same as the audit log)
  */
 final class MetricsController extends ApiController
 {
     private const INTERVAL_SECONDS = 2;
-    private const MAX_DURATION = 1800;     // 30 นาที แล้วให้เบราว์เซอร์ต่อใหม่เอง
+    private const MAX_DURATION = 1800;     // 30 minutes, then let the browser reconnect on its own
 
     /**
-     * ช่วงเวลาที่เลือกได้ => [ย้อนหลังกี่วินาที, หนึ่งจุดในกราฟกว้างกี่วินาที, รูปแบบป้าย]
+     * Selectable range => [how many seconds back, one graph point's width in seconds, label format]
      *
-     * **จำนวนจุดถูกกำหนดที่นี่ ไม่ใช่ให้กราฟไปตัดเอง** — `GraphComponent` วาดแค่
-     * `data.slice(0, maxDataPoints)` ซึ่งเป็น **จุดแรก ๆ ของชุด ไม่ใช่จุดล่าสุด** ·
-     * ส่งค่ารายนาทีทั้ง 1,440 จุดของ 24 ชั่วโมงไป กราฟจึงวาดแค่ 20 นาทีแรกของชุด
-     * แล้วค้างอยู่ตรงนั้นตลอด (ดูเหมือนกราฟ "ไม่ขยับ" ทั้งที่ข้อมูลสดมาครบ) และป้าย
-     * ทุกช่วงก็หน้าตาเหมือนกันหมดเพราะเป็นนาทีแรก ๆ ของชุดเสมอ ไม่ว่าจะเลือกช่วงไหน
+     * **The point count is decided here, not left for the graph to trim** —
+     * `GraphComponent` only draws `data.slice(0, maxDataPoints)`, which is **the
+     * first points of the set, not the most recent** · sending all 1,440 per-minute
+     * points of a 24-hour range would make the graph draw only the first 20
+     * minutes of the set and sit stuck there the whole time (looks like the graph
+     * "isn't moving" even though live data keeps arriving), and every range's
+     * labels would look identical, since they're always the set's earliest
+     * minutes no matter which range was chosen
      *
-     * ผลพลอยได้คือคำตอบเล็กลงจากหลักพันจุดเหลือหลักสิบ — แต่เหตุผลหลักคือ **หนึ่งจุด
-     * ต่อหนึ่งช่วงเวลาที่อ่านออก** ซึ่งเป็นสิ่งเดียวที่ทำให้ตัวเลือกช่วงมีความหมาย
+     * A side effect is the response shrinking from thousands of points down to
+     * dozens — but the main reason is **one point per genuinely readable time
+     * span**, which is the one thing that makes the range choice meaningful
      *
      * @var array<string,array{0:int,1:int,2:string}>
      */
     private const RANGES = [
         /*
-         * ช่วงเดียวที่ไม่เฉลี่ยอะไรเลย — หนึ่งจุดคือหนึ่งแถวที่ `metrics.record` เขียนไว้
+         * The one range that averages nothing at all — one point is one row `metrics.record` wrote
          *
-         * มีไว้ตอบคำถาม "ตอนนี้เครื่องเป็นยังไง" ซึ่งช่วงที่ยาวกว่านี้ตอบไม่ได้:
-         * พีคที่กินเวลาสองนาทีถูกกลบจนหายไปในค่าเฉลี่ยรายชั่วโมง · แถบตัวเลขสดด้านบน
-         * บอกได้แค่ "เดี๋ยวนี้" ไม่ได้บอกว่าเมื่อสิบนาทีที่แล้วมันพุ่งไปแล้วลงมา
+         * Exists to answer "how is the machine right now," which longer ranges
+         * can't: a spike lasting two minutes gets buried and lost in an
+         * hourly average · the live number bar up top can only say "right now,"
+         * not that it spiked and came back down ten minutes ago
          */
-        '20m' => [1200, 60, 'H:i'],            // 20 จุด · ทุกนาที (ความละเอียดดิบ)
-        '1h' => [3600, 300, 'H:i'],            // 12 จุด · ทุก 5 นาที
-        '6h' => [21600, 1800, 'H:i'],          // 12 จุด · ทุกครึ่งชั่วโมง
-        '24h' => [86400, 3600, 'H:i'],         // 24 จุด · ทุกชั่วโมง
-        '7d' => [604800, 43200, 'j/n H:i'],    // 14 จุด · ทุกครึ่งวัน
-        '30d' => [2592000, 86400, 'j/n'],      // 30 จุด · ทุกวัน
-        '1y' => [31536000, 2592000, 'M'],      // 12 จุด · ทุก 30 วัน
+        '20m' => [1200, 60, 'H:i'],            // 20 points · every minute (raw resolution)
+        '1h' => [3600, 300, 'H:i'],            // 12 points · every 5 minutes
+        '6h' => [21600, 1800, 'H:i'],          // 12 points · every half hour
+        '24h' => [86400, 3600, 'H:i'],         // 24 points · every hour
+        '7d' => [604800, 43200, 'j/n H:i'],    // 14 points · every half day
+        '30d' => [2592000, 86400, 'j/n'],      // 30 points · every day
+        '1y' => [31536000, 2592000, 'M'],      // 12 points · every 30 days
     ];
 
     public function index(Request $request): Response
@@ -65,11 +72,12 @@ final class MetricsController extends ApiController
     }
 
     /**
-     * ค่าย้อนหลังสำหรับกราฟ — PLAN-V2 เฟส E6
+     * Historical values for the graph — PLAN-V2 phase E6
      *
-     * เลือกชั้นความละเอียดให้เองตามช่วงที่ขอ (นาที/ชั่วโมง/วัน) หน้าจอจึงส่งมาแค่ `range`
-     * ไม่ต้องรู้ว่าข้อมูลถูกยุบชั้นยังไง — ถ้าให้หน้าจอเลือกเอง วันที่เปลี่ยนนโยบายการยุบ
-     * จะต้องไล่แก้ทุกที่ที่เรียก
+     * Picks the resolution tier itself based on the requested range
+     * (minute/hour/day), so the screen only sends `range` and never needs to know
+     * how the data is bucketed — if the screen chose it itself, the day the
+     * bucketing policy changes would mean chasing down every call site
      */
     public function history(Request $request): Response
     {
@@ -79,7 +87,7 @@ final class MetricsController extends ApiController
             return $this->problem(
                 ApiProblem::ValidationError,
                 $this->t('Unknown range') . ' — ' . $this->t('Allowed: ') . implode(', ', array_keys(self::RANGES)),
-                ['range' => 'ค่าที่ส่งมาไม่อยู่ในรายการ'],
+                ['range' => 'The value sent is not in the list'],
             );
         }
 
@@ -96,34 +104,37 @@ final class MetricsController extends ApiController
                 'range' => $range,
                 'bucket' => $bucket,
                 'since' => $since,
-                // ความกว้างของหนึ่งจุด — หน้าจออธิบายให้ผู้ใช้ได้ว่ากำลังดูค่าเฉลี่ยของอะไร
+                // One point's width — the screen uses this to explain to the user what average they're looking at
                 'step' => $step,
                 'points' => count($rows),
-                // หน้าจอใช้บอกผู้ใช้ว่าทำไมกราฟถึงว่าง แทนที่จะแสดงกล่องเปล่าเฉย ๆ
+                // The screen uses this to tell the user why the graph is empty, instead of just showing a blank box
                 'collecting' => $rows === [],
             ],
         );
     }
 
     /**
-     * แปลงแถวจากฐานข้อมูลเป็นรูป `[{name, data:[{label, value}]}]`
+     * Convert database rows into the `[{name, data:[{label, value}]}]` shape
      *
-     * **นี่คือรูปที่ `GraphComponent` ของ Now.js อ่านได้ตรง ๆ ผ่าน `data-url`** — เทมเพลต
-     * จึงประกาศกราฟด้วยแอตทริบิวต์อย่างเดียวโดยไม่ต้องเขียน JS แปลงข้อมูล ตามกฎของ
-     * `js/pages.js` ที่ว่า "ห้ามมีอะไรที่ data-attribute ทำแทนได้"
+     * **This is the shape Now.js's `GraphComponent` reads directly via `data-url`**
+     * — so a template can declare a graph with attributes alone, no data-converting
+     * JS needed, per `js/pages.js`'s rule that "nothing may exist that a
+     * data-attribute could do instead"
      *
-     * **ไม่ใช่การผูก REST เข้ากับ chart library ตัวใดตัวหนึ่ง** — `{name, data:[{label,value}]}`
-     * คือรูป "ชุดข้อมูลหลายเส้นพร้อมป้ายกำกับ" แบบทั่วไป และเป็นสัญญาที่เฟรมเวิร์กของ
-     * โปรเจกต์นี้ใช้อยู่แล้วทุกหน้า (ดู `api/v1/quarterly-sales` ของ adminframework)
-     * ผู้เรียกที่ต้องการตัวเลขดิบยังอ่าน `value` ได้ตรง ๆ และ `meta` บอกบริบทครบ
+     * **Not REST tied to any one chart library** — `{name, data:[{label,value}]}`
+     * is the generic "several labeled series" shape, and it's the contract this
+     * project's framework already uses on every page (see adminframework's
+     * `api/v1/quarterly-sales`) · a caller wanting raw numbers can still read
+     * `value` directly, and `meta` states the full context
      *
      * @param list<array<string,mixed>> $rows
      * @return list<array{name:string,data:list<array{label:string,value:float}>}>
      */
     private function toSeries(array $rows, string $format): array
     {
-        // รูปแบบป้ายมากับช่วงที่เลือก ไม่ใช่กับชั้นที่เก็บ — ชั้นเดียวกันใช้ได้หลายช่วง
-        // (7 วันกับ 30 วันอ่านจากชั้นชั่วโมงเหมือนกัน แต่ป้ายต้องคนละแบบ)
+        // The label format comes with the chosen range, not the storage tier —
+        // the same tier serves several ranges (7 days and 30 days both read from
+        // the hourly tier, but need different-looking labels)
         $labels = array_map(
             static fn (array $row): string => date($format, (int) $row['bucket_at']),
             $rows,
@@ -132,47 +143,49 @@ final class MetricsController extends ApiController
         $series = [];
 
         foreach ([
-            'CPU' => 'cpu_percent',
-            'Memory' => 'memory_percent',
-            'ดิสก์' => 'disk_percent',
-        ] as $name => $column) {
+            ['CPU', 'cpu_percent'],
+            ['Memory', 'memory_percent'],
+            ['Disk', 'disk_percent'],
+        ] as [$name, $column]) {
             $points = [];
 
             foreach ($rows as $index => $row) {
                 $points[] = ['label' => $labels[$index], 'value' => round((float) $row[$column], 1)];
             }
 
-            $series[] = ['name' => $name, 'data' => $points];
+            $series[] = ['name' => $this->t($name), 'data' => $points];
         }
 
         return $series;
     }
 
     /**
-     * สตรีมค่าสด — ย้ายมาจาก `Controller\Api\StreamController` ตอนลบ UI แบบ HTML
+     * Stream live values — moved from `Controller\Api\StreamController` when the HTML UI was removed
      *
-     * เรื่องที่พลาดง่ายและจัดการไว้แล้วทั้งหมด: ปิด output buffer ก่อนเริ่ม · ตรวจว่า
-     * เบราว์เซอร์ยังอยู่ทุกรอบ (ไม่งั้นการเชื่อมต่อที่ค้างจะกินสล็อต PHP-FPM ไว้ตลอด)
-     * · หยุดเองเมื่อ agent ล่มติดกันสามรอบ · บังคับปิดที่ 30 นาทีแล้วให้เบราว์เซอร์
-     * ต่อกลับเอง ซึ่งเป็นความสามารถที่ทำให้เลือก SSE แทน WebSocket ตั้งแต่แรก
+     * Easy-to-miss things, all already handled: close the output buffer before
+     * starting · check the browser is still there every round (otherwise a stale
+     * connection permanently holds a PHP-FPM slot) · stop on its own after three
+     * consecutive agent failures · force-close at 30 minutes and let the browser
+     * reconnect itself, which is the very capability that made SSE the choice
+     * over WebSocket in the first place
      */
     public function stream(Request $request): Response
     {
         $actor = $this->ctx->actor($request);
         $agent = $this->agent();
 
-        // ส่ง header เองเพราะต้องเริ่ม stream ก่อนจบ request cycle
-        // จึงใช้ Response ปกติไม่ได้
+        // Headers are sent by hand because the stream must start before the
+        // request cycle ends, so a normal Response can't be used
         header('Content-Type: text/event-stream; charset=UTF-8');
         header('Cache-Control: no-store');
-        header('X-Accel-Buffering: no');    // ปิด buffer ของ nginx ถ้ามี proxy คั่นอยู่
+        header('X-Accel-Buffering: no');    // turns off nginx's buffering, if a proxy sits in between
         header('Connection: keep-alive');
 
         while (ob_get_level() > 0) {
             ob_end_flush();
         }
 
-        // เบราว์เซอร์ใช้ค่านี้ตัดสินใจว่าจะต่อกลับเมื่อไรถ้าหลุด
+        // The browser uses this value to decide when to reconnect if it drops
         echo 'retry: 5000' . "\n\n";
         flush();
 
@@ -180,7 +193,7 @@ final class MetricsController extends ApiController
         $failures = 0;
 
         while (time() < $deadline) {
-            // ฝั่งเบราว์เซอร์ปิดแท็บไปแล้ว — ปล่อยสล็อต FPM คืนทันที
+            // The browser's tab is already closed — release the FPM slot immediately
             if (connection_aborted() === 1) {
                 break;
             }
@@ -194,8 +207,9 @@ final class MetricsController extends ApiController
                 $failures++;
                 $this->send('error', ['message' => $e->getMessage()]);
 
-                // agent ล่มติดต่อกันหลายรอบ — หยุด stream ให้เบราว์เซอร์ต่อใหม่เอง
-                // ดีกว่าวนยิง socket ที่ตายแล้วทุก 2 วินาทีไม่รู้จบ
+                // The agent has failed several times in a row — stop the stream and
+                // let the browser reconnect on its own, better than looping against
+                // a dead socket every 2 seconds forever
                 if ($failures >= 3) {
                     break;
                 }
@@ -204,9 +218,9 @@ final class MetricsController extends ApiController
             sleep(self::INTERVAL_SECONDS);
         }
 
-        $this->send('bye', ['reason' => 'หมดเวลาเชื่อมต่อ กรุณาโหลดหน้าใหม่']);
+        $this->send('bye', ['reason' => $this->t('The connection timed out — please reload the page')]);
 
-        // ตอบกลับเป็น response ว่างเพราะเนื้อหาถูกส่งไปหมดแล้วระหว่าง stream
+        // Answers with an empty response, since the content was all sent during the stream
         return Response::noContent();
     }
 
