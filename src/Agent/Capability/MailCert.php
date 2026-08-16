@@ -13,23 +13,31 @@ use Phpcp\Driver\Mail\MailCertificate;
 use Phpcp\Driver\Ssl\CertbotManager;
 
 /**
- * ผูกใบรับรองของ mail hostname เข้ากับ Postfix และ Dovecot — PLAN-MAIL เฟส M3
+ * Binds the mail hostname's certificate to Postfix and Dovecot — PLAN-MAIL phase M3
  *
- * ทำสองอย่างที่ต้องมีคนทำแต่ยังไม่มีใครทำ:
+ * Does two things that need doing but nobody was doing yet:
  *
- *   1. **หาใบที่ครอบคลุม mail hostname** ที่มีอยู่แล้วบนเครื่อง แล้วชี้ให้เดมอนทั้งสอง
- *      ใช้ใบนั้นแทนใบ snakeoil ของดิสโทร ที่โปรแกรมเมลทุกตัวขึ้นคำเตือน
- *   2. **บอกเดมอนเมื่อใบถูกต่ออายุ** · certbot ต่ออายุเองทุก 60 วันโดยไม่ผ่าน panel
- *      เลย และ Dovecot ถือใบที่อ่านตอนสตาร์ตไว้จนกว่าจะถูกสั่ง reload — ไม่มีงานนี้
- *      ลูกค้าจะเจอใบหมดอายุตอนเปิดกล่อง ทั้งที่ไฟล์บนดิสก์เป็นใบใหม่เรียบร้อยแล้ว
- *      และไม่มีอะไรบนหน้าจอผิดปกติสักอย่าง
+ *   1. **Finds a certificate that covers the mail hostname** already on the
+ *      machine, and points both daemons at it instead of the distro's
+ *      snakeoil certificate, which every mail client warns about.
+ *   2. **Tells the daemons when the certificate has been renewed** ·
+ *      certbot renews on its own every 60 days without ever going through
+ *      the panel, and Dovecot holds onto whatever certificate it read at
+ *      start time until told to reload — without this job, a customer
+ *      would run into an expired certificate opening their mailbox, even
+ *      though the file on disk is already a fresh one and nothing on the
+ *      screen looks wrong at all.
  *
- * **ไม่ขอใบเอง** — เหตุผลอยู่ที่หัวคลาส `MailCertificate` · ผู้ดูแลเพิ่ม mail hostname
- * เป็นโดเมนของเว็บไซต์แล้วกดปุ่มขอใบรับรองที่มีอยู่ในหน้า SSL ตามปกติ
+ * **Never requests a certificate on its own** — the reason lives at the top
+ * of the `MailCertificate` class · an admin adds the mail hostname as a
+ * website domain, then clicks the existing "request certificate" button on
+ * the SSL page as normal.
  *
- * **ไม่โยนข้อผิดพลาดเมื่อยังไม่มีใบ** เพราะงานนี้ทำงานตามเวลาทุกวันด้วย · เครื่องที่
- * ยังไม่ได้ขอใบไม่ใช่เครื่องที่ผิดพลาด มันแค่ยังไม่ถึงขั้นนั้น — งานที่ล้มทุกวันคือ
- * งานที่ผู้ดูแลเลิกอ่านภายในสัปดาห์เดียว แล้ววันที่ล้มจริงจะไม่มีใครเห็น
+ * **Never throws when no certificate exists yet**, because this job also
+ * runs on a daily schedule · a machine that hasn't requested a certificate
+ * yet isn't a broken machine, it just hasn't gotten there yet — a job that
+ * fails every day is a job an admin stops reading within a week, and the day
+ * it genuinely fails goes unnoticed by anyone.
  */
 final class MailCert extends MailCapability
 {
@@ -39,8 +47,9 @@ final class MailCert extends MailCapability
     }
 
     /**
-     * ใบรับรองของ mail hostname เป็นของทั้งเครื่อง ไม่ใช่ของโดเมนใดโดเมนหนึ่ง —
-     * เจ้าของเว็บที่จัดการกล่องของตัวเองได้ ไม่ควรเปลี่ยนใบที่ทุกโดเมนบนเครื่องใช้ร่วมกัน
+     * The mail hostname's certificate belongs to the whole machine, not any
+     * one domain — a site owner who can manage their own mailbox shouldn't
+     * be able to change a certificate every domain on the machine shares.
      */
     public function permission(): string
     {
@@ -49,7 +58,7 @@ final class MailCert extends MailCapability
 
     public function summary(): string
     {
-        return 'ผูกใบรับรองของ mail hostname เข้ากับ Postfix และ Dovecot';
+        return "Bind the mail hostname's certificate to Postfix and Dovecot";
     }
 
     public function validate(array $args): array
@@ -60,27 +69,31 @@ final class MailCert extends MailCapability
     public function run(array $args, Executor $executor, Context $context): array
     {
         $settings = new SettingsRepository($context->db);
-        // ชื่อเดียวกับที่ Postfix ประกาศจริง ไม่ใช่แค่ค่าในช่องกรอก — ดู mailHostname()
+        // The same name Postfix actually announces, not just the form field's value — see mailHostname()
         $hostname = self::mailHostname($settings);
         $domains = (new MailboxRepository($context->db))->enabledDomains();
 
         /*
-         * ไม่มีโดเมนไหนเปิดเมล = ไม่มีส่วนรับเมลใน main.cf เลย จึงไม่มีที่ให้ใส่ใบ ·
-         * เขียนไฟล์ตั้งค่าใหม่ตรงนี้มีแต่จะกวนเครื่องที่ใช้ Postfix ส่งเมลแจ้งเตือนเฉย ๆ
+         * No domain has mail enabled = there's no receiving section in
+         * main.cf at all, so there's nowhere to put the certificate ·
+         * rewriting config files here would do nothing but disturb a
+         * machine that only uses Postfix to send notification mail.
          */
         if ($domains === []) {
-            return $this->idle('ยังไม่มีโดเมนไหนเปิดเมล — ใบรับรองของเมลยังไม่มีผลกับอะไร');
+            return $this->idle('No domain has mail enabled yet — a mail certificate has no effect on anything yet');
         }
 
         if ($hostname === '') {
-            return $this->idle('ยังไม่ได้ตั้งชื่อโฮสต์ของเมล — ตั้งในหน้าตั้งค่าก่อน แล้วค่อยผูกใบรับรอง');
+            return $this->idle('The mail hostname is not set yet — set it on the settings page first, then bind a certificate');
         }
 
         $certificates = new MailCertificate(new CertbotManager());
         $found = $certificates->locate($executor, $hostname);
 
-        // ยังไม่มีใบจริง = ใช้ใบของดิสโทรไปก่อน · **ยังต้องเขียนลงไฟล์ตั้งค่าอยู่ดี**
-        // ดูเหตุผลที่ drift() — บรรทัดที่ไม่มีอยู่จริงคือบรรทัดที่แก้ไม่ได้ในวันที่มีใบ
+        // No real certificate yet = fall back to the distro's own · **still
+        // has to be written to the config files regardless** — see the
+        // reasoning in drift() — a line that never existed is a line that
+        // can't be edited on the day a certificate finally shows up
         $desired = MailCertificate::pathsOrDefault(
             (string) ($found['cert'] ?? ''),
             (string) ($found['key'] ?? ''),
@@ -89,8 +102,9 @@ final class MailCert extends MailCapability
         $moved = $settings->get('mail.tls_cert') !== ($found['cert'] ?? '');
 
         /*
-         * ต่ออายุแล้วเส้นทางเหมือนเดิมทุกตัวอักษร — เทียบเส้นทางอย่างเดียวจึงไม่พอ
-         * และเป็นกรณีที่เกิดบ่อยที่สุด (ทุก 60 วัน ตลอดอายุของเครื่อง)
+         * After a renewal the path is identical down to the character —
+         * comparing paths alone isn't enough, and this is the most common
+         * case of all (every 60 days, for the machine's entire lifetime).
          */
         $renewed = $found !== null
             && $certificates->changedSince($executor, $found['cert'], MailboxManager::DOVECOT_CONF);
@@ -102,16 +116,17 @@ final class MailCert extends MailCapability
             return $this->idle(
                 $found === null
                     ? sprintf(
-                        'ยังไม่มีใบรับรองที่ครอบคลุม %s บนเครื่องนี้ — เพิ่ม %s เป็นโดเมนของเว็บไซต์ '
-                        . 'แล้วกดขอใบรับรองในหน้า SSL ตามปกติ จากนั้นเมลจะใช้ใบนั้นตามไปเอง · '
-                        . 'ชื่อที่ยังไม่มี DNS สาธารณะ (เช่นลงท้าย .test หรือ .local) ขอใบจริงไม่ได้เลย '
-                        . 'ให้เลือกวิธี "ใบที่เซ็นเอง" แทน — เมลใช้ใบแบบนั้นได้เหมือนกัน '
-                        . 'อย่างน้อยชื่อในใบก็ตรงกับชื่อที่เครื่องประกาศ '
-                        . '(ระหว่างนี้ใช้ใบของดิสโทรไปก่อน โปรแกรมเมลจะขึ้นคำเตือน)',
+                        'No certificate covers %s on this machine yet — add %s as a website domain, '
+                        . 'then click "request certificate" on the SSL page as normal, and mail will '
+                        . 'follow along and use it automatically · a name with no public DNS yet '
+                        . '(e.g. ending in .test or .local) can never request a real certificate at '
+                        . 'all — choose "self-signed" instead — mail can use that kind too, and at '
+                        . 'least the name in it matches what the machine announces '
+                        . "(in the meantime it's using the distro's own certificate, which mail clients will warn about)",
                         $hostname,
                         $hostname,
                     )
-                    : sprintf('ใบรับรองของ %s เป็นปัจจุบันอยู่แล้ว (เหลือ %d วัน)', $hostname, $found['days_left']),
+                    : sprintf('The certificate for %s is already up to date (%d day(s) left)', $hostname, $found['days_left']),
                 $found,
             );
         }
@@ -121,7 +136,7 @@ final class MailCert extends MailCapability
             'mail.tls_key' => (string) ($found['key'] ?? ''),
         ]);
 
-        // เขียน main.cf กับ 99-phpcp.conf ใหม่ทั้งชุดแล้ว reload ทั้งสองเดมอน
+        // Rewrites main.cf and 99-phpcp.conf entirely, then reloads both daemons
         $this->sync($executor, $context);
 
         return [
@@ -131,18 +146,18 @@ final class MailCert extends MailCapability
             'certificate' => $found,
             'message' => match (true) {
                 $found === null => sprintf(
-                    'ยังไม่มีใบรับรองที่ครอบคลุม %s — ตั้งให้ Dovecot กับ Postfix ใช้ใบของดิสโทรใบเดียวกันไว้ก่อน '
-                    . 'แล้วขอใบจริงในหน้า SSL เมื่อพร้อม',
+                    'No certificate covers %s yet — set Dovecot and Postfix to share the same distro '
+                    . 'certificate for now, request a real one on the SSL page whenever ready',
                     $hostname,
                 ),
                 $moved => sprintf(
-                    'เมลใช้ใบรับรองของ %s แล้ว (%s · เหลือ %d วัน)',
+                    "Mail is now using %s's certificate (%s · %d day(s) left)",
                     $hostname,
-                    $found['source'] === 'letsencrypt' ? "Let's Encrypt" : 'ใบที่เซ็นเอง',
+                    $found['source'] === 'letsencrypt' ? "Let's Encrypt" : 'self-signed',
                     $found['days_left'],
                 ),
                 default => sprintf(
-                    'ใบรับรองของ %s เปลี่ยนไป บอก Postfix กับ Dovecot ให้อ่านใบใหม่เรียบร้อย (เหลือ %d วัน)',
+                    "%s's certificate changed — told Postfix and Dovecot to read the new one (%d day(s) left)",
                     $hostname,
                     $found['days_left'],
                 ),
@@ -151,33 +166,41 @@ final class MailCert extends MailCapability
     }
 
     /**
-     * ไฟล์ตั้งค่าที่ใช้อยู่จริงพูดถึงใบที่เราต้องการหรือเปล่า
+     * Does the config file genuinely in use mention the certificate we want?
      *
-     * **จำเป็นเพราะไฟล์เหล่านี้ถูกเขียนใหม่เฉพาะตอนมีคนแตะกล่องจดหมายเท่านั้น** ·
-     * อัปเกรด panel ที่เพิ่มบรรทัดใหม่ลงเทมเพลตจึงไม่มีผลกับเครื่องที่ตั้งเมลเสร็จไปแล้ว
-     * จนกว่าจะมีใครสร้างหรือลบกล่องสักกล่อง — ซึ่งอาจไม่เกิดขึ้นอีกเลยเป็นปี
+     * **Necessary because these files are only ever rewritten when someone
+     * touches a mailbox** · a panel upgrade that adds a new line to a
+     * template has no effect at all on a machine whose mail was already set
+     * up, until someone creates or deletes a mailbox — which might not
+     * happen again for years.
      *
-     * เจอจริงบนเครื่องจริง: `doveconf -n` ตอบว่า `ssl_cert` เป็นใบของดิสโทร ทั้งที่
-     * เทมเพลตตั้งให้แล้ว เพราะ `99-phpcp.conf` บนดิสก์ยังเป็นไฟล์ที่สร้างก่อนหน้านั้น ·
-     * ผลคือคุณสมบัติที่ "ทำเสร็จแล้ว" ไม่เคยไปถึงเครื่องที่ใช้งานอยู่จริงสักเครื่อง
+     * Genuinely found on a real machine: `doveconf -n` reported `ssl_cert`
+     * as the distro's own certificate, even though the template already set
+     * it correctly, because the on-disk `99-phpcp.conf` was still the file
+     * generated before that template change · the result was a feature that
+     * was "already done" never actually reaching a single machine in production.
      */
     /**
-     * ไฟล์ตั้งค่าบนเครื่องเก่ากว่าเทมเพลตที่ใช้สร้างมันหรือเปล่า
+     * Is the on-disk config file older than the template used to generate it?
      *
-     * **ปัญหาที่กัดซ้ำสามครั้งในเฟสนี้:** ติดตั้ง panel รุ่นใหม่ไม่ได้แปลว่าไฟล์ใน `/etc`
-     * ถูกเขียนใหม่ · ไฟล์พวกนั้นถูกเขียนเฉพาะตอนมีคนสั่งงานเมลเท่านั้น เครื่องที่ตั้งเมล
-     * เสร็จไปแล้วจึงถือไฟล์รุ่นก่อนอัปเกรดต่อไปเรื่อย ๆ — การแก้เทมเพลตไปไม่ถึงเครื่องจริง
-     * สักเครื่อง และไม่มีอะไรฟ้องเพราะเมลยังทำงานปกติทุกอย่าง
+     * **A problem that bit this phase three separate times:** installing a
+     * new panel version doesn't mean files under `/etc` get rewritten ·
+     * those files are only written when someone triggers a mail operation,
+     * so a machine whose mail was already set up keeps holding files from
+     * before the upgrade indefinitely — a template fix never reaches a
+     * single real machine, and nothing complains, because mail keeps
+     * working completely normally the whole time.
      *
-     * เทียบเวลาแก้ไขของเทมเพลตกับไฟล์ที่มันสร้าง — ตอบคำถาม "อัปเกรดแล้วแต่ยังไม่ได้
-     * เขียนใหม่" ได้ตรง ๆ โดยไม่ต้องรู้ว่าเทมเพลตเปลี่ยนอะไรไปบ้าง · แบบเดียวกับที่
-     * `webserver.rescan` ทำให้ vhost
+     * Compares the template's modification time against the file it
+     * generated — answers "upgraded, but not yet rewritten" directly,
+     * without needing to know what actually changed in the template · the
+     * same technique `webserver.rescan` uses for vhosts.
      */
     private function outdated(Executor $executor, Context $context): bool
     {
         $templates = rtrim($context->config->paths->templates(), '/');
 
-        // เทมเพลต → ไฟล์ที่มันสร้าง · main.cf ถูกประกอบจากสองเทมเพลต จึงเทียบทั้งคู่
+        // Template → the file it generates · main.cf is assembled from two templates, so both are compared
         $pairs = [
             $templates . '/postfix/main.cf.tpl' => '/etc/postfix/main.cf',
             $templates . '/postfix/hosting.cf.tpl' => '/etc/postfix/main.cf',
@@ -187,22 +210,26 @@ final class MailCert extends MailCapability
 
         foreach ($pairs as $template => $generated) {
             /*
-             * **เทมเพลตอ่านตรงจากดิสก์ ไม่ผ่าน Executor** — มันเป็นไฟล์ของตัว panel เอง
-             * ที่มาพร้อมโค้ด ไม่ใช่ไฟล์บนเครื่องที่ agent ดูแล · ส่งผ่าน Executor เมื่อไหร่
-             * เส้นทางจะถูกเติมรากของ sandbox แล้วหาไฟล์ไม่เจอ กลายเป็น "ไม่มีอะไรเก่า"
-             * ตลอดกาลโดยไม่มีอะไรฟ้อง
+             * **The template is read straight from disk, never through the
+             * Executor** — it's a file belonging to the panel itself,
+             * shipped with the code, not a machine file the agent manages ·
+             * routing it through the Executor would prefix the path with
+             * the sandbox's root and never find the file, silently reading
+             * as "nothing is ever outdated" forever, with nothing to complain.
              */
             /*
-             * ล้างแคชของ stat ก่อนอ่านเสมอ — `phpcp-agentd` เป็นโปรเซสที่อยู่ยาว
-             * ค่าที่ PHP จำไว้จากรอบก่อนจะค้างข้ามการอัปเกรด แล้วงานนี้จะตอบว่า
-             * "ไม่มีอะไรเปลี่ยน" ตลอดไปทั้งที่เทมเพลตถูกแทนที่ไปแล้ว
+             * The stat cache is always cleared before reading —
+             * `phpcp-agentd` is a long-lived process, so a value PHP
+             * cached from an earlier run would linger across an upgrade,
+             * and this job would keep answering "nothing changed" forever
+             * even after the template was genuinely replaced.
              */
             clearstatcache(true, $template);
 
             $source = @filemtime($template);
 
             if ($source === false) {
-                continue;   // ไม่มีเทมเพลตนี้ในรุ่นที่ติดตั้งอยู่ — ไม่ใช่เรื่องของงานนี้
+                continue;   // This template doesn't exist in the installed version — not this job's concern
             }
 
             $target = $executor->stat($executor->path($generated));
@@ -220,7 +247,7 @@ final class MailCert extends MailCapability
         try {
             $conf = $executor->readFile($executor->path(MailboxManager::DOVECOT_CONF));
         } catch (\Throwable) {
-            // อ่านไม่ได้หรือยังไม่มีไฟล์ = ยังไม่ได้บอก Dovecot เรื่องใบนี้
+            // Unreadable or doesn't exist yet = Dovecot was never told about this certificate
             return true;
         }
 
@@ -228,7 +255,7 @@ final class MailCert extends MailCapability
     }
 
     /**
-     * ไม่มีอะไรต้องทำ — ยังเป็นผลสำเร็จ ไม่ใช่ข้อผิดพลาด
+     * Nothing needed doing — still a success, not an error
      *
      * @param array<string,mixed>|null $certificate
      * @return array<string,mixed>

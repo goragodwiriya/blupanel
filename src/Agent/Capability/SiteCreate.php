@@ -19,17 +19,17 @@ use Phpcp\Driver\Dns\BindZoneManager;
 use Phpcp\Support\Validator;
 
 /**
- * สร้างเว็บไซต์ใหม่ — ARCHITECTURE §11
+ * Creates a new website — ARCHITECTURE §11
  *
- * ทำ 6 อย่างเป็นชุดเดียว ล้มกลางทางต้องย้อนกลับให้หมด:
- *   1. จองแถวในฐานข้อมูลเพื่อให้ได้ id (ชื่อผู้ใช้ระบบคือ web_<id>)
- *   2. สร้างผู้ใช้ระบบของเว็บไซต์
- *   3. สร้างไดเรกทอรีพร้อมสิทธิ์ 750 และตั้งเจ้าของ
- *   4. เขียน FPM pool และ vhost ลงทรานแซกชัน
- *   5. ตรวจ config ทั้งสองบริการ ผ่านแล้วจึง reload
- *   6. บันทึกผลลงฐานข้อมูล
+ * Does 6 things as a single unit — a failure partway through must revert everything:
+ *   1. Reserve a database row to get an id (the system username is web_<id>)
+ *   2. Create the website's system user
+ *   3. Create its directories with 750 permissions and set ownership
+ *   4. Write the FPM pool and vhost into a transaction
+ *   5. Validate both services' config, and only then reload
+ *   6. Save the outcome to the database
  *
- * ขั้นที่ 5 คือจุดที่กันไม่ให้ vhost ผิดทำให้เว็บทุกเว็บบนเครื่องดับ
+ * Step 5 is what stops a bad vhost from taking down every site on the machine.
  */
 final class SiteCreate extends SiteCapability
 {
@@ -50,7 +50,7 @@ final class SiteCreate extends SiteCapability
 
     public function summary(): string
     {
-        return 'สร้างเว็บไซต์ใหม่พร้อมผู้ใช้ระบบ FPM pool และ vhost';
+        return 'Create a new website with a system user, FPM pool, and vhost';
     }
 
     /**
@@ -67,7 +67,7 @@ final class SiteCreate extends SiteCapability
                 $alias = Validator::domain($alias);
 
                 if ($alias === $domain) {
-                    throw new ValidationError('โดเมนสำรองต้องไม่ซ้ำกับโดเมนหลัก');
+                    throw new ValidationError('An alias domain must not duplicate the primary domain');
                 }
 
                 $aliases[] = $alias;
@@ -75,15 +75,17 @@ final class SiteCreate extends SiteCapability
         }
 
         /*
-         * `www.<โดเมน>` เป็นโดเมนสำรองให้อัตโนมัติ — ทุก control panel ทำแบบนี้
+         * `www.<domain>` is added as an alias automatically — every control panel does this.
          *
-         * **ไม่ใช่ความสะดวก แต่เป็นความสอดคล้อง**: ระบบสร้างเรกคอร์ด DNS ของ `www`
-         * ให้อยู่แล้วตอนสร้างเว็บ ({@see \Phpcp\Domain\DnsZoneDefaults}) ถ้าไม่เพิ่ม
-         * เป็น alias ด้วย ชื่อนั้นจะ resolve มาที่เครื่องนี้แล้วตกไปที่ vhost เริ่มต้น
-         * ของเว็บเซิร์ฟเวอร์ — ผู้เยี่ยมชมเห็นหน้าต้อนรับของ nginx แทนเว็บของลูกค้า
-         * (เจอบนเซิร์ฟเวอร์จริง 2026-08-14) · DNS สัญญาว่าใช้ได้ vhost ต้องรับคำสัญญานั้น
+         * **Not a convenience — a consistency requirement**: the system
+         * already creates a `www` DNS record when the site is created
+         * ({@see \Phpcp\Domain\DnsZoneDefaults}); if it isn't also added as
+         * an alias, that name resolves to this machine and falls through to
+         * the web server's default vhost — a visitor sees nginx's welcome
+         * page instead of the customer's site (found on the real server,
+         * 2026-08-14) · DNS promises it works, so the vhost has to keep that promise.
          *
-         * ข้ามเมื่อโดเมนหลักเป็น `www.` อยู่แล้ว — `www.www.example.com` ไม่มีความหมาย
+         * Skipped when the primary domain already starts with `www.` — `www.www.example.com` means nothing.
          */
         if (!str_starts_with($domain, 'www.')) {
             $aliases[] = 'www.'.$domain;
@@ -93,7 +95,7 @@ final class SiteCreate extends SiteCapability
             'domain' => $domain,
             'php_version' => $phpVersion,
             'aliases' => array_values(array_unique($aliases)),
-            // ว่าง = ใช้ <บ้าน>/public · ชื่อย่อยหรือ path เต็มถูกประกอบ/ตรวจใน run()
+            // Empty = use <home>/public · a short name or a full path is assembled/checked in run()
             'docroot' => Validator::optionalString($args, 'docroot', '', 4096),
             'pointer_root' => Validator::optionalString($args, 'pointer_root', '', 4096),
             'owner_user_id' => isset($args['owner_user_id'])
@@ -103,7 +105,7 @@ final class SiteCreate extends SiteCapability
     }
 
     /**
-     * ตรวจสอบโควตาสำหรับลูกค้าก่อนสร้างเว็บไซต์
+     * Checks the customer's quota before creating a website
      *
      * @throws ValidationError
      */
@@ -118,24 +120,26 @@ final class SiteCreate extends SiteCapability
     }
 
     /**
-     * หาเจ้าของและชื่อบัญชีระบบที่เว็บนี้จะรันด้วย
+     * Resolves the owner and the system account name this site will run as
      *
-     * ผู้ใช้ที่ยังไม่เคยมีเว็บจะยังไม่มีบัญชีระบบ — ชื่อบัญชีคือชื่อผู้ใช้ ตรวจซ้ำอีกครั้ง
-     * ด้วยกฎเดียวกับตอนสร้างผู้ใช้ เพราะแถวในฐานข้อมูลอาจถูกแก้ด้วยมือมาก่อน
-     * และค่านี้กำลังจะกลายเป็นชื่อโฟลเดอร์กับชื่อบัญชี Linux จริง
+     * A user who has never had a site yet won't have a system account —
+     * the account name is the username, checked again with the same rule
+     * used at user creation time, because the database row might have been
+     * edited by hand beforehand, and this value is about to become a real
+     * folder name and a real Linux account name.
      *
      * @throws ValidationError
      */
     private function resolveOwner(Context $context, int $ownerUserId): UserAccount
     {
         if ($ownerUserId <= 0) {
-            throw new ValidationError('ต้องระบุเจ้าของเว็บไซต์ (owner_user_id)');
+            throw new ValidationError('A website owner must be specified (owner_user_id)');
         }
 
         $user = (new UserRepository($context->db))->find($ownerUserId);
 
         if ($user === null) {
-            throw new ValidationError("ไม่พบผู้ใช้รหัส {$ownerUserId} ที่จะเป็นเจ้าของเว็บไซต์");
+            throw new ValidationError("User {$ownerUserId} was not found to be the website's owner");
         }
 
         try {
@@ -146,9 +150,9 @@ final class SiteCreate extends SiteCapability
     }
 
     /**
-     * บันทึกว่าผู้ใช้คนนี้มีบัญชีระบบแล้ว พร้อม uid/gid ที่ระบบปฏิบัติการให้มาจริง
+     * Records that this user now has a system account, with the uid/gid the OS actually assigned
      *
-     * เก็บ uid ไว้เพื่อให้ตัวตรวจสภาพและโควตาดิสก์ (เฟส E2) อ้างอิงได้โดยไม่ต้องถาม OS ซ้ำ
+     * The uid is saved so the health check and disk quota (phase E2) can reference it without asking the OS again.
      *
      * @param array{uid:int,gid:int} $identity
      */
@@ -163,15 +167,18 @@ final class SiteCreate extends SiteCapability
     }
 
     /**
-     * ตรึงโดเมนหลักของบัญชีไว้ที่เว็บแรก — ตัวตัดสินว่าใครได้ `public_html`
+     * Locks an account's primary domain to its first website — decides who gets `public_html`
      *
-     * **เขียนเฉพาะตอนที่ยังว่าง** เพราะค่านี้คือเส้นทางไฟล์ของเว็บที่ให้บริการอยู่
-     * ในเลย์เอาต์ cpanel · ถ้าเขียนทับทุกครั้งที่สร้างเว็บใหม่ เว็บเดิมจะย้ายจาก
-     * `public_html` ไปเป็น `<บ้าน>/<โดเมน>` เงียบ ๆ แล้วเว็บที่เคยใช้งานได้จะ 404
-     * ทันทีโดยที่ไม่มีใครสั่งอะไรกับมันเลย
+     * **Only ever written when still empty**, because this value is the
+     * file path of the website currently being served, in the cpanel
+     * layout · overwriting it every time a new site is created would
+     * silently move the original site from `public_html` to
+     * `<home>/<domain>`, and a site that used to work would 404
+     * immediately, with nobody having asked for anything to happen to it.
      *
-     * มีความหมายเฉพาะเลย์เอาต์ cpanel แต่บันทึกทุกเลย์เอาต์ เพราะบัญชีที่เปลี่ยนมา
-     * ใช้ cpanel ภายหลังต้องมีคำตอบพร้อมอยู่แล้ว ไม่ใช่ต้องเดาย้อนหลังตอนนั้น
+     * Only meaningful for the cpanel layout, but recorded for every layout
+     * anyway, because an account that switches to cpanel later needs the
+     * answer already sitting there, instead of having to be guessed retroactively at that point.
      */
     private function rememberMainDomain(Context $context, UserAccount $owner, string $domain): void
     {
@@ -196,21 +203,22 @@ final class SiteCreate extends SiteCapability
         $provisioner = $this->provisioner($context);
 
         if ($repository->domainExists($args['domain'])) {
-            throw new ValidationError("โดเมน {$args['domain']} ถูกใช้งานอยู่แล้วในระบบ");
+            throw new ValidationError("Domain {$args['domain']} is already in use in the system");
         }
 
         foreach ($args['aliases'] as $alias) {
             if ($repository->domainExists($alias)) {
-                throw new ValidationError("โดเมนสำรอง {$alias} ถูกใช้งานอยู่แล้วในระบบ");
+                throw new ValidationError("Alias domain {$alias} is already in use in the system");
             }
         }
 
         if (!$provisioner->fpm()->isVersionInstalled($executor, $args['php_version'])) {
-            throw new ValidationError("เครื่องนี้ยังไม่ได้ติดตั้ง PHP {$args['php_version']}");
+            throw new ValidationError("This machine does not have PHP {$args['php_version']} installed");
         }
 
-        // Domain Pointer — รับทั้งชื่อโฟลเดอร์ย่อยและ path เต็ม แล้วบังคับให้อยู่ในขอบเขต
-        // จาก config เท่านั้น มิฉะนั้นผู้ดูแลจะชี้ vhost ไปที่ /etc หรือ /root ได้
+        // Domain Pointer — accepts either a short folder name or a full
+        // path, and forces it to stay within the scope declared in config
+        // only, or else an admin could point a vhost at /etc or /root
         $docroot = Validator::resolvePointerDocroot(
             $args['docroot'],
             $context->config->docrootRoots(),
@@ -218,8 +226,9 @@ final class SiteCreate extends SiteCapability
             $args['pointer_root'] ?? '',
         );
 
-        // เว็บทุกแห่งต้องมีเจ้าของตั้งแต่ migration 0006 — เส้นทางไฟล์ทั้งหมดของเว็บ
-        // อนุมานจากบ้านของเจ้าของ การสร้างเว็บโดยไม่รู้เจ้าของจึงประกอบเส้นทางไม่ได้เลย
+        // Every site has had to have an owner since migration 0006 — a
+        // site's entire set of file paths is derived from its owner's home,
+        // so creating a site without knowing the owner leaves no way to assemble a path at all
         $owner = $this->resolveOwner($context, $args['owner_user_id']);
 
         $this->assertQuota($context, $owner->userId);
@@ -243,8 +252,9 @@ final class SiteCreate extends SiteCapability
         $transaction = new ConfigTransaction($executor);
 
         try {
-            // บัญชีระบบถูกสร้างแบบ lazy — เว็บแรกของผู้ใช้เป็นตัวจุดชนวน เว็บถัด ๆ ไป
-            // เรียกซ้ำได้โดยไม่มีผลข้างเคียง เพราะ ensure() เป็น idempotent
+            // The system account is created lazily — a user's first site is
+            // what triggers it, and subsequent sites can call this again
+            // with no side effect, since ensure() is idempotent
             $identity = $provisioner->account()->ensure($executor, $owner);
             $this->rememberSystemUser($context, $owner, $identity);
             $this->rememberMainDomain($context, $owner, $site->domain);
@@ -264,7 +274,7 @@ final class SiteCreate extends SiteCapability
             $repository->completeProvisioning($site);
             $this->recordDomains($context, $site);
 
-            // ต้องหลัง recordDomains — แถวใน `domains` ต้องมีก่อนถึงจะผูกเรกคอร์ดได้
+            // Must come after recordDomains — a row in `domains` has to exist before a record can be attached to it
             $dns = $this->seedDnsZone($executor, $context, $site);
 
             if ($this->isLocalEnvironment($executor, $context)) {
@@ -278,16 +288,18 @@ final class SiteCreate extends SiteCapability
                 }
             }
         } catch (\Throwable $e) {
-            // ย้อนกลับให้ครบทุกชั้น มิฉะนั้นจะเหลือผู้ใช้ระบบหรือแถวในฐานข้อมูลค้าง
-            // ที่ทำให้สร้างโดเมนเดิมซ้ำไม่ได้อีกเลย
-            // ย้อนเฉพาะสิ่งที่คำสั่งนี้สร้าง — **ห้ามลบบัญชีระบบทิ้ง** เพราะเจ้าของอาจมีเว็บอื่น
-            // ที่ยังใช้บัญชีนั้นอยู่ การลบจะทำให้เว็บที่ยังดีอยู่ล่มไปด้วยทันที
+            // Reverted at every layer, or a leftover system user or database
+            // row would make it impossible to ever create the same domain again.
+            // Only reverts what this command itself created — **the system
+            // account is never deleted**, since the owner might have another
+            // site still using that same account, and deleting it would
+            // immediately take down a perfectly healthy site along with it.
             $transaction->rollback();
             $repository->delete($siteId);
 
             throw $e instanceof ExecutionFailed || $e instanceof ValidationError
                 ? $e
-                : new ExecutionFailed('สร้างเว็บไซต์ไม่สำเร็จ: '.$e->getMessage());
+                : new ExecutionFailed('Failed to create website: '.$e->getMessage());
         }
 
         return [
@@ -300,14 +312,14 @@ final class SiteCreate extends SiteCapability
             'vhost' => $provisioner->webserver()->vhostPath($site),
             'aliases' => $site->aliases,
             'dns' => $dns,
-            'message' => "สร้างเว็บไซต์ {$site->domain} เรียบร้อยแล้ว"
+            'message' => "Created website {$site->domain}"
                 . (($dns['seeded'] ?? false)
-                    ? sprintf(' · สร้าง DNS zone ให้แล้ว (%d เรกคอร์ด ชี้ไป %s)', count($dns['records'] ?? []), $dns['ip'] ?? '')
-                    : ' · ยังไม่ได้สร้าง DNS zone: ' . ($dns['reason'] ?? 'ไม่ทราบสาเหตุ')),
+                    ? sprintf(' · created a DNS zone (%d record(s) pointing to %s)', count($dns['records'] ?? []), $dns['ip'] ?? '')
+                    : ' · did not create a DNS zone: ' . ($dns['reason'] ?? 'unknown reason')),
         ];
     }
 
-    /** บันทึกโดเมนหลักและโดเมนสำรองลงตาราง domains */
+    /** Records the primary domain and any alias domains into the domains table */
     private function recordDomains(Context $context, Site $site): void
     {
         $now = time();
@@ -330,22 +342,26 @@ final class SiteCreate extends SiteCapability
     }
 
     /**
-     * สร้าง zone ที่ใช้งานได้ทันทีให้โดเมนใหม่ — ไม่ใช่หน้า DNS ว่างเปล่า
+     * Creates a zone that works immediately for the new domain — never a blank DNS page
      *
-     * **เดิมการสร้างเว็บไม่สร้างเรกคอร์ด DNS ให้เลย** ผู้ดูแลต้องพิมพ์เองทุกบรรทัด
-     * และ zone file ไม่เกิดขึ้นจนกว่าจะเพิ่มตัวแรก · ต่างจากทุก control panel ที่
-     * ผู้ใช้ย้ายมา ซึ่งสร้างโดเมนแล้วได้ zone ที่ตอบ query ได้ทันที
+     * **Creating a site used to never create any DNS record at all** — an
+     * admin had to type every single line by hand, and the zone file
+     * didn't exist until the first one was added · unlike every control
+     * panel a user might be migrating from, where creating a domain gets a
+     * zone that can already answer queries.
      *
-     * ไม่โยน exception เมื่อล้ม — เว็บถูกสร้างเสร็จแล้วและใช้งานได้ตามปกติ การที่ DNS
-     * ยังไม่พร้อม (ยังไม่เปิด `dns.enabled` · หาไอพีสาธารณะไม่ได้ · BIND ปฏิเสธ zone)
-     * ไม่ใช่เหตุให้ล้มการสร้างเว็บทั้งงานแล้วคืนค่าทุกอย่าง · รายงานกลับไปแทน
+     * Never throws on failure — the site was already created successfully
+     * and works normally · DNS not being ready yet (`dns.enabled` isn't
+     * turned on · no public IP could be found · BIND rejected the zone) is
+     * not a reason to fail the whole site-creation job and revert
+     * everything · it's reported back in the response instead.
      *
      * @return array<string,mixed>
      */
     private function seedDnsZone(Executor $executor, Context $context, Site $site): array
     {
         if (!$context->config->dnsEnabled()) {
-            return ['seeded' => false, 'reason' => 'ยังไม่ได้เปิดการเชื่อม BIND9'];
+            return ['seeded' => false, 'reason' => 'The BIND9 connection is not turned on yet'];
         }
 
         $ip = ServerAddress::detect($executor, $context->config->string('server.public_ip'));
@@ -353,7 +369,7 @@ final class SiteCreate extends SiteCapability
         if ($ip === '') {
             return [
                 'seeded' => false,
-                'reason' => 'หาไอพีสาธารณะของเครื่องไม่ได้ — ตั้ง server.public_ip แล้วสร้าง zone อีกครั้งจากหน้า DNS',
+                'reason' => "Could not find the machine's public IP — set server.public_ip, then create the zone again from the DNS page",
             ];
         }
 
@@ -363,13 +379,15 @@ final class SiteCreate extends SiteCapability
         );
 
         if ($row === null) {
-            return ['seeded' => false, 'reason' => 'ไม่พบโดเมนหลักของเว็บนี้'];
+            return ['seeded' => false, 'reason' => "This site's primary domain was not found"];
         }
 
         try {
             /*
-             * โดเมนที่อยู่ใต้ zone ที่เครื่องนี้ดูแลอยู่แล้ว ต้องเป็น**เรกคอร์ดใน zone นั้น**
-             * ไม่ใช่ zone แยกอีกไฟล์ — ดูเหตุผลเต็มที่ DnsZoneDefaults::parentZone()
+             * A domain that falls under a zone this machine already manages
+             * has to become **a record inside that zone**, never a separate
+             * zone file of its own — see the full reasoning at
+             * DnsZoneDefaults::parentZone()
              */
             $parent = DnsZoneDefaults::parentZone($context->db, $site->domain, (int) $row['id']);
 
