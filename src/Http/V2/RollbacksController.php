@@ -11,18 +11,22 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * รายการที่รอยืนยัน — `/api/v2/rollbacks`
+ * The item waiting for confirmation — `/api/v2/rollbacks`
  *
- * กลไกนี้คือสิ่งที่ทำให้แก้ firewall/SSH จากระยะไกลแล้วไม่ล็อกตัวเองออกจากเครื่อง:
- * เปลี่ยนค่า → ถ้ายังเข้าถึงได้ให้กดยืนยันภายในเวลา → ไม่กดทันระบบคืนค่าเดิมให้เอง
+ * This mechanism is what makes it safe to edit the firewall/SSH remotely
+ * without locking yourself out: change the value → confirm within the time
+ * window if still reachable → if not confirmed in time, the system reverts it automatically
  *
- * **ตัวจับเวลาอยู่ฝั่งเซิร์ฟเวอร์เสมอ ไม่ใช่ในเบราว์เซอร์** — กรณีที่ต้องกู้คือกรณีที่
- * ผู้ใช้หลุดไปแล้ว เบราว์เซอร์จึงไม่มีโอกาสทำงาน · ตัวที่กระตุ้นจริงคือ
- * `phpcp-scheduler` ที่เรียก `rollback.run` ทุกนาที (เฟส A1)
+ * **The timer always lives server-side, never in the browser** — the case
+ * that needs recovering from is exactly the case where the user has already
+ * been cut off, so the browser never gets a chance to run · what actually
+ * triggers it is `phpcp-scheduler` calling `rollback.run` every minute (phase A1)
  *
- * สอง sub-resource เป็นคำนามตาม §4.1:
- *   `confirmation` — ยืนยันว่ายังเข้าถึงได้ · การที่คำขอนี้มาถึงได้คือหลักฐานในตัวมันเอง
- *   `execution`    — สั่งคืนค่าทันทีโดยไม่รอหมดเวลา ใช้เมื่อรู้ตัวว่าตั้งผิด
+ * Two sub-resources, nouns per §4.1:
+ *   `confirmation` — confirms the connection is still reachable · the request
+ *                    itself arriving is its own proof
+ *   `execution`    — reverts immediately without waiting for the timeout, for
+ *                    when the mistake is already obvious
  */
 final class RollbacksController extends ApiController
 {
@@ -33,12 +37,13 @@ final class RollbacksController extends ApiController
 
         return $this->ok($pending === null ? [] : [$this->describe($pending)], [
             'default_window' => RollbackGuard::DEFAULT_WINDOW,
-            // รายการที่หมดเวลาแล้วแต่ scheduler ยังไม่ทันเก็บ — ผู้ดูแลควรเห็นว่ามีค้างอยู่
+            // Items that already timed out but the scheduler hasn't swept up
+            // yet — the admin should still see that something is pending
             'expired_waiting' => count($guard->expired()),
         ]);
     }
 
-    /** ยืนยันว่ายังเข้าถึงเครื่องได้ — ยกเลิกการคืนค่าที่ตั้งเวลาไว้ */
+    /** Confirm the machine is still reachable — cancels the scheduled rollback */
     public function confirm(Request $request): Response
     {
         $result = $this->agent()->data(
@@ -51,10 +56,10 @@ final class RollbacksController extends ApiController
     }
 
     /**
-     * สั่งคืนค่าทันที
+     * Revert immediately
      *
-     * บีบให้รายการหมดอายุก่อน แล้วเดินเส้นทางคืนค่าเดียวกับที่ scheduler ใช้ —
-     * ไม่เขียนตรรกะคืนค่าซ้ำอีกชุด เพื่อให้มีเส้นทางเดียวที่ต้องดูแลและทดสอบ
+     * Forces the item to expire first, then walks the same revert path the
+     * scheduler uses — never a second copy of revert logic, so there's only ever one path to maintain and test
      */
     public function execute(Request $request): Response
     {

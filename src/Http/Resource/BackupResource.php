@@ -5,21 +5,25 @@ declare(strict_types=1);
 namespace Phpcp\Http\Resource;
 
 /**
- * ไฟล์สำรองหนึ่งไฟล์ — **อ่านมาจากโฟลเดอร์จริง ไม่ใช่จากแถวในตาราง**
+ * One backup file — **read from the real folder, never from a table row**
  *
- * ตั้งแต่ PLAN-BACKUP-V2 ข้อ B4 ตัวไฟล์คือแหล่งความจริง · สิ่งที่ทรัพยากรนี้ส่งออกไป
- * จึงเป็นสิ่งที่ `stat()` ตอบได้เท่านั้น ไม่มีสถานะที่ระบบเคยจดไว้เมื่อวานปนอยู่เลย
+ * As of PLAN-BACKUP-V2 item B4, the file itself is the source of truth · so
+ * what this resource exports is only ever what `stat()` can answer, with no
+ * status the system happened to note down yesterday mixed in
  *
- * `bytes` เป็นไบต์ดิบ ไม่ใช่ "1.2 GB" — หน้าจอจัดรูปแบบเอง และการเรียงตามขนาดต้องทำ
- * จากตัวเลขเท่านั้น
+ * `bytes` is a raw byte count, never "1.2 GB" — the screen formats it itself,
+ * and sorting by size must only ever work from the number
  *
- * **ไม่มี `checksum` และ `offsite_status` อีกแล้ว** · ทั้งคู่เคยมาจากแถวในตาราง ·
- * checksum ที่บันทึกไว้ตอนสร้างพิสูจน์อะไรไม่ได้เมื่อไฟล์อยู่ในมือลูกค้า — ค่าที่มี
- * ความหมายคือค่าที่คำนวณจากไฟล์เดี๋ยวนั้น ซึ่งการกู้คืนกับการส่งออกทำเองอยู่แล้วทุกครั้ง
+ * **`checksum` and `offsite_status` no longer exist** · both used to come from
+ * a table row · a checksum recorded at creation time proves nothing once the
+ * file is in the customer's hands — the value that actually means something
+ * is one computed from the file right then, which restore and export already do every time
  *
- * `restorable` คือคำตอบของคำถามที่หน้าจอต้องใช้จริง: ปุ่มกู้คืนกดได้ไหม · ไฟล์ที่จับคู่
- * กับเว็บไม่ได้ (ลูกค้าคัดลอกมาเอง หรือมาจากเว็บที่ลบไปแล้ว) ยังแสดงในรายการเพราะมัน
- * กินโควตาของเขาจริง แต่กู้คืนอัตโนมัติไม่ได้
+ * `restorable` answers the question the screen genuinely needs: can the
+ * restore button be clicked · a file that can't be matched to a website
+ * (the customer copied it in themselves, or it came from a website that's
+ * since been deleted) still shows up in the list because it genuinely counts
+ * against their quota, but it can't be restored automatically
  */
 final class BackupResource extends Resource
 {
@@ -28,11 +32,12 @@ final class BackupResource extends Resource
         $type = self::string($row['type'] ?? '');
 
         return [
-            // ชื่อไฟล์คือกุญแจของทรัพยากรนี้ — คู่กับ `user_id` แล้วอ้างถึงไฟล์ได้ตรงตัว
+            // The filename is this resource's key — paired with `user_id` it refers to the exact file
             'name' => self::string($row['name'] ?? ''),
             'path' => self::string($row['path'] ?? ''),
             'type' => $type,
-            'type_label' => $type === 'database' ? 'ฐานข้อมูล' : 'ไฟล์เว็บไซต์',
+            // A raw catalog key, translated client-side via {LNG_${type_label}} — see backups.html
+            'type_label' => $type === 'database' ? 'Database' : 'Website files',
             'domain' => self::string($row['domain'] ?? ''),
             'site_id' => (int) ($row['site_id'] ?? 0),
             'user_id' => (int) ($row['user_id'] ?? 0),
@@ -40,7 +45,7 @@ final class BackupResource extends Resource
             'size_bytes' => (int) ($row['bytes'] ?? 0),
             'modified_at' => (int) ($row['modified_at'] ?? 0),
             'restorable' => (bool) ($row['restorable'] ?? false),
-            // สีของป้ายมาจากฝั่งเซิร์ฟเวอร์ เทมเพลตจึงเขียน `pill-${type_tone}` ได้ตรง ๆ
+            // The pill's color comes from the server, so the template can write `pill-${type_tone}` directly
             'type_tone' => $type === 'database' ? 'info' : 'ok',
         ];
     }
