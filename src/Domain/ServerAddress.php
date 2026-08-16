@@ -7,39 +7,46 @@ namespace Phpcp\Domain;
 use Phpcp\Agent\Executor\Executor;
 
 /**
- * ไอพีสาธารณะของเครื่องนี้ — ค่าที่ A record ทุกตัวต้องชี้ไป
+ * This machine's public IP — the value every A record must point at
  *
- * ## ทำไมถามการ์ดเน็ตตรง ๆ ไม่ได้
+ * ## Why the network card can't just be asked directly
  *
- * เครื่องบนคลาวด์เกือบทุกเจ้าอยู่หลัง NAT: การ์ดเน็ตเห็นแต่ไอพีภายใน (เช่น
- * `172.26.15.166` บน Lightsail) ส่วนไอพีที่โลกใช้ติดต่อเป็นคนละเบอร์ (`18.142.27.80`)
- * · การใช้ค่าจากการ์ดเน็ตทำ A record แปลว่าโดเมนทุกโดเมนบนเครื่องชี้ไปยังที่อยู่ที่
- * ไม่มีใครนอกวงเข้าถึงได้ — เว็บล่มทั้งเครื่องโดยที่ทุกอย่างในระบบดู "สำเร็จ"
+ * Almost every cloud machine sits behind NAT: the network card only ever sees an
+ * internal IP (e.g. `172.26.15.166` on Lightsail), while the IP the outside world
+ * actually uses is a completely different number (`18.142.27.80`) · using the
+ * network card's own value to build an A record means every domain on the machine
+ * points at an address nobody outside the private network can reach — every site
+ * goes down while everything in the system looks "successful."
  *
- * ## ลำดับการหา
+ * ## Lookup order
  *
- *   1. `server.public_ip` ที่ผู้ดูแลตั้งเอง — ชนะเสมอ · เครื่องที่อยู่หลัง proxy หรือมี
- *      หลายไอพีต้องมีทางบอกให้ชัด ไม่ใช่ให้ระบบเดา
- *   2. metadata ของคลาวด์ (IMDSv2) — ตอบไอพีสาธารณะจริงโดยไม่ต้องออกอินเทอร์เน็ต
- *      ใช้ได้กับ AWS EC2 และ Lightsail ซึ่งเป็นที่ที่ผู้ใช้ส่วนใหญ่ติดตั้ง
- *   3. ที่อยู่ต้นทางของเส้นทางออกเน็ต — ถูกต้องบนเครื่องที่มีไอพีสาธารณะติดการ์ดจริง
- *      (VPS ทั่วไป, เครื่องในองค์กร) และเป็นคำตอบที่ดีที่สุดที่เหลืออยู่
+ *   1. `server.public_ip`, set by the admin themselves — always wins · a machine
+ *      behind a proxy or with multiple IPs needs an explicit way to say so, not a
+ *      guess from the system.
+ *   2. Cloud metadata (IMDSv2) — answers the real public IP without needing to
+ *      reach the internet at all · works on AWS EC2 and Lightsail, where most
+ *      users are installed.
+ *   3. The source address of the outbound route — correct on a machine whose
+ *      network card genuinely has a public IP attached (a typical VPS, an
+ *      on-premise machine), and the best remaining answer available.
  *
- * **ไม่ถามบริการภายนอกอย่าง ifconfig.me** — การตั้งค่า DNS ไม่ควรขึ้นกับว่าเว็บของ
- * คนอื่นยังอยู่ไหม และไม่ควรส่งสัญญาณออกไปบอกใครว่าเครื่องนี้เพิ่งตั้งโดเมนอะไร
+ * **Never asks an external service like ifconfig.me** — DNS configuration
+ * shouldn't depend on whether someone else's website is still up, and shouldn't
+ * signal out to anyone which domains this machine has just set up.
  */
 final class ServerAddress
 {
-    /** metadata ของ AWS/Lightsail — link-local จึงไม่ออกไปนอกเครื่อง */
+    /** AWS/Lightsail metadata — link-local, so it never leaves the machine */
     private const METADATA_HOST = 'http://169.254.169.254';
 
-    /** สั้นมากโดยตั้งใจ — เครื่องที่ไม่ใช่คลาวด์จะไม่มีใครตอบ ต้องไม่ค้างรอ */
+    /** Deliberately very short — a non-cloud machine will have nobody answering, and this must not hang */
     private const METADATA_TIMEOUT = 2;
 
     /**
-     * ไอพีที่ควรใช้ทำ A record — คืน '' เมื่อหาไม่ได้เลย
+     * The IP that should be used to build an A record — returns '' when nothing was found
      *
-     * ผู้เรียกต้องจัดการกรณีค่าว่างเอง (ถามผู้ดูแล) ไม่ใช่ได้ค่ามั่ว ๆ ไปเขียนลง zone
+     * The caller must handle the empty case itself (ask the admin), not take a
+     * guessed value and write it into a zone.
      */
     public static function detect(Executor $executor, string $configured = ''): string
     {
@@ -53,10 +60,10 @@ final class ServerAddress
     }
 
     /**
-     * ถาม metadata ของคลาวด์ · IMDSv2 ต้องขอ token ก่อนถึงจะอ่านได้
+     * Query cloud metadata · IMDSv2 requires requesting a token before it can be read
      *
-     * IMDSv1 (อ่านตรงไม่ต้องมี token) ถูกปิดเป็นค่าเริ่มต้นบนอินสแตนซ์ใหม่แล้ว
-     * จึงต้องเดินทาง v2 เป็นหลัก ไม่ใช่ทางสำรอง
+     * IMDSv1 (reading directly, no token needed) is now disabled by default on new
+     * instances, so the v2 path has to be the primary route, not a fallback.
      */
     private static function fromMetadata(): string
     {
@@ -76,10 +83,12 @@ final class ServerAddress
     }
 
     /**
-     * ที่อยู่ต้นทางที่ kernel จะใช้ตอนออกเน็ต
+     * The source address the kernel would use for an outbound connection
      *
-     * ถาม kernel ว่า "ถ้าจะไป 1.1.1.1 จะออกด้วยที่อยู่ไหน" ซึ่งตอบถูกแม้เครื่องมีหลาย
-     * การ์ดหรือหลายที่อยู่ · ไม่ได้ส่งอะไรออกไปจริง เป็นการถามตารางเส้นทางเฉย ๆ
+     * Asks the kernel "if this were headed to 1.1.1.1, which address would it go
+     * out with," which answers correctly even on a machine with multiple network
+     * cards or addresses · nothing is actually sent — this is purely a routing
+     * table lookup.
      */
     private static function fromRoute(Executor $executor): string
     {
@@ -109,17 +118,19 @@ final class ServerAddress
         return $body === false ? '' : trim($body);
     }
 
-    /** IPv4 ที่ใช้ได้จริงบนอินเทอร์เน็ต — ตัดที่อยู่ส่วนตัวและ loopback ทิ้ง */
+    /** A valid, internet-routable IPv4 address — excludes private and loopback ranges */
     public static function isIpv4(string $value): bool
     {
         return filter_var($value, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false;
     }
 
     /**
-     * ที่อยู่นี้เป็นไอพีส่วนตัวหรือไม่ — ใช้เตือนผู้ดูแล ไม่ใช่ปฏิเสธ
+     * Whether this address is a private IP — used to warn the admin, not to reject it
      *
-     * เครื่องในองค์กรที่ให้บริการเฉพาะวงในใช้ที่อยู่ส่วนตัวอย่างถูกต้อง การห้ามจึงผิด
-     * แต่บนคลาวด์มันแทบทุกครั้งแปลว่าตรวจไอพีผิด — บอกให้รู้ดีกว่าปล่อยผ่านเงียบ ๆ
+     * An on-premise machine serving only its own internal network correctly uses a
+     * private address, so rejecting it would be wrong · but on the cloud, this is
+     * almost always a sign the IP detection went wrong — better to say so than
+     * silently let it through.
      */
     public static function isPrivate(string $value): bool
     {
