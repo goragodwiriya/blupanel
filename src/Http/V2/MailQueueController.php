@@ -10,14 +10,15 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * คิวเมลขาออก — `/api/v2/mail/queue` (PLAN-MAIL §5)
+ * The outgoing mail queue — `/api/v2/mail/queue` (PLAN-MAIL §5)
  *
- * ที่นี่แปลงคำขอเป็น argument ของ capability แล้วแปลงผลกลับเป็น JSON เท่านั้น ·
- * การตัดสินใจว่าคำสั่งไหนอันตรายแค่ไหนอยู่ที่ capability ซึ่งเป็นที่เดียวที่แตะเครื่องได้
+ * This layer only converts requests into capability arguments and converts
+ * results back into JSON · deciding how dangerous a given command is belongs
+ * to the capability, the only place that can touch the machine
  */
 final class MailQueueController extends ApiController
 {
-    /** รายการในคิว พร้อมสรุปที่หน้าจอใช้ตัดสินว่าต้องลงมือไหม */
+    /** The queue's messages, with a summary the screen uses to decide whether action is needed */
     public function index(Request $request): Response
     {
         $result = $this->agent()->data('mail.queue', [], $this->ctx->actor($request));
@@ -27,7 +28,7 @@ final class MailQueueController extends ApiController
             fn (array $row): array => $row + [
                 'row_id' => $row['id'],
                 'recipient' => implode(', ', (array) ($row['recipients'] ?? [])),
-                // ค้างนานแค่ไหนคือสิ่งที่บอกว่าเรื่องนี้ด่วนหรือยัง — Postfix ยอมแพ้ที่ 5 วัน
+                // How long it's been stuck is what says whether this is urgent yet — Postfix gives up at 5 days
                 'age' => max(0, $now - (int) ($row['arrival_time'] ?? $now)),
                 'tone' => ($row['queue'] ?? '') === 'deferred' ? 'danger' : 'ok',
                 'reason_short' => mb_substr((string) ($row['reason'] ?? ''), 0, 120),
@@ -36,14 +37,17 @@ final class MailQueueController extends ApiController
         );
 
         /*
-         * **คืนเป็นรายการล้วน เพราะตารางเป็นคนดึงข้อมูลเอง (`data-source`)**
+         * **Returns a plain list, because the table fetches its own data (`data-source`)**
          *
-         * รูปแบบเดียวกับหน้าฐานข้อมูลและหน้าเว็บไซต์ที่ใช้งานได้อยู่แล้ว · ตารางที่ดึง
-         * ข้อมูลเองเท่านั้นที่สั่ง "โหลดใหม่" ได้จริงหลังลบสำเร็จ — ตารางที่ผูกกับข้อมูล
-         * ของหน้าต้องให้ทั้งหน้าโหลดใหม่ ซึ่งเป็นทางที่ยังไม่มีกลไกรองรับ
+         * The same pattern the databases page and websites page already use
+         * successfully · only a table that fetches its own data can genuinely
+         * be told to "reload" after a successful delete — a table bound to the
+         * page's own data would need the whole page to reload, a path with no
+         * mechanism for that yet
          *
-         * อ่านคิวไม่ได้ = ข้อผิดพลาด ไม่ใช่คิวว่าง · ตอบเป็น problem ไปเลยดีกว่าโชว์
-         * ตารางเปล่าซึ่งอ่านได้ว่า "ไม่มีเมลค้าง" ทั้งที่ความจริงคือ "ดูไม่ได้"
+         * Failing to read the queue = an error, not an empty queue · answering
+         * with a problem response is better than showing an empty table that
+         * reads as "no mail stuck" when the truth is "can't be viewed"
          */
         if (($result['available'] ?? false) !== true) {
             return $this->problem(
@@ -56,7 +60,7 @@ final class MailQueueController extends ApiController
         return $this->ok($rows);
     }
 
-    /** เนื้อเมลหนึ่งฉบับในคิว — เปิดใน Modal ไม่ใช่หน้าใหม่ */
+    /** One queued message's content — opens in a modal, not a new page */
     public function show(Request $request): Response
     {
         $result = $this->agent()->data(
@@ -72,7 +76,7 @@ final class MailQueueController extends ApiController
                 'action' => 'show',
                 'title' => $this->t('Queued message') . ' ' . (string) ($result['id'] ?? ''),
                 'titleClass' => 'icon-email',
-                // ข้อความดิบ — ต้องหนี HTML ทั้งก้อน เนื้อเมลมาจากคนนอกทั้งหมด
+                // Raw text — must be entirely HTML-escaped, since a message's content always comes from an outsider
                 'html' => '<pre class="mono selectable scroll">'
                     . htmlspecialchars((string) ($result['content'] ?? ''), ENT_QUOTES, 'UTF-8')
                     . '</pre>',
@@ -81,23 +85,24 @@ final class MailQueueController extends ApiController
         );
     }
 
-    /** ลองส่งใหม่ทั้งคิวเดี๋ยวนี้ */
+    /** Retry sending the whole queue right now */
     public function flush(Request $request): Response
     {
         return $this->act($request, ['action' => 'flush']);
     }
 
-    /** ลบฉบับเดียว */
+    /** Delete one message */
     public function destroy(Request $request): Response
     {
         return $this->act($request, ['action' => 'delete', 'id' => $request->param('id')]);
     }
 
     /**
-     * ล้างทั้งคิว
+     * Clear the whole queue
      *
-     * เส้นทางแยกจากการลบฉบับเดียวโดยเจตนา — ไม่มีทางที่ค่า id แปลก ๆ จะกลายเป็น
-     * การลบทั้งคิวได้ เพราะสองอย่างนี้ไม่ได้ใช้เส้นทางเดียวกันเลย
+     * Deliberately a separate route from deleting a single message — there's
+     * no way for a strange id value to turn into deleting the whole queue,
+     * since these two never share a route at all
      */
     public function destroyAll(Request $request): Response
     {
@@ -107,16 +112,18 @@ final class MailQueueController extends ApiController
     /**
      * @param array<string,mixed> $args
      *
-     * **สั่งให้ตารางโหลดใหม่ด้วย `completed()` ไม่ใช่เหตุการณ์ของหน้า**
+     * **Tells the table to reload via `completed()`, not a page event**
      *
-     * `completed($message, 'ชื่อตาราง')` ส่งคำสั่ง `{type:"redirect", url:"reload"}` กลับไป
-     * ซึ่งเป็นชนิดที่เฟรมเวิร์กมีตัวรับให้อยู่แล้ว และ `TableManager` ส่งฟังก์ชัน
-     * `reloadTable` มาให้ตอนเรียก `ResponseHandler.process()` หลังปุ่มในแถวทำงาน —
-     * เป็นเส้นทางเดียวกับหน้าฐานข้อมูลที่ลบแล้วตารางรีเฟรชถูกต้องมาตลอด
+     * `completed($message, 'tableName')` sends back a `{type:"redirect",
+     * url:"reload"}` command, a type the framework already has a handler for —
+     * `TableManager` supplies a `reloadTable` function when
+     * `ResponseHandler.process()` runs after a row button fires — the same
+     * path the databases page has always used to refresh its table correctly after a delete
      *
-     * ที่เคยส่ง `{type:"event"}` ไปนั้น **ไม่มีตัวรับชนิดนั้นอยู่เลย** ·
-     * `ResponseHandler.executeAction` ค้นไม่เจอก็เตือนใน console แล้วผ่านไปเงียบ ๆ
-     * ผลคือลบสำเร็จจริงบนเซิร์ฟเวอร์ แต่ตารางยังโชว์แถวเดิมเหมือนไม่มีอะไรเกิดขึ้น
+     * What used to be sent, `{type:"event"}`, **has no handler for that type at
+     * all** · `ResponseHandler.executeAction` finds nothing, warns in the
+     * console, and moves on silently — the result was a genuinely successful
+     * server-side delete, while the table kept showing the same row as if nothing happened
      */
     private function act(Request $request, array $args): Response
     {
