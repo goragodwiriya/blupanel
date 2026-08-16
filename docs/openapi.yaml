@@ -1766,21 +1766,52 @@ paths:
   /databases/form:
     get:
       tags: [databases]
-      summary: โครงเปล่าของฟอร์มสร้างฐานข้อมูล พร้อมคำสั่งเปิด modal
+      summary: โครงของฟอร์มสร้างฐานข้อมูล พร้อมรายการให้เลือกและคำสั่งเปิด modal
       description: |
         คืนค่าเริ่มต้นของฟอร์มพร้อม `actions: [{type: modal, template: ...}]`
         หน้าเว็บจึงยิงคำขอเดียวแล้วส่งคำตอบต่อให้ ResponseHandler โดยไม่ต้องรู้ว่า
         เทมเพลตของฟอร์มชื่ออะไร — รูปแบบเดียวกับ `GET /cron-jobs/{id}` ที่ id = 0
+
+        **รายการบัญชีกับเว็บไซต์อยู่ใน `data` ไม่ใช่ `meta`** · `meta.*` ผูกกับ
+        `data-for`/`data-text` ของ Now.js ไม่ได้ — คอมโพเนนต์เห็นเฉพาะชั้น `data`
+        รายการที่ใส่ไว้ใน meta จะกลายเป็น `<select>` ว่างเปล่าโดยไม่มีข้อผิดพลาดใด ๆ
+
+        ลูกค้าเห็นบัญชีเดียวคือของตัวเอง และเห็นเฉพาะเว็บของตัวเอง
       responses:
         "200":
-          description: โครงเปล่าและคำสั่งเปิด modal
+          description: ค่าเริ่มต้น รายการที่เลือกได้ และคำสั่งเปิด modal
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   ok: { type: boolean }
-                  data: { type: object }
+                  data:
+                    type: object
+                    properties:
+                      name: { type: string }
+                      privileges: { type: string }
+                      owner_user_id: { type: integer, description: บัญชีที่เลือกไว้ให้ล่วงหน้า }
+                      site_id: { type: integer }
+                      accounts:
+                        type: array
+                        description: บัญชีโฮสติ้งที่เลือกเป็นเจ้าของได้ · `label` มีคำนำหน้าติดมาด้วย
+                        items:
+                          type: object
+                          properties:
+                            id: { type: integer }
+                            username: { type: string }
+                            prefix: { type: string }
+                            label: { type: string }
+                      sites:
+                        type: array
+                        description: เว็บไซต์ที่ผูกได้ · รายการแรกคือ "ไม่ผูกกับเว็บไซต์" (id = 0)
+                        items:
+                          type: object
+                          properties:
+                            id: { type: integer }
+                            owner_user_id: { type: integer }
+                            label: { type: string }
                   actions: { type: array, items: { type: object } }
 
   /settings/panel-certificate:
@@ -3602,23 +3633,44 @@ paths:
 
     post:
       tags: [databases]
-      summary: สร้างฐานข้อมูลพร้อมผู้ใช้
+      summary: สร้างฐานข้อมูลพร้อมผู้ใช้ประจำฐาน
       description: |
         รหัสผ่านที่สุ่มให้อยู่ในคำตอบ **ครั้งเดียวเท่านั้น** — panel ไม่เก็บไว้ที่ไหนเลย
         และไม่มีทางดูย้อนหลังได้ ต้องตั้งใหม่ถ้าทำหาย
+
+        **ชื่อฐานข้อมูลได้คำนำหน้าของบัญชีเจ้าของเสมอ** (`<บัญชี>_<ชื่อ>`) แบบเดียวกับ
+        cPanel — MariaDB มี namespace เดียวทั้งเครื่อง ลูกค้าสองรายจึงตั้งชื่อ `shop`
+        พร้อมกันไม่ได้ถ้าไม่มีคำนำหน้า · ส่งชื่อที่มีคำนำหน้ามาแล้วก็ได้ ระบบไม่เติมซ้ำ
+
+        **ชื่อผู้ใช้ประจำฐานข้อมูลไม่รับจากผู้เรียก** — ระบบตั้งให้จากชื่อฐานที่เติม
+        คำนำหน้าแล้ว (`<บัญชี>_<ชื่อ>_user`) · ของเดิมรับมาได้ ซึ่งเปิดให้ชี้ฐานข้อมูล
+        ใหม่ไปยังผู้ใช้ของลูกค้ารายอื่น และชื่อปริยายที่คิดจากชื่อก่อนเติมคำนำหน้า
+        ทำให้ลูกค้าสองรายไปชนกันที่ผู้ใช้คนเดียว
+
+        นอกจากผู้ใช้ประจำฐานแล้ว **บัญชี MariaDB ของเจ้าของถูกสร้างให้เองถ้ายังไม่มี**
+        แล้ว grant ฐานนี้เข้าไปด้วย — เป็นบัญชีเดียวที่เห็นฐานข้อมูลทุกฐานที่ขึ้นต้นด้วย
+        ชื่อเดียวกัน และเป็นตัวที่ phpMyAdmin ใช้เข้าโดยไม่ต้องพิมพ์รหัส
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [name, username]
+              required: [name]
               properties:
-                name: { type: string }
-                username: { type: string }
+                name: { type: string, description: "ชื่อล้วน ไม่ต้องใส่คำนำหน้า (ใส่มาก็ได้ ระบบไม่เติมซ้ำ)" }
+                owner_user_id:
+                  type: integer
+                  description: >-
+                    บัญชีโฮสติ้งที่เป็นเจ้าของ · 0 = เอาจากเว็บไซต์ที่ผูก และถ้าไม่ผูกเลย
+                    ถือว่าเป็นฐานข้อมูลของเครื่อง (ไม่มีคำนำหน้า) · ลูกค้าระบุได้เฉพาะตัวเอง
                 host: { type: string, default: localhost }
-                privileges: { type: string, default: readwrite }
-                site_id: { type: integer, description: "ผูกกับเว็บไซต์เพื่อให้นับเข้าโควตาและสำรองไปด้วยกัน" }
+                privileges: { type: string, default: readwrite, description: "สิทธิ์ของผู้ใช้ประจำฐานข้อมูล" }
+                site_id:
+                  type: integer
+                  description: >-
+                    ผูกกับเว็บไซต์เพื่อให้เข้ารอบสำรองอัตโนมัติไปด้วยกัน · ต้องเป็นเว็บของ
+                    บัญชีเจ้าของ ไม่งั้นถูกปฏิเสธ
                 charset: { type: string, default: utf8mb4 }
       responses:
         "201":

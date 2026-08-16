@@ -139,16 +139,144 @@ test('ฐานข้อมูลของลูกค้าต้องได�
     );
 
     $reflection = new ReflectionMethod(Phpcp\Agent\Capability\DbCreate::class, 'ownerAccount');
-    $account = $reflection->invoke(new Phpcp\Agent\Capability\DbCreate(), $context, $siteId);
+    $capability = new Phpcp\Agent\Capability\DbCreate();
+
+    // มาจากเว็บ — ฟอร์มของหน้ารายละเอียดเว็บส่งแค่ site_id มา
+    $account = $reflection->invoke($capability, $context, 0, $siteId);
 
     assertTrue($account !== null, 'ต้องหาเจ้าของเว็บเจอ');
     assertSame('shopowner', $account->username, 'ชื่อบัญชี MariaDB ต้องตรงกับบัญชีระบบ');
 
-    // ฐานข้อมูลที่ไม่ได้ผูกกับเว็บของลูกค้าไม่ถูกแตะ — ผู้ดูแลตั้งชื่ออะไรก็ได้
-    assertSame(null, $reflection->invoke(new Phpcp\Agent\Capability\DbCreate(), $context, 0), 'ไม่มีเว็บ = ไม่มีคำนำหน้า');
+    /*
+     * มาจากบัญชีโดยตรง — ฟอร์มหน้าฐานข้อมูลให้เลือก "บัญชีเจ้าของ" จากรายการ
+     *
+     * ต้องได้คำตอบเดียวกับตอนมาจากเว็บ ไม่งั้นฐานข้อมูลที่ลูกค้าสร้างโดยไม่ผูกกับเว็บ
+     * จะไม่มีคำนำหน้าและไม่มีใครเปิดดูได้ใน phpMyAdmin
+     */
+    $direct = $reflection->invoke($capability, $context, $ownerId, 0);
+
+    assertTrue($direct !== null, 'เลือกบัญชีตรง ๆ ต้องหาเจอเหมือนกัน');
+    assertSame('shopowner', $direct->username, 'ต้องเป็นบัญชีเดียวกับที่เลือก');
+
+    // ไม่ระบุทั้งสองอย่าง = ฐานข้อมูลของเครื่อง ไม่ใช่ของลูกค้า — ผู้ดูแลตั้งชื่ออะไรก็ได้
+    assertSame(null, $reflection->invoke($capability, $context, 0, 0), 'ไม่มีเจ้าของ = ไม่มีคำนำหน้า');
 
     // ความยาวที่เหลือหลังหักคำนำหน้าต้องถูกคำนวณให้ถูก
     assertSame(64 - strlen('shopowner_'), 64 - strlen(DbAccountRepository::prefixFor('shopowner')), 'สูตรความยาวต้องตรงกัน');
+});
+
+test('ชื่อผู้ใช้ประจำฐานข้อมูลต้องคิดจากชื่อที่เติมคำนำหน้าแล้ว', static function (): void {
+    /*
+     * **ลูกค้าสองรายที่ตั้งชื่อฐานว่า `shop` เหมือนกันต้องไม่ไปชนผู้ใช้คนเดียวกัน**
+     *
+     * ของเดิมคิดชื่อผู้ใช้ปริยายจากชื่อฐาน**ก่อน**เติมคำนำหน้า ทั้งคู่จึงได้ `shop_user`
+     * · รายที่สองสร้างไม่ได้พร้อมข้อความที่พูดถึงชื่อที่เขาไม่เคยพิมพ์ และถ้าวันหนึ่ง
+     * `CREATE USER` ถูกเปลี่ยนเป็น `IF NOT EXISTS` มันจะกลายเป็นการยกฐานข้อมูลของ
+     * ลูกค้ารายที่สองให้ผู้ใช้ของรายแรกทันที
+     *
+     * ชื่อที่ถูกจองไปแล้วบนเครื่องต้องได้ส่วนต่อท้ายสุ่ม ไม่ใช่ถูกใช้ซ้ำ
+     */
+    $capability = new Phpcp\Agent\Capability\DbCreate();
+    $method = new ReflectionMethod($capability, 'dedicatedUser');
+    $executor = new Phpcp\Agent\Executor\SandboxExecutor(sys_get_temp_dir() . '/phpcp-dbuser-' . getmypid());
+
+    $alice = $method->invoke($capability, $executor, 'alice_shop', 'localhost');
+    $bob = $method->invoke($capability, $executor, 'bob_shop', 'localhost');
+
+    assertSame('alice_shop_user', $alice, 'ชื่อผู้ใช้ต้องมาจากชื่อฐานที่เติมคำนำหน้าแล้ว');
+    assertSame('bob_shop_user', $bob, 'ลูกค้าอีกรายต้องได้ชื่อของตัวเอง');
+    assertTrue($alice !== $bob, 'สองรายที่ตั้งชื่อฐานเหมือนกันต้องไม่ได้ผู้ใช้คนเดียวกัน');
+
+    // ยาวเกิน 32 ตัวอักษรต้องถูกตัด ไม่ใช่ปล่อยให้ MariaDB ปฏิเสธทีหลัง
+    $long = $method->invoke($capability, $executor, str_repeat('x', 60), 'localhost');
+
+    assertTrue(strlen($long) <= 32, 'ชื่อผู้ใช้ต้องไม่เกิน 32 ตัวอักษรตามที่ MariaDB รับได้');
+});
+
+test('ลูกค้าสร้างฐานข้อมูลให้บัญชีคนอื่นไม่ได้', static function (): void {
+    /*
+     * รายการบัญชีในฟอร์มถูกกรองตามสิทธิ์แล้ว แต่รายการนั้นเป็นความสะดวกของคนกรอกฟอร์ม
+     * **ไม่ใช่ด่าน** · ด่านอยู่ที่นี่ ที่ซึ่งคำขอที่ถูกแก้ด้วยมือถูกปฏิเสธ
+     */
+    $db = migratedDb();
+    $users = new Phpcp\Domain\UserRepository($db);
+
+    $mine = $users->createHostingAccount('mineown', 'Mine-Own-Password-11', 'mine@example.com');
+    $theirs = $users->createHostingAccount('theirown', 'Their-Own-Password-11', 'their@example.com');
+
+    $db->update('users', ['system_user' => 'mineown'], ['id' => $mine]);
+    $db->update('users', ['system_user' => 'theirown'], ['id' => $theirs]);
+
+    $capability = new Phpcp\Agent\Capability\DbCreate();
+    $method = new ReflectionMethod($capability, 'assertOwnerAccess');
+    $owner = Phpcp\Domain\UserAccount::fromRow($db->first('SELECT * FROM users WHERE id = :id', ['id' => $theirs]));
+
+    $customer = new Context(
+        new Actor($mine, 'mineown', Permissions::WEBADMIN, '127.0.0.1', 'test'),
+        Config::load(PHPCP_ROOT),
+        $db,
+    );
+
+    assertRejects(
+        Phpcp\Agent\PermissionDenied::class,
+        static fn () => $method->invoke($capability, $customer, $owner),
+        'ลูกค้าต้องเลือกบัญชีของคนอื่นไม่ได้',
+    );
+
+    // ของตัวเองต้องผ่าน — ไม่ใช่ปฏิเสธทุกกรณีแล้วเทสต์ผ่าน
+    $own = Phpcp\Domain\UserAccount::fromRow($db->first('SELECT * FROM users WHERE id = :id', ['id' => $mine]));
+    $method->invoke($capability, $customer, $own);
+    TestRunner::$assertions++;
+
+    // ผู้ดูแลเลือกบัญชีไหนก็ได้
+    $admin = new Context(
+        new Actor(1, 'admin', Permissions::SUPERADMIN, '127.0.0.1', 'test'),
+        Config::load(PHPCP_ROOT),
+        $db,
+    );
+
+    $method->invoke($capability, $admin, $owner);
+    TestRunner::$assertions++;
+});
+
+test('เว็บไซต์ที่เลือกต้องเป็นของบัญชีเจ้าของฐานข้อมูล', static function (): void {
+    /*
+     * ทั้งบัญชีและเว็บมาจากฟอร์มเดียวกัน จึงขัดกันเองได้ · ฐานข้อมูลที่ถูกบันทึกไว้กับ
+     * เว็บของลูกค้าอีกรายจะไปโผล่ในรายการของเขา เข้ารอบสำรองของเขา และกินโควตาของเขา
+     */
+    $db = migratedDb();
+    $users = new Phpcp\Domain\UserRepository($db);
+    $now = time();
+
+    $a = $users->createHostingAccount('ownera', 'Owner-A-Password-11', 'a@example.com');
+    $b = $users->createHostingAccount('ownerb', 'Owner-B-Password-11', 'b@example.com');
+    $db->update('users', ['system_user' => 'ownera'], ['id' => $a]);
+    $db->update('users', ['system_user' => 'ownerb'], ['id' => $b]);
+
+    $siteOfB = $db->insert('sites', [
+        'primary_domain' => 'b.example.com', 'docroot' => '/home/ownerb/public_html',
+        'php_version' => '8.4', 'owner_user_id' => $b, 'created_at' => $now, 'updated_at' => $now,
+    ]);
+
+    $context = new Context(
+        new Actor(1, 'admin', Permissions::SUPERADMIN, '127.0.0.1', 'test'),
+        Config::load(PHPCP_ROOT),
+        $db,
+    );
+
+    $capability = new Phpcp\Agent\Capability\DbCreate();
+    $method = new ReflectionMethod($capability, 'assertSiteBelongsTo');
+    $accountA = Phpcp\Domain\UserAccount::fromRow($db->first('SELECT * FROM users WHERE id = :id', ['id' => $a]));
+
+    assertRejects(
+        Phpcp\Agent\ValidationError::class,
+        static fn () => $method->invoke($capability, $context, $siteOfB, $accountA),
+        'เว็บของอีกบัญชีต้องถูกปฏิเสธ',
+    );
+
+    // ไม่ผูกกับเว็บเลยต้องผ่าน — ฐานข้อมูลไม่จำเป็นต้องมีเว็บ
+    $method->invoke($capability, $context, 0, $accountA);
+    TestRunner::$assertions++;
 });
 
 test('เส้นทางเข้า phpMyAdmin ต้องเป็น POST เท่านั้น', static function (): void {
@@ -164,11 +292,24 @@ test('เส้นทางเข้า phpMyAdmin ต้องเป็น POST
     assertSame('db.view', $route['route']->permission, 'ต้องใช้สิทธิ์ db.view');
 
     // หน้าเว็บต้องไม่มีทางเข้าที่ข้ามด่าน CSRF ไปได้ — ลิงก์ตรงคือทางแบบนั้น
-    $page = (string) file_get_contents(PHPCP_ROOT.'/public/assets/spa/templates/databases.html');
+    //
+    // ตัดคอมเมนต์ทิ้งก่อนเทียบ · คำอธิบายที่บอกว่า "ห้ามทำแบบนี้" มีเส้นทางนั้นอยู่ในตัว
+    // อยู่แล้ว การจับคำดิบ ๆ จึงทำให้เทสต์แดงเพราะคำอธิบาย ไม่ใช่เพราะโค้ด
+    $page = (string) preg_replace(
+        '/<!--.*?-->/s',
+        '',
+        (string) file_get_contents(PHPCP_ROOT.'/public/assets/spa/templates/databases.html'),
+    );
 
+    /*
+     * เดิมตรวจแค่ `href="/phpmyadmin` ซึ่งจับปุ่มในตารางไม่ได้เลย — มันเป็น
+     * `data-row-actions` ที่ใส่เส้นทางไว้ในคีย์ `url` · ผลคือปุ่มของทุกแถวพาไปที่
+     * phpMyAdmin แบบ GET ที่ไม่มี session ผู้ใช้จึงเจอหน้าล็อกอินของ phpMyAdmin
+     * แทนฐานข้อมูลของตัวเอง และไม่มีเทสต์ไหนฟ้อง
+     */
     assertTrue(
-        !str_contains($page, 'href="/phpmyadmin'),
-        'หน้าเว็บต้องไม่มีลิงก์ตรงไป phpMyAdmin — ต้องยิง POST ที่มี CSRF token',
+        !str_contains($page, '/phpmyadmin/index.php'),
+        'หน้าเว็บต้องไม่มีเส้นทางตรงไป phpMyAdmin ไม่ว่าจะในรูป href หรือ data-row-actions',
     );
 
     // รหัสผ่านฐานข้อมูลต้องไม่เคยผ่านมือ JavaScript — คำตอบมีแค่ URL ปลายทาง

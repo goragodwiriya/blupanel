@@ -39,6 +39,8 @@ final class MariaDbSimulator implements Simulator
             str_contains(strtoupper($sql), 'INFORMATION_SCHEMA.TABLES') => $this->sizes($argv, $state),
             preg_match('/^CREATE DATABASE `([^`]+)`/i', $sql, $m) === 1 => $this->createDatabase($argv, $state, $m[1]),
             preg_match('/^DROP DATABASE `([^`]+)`/i', $sql, $m) === 1 => $this->dropDatabase($argv, $state, $m[1]),
+            preg_match('/^SELECT 1 AS found FROM mysql\.user WHERE User = \'([^\']*)\' AND Host = \'([^\']*)\'/i', $sql, $m) === 1
+                => $this->userExists($argv, $state, $m[1], $m[2]),
             preg_match('/^CREATE USER \'([^\']+)\'@\'([^\']+)\'/i', $sql, $m) === 1 => $this->createUser($argv, $state, $m[1], $m[2]),
             preg_match('/^DROP USER \'([^\']+)\'@\'([^\']+)\'/i', $sql, $m) === 1 => $this->dropUser($argv, $state, $m[1], $m[2]),
             preg_match('/^ALTER USER /i', $sql) === 1 => $this->ok($argv),
@@ -91,6 +93,27 @@ final class MariaDbSimulator implements Simulator
         $state->write('databases', $databases);
 
         return $this->ok($argv);
+    }
+
+    /**
+     * Answers "does this MariaDB user already exist" from the sandbox's own state
+     *
+     * Needed because a name that is already taken is now what decides whether a
+     * new database's dedicated user gets a random suffix (see
+     * `DbCreate::dedicatedUser`) — without this, creating any database in
+     * sandbox mode fails outright on a query the real server answers fine.
+     *
+     * The header row matters: the client reads tab-separated output where the
+     * first line is the column names, so a bare value would be read as the header
+     * and the result would come back empty.
+     */
+    private function userExists(array $argv, SandboxState $state, string $user, string $host): ExecResult
+    {
+        $users = $state->read('dbusers');
+
+        return isset($users[$user . '@' . $host])
+            ? $this->rows($argv, ['found', '1'])
+            : $this->rows($argv, ['found']);
     }
 
     private function createUser(array $argv, SandboxState $state, string $user, string $host): ExecResult

@@ -20,13 +20,6 @@
         <div class="tablebody">
           <table class="table border fullwidth" data-table="databases" data-source="/api/v2/databases" data-default-sort="name asc" data-page-size="25" data-search-columns="name"
                  data-row-actions='{
-                    "phpmyadmin": {
-                     "title": "Open phpMyAdmin",
-                     "className": "btn btn-success icon-database",
-                     "method": "get",
-                     "target": "_blank",
-                     "url": "/phpmyadmin/index.php?route=/database/structure&db={name}"
-                   },
                    "delete": {
                      "title": "Delete",
                      "className": "btn btn-danger icon-delete",
@@ -43,6 +36,21 @@
                 <th data-field="size" data-format="bytes" class="center" data-cell-class="center" data-i18n>{LNG_Size}</th>
                 <th data-field="charset" class="center" data-cell-class="center" data-empty-text="—" data-i18n>{LNG_Charset}</th>
                 <th data-field="site" data-empty-text="—" data-i18n>{LNG_Website}</th>
+                <!--
+                  ปุ่มเปิด phpMyAdmin ต้องเป็นตัวจัดรูปแบบ ไม่ใช่ data-row-actions
+
+                  การเปิดเป็นสองจังหวะที่แยกกันไม่ได้: POST ที่มี CSRF token เพื่อสร้าง
+                  session ฝั่ง phpMyAdmin (auth_type = signon) แล้วค่อยพาไปที่ URL ที่ได้
+                  · ลิงก์ตรงไปที่ `/phpmyadmin/index.php?...` แบบเดิมเป็น GET ที่ไม่มี
+                  session — phpMyAdmin จึงเด้งหน้าล็อกอินของตัวเองขึ้นมาแทน ซึ่งคือ
+                  อาการ "กดปุ่มในตารางแล้วไม่ทำงาน"
+
+                  ผูกกับ `exists_on_server` เพราะปุ่มควรขึ้นเฉพาะฐานที่มีอยู่บน MariaDB
+                  จริง — แถวที่ panel รู้จักแต่เครื่องไม่มีแล้ว กดไปก็เจอหน้าผิดพลาดของ
+                  phpMyAdmin (และคอลัมน์ `name` ถูกใช้เป็นชื่อฐานไปแล้ว ตารางเดียวมี
+                  data-field ซ้ำกันไม่ได้)
+                -->
+                <th data-field="exists_on_server" data-formatter="formatDatabaseActions" data-i18n>{LNG_Open}</th>
               </tr>
             </thead>
             <tbody></tbody>

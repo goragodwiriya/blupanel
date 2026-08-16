@@ -161,6 +161,32 @@
     };
   }
 
+  /**
+   * ปุ่ม "เปิดใน phpMyAdmin" ของแต่ละแถวในตารางฐานข้อมูล
+   *
+   * **ต้องเป็นตัวจัดรูปแบบ ไม่ใช่ `data-row-actions`** · การเปิดเป็นสองจังหวะที่แยก
+   * กันไม่ได้: POST ที่มี CSRF token เพื่อสร้าง session ฝั่ง phpMyAdmin แล้วค่อยพาไป
+   * ที่ URL ที่ได้ — ซึ่ง `data-row-actions` (ที่ประกอบได้แค่ลิงก์หรือคำขอเดียว)
+   * ทำไม่ได้ · ของเดิมลิงก์ตรงไปที่ `/phpmyadmin/index.php?...` เป็น GET ที่ไม่มี
+   * session ผู้ใช้จึงเจอหน้าล็อกอินของ phpMyAdmin แทนฐานข้อมูลของตัวเอง
+   *
+   * ปุ่มเดียวกับที่หัวหน้าจอใช้ ต่างกันแค่มี `data-db` ติดไปด้วย
+   */
+  window.formatDatabaseActions = (cell, existsOnServer, row) => {
+    cell.textContent = '';
+
+    // ฐานที่ panel รู้จักแต่ไม่มีอยู่บนเครื่องแล้ว กดไปก็ได้แต่หน้าผิดพลาด
+    if (existsOnServer === false) return;
+
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'btn small btn-success icon-database';
+    open.dataset.action = 'click.prevent:openPhpMyAdmin';
+    open.dataset.db = String((row && row.name) || '');
+    open.title = t('Open phpMyAdmin');
+    cell.appendChild(open);
+  };
+
   window.formatBackupFilesToggle = backupTargetToggle('backup_files');
   window.formatBackupDatabaseToggle = backupTargetToggle('backup_database');
 })();

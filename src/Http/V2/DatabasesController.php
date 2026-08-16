@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Phpcp\Http\V2;
 
+use Phpcp\Domain\DbAccountRepository;
 use Phpcp\Http\ApiController;
 use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
+use Phpcp\Security\Permissions;
 
 /**
  * ฐานข้อมูล MariaDB — `/api/v2/databases`
@@ -78,8 +80,24 @@ final class DatabasesController extends ApiController
      */
     public function form(Request $request): Response
     {
+        $owner = $this->scopeOwner();
+
+        /*
+         * รายชื่อบัญชีกับเว็บไซต์เดินทางมาใน `data` **ไม่ใช่ `meta`**
+         *
+         * `meta.*` ผูกกับ `data-for`/`data-text` ของ Now.js ไม่ได้ — คอมโพเนนต์เห็น
+         * เฉพาะชั้น `data` · รายการที่ใส่ไว้ใน meta จะกลายเป็น <select> ว่างเปล่า
+         * โดยไม่มีข้อผิดพลาดอะไรให้เห็นเลย (เสียเวลาไปแล้วหนึ่งรอบในหน้า Mailboxes)
+         */
         return $this->ok(
-            ['name' => '', 'username' => '', 'privileges' => 'readwrite'],
+            [
+                'name' => '',
+                'privileges' => 'readwrite',
+                'owner_user_id' => $owner ?? 0,
+                'site_id' => 0,
+                'accounts' => $this->selectableAccounts($owner),
+                'sites' => $this->selectableSites($owner),
+            ],
             [],
             [[
                 'type' => 'modal',
@@ -91,40 +109,160 @@ final class DatabasesController extends ApiController
         );
     }
 
+    /** null = ผู้ดูแลที่เห็นทั้งเครื่อง · ค่าอื่น = ลูกค้าที่เห็นเฉพาะของตัวเอง */
+    private function scopeOwner(): ?int
+    {
+        return $this->ctx->role() === Permissions::WEBADMIN ? $this->ctx->userId() : null;
+    }
+
+    /**
+     * บัญชีโฮสติ้งที่ผู้เรียกเลือกเป็นเจ้าของฐานข้อมูลได้
+     *
+     * **ลูกค้าเลือกได้แค่ตัวเอง** จึงเหลือรายการเดียว · ผู้ดูแลเห็นทุกบัญชีที่มีบ้านจริง
+     * (บัญชีที่ยังไม่มีบัญชีระบบไม่มี prefix ให้ใช้ และยังไม่มีที่ให้เก็บอะไร)
+     *
+     * ชื่อที่แสดงมี prefix ติดไปด้วย เพราะนั่นคือสิ่งที่ผู้ใช้ต้องเห็นก่อนพิมพ์ชื่อ
+     * ฐานข้อมูล — ไม่งั้นเขาจะพิมพ์ `shop` แล้วประหลาดใจที่ได้ `alice_shop`
+     *
+     * @return list<array<string,mixed>>
+     */
+    private function selectableAccounts(?int $owner): array
+    {
+        $sql = 'SELECT id, username, COALESCE(system_user, username) AS system_user
+                  FROM users
+                 WHERE role = :role AND system_user IS NOT NULL';
+        $params = ['role' => Permissions::WEBADMIN];
+
+        if ($owner !== null) {
+            $sql .= ' AND id = :id';
+            $params['id'] = $owner;
+        }
+
+        return array_map(
+            static fn (array $row): array => [
+                'id' => (int) $row['id'],
+                'username' => (string) $row['username'],
+                'prefix' => DbAccountRepository::prefixFor((string) $row['system_user']),
+                'label' => sprintf('%s (%s…)', $row['username'], DbAccountRepository::prefixFor((string) $row['system_user'])),
+            ],
+            $this->app->db()->all($sql . ' ORDER BY username', $params),
+        );
+    }
+
+    /**
+     * เว็บไซต์ที่ผูกฐานข้อมูลนี้ไว้ได้ · รายการแรกคือ "ไม่ผูกกับเว็บไซต์"
+     *
+     * ตัวเลือก "ไม่ผูก" มาจากเซิร์ฟเวอร์ ไม่ใช่ `<option>` นิ่ง ๆ ในเทมเพลต เพราะ
+     * `data-for` เขียนทับลูกทั้งหมดของ `<select>` — option ที่เขียนไว้ในเทมเพลตจะหาย
+     * ไปทันทีที่ข้อมูลมาถึง
+     *
+     * **การผูกกับเว็บมีผลจริง ไม่ใช่แค่ป้าย** — รอบสำรองอัตโนมัติหาฐานข้อมูลของเว็บ
+     * จากค่านี้ ฐานที่ไม่ผูกกับเว็บไหนเลยจึงไม่ถูกสำรองให้
+     *
+     * @return list<array<string,mixed>>
+     */
+    private function selectableSites(?int $owner): array
+    {
+        $sql = 'SELECT id, primary_domain, owner_user_id FROM sites';
+        $params = [];
+
+        if ($owner !== null) {
+            $sql .= ' WHERE owner_user_id = :owner';
+            $params['owner'] = $owner;
+        }
+
+        $sites = array_map(
+            static fn (array $row): array => [
+                'id' => (int) $row['id'],
+                'owner_user_id' => (int) $row['owner_user_id'],
+                'label' => (string) $row['primary_domain'],
+            ],
+            $this->app->db()->all($sql . ' ORDER BY primary_domain', $params),
+        );
+
+        return array_merge(
+            [['id' => 0, 'owner_user_id' => 0, 'label' => $this->t('Not linked to a website')]],
+            $sites,
+        );
+    }
+
     public function store(Request $request): Response
     {
         $result = $this->agent()->data('db.create', [
             'name' => trim($request->payloadString('name')),
-            'username' => trim($request->payloadString('username')),
+            // ชื่อผู้ใช้ฐานข้อมูลไม่รับจากฟอร์มอีกแล้ว — capability ตั้งให้จากชื่อฐาน
+            // ที่เติม prefix แล้ว (ดู DbCreate::dedicatedUser) เพื่อไม่ให้ลูกค้าสองราย
+            // ที่ตั้งชื่อฐานเหมือนกันไปชนผู้ใช้คนเดียวกัน
             'host' => $request->payloadString('host') ?: 'localhost',
             'privileges' => $request->payloadString('privileges') ?: 'readwrite',
+            'owner_user_id' => (int) $request->payload('owner_user_id', 0),
             'site_id' => (int) $request->payload('site_id', 0),
             'charset' => $request->payloadString('charset') ?: 'utf8mb4',
         ], $this->ctx->actor($request));
 
-        // รหัสผ่านที่สุ่มให้ต้องอยู่ในกล่องที่ผู้ใช้กดปิดเอง — ไม่มีที่อื่นให้ดูย้อนหลัง
-        return $this->done(
-            $this->t('Database {name} created', ['name' => (string) $result['name']]),
-            [
-                ['type' => 'modal', 'action' => 'close'],
-                [
-                    'type' => 'modal',
-                    'action' => 'show',
-                    'title' => 'Database created',
-                    'content' => sprintf(
-                        '<p>ฐานข้อมูล <strong>%s</strong> · ผู้ใช้ <strong>%s</strong></p>'
-                        . '<p>รหัสผ่าน — คัดลอกไว้ก่อนปิดหน้าต่างนี้ เพราะระบบไม่เก็บไว้ที่ใดอีก</p>'
-                        . '<p class="mono selectable">%s</p>',
-                        htmlspecialchars((string) $result['name'], ENT_QUOTES, 'UTF-8'),
-                        htmlspecialchars((string) ($result['username'] ?? ''), ENT_QUOTES, 'UTF-8'),
-                        htmlspecialchars((string) ($result['password'] ?? ''), ENT_QUOTES, 'UTF-8'),
+        $message = $this->t('Database {name} created', ['name' => (string) $result['name']]);
+
+        return $this->done($message, $this->createdActions($result, $message), $result, 201)
+            ->withHeader('Location', '/api/v2/databases/' . rawurlencode((string) $result['name']));
+    }
+
+    /**
+     * คำสั่งหน้าจอหลังสร้างฐานข้อมูลสำเร็จ — ลำดับเดียวกับทุกหน้าในระบบ
+     *
+     * `ปิด Modal → แถบแจ้งผล → (หน้าต่างรหัสผ่าน) → โหลดตารางใหม่`
+     *
+     * สามอย่างที่เคยผิดตรงนี้:
+     *
+     *   1. **ไม่มีแถบแจ้งผลเลย** — กดบันทึกแล้ว Modal หายไปเฉย ๆ ผู้ใช้ที่ไม่ได้จ้อง
+     *      ตารางอยู่จึงไม่รู้ว่าสำเร็จหรือเงียบหาย แล้วมักกดซ้ำ
+     *   2. **หน้าต่างรหัสผ่านส่ง `content`** ซึ่ง `ResponseHandler` ไม่รู้จัก (มันอ่าน
+     *      `html` หรือ `template`) — หน้าต่างจึงเปิดมาว่างเปล่า และรหัสที่ไม่มีที่อื่น
+     *      ให้ดูย้อนหลังก็หายไปพร้อมกัน
+     *   3. ข้อความในหน้าต่างเป็นภาษาไทยฝังในโค้ด ไม่ผ่านตัวแปลภาษา
+     *
+     * @param array<string,mixed> $result
+     * @return list<array<string,mixed>>
+     */
+    private function createdActions(array $result, string $message): array
+    {
+        $actions = [
+            ['type' => 'modal', 'action' => 'close'],
+            ['type' => 'notification', 'level' => 'success', 'message' => $message],
+        ];
+
+        $password = (string) ($result['password'] ?? '');
+
+        // รหัสที่สุ่มให้ต้องอยู่ในกล่องที่ผู้ใช้กดปิดเอง ไม่ใช่แถบที่หายไปเองใน 5 วินาที
+        if ($password !== '') {
+            $actions[] = [
+                'type' => 'modal',
+                'action' => 'show',
+                'title' => $this->t('Database created'),
+                'titleClass' => 'icon-database',
+                'html' => sprintf(
+                    '<p>%s</p><p class="mono selectable">%s</p><p>%s</p><p class="mono selectable">%s</p>',
+                    htmlspecialchars(
+                        $this->t('Database {name} · user {user}', [
+                            'name' => (string) $result['name'],
+                            'user' => (string) ($result['username'] ?? ''),
+                        ]),
+                        ENT_QUOTES,
+                        'UTF-8',
                     ),
-                ],
-                ['type' => 'redirect', 'url' => 'reload', 'target' => 'databases'],
-            ],
-            $result,
-            201,
-        )->withHeader('Location', '/api/v2/databases/' . rawurlencode((string) $result['name']));
+                    htmlspecialchars((string) $result['name'], ENT_QUOTES, 'UTF-8'),
+                    htmlspecialchars(
+                        $this->t('Copy this password before closing — it is not stored anywhere'),
+                        ENT_QUOTES,
+                        'UTF-8',
+                    ),
+                    htmlspecialchars($password, ENT_QUOTES, 'UTF-8'),
+                ),
+            ];
+        }
+
+        $actions[] = ['type' => 'redirect', 'url' => 'reload', 'target' => 'databases'];
+
+        return $actions;
     }
 
     /**
@@ -166,11 +304,19 @@ final class DatabasesController extends ApiController
             [[
                 'type' => 'modal',
                 'action' => 'show',
-                'title' => 'New password',
-                'content' => sprintf(
-                    '<p>รหัสผ่านใหม่ของผู้ใช้ฐานข้อมูล <strong>%s</strong> — คัดลอกไว้ก่อนปิดหน้าต่างนี้</p>'
-                    . '<p class="mono selectable">%s</p>',
-                    htmlspecialchars((string) ($result['username'] ?? ''), ENT_QUOTES, 'UTF-8'),
+                'title' => $this->t('New password'),
+                'titleClass' => 'icon-lock',
+                // `html` ไม่ใช่ `content` — ResponseHandler อ่านคีย์นี้เท่านั้น
+                // (ของเดิมส่ง `content` หน้าต่างจึงเปิดมาว่างเปล่าพร้อมรหัสที่หายไปด้วย)
+                'html' => sprintf(
+                    '<p>%s</p><p class="mono selectable">%s</p>',
+                    htmlspecialchars(
+                        $this->t('New password for database user {user}', [
+                            'user' => (string) ($result['username'] ?? ''),
+                        ]) . ' — ' . $this->t('Copy this password before closing — it is not stored anywhere'),
+                        ENT_QUOTES,
+                        'UTF-8',
+                    ),
                     htmlspecialchars((string) ($result['password'] ?? ''), ENT_QUOTES, 'UTF-8'),
                 ),
             ]],

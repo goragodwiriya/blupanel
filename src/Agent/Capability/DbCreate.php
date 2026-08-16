@@ -6,6 +6,7 @@ namespace Phpcp\Agent\Capability;
 
 use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
+use Phpcp\Agent\PermissionDenied;
 use Phpcp\Agent\ValidationError;
 use Phpcp\Domain\DbAccountRepository;
 use Phpcp\Domain\UserAccount;
@@ -50,17 +51,22 @@ final class DbCreate extends DbAccountCapability
 
     public function validate(array $args): array
     {
-        $name = MariaDbManager::assertDatabaseName(Validator::requireString($args, 'name', 64));
-
-        // The default username is inferred from the database name, trimmed to fit the 32-character limit
-        $user = Validator::optionalString($args, 'username', '', 32);
-        if ($user === '') {
-            $user = substr(preg_replace('/_db$/', '', $name) . '_user', 0, 32);
-        }
-
         return [
-            'name' => $name,
-            'username' => MariaDbManager::assertUserName($user),
+            // Left unqualified here on purpose — the owner's prefix is added in
+            // run(), which is the only place that knows who the owner is
+            'name' => MariaDbManager::assertDatabaseName(Validator::requireString($args, 'name', 64)),
+            /*
+             * **The dedicated user's name is never accepted from the caller**
+             *
+             * It used to be a free-text field on the form, which meant two things
+             * that both went wrong: a caller could point a new database at an
+             * existing MariaDB user belonging to a different customer, and the
+             * default (`<name>_user`) was derived from the *unqualified* name —
+             * so two customers who each created `shop` both landed on `shop_user`,
+             * and the second one's CREATE USER failed with a name they never typed.
+             *
+             * It is derived from the qualified name instead (see run()).
+             */
             'host' => Validator::requireEnum(
                 ['host' => $args['host'] ?? 'localhost'],
                 'host',
@@ -70,26 +76,36 @@ final class DbCreate extends DbAccountCapability
                 Validator::optionalString($args, 'privileges', 'readwrite', 16),
             ),
             'site_id' => isset($args['site_id']) ? Validator::requireInt($args, 'site_id', 0) : 0,
+            // 0 = no hosting account chosen · the owner is then taken from the
+            // site, and failing that the database belongs to the machine itself
+            'owner_user_id' => Validator::optionalInt($args, 'owner_user_id', 0, 0),
             'charset' => Validator::optionalString($args, 'charset', 'utf8mb4', 32),
         ];
     }
 
     /**
-     * The account of the site owner this database will be bound to — null = not
-     * bound to a customer's website
+     * The hosting account that will own this database — null = the machine's own,
+     * not a customer's
      *
-     * Used both to determine the database name's prefix and to decide who to grant to
+     * Decides two things: the prefix the database name gets, and which MariaDB
+     * account is granted access to it so phpMyAdmin shows it.
+     *
+     * The caller may name the account directly (`owner_user_id`, which is what
+     * the form sends), or leave it to be taken from the website the database is
+     * bound to. Naming it directly is what lets a database exist without being
+     * tied to any website at all — a customer's second database for a tool that
+     * isn't a site yet still has to belong to somebody.
      */
-    private function ownerAccount(Context $context, int $siteId): ?UserAccount
+    private function ownerAccount(Context $context, int $ownerUserId, int $siteId): ?UserAccount
     {
-        if ($siteId <= 0) {
-            return null;
-        }
-
-        $row = $context->db->first(
-            'SELECT u.* FROM sites s JOIN users u ON u.id = s.owner_user_id WHERE s.id = :id',
-            ['id' => $siteId],
-        );
+        $row = $ownerUserId > 0
+            ? $context->db->first('SELECT * FROM users WHERE id = :id', ['id' => $ownerUserId])
+            : ($siteId > 0
+                ? $context->db->first(
+                    'SELECT u.* FROM sites s JOIN users u ON u.id = s.owner_user_id WHERE s.id = :id',
+                    ['id' => $siteId],
+                )
+                : null);
 
         if ($row === null || $row['role'] !== Permissions::WEBADMIN || $row['system_user'] === null) {
             return null;
@@ -103,30 +119,110 @@ final class DbCreate extends DbAccountCapability
     }
 
     /**
-     * Checks the customer's quota before creating a database
+     * Refuses a website that belongs to somebody other than the chosen account
+     *
+     * Both values come from the same form, so they can disagree — and a database
+     * recorded against another customer's website would show up in that
+     * customer's list and get backed up on their round, with their quota paying
+     * for it.
      *
      * @throws ValidationError
      */
-    private function assertQuota(Context $context, int $siteId): void
+    private function assertSiteBelongsTo(Context $context, int $siteId, ?UserAccount $owner): void
     {
         if ($siteId <= 0) {
-            return; // No website = no quota to check
+            return;
         }
 
-        // Finds the website's owner
-        $site = $context->db->first('SELECT owner_user_id FROM sites WHERE id = :id', ['id' => $siteId]);
-        if ($site === null) {
-            return; // No owner found
+        $siteOwner = (int) $context->db->value(
+            'SELECT owner_user_id FROM sites WHERE id = :id',
+            ['id' => $siteId],
+            0,
+        );
+
+        if ($owner === null || $siteOwner !== $owner->userId) {
+            throw new ValidationError('The chosen website does not belong to that account');
+        }
+    }
+
+    /**
+     * The name of this database's own dedicated MariaDB user
+     *
+     * Derived from the **qualified** database name, so two customers who each
+     * create `shop` get `alice_shop_user` and `bob_shop_user` instead of both
+     * reaching for `shop_user` — where the second one would either fail with a
+     * name they never typed, or (worse, had CREATE USER been forgiving) hand a
+     * second customer's database to the first customer's user.
+     *
+     * MariaDB caps a username at 32 characters, so long names get trimmed, and a
+     * trim can collide again. A name already taken on the machine therefore gets
+     * a short random suffix rather than being reused — reuse is the one outcome
+     * that silently crosses the line between two customers.
+     */
+    private function dedicatedUser(Executor $executor, string $database, string $host): string
+    {
+        $manager = $this->manager();
+        $base = substr(preg_replace('/_db$/', '', $database) . '_user', 0, 32);
+
+        if (!$manager->userExists($executor, $base, $host)) {
+            return MariaDbManager::assertUserName($base);
         }
 
-        $ownerUserId = (int) ($site['owner_user_id'] ?? 0);
-        if ($ownerUserId <= 0) {
-            return; // No customer owner
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $candidate = substr($base, 0, 32 - 7) . '_' . bin2hex(random_bytes(3));
+
+            if (!$manager->userExists($executor, $candidate, $host)) {
+                return MariaDbManager::assertUserName($candidate);
+            }
+        }
+
+        throw new ValidationError('A free name for the database user could not be found — try a different database name');
+    }
+
+    /**
+     * A customer may only ever choose themselves as the owner
+     *
+     * The account list the form shows is already narrowed down, but that list is
+     * a convenience for the person filling in the form — it is not a gate. The
+     * gate is here, where a customer who edits the request by hand and names
+     * somebody else's account gets refused.
+     *
+     * @throws PermissionDenied
+     */
+    private function assertOwnerAccess(Context $context, ?UserAccount $owner): void
+    {
+        $actor = $context->actor;
+
+        if ($owner === null
+            || $actor->userId === 0
+            || in_array($actor->role, [Permissions::SUPERADMIN, Permissions::SYSADMIN], true)) {
+            return;
+        }
+
+        if ($owner->userId !== $actor->userId) {
+            throw new PermissionDenied('A database can only be created for your own account');
+        }
+    }
+
+    /**
+     * Checks the owning account's quota before creating a database
+     *
+     * Used to be looked up from the website, which meant a database created
+     * without one skipped the check entirely — a customer could fill the machine
+     * with databases as long as they never bound any of them to a site.
+     *
+     * @throws ValidationError
+     */
+    private function assertQuota(Context $context, ?UserAccount $owner): void
+    {
+        // Not a customer's database — the machine's own quota is the disk itself
+        if ($owner === null) {
+            return;
         }
 
         $quota = new QuotaChecker(new UserRepository($context->db));
 
-        $result = $quota->checkOwnerCanCreate($ownerUserId, 'database', 1);
+        $result = $quota->checkOwnerCanCreate($owner->userId, 'database', 1);
         if (!$result['ok']) {
             throw new ValidationError($result['message']);
         }
@@ -141,14 +237,20 @@ final class DbCreate extends DbAccountCapability
         }
 
         $this->assertSiteAccess($context, $args['site_id']);
-        $this->assertQuota($context, $args['site_id']);
 
         // A customer's database is always prefixed with their account name —
         // MariaDB has one single namespace across the whole machine, so two
         // different customers couldn't both name a database `shop` without a
-        // prefix (a database an admin creates without binding it to a
-        // customer's site is left untouched)
-        $owner = $this->ownerAccount($context, $args['site_id']);
+        // prefix (a database an admin creates for the machine itself, with no
+        // account chosen, is left untouched)
+        $owner = $this->ownerAccount($context, $args['owner_user_id'], $args['site_id']);
+
+        $this->assertOwnerAccess($context, $owner);
+        $this->assertSiteBelongsTo($context, $args['site_id'], $owner);
+
+        // Checked against the account, not the website — a database that belongs
+        // to an account but no site still counts against that account's quota
+        $this->assertQuota($context, $owner);
 
         if ($owner !== null) {
             $qualified = DbAccountRepository::qualify($owner->username, $args['name']);
@@ -179,6 +281,7 @@ final class DbCreate extends DbAccountCapability
             throw new ValidationError("A database named {$args['name']} already exists on the machine");
         }
 
+        $args['username'] = $this->dedicatedUser($executor, $args['name'], $args['host']);
         $password = self::randomPassword();
 
         // Created on the machine first, then recorded in the panel — if the
