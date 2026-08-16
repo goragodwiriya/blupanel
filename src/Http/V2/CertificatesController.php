@@ -8,19 +8,21 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * ใบรับรอง SSL — `/api/v2/certificates`
+ * SSL certificates — `/api/v2/certificates`
  *
- * ทรัพยากรนี้ใช้ **site id เป็นตัวระบุ** ไม่ใช่ id ของใบรับรอง เพราะหนึ่งเว็บไซต์
- * มีใบรับรองได้ใบเดียวเสมอ (ครอบทุกโดเมนของเว็บนั้นในใบเดียว) การมี id แยกต่างหาก
- * จะทำให้ต้องถามสองรอบทุกครั้งว่า "เว็บนี้ใบไหน" โดยไม่ได้อะไรเพิ่ม
+ * This resource is identified by **site id**, not a certificate id, because
+ * one website always has exactly one certificate (covering all of that
+ * website's domains in the one certificate) — a separate id would mean asking
+ * twice every time "which certificate belongs to this website" for no extra benefit
  *
- * ข้อมูลอ่านจากไฟล์ใบรับรองจริงทุกครั้ง ไม่ใช่จากตารางในฐานข้อมูล — certbot ต่ออายุเอง
- * ผ่าน timer ของมันโดยไม่ผ่าน panel เลย ตารางจึงล้าหลังได้เสมอ (`cert.sync` ในเฟส A1
- * เป็นตัวไล่ให้ตารางตามทัน แต่แหล่งความจริงยังเป็นไฟล์)
+ * Data is read from the real certificate file every time, never a database
+ * table — certbot renews on its own through its own timer, never through the
+ * panel, so a table can always fall behind (`cert.sync` in phase A1 chases the
+ * table back into sync, but the file is still the source of truth)
  */
 final class CertificatesController extends HostingController
 {
-    /** ใบรับรองของทุกเว็บไซต์ที่ผู้เรียกมีสิทธิ์เห็น — กรองด้วย `site_id` ได้ (§4.5) */
+    /** Every certificate belonging to a website the caller has permission to see — filterable by `site_id` (§4.5) */
     public function index(Request $request): Response
     {
         $data = $this->agent()->data('ssl.list', [], $this->ctx->actor($request));
@@ -34,8 +36,9 @@ final class CertificatesController extends HostingController
             ));
         }
 
-        // เงื่อนไขของปุ่มในตารางอ่านได้เฉพาะค่าในแถวเดียวกัน — สิทธิ์จึงต้องมากับแถว
-        // ไม่ใช่ให้หน้าจอไปหาเอาจากที่อื่น · ตัวจริงที่กันคือ permission ของเส้นทาง API
+        // A button's condition in the table can only read values in the same
+        // row — so permission must travel with the row, not have the screen go
+        // find it elsewhere · the real guard is the API route's own permission check
         $manage = $this->ctx->can('ssl.manage');
 
         return $this->ok(
@@ -51,16 +54,17 @@ final class CertificatesController extends HostingController
     }
 
     /**
-     * แผ่ `certificate` ขึ้นมาไว้ระดับบนสุดของแถว
+     * Flatten `certificate` up to the row's top level
      *
-     * `ssl.list` ของ agent ซ้อนรายละเอียดใบรับรองไว้ในคีย์ `certificate` ซึ่งอ่านง่าย
-     * ตอนดูด้วยตา แต่**ตารางของหน้าจออ่านได้แค่คีย์ระดับบนสุด** — คอลัมน์สถานะ
-     * ผู้ออกใบรับรอง และวันหมดอายุจึงว่างเปล่ามาตลอดโดยที่ตารางยังขึ้นครบทุกแถว
-     * และ console ไม่มี error สักตัว
+     * The agent's `ssl.list` nests certificate details inside a `certificate`
+     * key, which reads easily by eye, but **the screen's table can only read
+     * top-level keys** — so the status, issuer, and expiry columns stayed
+     * empty the whole time while the table still showed every row and the
+     * console had not a single error
      *
-     * แผ่ที่นี่แทนที่จะให้หน้าจอเดินเข้าไปเอง เพราะนี่คือ **endpoint แบบรายการ** —
-     * รูปที่เหมาะกับมันคือแถวแบน ๆ หนึ่งแถวต่อหนึ่งเว็บ ส่วนรายละเอียดที่ซ้อนกัน
-     * เป็นรูปของทรัพยากรเดี่ยว
+     * Flattened here instead of having the screen reach in itself, because
+     * this is a **list endpoint** — the shape that fits it is a flat row, one
+     * per website, while nested detail is the shape of a single resource
      *
      * @param array<string,mixed> $row
      * @return array<string,mixed>
@@ -74,16 +78,17 @@ final class CertificatesController extends HostingController
 
         return $row + [
             'status' => $status,
-            // สีของป้ายมาจากฝั่งเซิร์ฟเวอร์ เทมเพลตจึงเขียน `pill-${status_tone}` ได้ตรง ๆ
+            // The pill's color comes from the server, so the template can write `pill-${status_tone}` directly
             'status_tone' => match ($status) {
                 'valid' => 'ok',
                 'expiring' => 'warn',
                 'expired', 'invalid' => 'danger',
                 default => 'muted',
             },
-            // null เมื่อไม่มีใบรับรอง (status=none) — ไม่ใช่ '' หรือ 0 · ตัวจัดรูปแบบมาตรฐาน
-            // ของตาราง (`data-format`, `data-empty-text`) แสดง "—" ให้เองเฉพาะค่า null/undefined
-            // เท่านั้น ค่า 0 จะถูกตีความเป็นวันที่จริง (1 ม.ค. 1970) ไม่ใช่ "ไม่มี"
+            // null when there's no certificate (status=none) — never '' or 0 · the
+            // table's standard formatters (`data-format`, `data-empty-text`) show
+            // "—" only for null/undefined values · a 0 would be interpreted as a
+            // real date (Jan 1, 1970), not "none"
             'source' => isset($certificate['source']) && $certificate['source'] !== '' ? (string) $certificate['source'] : null,
             'issuer' => isset($certificate['issuer']) && $certificate['issuer'] !== '' ? (string) $certificate['issuer'] : null,
             'subject' => isset($certificate['subject']) && $certificate['subject'] !== '' ? (string) $certificate['subject'] : null,
@@ -95,11 +100,12 @@ final class CertificatesController extends HostingController
     }
 
     /**
-     * ขอใบรับรองใหม่ให้เว็บไซต์
+     * Request a new certificate for a website
      *
-     * `method` เลือกได้ระหว่าง letsencrypt กับ self-signed · โหมด staging ของ
-     * Let's Encrypt มีไว้ทดสอบโดยไม่กิน rate limit ของ production ซึ่งพอโดนแล้ว
-     * ต้องรอเป็นสัปดาห์ — ค่านี้จึงต้องส่งผ่านได้จาก API ไม่ใช่มีแต่ในหน้าเว็บ
+     * `method` chooses between letsencrypt and self-signed · Let's Encrypt's
+     * staging mode exists for testing without eating into production's rate
+     * limit, which once hit means waiting a week — so this value must be
+     * passable through the API, not exist only on the web page
      */
     public function store(Request $request): Response
     {
@@ -128,7 +134,7 @@ final class CertificatesController extends HostingController
         )->withHeader('Location', '/api/v2/certificates');
     }
 
-    /** ต่ออายุใบรับรอง — `force` ใช้เมื่อยังไม่ถึงกำหนดแต่ต้องการต่อเลย */
+    /** Renew a certificate — `force` is used when it isn't due yet but a renewal is wanted anyway */
     public function renew(Request $request): Response
     {
         $siteId = $request->paramInt('site_id');
@@ -150,9 +156,9 @@ final class CertificatesController extends HostingController
     }
 
     /**
-     * เปลี่ยนโหมด HTTPS ของเว็บไซต์ (off / on / forced)
+     * Change a website's HTTPS mode (off / on / forced)
      *
-     * เป็น PUT เพราะเป็นการแทนที่ค่าทั้งค่า และสั่งซ้ำแล้วผลไม่เปลี่ยน
+     * A PUT because it replaces the whole value, and repeating it changes nothing further
      */
     public function setMode(Request $request): Response
     {
@@ -175,10 +181,11 @@ final class CertificatesController extends HostingController
     }
 
     /**
-     * ลบใบรับรอง — ต้องยืนยันด้วยชื่อโดเมน
+     * Delete a certificate — requires confirming with the domain name
      *
-     * capability ปิด HTTPS ให้ก่อนลบไฟล์เสมอ ไม่งั้น vhost จะชี้ไปยังไฟล์ที่ไม่มีอยู่
-     * แล้วเว็บทั้งเครื่องจะไม่ขึ้น (Apache ปฏิเสธทั้ง config ไม่ใช่แค่ vhost นั้น)
+     * The capability always turns off HTTPS before deleting the files, or the
+     * vhost would point at files that no longer exist and the whole machine's
+     * websites would go down (Apache rejects the entire config, not just that one vhost)
      */
     public function destroy(Request $request): Response
     {
