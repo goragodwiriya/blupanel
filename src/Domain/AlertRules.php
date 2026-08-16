@@ -7,42 +7,45 @@ namespace Phpcp\Domain;
 use Phpcp\Kernel\Db;
 
 /**
- * ตัดสินว่าอะไรผิดปกติและควรแจ้งเตือนเมื่อไร — PLAN-V2 เฟส E6
+ * Decide what's abnormal and when it should be notified — PLAN-V2 Phase E6
  *
- * **หัวใจของคลาสนี้คือ "เมื่อไรควรเงียบ" ไม่ใช่ "อะไรผิดปกติ"** — การตรวจว่าดิสก์เกิน 85%
- * เป็นเรื่องง่าย ส่วนที่ทำให้ระบบแจ้งเตือนใช้งานได้จริงคือการไม่ส่งข้อความเดิมซ้ำทุกนาที
- * จนคนปิดการแจ้งเตือนทิ้ง (ดูเหตุผลเต็มใน `db/migrations/0015_alert_state.sql`)
+ * **This class's real job is "when to stay quiet," not "what's abnormal"** —
+ * checking whether disk usage passed 85% is easy; what makes an alerting system
+ * actually usable is not resending the same message every minute until people turn
+ * notifications off entirely (full reasoning in `db/migrations/0015_alert_state.sql`).
  *
- * กฎการส่ง:
- *   - เข้าสู่สถานะผิดปกติครั้งแรก → ส่ง
- *   - ระดับแย่ลง (warning → critical) → ส่งทันที ไม่ต้องรอรอบ
- *   - ระดับเท่าเดิมหรือดีขึ้นแต่ยังผิดปกติ → เงียบจนครบรอบเตือนซ้ำ
- *   - กลับมาปกติ → ส่ง "หายแล้ว" ครั้งเดียวแล้วลืมสถานะ
+ * Sending rules:
+ *   - First time entering an abnormal state → send
+ *   - Level gets worse (warning → critical) → send immediately, don't wait for the cycle
+ *   - Level stays the same or improves but is still abnormal → stay quiet until the repeat cycle
+ *   - Back to normal → send "recovered" once, then forget the state
  */
 final class AlertRules
 {
-    /** เตือนซ้ำทุก 6 ชั่วโมงถ้าปัญหายังอยู่ — ถี่พอให้ไม่ลืม ห่างพอให้ไม่รำคาญ */
+    /** Repeat every 6 hours while the problem persists — frequent enough not to be forgotten, spaced enough not to annoy */
     public const REPEAT_AFTER = 21600;
 
     /**
-     * เกณฑ์ของทรัพยากรที่วัดเป็นเปอร์เซ็นต์ → [เตือน, วิกฤต]
+     * Thresholds for resources measured as a percentage → [warning, critical]
      *
-     * ตัวเลขมาจากพฤติกรรมจริงของเครื่องโฮสติ้ง: ดิสก์ 85% คือจุดที่ควรเริ่มหาที่ลบเพราะ
-     * ไฟล์สำรองรอบถัดไปอาจไม่พอ · 95% คือจุดที่ MariaDB เริ่มเขียนไม่ได้และเว็บล่มทั้งเครื่อง
-     * · หน่วยความจำใช้เกณฑ์สูงกว่าเพราะ Linux ใช้ที่ว่างเป็น cache เป็นปกติอยู่แล้ว
+     * These numbers come from real hosting-machine behavior: 85% disk is the point
+     * where it's time to start looking for something to delete, since the next
+     * backup run might not have room · 95% is the point where MariaDB starts failing
+     * to write and the whole machine's sites go down · memory uses a higher threshold
+     * because Linux normally uses free memory as cache anyway.
      *
      * @var array<string,array{0:float,1:float,2:string}>
      */
     public const THRESHOLDS = [
-        'disk' => [85.0, 95.0, 'พื้นที่ดิสก์'],
-        'memory' => [90.0, 97.0, 'หน่วยความจำ'],
+        'disk' => [85.0, 95.0, 'Disk space'],
+        'memory' => [90.0, 97.0, 'Memory'],
     ];
 
-    /** load average ต่อคอร์ — 1.0 = ใช้เต็มทุกคอร์พอดี · เกิน 2 เท่าคือมีคิวรอจริง */
+    /** Load average per core — 1.0 = every core exactly saturated · past 2x means a real queue is backing up */
     public const LOAD_WARNING = 1.5;
     public const LOAD_CRITICAL = 3.0;
 
-    /** ใบรับรองที่เหลือน้อยกว่านี้ (วัน) ต้องเตือน — certbot ต่ออายุที่ 30 วัน */
+    /** A certificate with fewer days left than this must warn — certbot renews at 30 days */
     public const CERT_WARNING_DAYS = 20;
     public const CERT_CRITICAL_DAYS = 7;
 
@@ -51,21 +54,21 @@ final class AlertRules
     }
 
     /**
-     * ตัดสินว่าเกณฑ์นี้ควรส่งข้อความหรือไม่ แล้วบันทึกสถานะให้เอง
+     * Decide whether this threshold should send a notification, and record state itself
      *
-     * @param string $key คีย์ของเกณฑ์ เช่น `disk` หรือ `service:nginx`
-     * @param string|null $level `warning`/`critical` · null = กลับมาปกติแล้ว
-     * @return array{notify:bool,reason:string} `reason` ใช้ประกอบข้อความและไว้ดูตอนไล่ปัญหา
+     * @param string $key the threshold's key, e.g. `disk` or `service:nginx`
+     * @param string|null $level `warning`/`critical` · null = back to normal
+     * @return array{notify:bool,reason:string} `reason` is used to build the message and for later debugging
      */
     public function evaluate(string $key, ?string $level, float $value = 0, ?int $now = null): array
     {
         $now ??= time();
         $previous = $this->db->first('SELECT * FROM alert_state WHERE alert_key = :k', ['k' => $key]);
 
-        // กลับมาปกติ — แจ้งครั้งเดียวว่าหายแล้ว เฉพาะเมื่อเคยแจ้งว่าผิดปกติไปก่อน
+        // Back to normal — notify once that it recovered, only if it was previously reported abnormal
         if ($level === null) {
             if ($previous === null) {
-                return ['notify' => false, 'reason' => 'ปกติอยู่แล้ว'];
+                return ['notify' => false, 'reason' => 'already normal'];
             }
 
             $this->db->run('DELETE FROM alert_state WHERE alert_key = :k', ['k' => $key]);
@@ -73,38 +76,38 @@ final class AlertRules
             return ['notify' => true, 'reason' => 'recovered'];
         }
 
-        // ผิดปกติครั้งแรก
+        // First time abnormal
         if ($previous === null) {
             $this->remember($key, $level, $value, $now, $now);
 
             return ['notify' => true, 'reason' => 'new'];
         }
 
-        // แย่ลงกว่าเดิม — ส่งทันทีโดยไม่รอรอบ เพราะสถานการณ์เปลี่ยนไปในทางที่แย่ลง
+        // Got worse than before — send immediately without waiting for the cycle, since the situation changed for the worse
         if ($level === 'critical' && $previous['level'] === 'warning') {
             $this->remember($key, $level, $value, (int) $previous['first_at'], $now);
 
             return ['notify' => true, 'reason' => 'escalated'];
         }
 
-        // ยังผิดปกติอยู่เหมือนเดิม — เงียบจนครบรอบเตือนซ้ำ
+        // Still abnormal, unchanged — stay quiet until the repeat cycle is up
         if ($now - (int) $previous['notified_at'] >= self::REPEAT_AFTER) {
             $this->remember($key, $level, $value, (int) $previous['first_at'], $now);
 
             return ['notify' => true, 'reason' => 'reminder'];
         }
 
-        // อัปเดตค่าล่าสุดไว้แต่ไม่ส่ง — ข้อความรอบหน้าจะได้บอกค่าปัจจุบันที่ถูกต้อง
+        // Update the latest value but don't send — the next cycle's message will report the correct current value
         $this->db->update(
             'alert_state',
             ['value' => $value, 'level' => $level, 'updated_at' => $now],
             ['alert_key' => $key],
         );
 
-        return ['notify' => false, 'reason' => 'ส่งไปแล้วและยังไม่ครบรอบเตือนซ้ำ'];
+        return ['notify' => false, 'reason' => 'already sent and the repeat cycle is not up yet'];
     }
 
-    /** ระดับของค่าเปอร์เซ็นต์ตามเกณฑ์ที่ตั้งไว้ — null = ปกติ */
+    /** The level for a percentage value against its configured thresholds — null = normal */
     public static function levelForPercent(string $type, float $percent): ?string
     {
         if (!isset(self::THRESHOLDS[$type])) {
@@ -121,10 +124,11 @@ final class AlertRules
     }
 
     /**
-     * ระดับของ load average เทียบกับจำนวนคอร์
+     * The level for a load average against the core count
      *
-     * เทียบต่อคอร์เสมอ ไม่ใช่ค่าดิบ — load 4.0 บนเครื่อง 8 คอร์คือสบาย ๆ
-     * แต่บนเครื่องคอร์เดียวคือคิวยาวจนเว็บตอบช้าแล้ว
+     * Always compared per core, never the raw value — a load of 4.0 on an 8-core
+     * machine is comfortable, but on a single-core machine it's a queue long enough
+     * that sites are already responding slowly.
      */
     public static function levelForLoad(float $load1, int $cores): ?string
     {
@@ -137,7 +141,7 @@ final class AlertRules
         };
     }
 
-    /** ระดับของใบรับรองที่ใกล้หมดอายุ — null = ยังเหลือเวลาพอ */
+    /** The level for a certificate nearing expiry — null = still plenty of time left */
     public static function levelForCertDays(int $daysLeft): ?string
     {
         return match (true) {
@@ -148,13 +152,14 @@ final class AlertRules
     }
 
     /**
-     * สถานะที่ยังค้างอยู่ทั้งหมด — หน้าจอใช้แสดงว่าตอนนี้มีอะไรผิดปกติบ้าง
+     * Every state still outstanding — the screen uses this to show what's currently abnormal
      *
-     * **เรียงด้วย CASE ไม่ใช่ `ORDER BY level DESC`** — การเรียงตามตัวอักษรให้ `warning`
-     * มาก่อน `critical` (w > c) ซึ่งกลับหัวกับสิ่งที่ต้องการพอดี · ผู้ดูแลที่เปิดหน้าเว็บ
-     * ตอนเครื่องมีปัญหาหลายเรื่องพร้อมกัน จะเห็นเรื่องที่แค่ควรจับตาอยู่เหนือเรื่องที่
-     * ทำให้เว็บล่มทั้งเครื่อง · ที่เก่าสุดขึ้นก่อนในระดับเดียวกัน เพราะเป็นเรื่องที่ถูก
-     * ปล่อยทิ้งไว้นานที่สุด
+     * **Sorted with a CASE, not `ORDER BY level DESC`** — alphabetical order would put
+     * `warning` before `critical` (w > c), exactly backwards from what's wanted · an
+     * admin opening the page while a machine has several problems at once should see
+     * something merely worth watching sitting above something that's taking the
+     * entire machine's sites down · within the same level, the oldest comes first,
+     * since it's the issue that's been left unaddressed the longest.
      */
     public function active(): array
     {
@@ -165,23 +170,29 @@ final class AlertRules
     }
 
     /**
-     * ลบสถานะของเกณฑ์ที่รอบนี้ไม่ได้ตรวจแล้ว — กันรายการค้างที่ไม่มีวันหายไปเอง
+     * Delete the state of any threshold not checked this round — prevents a stale
+     * entry that would otherwise never go away on its own
      *
-     * **รายการในตารางนี้จะหายก็ต่อเมื่อมีการประเมินคีย์นั้นแล้วพบว่ากลับมาปกติ** ·
-     * คีย์ที่เลิกถูกประเมินจึงค้างอยู่ตลอดไป — เจอจริงกับ `service:<ชื่อ>` ของบริการที่
-     * เคยหยุดทำงานแล้วถูกถอนออกจากเครื่องภายหลัง: `AlertCheck` ข้ามบริการที่
-     * `not_installed` ไปเลย จึงไม่มีอะไรมาบอกว่ามันหายดีแล้ว
+     * **An entry in this table only disappears once that key is evaluated and found
+     * to be back to normal** · a key that stops being evaluated at all therefore
+     * stays stuck forever — this actually happened with `service:<name>` for a
+     * service that had stopped and was later removed from the machine entirely:
+     * `AlertCheck` simply skips a service that's `not_installed`, so nothing ever
+     * tells the system it recovered.
      *
-     * ผลคือหน้าจอแสดงว่ามีปัญหาค้างอยู่ตลอดกาล ผู้ดูแลกดอะไรก็ไม่หาย และเลิกเชื่อ
-     * ส่วนนี้ไปทั้งส่วน — ซึ่งอันตรายกว่าไม่มีมันเลย เพราะวันที่มีปัญหาจริงก็จะถูกมองข้าม
+     * The result was a screen permanently showing a problem the admin can never
+     * clear no matter what they click, and eventually stops trusting this part of
+     * the system entirely — which is more dangerous than not having it at all,
+     * because the day there's a real problem, it gets ignored too.
      *
-     * @param list<string> $keys คีย์ทั้งหมดที่รอบนี้ตรวจแล้ว
+     * @param list<string> $keys every key that was checked this round
      */
     public function forgetOthers(array $keys): int
     {
         if ($keys === []) {
-            // ไม่ได้ตรวจอะไรเลย = ผิดปกติของตัวตรวจเอง ไม่ใช่สัญญาณว่าทุกอย่างหายดี
-            // การลบทั้งตารางตรงนี้จะกลบปัญหาจริงที่ค้างอยู่
+            // Nothing was checked at all = a bug in the checker itself, not a signal
+            // that everything recovered. Clearing the whole table here would paper
+            // over a real, still-outstanding problem.
             return 0;
         }
 
