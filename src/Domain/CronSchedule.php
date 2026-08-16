@@ -7,23 +7,24 @@ namespace Phpcp\Domain;
 use Phpcp\Agent\ValidationError;
 
 /**
- * ตรวจและอธิบายตารางเวลาแบบ cron
+ * Validate and describe a cron schedule
  *
- * ตรวจเองแทนที่จะปล่อยให้ cron ปฏิเสธทีหลัง เพราะ cron ที่รูปแบบผิด
- * จะถูกข้ามไปเงียบ ๆ ทั้งไฟล์ ทำให้งานอื่นที่ถูกต้องในไฟล์เดียวกันไม่ทำงานตามไปด้วย
+ * Validated here instead of letting cron reject it later, because a malformed cron
+ * line gets silently skipped for the *whole file*, taking every other, correctly
+ * formed job in the same file down with it.
  */
 final class CronSchedule
 {
-    /** ช่วงค่าที่ยอมรับของแต่ละฟิลด์ ตามลำดับใน crontab */
+    /** The accepted range for each field, in crontab order */
     private const RANGES = [
-        ['นาที', 0, 59],
-        ['ชั่วโมง', 0, 23],
-        ['วันที่', 1, 31],
-        ['เดือน', 1, 12],
-        ['วันในสัปดาห์', 0, 7],
+        ['minute', 0, 59],
+        ['hour', 0, 23],
+        ['day of month', 1, 31],
+        ['month', 1, 12],
+        ['day of week', 0, 7],
     ];
 
-    /** ตัวย่อที่ cron รองรับ แปลงเป็นห้าฟิลด์ให้เลย */
+    /** Shorthand forms cron supports — converted straight into five fields */
     private const ALIASES = [
         '@yearly' => '0 0 1 1 *',
         '@annually' => '0 0 1 1 *',
@@ -34,7 +35,7 @@ final class CronSchedule
         '@hourly' => '0 * * * *',
     ];
 
-    /** ตัวเลือกสำเร็จรูปที่ให้เลือกบนหน้าจอ */
+    /** Ready-made choices offered on screen */
     public static function presets(): array
     {
         return [
@@ -48,14 +49,14 @@ final class CronSchedule
     }
 
     /**
-     * ตรวจรูปแบบแล้วคืนตารางเวลาที่เป็นห้าฟิลด์เสมอ
+     * Validate the format and always return the schedule as five fields
      */
     public static function normalize(string $schedule): string
     {
         $schedule = trim(preg_replace('/\s+/', ' ', $schedule) ?? '');
 
         if ($schedule === '') {
-            throw new ValidationError('ต้องระบุตารางเวลา');
+            throw new ValidationError('A schedule must be specified');
         }
 
         if (isset(self::ALIASES[strtolower($schedule)])) {
@@ -63,13 +64,13 @@ final class CronSchedule
         }
 
         if (str_starts_with($schedule, '@')) {
-            throw new ValidationError('รองรับตัวย่อเฉพาะ @hourly @daily @weekly @monthly @yearly');
+            throw new ValidationError('Only these shorthand forms are supported: @hourly @daily @weekly @monthly @yearly');
         }
 
         $fields = explode(' ', $schedule);
 
         if (count($fields) !== 5) {
-            throw new ValidationError('ตารางเวลาต้องมี 5 ฟิลด์ เช่น "0 3 * * *"');
+            throw new ValidationError('A schedule must have 5 fields, e.g. "0 3 * * *"');
         }
 
         foreach ($fields as $index => $field) {
@@ -80,21 +81,21 @@ final class CronSchedule
         return implode(' ', $fields);
     }
 
-    /** ตรวจฟิลด์เดียว รองรับ * , - / ตามที่ cron รองรับจริง */
+    /** Validate a single field — supports * , - / exactly as real cron does */
     private static function assertField(string $field, string $label, int $min, int $max): void
     {
         foreach (explode(',', $field) as $part) {
             if ($part === '') {
-                throw new ValidationError("ฟิลด์{$label}มีรูปแบบไม่ถูกต้อง");
+                throw new ValidationError("The {$label} field has an invalid format");
             }
 
-            // แยกส่วน step ออกก่อน เช่น */5 หรือ 1-30/2
+            // Split off the step part first, e.g. */5 or 1-30/2
             $step = null;
             if (str_contains($part, '/')) {
                 [$part, $stepText] = explode('/', $part, 2);
 
                 if (preg_match('/^\d{1,2}$/', $stepText) !== 1 || (int) $stepText < 1) {
-                    throw new ValidationError("ค่า step ของฟิลด์{$label}ไม่ถูกต้อง");
+                    throw new ValidationError("Invalid step value for the {$label} field");
                 }
 
                 $step = (int) $stepText;
@@ -110,7 +111,7 @@ final class CronSchedule
                 self::assertNumber($to, $label, $min, $max);
 
                 if ((int) $from > (int) $to) {
-                    throw new ValidationError("ช่วงของฟิลด์{$label}กลับด้าน");
+                    throw new ValidationError("The {$label} field's range is backwards");
                 }
 
                 continue;
@@ -118,9 +119,9 @@ final class CronSchedule
 
             self::assertNumber($part, $label, $min, $max);
 
-            // ตัวเลขเดี่ยวกับ step ใช้ด้วยกันไม่ได้ใน cron มาตรฐาน
+            // A single number combined with a step is not valid in standard cron
             if ($step !== null) {
-                throw new ValidationError("ฟิลด์{$label}ใช้ step กับค่าเดี่ยวไม่ได้");
+                throw new ValidationError("The {$label} field cannot combine a step with a single value");
             }
         }
     }
@@ -128,22 +129,23 @@ final class CronSchedule
     private static function assertNumber(string $value, string $label, int $min, int $max): void
     {
         if (preg_match('/^\d{1,2}$/', $value) !== 1) {
-            throw new ValidationError("ฟิลด์{$label}ต้องเป็นตัวเลข");
+            throw new ValidationError("The {$label} field must be a number");
         }
 
         $number = (int) $value;
 
         if ($number < $min || $number > $max) {
-            throw new ValidationError("ฟิลด์{$label}ต้องอยู่ระหว่าง {$min} ถึง {$max}");
+            throw new ValidationError("The {$label} field must be between {$min} and {$max}");
         }
     }
 
     /**
-     * ตารางเวลานี้ตรงกับเวลาที่ระบุหรือไม่ — ตัดสินที่ความละเอียดระดับนาที
+     * Whether this schedule matches the given time — decided at minute-level resolution
      *
-     * ใช้กฎเดียวกับ cron ของ Unix ทุกข้อ รวมถึงข้อที่คนมองข้ามบ่อยที่สุด:
-     * ถ้า "วันที่" กับ "วันในสัปดาห์" ถูกระบุทั้งคู่ (ไม่ใช่ *) จะตรงเมื่อ**ข้อใดข้อหนึ่ง**ตรง
-     * ไม่ใช่ต้องตรงทั้งคู่ — `0 0 1 * 1` คือ "วันที่ 1 ของเดือน หรือทุกวันจันทร์"
+     * Follows every rule real Unix cron does, including the one people overlook most
+     * often: if both "day of month" and "day of week" are specified (neither is *),
+     * it matches when **either one** matches, not both — `0 0 1 * 1` means "the 1st
+     * of the month, or every Monday."
      */
     public static function matches(string $schedule, int $timestamp): bool
     {
@@ -161,7 +163,7 @@ final class CronSchedule
             return false;
         }
 
-        // 7 กับ 0 คืออาทิตย์เหมือนกันใน cron — ทำให้เป็นค่าเดียวก่อนเทียบ
+        // 7 and 0 both mean Sunday in cron — normalize to one value before comparing
         $weekdays = array_map(static fn (int $d): int => $d === 7 ? 0 : $d, self::expand($weekday, 0, 7));
 
         $dayMatches = in_array((int) date('j', $timestamp), self::expand($day, 1, 31), true);
@@ -175,16 +177,22 @@ final class CronSchedule
     }
 
     /**
-     * ถึงเวลาต้องรันหรือยัง เมื่อรู้ว่ารันครั้งล่าสุดเมื่อไร
+     * Is it time to run yet, given when it last ran
      *
-     * ไม่ได้ถามแค่ "นาทีนี้ตรงไหม" แต่ไล่ดูทุกนาทีตั้งแต่หลังรอบที่แล้วจนถึงตอนนี้
-     * เพราะตัวจับเวลาอาจไม่ได้ทำงานทุกนาทีจริง (เครื่องดับ, timer ถูกหยุด, งานรอบก่อนใช้เวลานาน)
-     * ถ้าเทียบแค่นาทีปัจจุบัน งานที่ตั้งไว้ตี 3 จะหายไปทั้งวันเพียงเพราะเครื่องปิดอยู่ตอนตี 3
+     * Doesn't just ask "does this minute match" — it walks every minute from just
+     * after the last run up to now, because the timer might not actually run every
+     * single minute (the machine was down, the timer was stopped, the previous run
+     * took a long time). Comparing only the current minute would mean a job scheduled
+     * for 3am gets skipped for the whole day just because the machine happened to be
+     * off at 3am.
      *
-     * @param int|null $lastRunAt null = ยังไม่เคยรัน ให้ดูเฉพาะนาทีปัจจุบัน
-     *                            (งานที่เพิ่งถูกเพิ่มไม่ควรระเบิดย้อนหลังทันทีที่ติดตั้ง)
-     * @param int      $catchUp   ไล่ย้อนหลังได้ไกลสุดกี่วินาที — กันงานที่ค้างมานาน
-     *                            รันรวดเดียวหลายสิบรอบตอนเครื่องกลับมา
+     * @param int|null $lastRunAt null = never run before, only look at the current
+     *                            minute (a job that was just added shouldn't
+     *                            immediately explode into running every missed slot
+     *                            since install)
+     * @param int      $catchUp   how far back to look, in seconds at most — prevents
+     *                            a long-neglected job from running dozens of times
+     *                            back to back once the machine comes back
      */
     public static function isDue(string $schedule, int $now, ?int $lastRunAt = null, int $catchUp = 86400): bool
     {
@@ -204,9 +212,10 @@ final class CronSchedule
     }
 
     /**
-     * คลี่ฟิลด์หนึ่งออกเป็นค่าที่เป็นไปได้ทั้งหมด
+     * Expand one field into every value it can match
      *
-     * รับเฉพาะรูปแบบที่ normalize() ยอมให้ผ่านแล้วเท่านั้น จึงไม่ต้องตรวจซ้ำที่นี่
+     * Only ever receives a shape that normalize() has already accepted, so nothing
+     * needs to be re-validated here.
      *
      * @return list<int>
      */
@@ -242,7 +251,20 @@ final class CronSchedule
         return array_values(array_unique($values));
     }
 
-    /** อธิบายตารางเวลาเป็นภาษาไทยแบบคร่าว ๆ สำหรับแสดงบนหน้าจอ */
+    /**
+     * A rough human-readable description of a schedule, for display on screen
+     *
+     * **Known gap:** this returns pre-formatted, locale-specific text, which
+     * conflicts with {@see \Phpcp\Http\Resource\Resource}'s own rule that this layer
+     * must always return raw values and leave formatting to the viewer · neither of
+     * this method's two callers ({@see \Phpcp\Http\Resource\CronJobResource} and
+     * {@see \Phpcp\Http\V2\BackupSchedulesController}) currently pass this through
+     * the translator, and `CronJobResource` is a static value object with no
+     * translator access at all — so today this text is English-only for every
+     * locale. The raw `schedule` field is always sent alongside this one specifically
+     * so callers are not forced to depend on it; fixing this properly means either
+     * giving Resource classes translator access or moving this formatting to the SPA.
+     */
     public static function describe(string $schedule): string
     {
         $known = self::presets();
@@ -259,15 +281,15 @@ final class CronSchedule
         [$minute, $hour, $day, $month, $weekday] = $fields;
 
         if ($minute !== '*' && $hour !== '*' && $day === '*' && $month === '*' && $weekday === '*') {
-            return sprintf('ทุกวัน เวลา %02d:%02d น.', (int) $hour, (int) $minute);
+            return sprintf('Daily at %02d:%02d', (int) $hour, (int) $minute);
         }
 
         if (str_starts_with($minute, '*/') && $hour === '*') {
-            return 'ทุก ' . substr($minute, 2) . ' นาที';
+            return 'Every ' . substr($minute, 2) . ' minutes';
         }
 
         if ($minute !== '*' && $hour === '*') {
-            return sprintf('ทุกชั่วโมง นาทีที่ %d', (int) $minute);
+            return sprintf('Every hour at minute %d', (int) $minute);
         }
 
         return $schedule;
