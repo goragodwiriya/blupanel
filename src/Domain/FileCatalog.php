@@ -5,25 +5,26 @@ declare (strict_types = 1);
 namespace Phpcp\Domain;
 
 /**
- * กติกาของตัวจัดการไฟล์: อะไรแก้ไขได้ ใหญ่ได้แค่ไหน และแสดงผลอย่างไร
+ * The file manager's rules: what can be edited, how large it can be, and how it's displayed
  *
- * แยกออกมาจาก capability เพราะทั้งฝั่งเว็บ (เพื่อบอกผู้ใช้ล่วงหน้า) และฝั่ง agent
- * (เพื่อบังคับใช้จริง) ต้องใช้กติกาชุดเดียวกัน ถ้ามีสองชุดจะเพี้ยนกันเมื่อแก้ที่เดียว
+ * Split out from the capability because both the web side (to tell the user in
+ * advance) and the agent side (to actually enforce it) must use the exact same
+ * rules — two separate copies would drift apart the moment only one gets edited.
  */
 final class FileCatalog
 {
-    /** เพดานไฟล์ที่เปิดในตัวแก้ไขข้อความ — SECURITY §2.7 */
+    /** Ceiling for a file opened in the text editor — SECURITY §2.7 */
     public const MAX_EDIT_BYTES = 5_242_880; // 5 MB
 
     /**
-     * เพดานไฟล์ที่อัปโหลด/ดาวน์โหลดผ่าน agent ได้ในครั้งเดียว
+     * Ceiling for a file uploaded/downloaded through the agent in a single transfer
      *
-     * Protocol::MAX_FRAME คือ 4 MB และ base64 ขยายข้อมูล 4/3 เท่า
-     * เผื่อส่วนหัวของ frame ไว้ด้วยจึงตั้งไว้ที่ 2.5 MB
+     * Protocol::MAX_FRAME is 4 MB, and base64 expands data by 4/3 · leaving room
+     * for the frame's own header, this is set to 2.5 MB.
      */
     public const MAX_TRANSFER_BYTES = 2_621_440; // 2.5 MB
 
-    /** นามสกุลที่เปิดในตัวแก้ไขข้อความได้ — allowlist ไม่ใช่ blocklist */
+    /** Extensions that can be opened in the text editor — an allowlist, not a blocklist */
     private const EDITABLE = [
         'txt', 'md', 'markdown', 'log', 'csv', 'tsv',
         'html', 'htm', 'css', 'scss', 'sass', 'less',
@@ -36,13 +37,13 @@ final class FileCatalog
         'gitignore', 'gitattributes', 'editorconfig', 'htaccess', 'lock'
     ];
 
-    /** ชื่อไฟล์ที่ไม่มีนามสกุลแต่เป็นข้อความแน่นอน */
+    /** Filenames with no extension that are still definitely text */
     private const EDITABLE_NAMES = [
         'dockerfile', 'makefile', 'procfile', 'readme', 'license', 'changelog',
         'composer.lock', 'package-lock.json', '.env', '.htaccess', '.gitignore'
     ];
 
-    /** จับคู่นามสกุล -> ชนิดที่ใช้เลือกไอคอนและโหมดของตัวแก้ไข */
+    /** Maps extension -> kind, used to pick an icon and the editor's mode */
     private const KINDS = [
         'image' => ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico', 'bmp', 'avif'],
         'archive' => ['zip', 'tar', 'gz', 'tgz', 'bz2', 'xz', '7z', 'rar'],
@@ -55,18 +56,18 @@ final class FileCatalog
         'text' => ['txt', 'md', 'markdown', 'log']
     ];
 
-    /** นามสกุลของไฟล์ (ตัวพิมพ์เล็ก) — คืน '' เมื่อไม่มี */
+    /** A file's extension (lowercase) — returns '' when there isn't one */
     public static function extension(string $name): string
     {
         $at = strrpos($name, '.');
         if ($at === false || $at === 0) {
-            return ''; // '.env' ถือว่าไม่มีนามสกุล ใช้ชื่อเต็มตัดสินแทน
+            return ''; // '.env' counts as having no extension — judged by the full name instead
         }
 
         return mb_strtolower(substr($name, $at + 1));
     }
 
-    /** ไฟล์นี้เปิดในตัวแก้ไขข้อความได้หรือไม่ */
+    /** Whether this file can be opened in the text editor */
     public static function isEditable(string $name, int $size): bool
     {
         if ($size > self::MAX_EDIT_BYTES) {
@@ -83,7 +84,7 @@ final class FileCatalog
         return $ext !== '' && in_array($ext, self::EDITABLE, true);
     }
 
-    /** ชนิดของไฟล์สำหรับเลือกไอคอนบนหน้าจอ */
+    /** A file's kind, used to pick an icon on screen */
     public static function kind(string $name): string
     {
         $ext = self::extension($name);
@@ -100,7 +101,7 @@ final class FileCatalog
         return 'file';
     }
 
-    /** โหมดไวยากรณ์ที่ส่งให้ตัวแก้ไขบนหน้าเว็บ */
+    /** The syntax mode sent to the editor on the web page */
     public static function syntax(string $name): string
     {
         return match (self::extension($name)) {
@@ -114,21 +115,22 @@ final class FileCatalog
     }
 
     /**
-     * Content-Type ที่ปลอดภัยสำหรับการดาวน์โหลด
+     * A safe Content-Type for downloads
      *
-     * คืน octet-stream เสมอโดยตั้งใจ: ไฟล์ในนี้เป็นของผู้ใช้ ถ้าส่ง text/html
-     * ออกไปตรง ๆ เบราว์เซอร์จะรันสคริปต์ในโดเมนของแผงควบคุมทันที (stored XSS)
+     * Deliberately always returns octet-stream: files in here belong to the user
+     * — sending text/html directly would make the browser run a script under the
+     * control panel's own domain immediately (stored XSS).
      */
     public static function downloadType(): string
     {
         return 'application/octet-stream';
     }
 
-    /** สิทธิ์ตั้งต้นที่เสนอในกล่องเปลี่ยนสิทธิ์ */
+    /** The default permissions offered in the chmod dialog */
     public static function suggestedModes(bool $isDir): array
     {
         return $isDir
-            ? ['0755' => '0755 — อ่าน/เข้าถึงได้ทุกคน', '0750' => '0750 — เฉพาะเจ้าของและกลุ่ม', '0700' => '0700 — เฉพาะเจ้าของ']
-            : ['0644' => '0644 — อ่านได้ทุกคน', '0640' => '0640 — เฉพาะเจ้าของและกลุ่ม', '0600' => '0600 — เฉพาะเจ้าของ'];
+            ? ['0755' => '0755 — everyone can read/access', '0750' => '0750 — owner and group only', '0700' => '0700 — owner only']
+            : ['0644' => '0644 — everyone can read', '0640' => '0640 — owner and group only', '0600' => '0600 — owner only'];
     }
 }
