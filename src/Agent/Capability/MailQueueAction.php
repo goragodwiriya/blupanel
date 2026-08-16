@@ -11,17 +11,19 @@ use Phpcp\Driver\Mail\MailQueue;
 use Phpcp\Support\Validator;
 
 /**
- * สั่งงานกับคิวเมลขาออก — PLAN-MAIL §5
+ * Acts on the outbound mail queue — PLAN-MAIL §5
  *
- * สามคำสั่งที่ผู้ดูแลต้องใช้จริงเวลาเมลค้าง:
+ * The three commands an admin genuinely needs when mail is stuck:
  *
- *   flush       ลองส่งใหม่เดี๋ยวนี้ — ใช้หลังแก้ต้นเหตุแล้ว (DNS ถูก, relay กลับมา)
- *               ไม่ต้องรอรอบถัดไปของ Postfix ซึ่งห่างขึ้นเรื่อย ๆ ตามจำนวนครั้งที่ล้ม
- *   delete      ลบฉบับเดียว — เมลที่ส่งผิด หรือเมลสแปมที่ถูกยัดเข้าคิว
- *   delete_all  ล้างทั้งคิว — **ลบเมลของลูกค้าทุกฉบับที่รอส่งอยู่**
+ *   flush       retry sending right now — used after fixing the root cause (DNS
+ *               fixed, relay back up), without waiting for Postfix's next cycle,
+ *               which gets further apart with every failed attempt
+ *   delete      remove one message — a misdirected email, or spam that got shoved into the queue
+ *   delete_all  clear the whole queue — **deletes every customer's message still waiting to send**
  *
- * `delete_all` เป็นค่าที่ต้องส่งมาตรง ๆ ไม่ใช่ `delete` ที่มี id เป็น `ALL` — ดูเหตุผล
- * ที่ `MailQueue::deleteAll()` · ผิดพลาดตรงนี้แปลว่าเมลของลูกค้าหายหมดโดยไม่มีใครรู้
+ * `delete_all` must be sent as its own explicit value, never `delete` with an id
+ * of `ALL` — see the reasoning at `MailQueue::deleteAll()` · getting this wrong
+ * here means every customer's mail vanishes with nobody the wiser.
  */
 final class MailQueueAction implements Capability
 {
@@ -30,7 +32,7 @@ final class MailQueueAction implements Capability
         return 'mail.queue_action';
     }
 
-    /** คิวเป็นของทั้งเครื่อง — ดูเหตุผลที่ MailQueueList */
+    /** The queue belongs to the whole machine — see the reasoning at MailQueueList */
     public function permission(): string
     {
         return 'settings.manage';
@@ -43,7 +45,7 @@ final class MailQueueAction implements Capability
 
     public function summary(): string
     {
-        return 'สั่งงานกับคิวเมลขาออก';
+        return 'Act on outbound mail queue';
     }
 
     public function validate(array $args): array
@@ -51,7 +53,7 @@ final class MailQueueAction implements Capability
         $action = Validator::requireEnum($args, 'action', ['flush', 'delete', 'delete_all', 'release']);
         $id = trim((string) ($args['id'] ?? ''));
 
-        // ตรวจรหัสตั้งแต่ตอนนี้สำหรับคำสั่งที่ต้องใช้ — `ALL` ถูกปฏิเสธใน assertId
+        // The id is validated right here for commands that need it — `ALL` is rejected inside assertId
         if (in_array($action, ['delete', 'release'], true)) {
             $id = MailQueue::assertId($id);
         }
@@ -82,21 +84,21 @@ final class MailQueueAction implements Capability
     {
         $queue->flush($executor);
 
-        return 'สั่งให้ลองส่งเมลในคิวใหม่ทั้งหมดแล้ว — ฉบับที่ยังส่งไม่ได้จะกลับเข้าคิวพร้อมเหตุผลใหม่';
+        return 'Retrying every message in the queue now — anything still undeliverable will return to the queue with a new reason';
     }
 
     private function delete(MailQueue $queue, Executor $executor, string $id): string
     {
         $queue->delete($executor, $id);
 
-        return sprintf('ลบเมล %s ออกจากคิวแล้ว', $id);
+        return sprintf('Removed message %s from the queue', $id);
     }
 
     private function release(MailQueue $queue, Executor $executor, string $id): string
     {
         $queue->release($executor, $id);
 
-        return sprintf('ปล่อยเมล %s กลับเข้าคิวปกติแล้ว', $id);
+        return sprintf('Released message %s back into the normal queue', $id);
     }
 
     private function deleteAll(MailQueue $queue, Executor $executor): string
@@ -105,6 +107,6 @@ final class MailQueueAction implements Capability
 
         $queue->deleteAll($executor);
 
-        return sprintf('ล้างคิวแล้ว — ลบเมลที่รอส่งอยู่ %d ฉบับ ไม่มีการแจ้งผู้ส่ง', $before);
+        return sprintf('Cleared the queue — deleted %d waiting message(s), senders were not notified', $before);
     }
 }

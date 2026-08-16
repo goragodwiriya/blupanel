@@ -9,16 +9,17 @@ use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
 
 /**
- * ตัวเลขสุขภาพเครื่อง — CPU, RAM, Disk, Network, Uptime, Load
+ * The machine's health numbers — CPU, RAM, Disk, Network, Uptime, Load
  *
- * อ่านจาก /proc โดยตรง ไม่ fork process ใด ๆ ต้นทุนจึงเกือบเป็นศูนย์
- * ซึ่งจำเป็นเพราะหน้าแดชบอร์ดเรียกทุก 2 วินาที (ARCHITECTURE §9.4)
+ * Reads straight from /proc, forking no process at all, so the cost is nearly
+ * zero — necessary because the dashboard page calls this every 2 seconds
+ * (ARCHITECTURE §9.4).
  *
- * /proc ถูกอ่านของจริงแม้ในโหมด sandbox — กราฟบนหน้าจอจึงเป็นค่าจริงของเครื่องเสมอ
+ * /proc is read for real even in sandbox mode — so the graph on screen is always the machine's real value.
  */
 final class SystemMetrics implements Capability
 {
-    /** ระยะเวลาที่ใช้เก็บตัวอย่าง CPU สองครั้งเพื่อคำนวณเปอร์เซ็นต์ */
+    /** The time between two CPU samples, used to compute the percentage */
     private const CPU_SAMPLE_US = 120_000;
 
     public static function name(): string
@@ -38,12 +39,12 @@ final class SystemMetrics implements Capability
 
     public function summary(): string
     {
-        return 'อ่านสถิติการใช้ทรัพยากรของเซิร์ฟเวอร์';
+        return 'Read server resource usage statistics';
     }
 
     public function validate(array $args): array
     {
-        // ไม่รับ argument ใดเลย — ทิ้งทุกอย่างที่ส่งมา
+        // Accepts no arguments at all — discards anything sent
         return [];
     }
 
@@ -97,9 +98,9 @@ final class SystemMetrics implements Capability
             }
 
             $fields = array_map(intval(...), preg_split('/\s+/', trim($line)) ?: []);
-            array_shift($fields); // ทิ้งคำว่า "cpu"
+            array_shift($fields); // Discards the "cpu" label
 
-            // ฟิลด์: user nice system idle iowait irq softirq steal guest guest_nice
+            // Fields: user nice system idle iowait irq softirq steal guest guest_nice
             $idle = ($fields[3] ?? 0) + ($fields[4] ?? 0);
 
             return ['total' => array_sum($fields), 'idle' => $idle];
@@ -126,12 +127,12 @@ final class SystemMetrics implements Capability
         $values = [];
         foreach (preg_split('/\R/', $executor->readFile('/proc/meminfo')) ?: [] as $line) {
             if (preg_match('/^(\w+):\s+(\d+)/', $line, $m) === 1) {
-                $values[$m[1]] = (int) $m[2] * 1024;    // kB → ไบต์
+                $values[$m[1]] = (int) $m[2] * 1024;    // kB → bytes
             }
         }
 
         $total = $values['MemTotal'] ?? 0;
-        // ใช้ MemAvailable ตามที่ kernel แนะนำ ไม่ใช่ MemFree ซึ่งไม่รวม cache ที่คืนได้
+        // Uses MemAvailable as the kernel recommends, not MemFree, which excludes reclaimable cache
         $available = $values['MemAvailable'] ?? ($values['MemFree'] ?? 0);
         $used = max(0, $total - $available);
 
@@ -147,9 +148,11 @@ final class SystemMetrics implements Capability
             'swap_total' => $swapTotal,
             'swap_used' => $swapUsed,
             /*
-             * คิดสัดส่วนที่นี่ ไม่ใช่ให้หน้าจอหารเอง — เครื่องที่ไม่มี swap เลยมี
-             * `swap_total = 0` ซึ่งการหารด้วยศูนย์ในเทมเพลตได้ NaN แล้วแถบวัดกว้างเพี้ยน
-             * โดยไม่มีอะไรฟ้อง · เครื่องแบบนั้นมีจริงและพบบ่อย (คอนเทนเนอร์แทบทุกตัว)
+             * The percentage is computed right here, not left for the screen to
+             * divide itself — a machine with no swap at all has `swap_total = 0`,
+             * and dividing by zero in a template produces NaN, with the meter bar
+             * silently rendering wrong · that kind of machine genuinely exists and
+             * is common (nearly every container).
              */
             'swap_percent' => $swapTotal > 0 ? round($swapUsed / $swapTotal * 100, 1) : 0.0,
         ];
@@ -184,7 +187,7 @@ final class SystemMetrics implements Capability
             [$name, $rest] = explode(':', $line, 2);
             $name = trim($name);
 
-            // ข้าม loopback และอินเทอร์เฟซเสมือน ตัวเลขจะได้สะท้อนทราฟฟิกจริง
+            // Skips loopback and virtual interfaces, so the numbers reflect real traffic
             if ($name === 'lo' || str_starts_with($name, 'veth') || str_starts_with($name, 'docker')) {
                 continue;
             }

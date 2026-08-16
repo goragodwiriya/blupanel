@@ -11,10 +11,11 @@ use Phpcp\Support\PathGuard;
 use Phpcp\Support\Validator;
 
 /**
- * บีบอัดไฟล์และโฟลเดอร์ที่เลือกเป็นไฟล์ zip
+ * Compresses selected files and folders into a zip file
  *
- * ไฟล์ผลลัพธ์ถูกสร้างในโฟลเดอร์ที่ผู้ใช้เปิดอยู่ ไม่ใช่ในที่ชั่วคราวของระบบ —
- * ผู้ใช้เห็นผลลัพธ์ทันทีและพื้นที่ที่ใช้ถูกนับรวมในโควตาของเว็บไซต์นั้นตามปกติ
+ * The resulting file is created in the folder the user has open, not in the
+ * system's temp location — the user sees the result immediately, and the space
+ * it uses counts toward that website's quota as normal.
  */
 final class FileZip extends FileCapability
 {
@@ -32,7 +33,7 @@ final class FileZip extends FileCapability
 
     public function summary(): string
     {
-        return 'บีบอัดไฟล์เป็น zip';
+        return 'Compress files into a zip';
     }
 
     /**
@@ -44,14 +45,14 @@ final class FileZip extends FileCapability
         foreach (Validator::requireStringList($args, 'items', self::MAX_ITEMS, 4096) as $item) {
             $relative = PathGuard::clean($item, 'เส้นทางที่จะบีบอัด');
             if ($relative === '') {
-                throw new ValidationError('เลือกไฟล์หรือโฟลเดอร์ที่จะบีบอัดก่อน');
+                throw new ValidationError('Select a file or folder to compress first');
             }
 
             $items[] = $relative;
         }
 
         if ($items === []) {
-            throw new ValidationError('เลือกไฟล์หรือโฟลเดอร์ที่จะบีบอัดก่อน');
+            throw new ValidationError('Select a file or folder to compress first');
         }
 
         $name = PathGuard::name(Validator::requireString($args, 'archive', 200), 'ชื่อไฟล์บีบอัด');
@@ -63,7 +64,7 @@ final class FileZip extends FileCapability
             'root' => Validator::pattern(
                 Validator::requireString($args, 'root', 64),
                 '/^[a-z][a-z0-9-]{0,63}$/',
-                'คีย์ขอบเขตไฟล์ไม่ถูกต้อง',
+                'Invalid file scope key',
             ),
             'path' => PathGuard::clean(Validator::optionalString($args, 'path', max: 4096)),
             'items' => $items,
@@ -84,18 +85,20 @@ final class FileZip extends FileCapability
         $folder = $args['path'];
         $archive = PathGuard::join($folder, $args['archive']);
 
-        // ขนาดของไฟล์บีบอัดรู้ไม่ได้ก่อนบีบเสร็จ — ตรวจได้แค่ว่าโควตายังไม่เต็ม
-        // (`RealExecutor::zip()` มีเพดาน 512 MB ของตัวเองกันของที่ใหญ่เกินจริงอยู่แล้ว)
+        // The compressed file's size can't be known before compression finishes —
+        // all that can be checked is that the quota isn't already full
+        // (`RealExecutor::zip()` already has its own 512 MB ceiling against something genuinely oversized)
         $this->assertQuotaAllows($context, $scope);
 
         $result = $this->withSite($executor, $scope, static function (callable $resolve) use ($executor, $items, $folder, $archive): array {
             $target = $resolve($archive, false);
             if ($executor->stat($target) !== null) {
-                throw new ValidationError('มีไฟล์ชื่อนี้อยู่แล้ว');
+                throw new ValidationError('A file with this name already exists');
             }
 
-            // ชื่อในไฟล์บีบอัดอ้างอิงจากโฟลเดอร์ที่ผู้ใช้เปิดอยู่ ไม่ใช่จากรากของเว็บไซต์ —
-            // แตกไฟล์ออกมาจึงได้โครงสร้างเหมือนที่เห็นบนหน้าจอ ไม่มีชั้นโฟลเดอร์แปลกปลอม
+            // Names inside the archive are relative to the folder the user has
+            // open, not the website's root — extracting it back out reproduces
+            // the structure seen on screen, with no stray folder level
             $summary = $executor->zip(
                 array_map(static fn(string $relative): string => $resolve($relative), $items),
                 $resolve($folder),
@@ -113,7 +116,7 @@ final class FileZip extends FileCapability
             'archive' => $archive,
             'entries' => $result['entries'],
             'bytes' => $result['bytes'],
-            'message' => sprintf('บีบอัด %d รายการเป็น %s แล้ว', $result['entries'], $args['archive'])
+            'message' => sprintf('Compressed %d item(s) into %s', $result['entries'], $args['archive'])
         ];
     }
 }

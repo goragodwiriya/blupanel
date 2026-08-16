@@ -9,14 +9,16 @@ use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
 
 /**
- * เปิดใช้งาน firewall
+ * Enables the firewall
  *
- * นี่คือคำสั่งที่ทำให้ผู้ดูแลหลุดจากเครื่องบ่อยที่สุดในบรรดาทั้งหมด: ufw ตั้งค่าเริ่มต้น
- * ให้ปฏิเสธขาเข้าทั้งหมด พอสั่ง enable ทั้งที่ยังไม่มีกฎเปิดพอร์ต SSH
- * การเชื่อมต่อก็ขาดทันทีและกลับเข้าไปแก้ไม่ได้อีกถ้าไม่มีคอนโซลจริง
+ * Of every command in the system, this is the one that locks admins out most
+ * often: ufw's default policy denies all inbound traffic, so running enable
+ * while there's no rule yet opening the SSH port cuts the connection instantly,
+ * with no way back in without a real console.
  *
- * ระบบจึงเปิดพอร์ตของ panel และพอร์ต SSH ให้ก่อนเสมอ แล้วค่อย enable
- * และยังบังคับให้ยืนยันภายในเวลาอีกชั้น เผื่อกรณีที่กฎถูกต้องแต่มีอย่างอื่นผิดพลาด
+ * So the system always opens the panel's port and the SSH port first, then
+ * enables — and on top of that still forces a timed confirmation, in case the
+ * rules are right but something else goes wrong.
  */
 final class FirewallEnable extends FirewallCapability implements Capability
 {
@@ -37,7 +39,7 @@ final class FirewallEnable extends FirewallCapability implements Capability
 
     public function summary(): string
     {
-        return 'เปิดใช้งาน firewall (มีการคืนค่าอัตโนมัติถ้าไม่ยืนยันภายในเวลา)';
+        return 'Enable firewall (auto-reverts if not confirmed in time)';
     }
 
     public function validate(array $args): array
@@ -54,12 +56,12 @@ final class FirewallEnable extends FirewallCapability implements Capability
         $status = $driver->status($executor);
 
         if ($status['active']) {
-            return ['rollback_id' => 0, 'opened' => [], 'message' => 'firewall เปิดใช้งานอยู่แล้ว'];
+            return ['rollback_id' => 0, 'opened' => [], 'message' => 'The firewall is already enabled'];
         }
 
         $opened = [];
 
-        // เปิดเส้นชีวิตก่อน enable เสมอ — ลำดับนี้สำคัญ ถ้าสลับกันคือหลุดทันที
+        // Always opens the lifeline before enabling — order matters here, reversed means an instant lockout
         foreach ([$this->panelPort($context), $this->sshPort($executor)] as $port) {
             if ($this->alreadyAllowed($status['rules'], $port)) {
                 continue;
@@ -73,27 +75,28 @@ final class FirewallEnable extends FirewallCapability implements Capability
 
         $rollbackId = $this->guard($context)->arm(
             action: 'firewall.enable',
-            description: 'เปิดใช้งาน firewall',
+            description: 'Enable firewall',
             files: [],
             reloadUnits: [],
             window: $args['window'],
             actorId: $context->actor->userId,
-            // ย้อนกลับแค่การเปิดใช้งาน ไม่ลบกฎเส้นชีวิตที่เพิ่งเปิดไว้ —
-            // กฎพวกนั้นไม่ได้ทำให้เสียหายอะไร และมีประโยชน์ตอนเปิด firewall ครั้งถัดไป
+            // Only reverts enabling — never deletes the lifeline rules just
+            // opened, since those rules cause no harm and are useful the next
+            // time the firewall gets enabled
             undo: [['type' => 'ufw.disable']],
         );
 
         $note = $opened === []
             ? ''
-            : ' (เปิดพอร์ต ' . implode(', ', $opened) . ' ไว้ให้ก่อนแล้วเพื่อไม่ให้เข้าเครื่องไม่ได้)';
+            : ' (opened port(s) ' . implode(', ', $opened) . ' first, so the machine stays reachable)';
 
         return [
             'rollback_id' => $rollbackId,
             'opened' => $opened,
             'window' => $args['window'],
             'message' => sprintf(
-                'เปิดใช้งาน firewall แล้ว%s — ต้องกดยืนยันว่ายังใช้งานได้ภายใน %d วินาที '
-                . 'ไม่อย่างนั้นระบบจะปิด firewall กลับให้อัตโนมัติ',
+                'Firewall enabled%s — confirm it still works within %d seconds, '
+                . 'or the system will automatically disable it again',
                 $note,
                 $args['window'],
             ),
