@@ -15,30 +15,34 @@ use Phpcp\Domain\Site;
 use Phpcp\Support\Validator;
 
 /**
- * ตั้งเจ้าของไฟล์ของเว็บไซต์ให้กลับเป็นค่าที่ถูกต้อง — ทีละเว็บ
+ * Resets a website's file ownership back to the correct values — one site at a time
  *
- * ## ทำไมต้องมี
+ * ## Why this needs to exist
  *
- * เจ้าของไฟล์เพี้ยนได้ง่ายกว่าที่คิด และเป็นสาเหตุอันดับหนึ่งของอาการ
- * "อัปโหลดไฟล์แล้วเว็บขึ้น 403" หรือ "ปลั๊กอินอัปเดตตัวเองไม่ได้":
+ * File ownership goes wrong more easily than it might seem, and is the
+ * number one cause of "uploaded a file and the site shows a 403" or "a
+ * plugin can't update itself":
  *
- *   - แตกไฟล์สำรองด้วย root แล้วไฟล์ทั้งชุดกลายเป็นของ root
- *   - คัดลอกไฟล์เข้ามาด้วย scp/rsync จากผู้ใช้อื่น
- *   - รัน composer หรือ npm ด้วย sudo
- *   - ย้ายเว็บมาจากเครื่องเก่าที่ใช้เลข uid คนละชุด
- *   - เว็บที่สร้างก่อนระบบแก้บั๊กเรื่องกลุ่มเจ้าของ (เคยตั้งเป็น <ผู้ใช้>:<ผู้ใช้>
- *     ซึ่งทำให้เว็บเซิร์ฟเวอร์เดินผ่านไดเรกทอรีไม่ได้เลย)
+ *   - unzipping a backup as root, so the whole set of files ends up owned by root
+ *   - copying files in with scp/rsync as a different user
+ *   - running composer or npm with sudo
+ *   - migrating a site from an old machine that used a different set of uid numbers
+ *   - a site created before the system fixed a group-ownership bug (used to
+ *     be set to <user>:<user>, which left the web server unable to traverse
+ *     the directory at all)
  *
- * ## ค่าที่ถูกต้องคืออะไร
+ * ## What the correct value actually is
  *
- * เจ้าของ = ผู้ใช้ของเว็บไซต์นั้น (PHP-FPM รันด้วย uid นี้ จึงต้องเขียนไฟล์ได้)
- * กลุ่ม   = กลุ่มของเว็บเซิร์ฟเวอร์ (Apache/nginx ต้องอ่านและเดินผ่านไดเรกทอรีได้)
+ * Owner = that website's own user (PHP-FPM runs as this uid, so it must be able to write files)
+ * Group = the web server's group (Apache/nginx must be able to read and traverse the directory)
  *
- * ## ขอบเขต
+ * ## Scope
  *
- * ทำได้ทีละเว็บไซต์เท่านั้น ไม่มีปุ่ม "ซ่อมทุกเว็บพร้อมกัน" โดยเจตนา —
- * คำสั่ง chown ที่ครอบคลุมทั้งเครื่องคือคำสั่งที่พังแล้วกู้ยากที่สุดคำสั่งหนึ่ง
- * และการทำทีละเว็บทำให้เห็นผลก่อนว่าถูกต้องแล้วค่อยทำเว็บถัดไป
+ * Only ever works one website at a time — there is deliberately no "fix
+ * every site at once" button · a chown that spans the whole machine is one
+ * of the hardest kinds of mistake to recover from once it goes wrong, and
+ * doing it one site at a time means seeing that it worked correctly before
+ * moving on to the next one.
  */
 final class SiteResetOwner extends SiteCapability implements Capability
 {
@@ -59,15 +63,16 @@ final class SiteResetOwner extends SiteCapability implements Capability
 
     public function summary(): string
     {
-        return 'ตั้งเจ้าของไฟล์ของเว็บไซต์ให้กลับเป็นค่าที่ถูกต้อง';
+        return "Reset a website's file ownership back to correct values";
     }
 
     public function validate(array $args): array
     {
         return [
             'site_id' => Validator::requireInt($args, 'site_id', 1),
-            // ซ่อมสิทธิ์ (0755/0644) ด้วยหรือไม่ — แยกจากการเปลี่ยนเจ้าของ
-            // เพราะบางเว็บตั้งสิทธิ์พิเศษไว้เองอย่างจงใจ เช่นสคริปต์ที่ต้อง execute
+            // Also fix permissions (0755/0644)? — kept separate from changing
+            // ownership, since some sites deliberately set special
+            // permissions on purpose, e.g. a script that needs to execute
             'fix_permissions' => (bool) ($args['fix_permissions'] ?? false),
         ];
     }
@@ -80,20 +85,21 @@ final class SiteResetOwner extends SiteCapability implements Capability
         $root = $site->root();
         $resolved = $executor->path($root);
 
-        // กันการเผลอสั่งกับเส้นทางของ panel เอง แม้ฐานข้อมูลจะถูกแก้ให้ชี้ไปที่นั่น
+        // Guards against accidentally targeting the panel's own path, even if the database was tampered with to point there
         SelfProtection::assertPath($root);
 
         if (!$executor->exists($resolved)) {
-            throw new ValidationError("ไม่พบไดเรกทอรีของเว็บไซต์: {$root}");
+            throw new ValidationError("Website directory not found: {$root}");
         }
 
-        // ตรวจซ้ำหลัง realpath — symlink ที่ชี้ออกนอกพื้นที่ของเว็บไซต์จะทำให้
-        // chown -R ไล่ตามไปเปลี่ยนเจ้าของไฟล์นอกขอบเขตได้
+        // Checked again after realpath — a symlink pointing outside the
+        // website's own space would let chown -R follow it and change
+        // ownership of files outside the intended scope
         $real = $executor->realPath($resolved);
 
         if ($real === null || $real !== rtrim($resolved, '/')) {
             throw new ValidationError(
-                'เส้นทางของเว็บไซต์ไม่ตรงกับที่คาดไว้หลังแปลง symlink — ยกเลิกเพื่อความปลอดภัย',
+                'The website path did not match what was expected after resolving symlinks — cancelled for safety',
             );
         }
 
@@ -103,15 +109,18 @@ final class SiteResetOwner extends SiteCapability implements Capability
         $before = $this->sample($executor, $site);
 
         /*
-         * ทุกไดเรกทอรีของเว็บ ไม่ใช่แค่ `root()`
+         * Every directory belonging to the site, not just `root()`
          *
-         * เดิม chown แค่ `root()` ตัวเดียว ซึ่งใช้ได้ตอนเลย์เอาต์เก็บทุกอย่างไว้ใต้กล่อง
-         * เดียวกัน · **ในเลย์เอาต์ cpanel `root()` คือ `.phpcp/<โดเมน>`** ส่วนไฟล์เว็บ
-         * อยู่ที่ `public_html` และ log อยู่ที่ `logs/<โดเมน>` ซึ่งอยู่คนละที่ —
-         * ปุ่มซ่อมเจ้าของไฟล์จึงรายงานว่าสำเร็จโดยที่ไฟล์ที่พังจริงไม่ถูกแตะเลย
+         * Used to chown just `root()` alone, which worked fine when the
+         * layout kept everything under a single folder · **in the cpanel
+         * layout, `root()` is `.phpcp/<domain>`**, while the website's own
+         * files live in `public_html` and logs live in `logs/<domain>` —
+         * entirely different places — so the ownership-fix button reported
+         * success while the files that were actually broken never got touched.
          *
-         * ใช้รายการเดียวกับตอนสร้างเว็บ (SiteProvisioner::ownershipTargets) เพื่อให้
-         * "ซ่อมให้กลับเป็นค่าที่ถูกต้อง" หมายถึงค่าเดียวกับที่ระบบตั้งไว้ตอนสร้างจริง ๆ
+         * Uses the same list used when the site was created
+         * (SiteProvisioner::ownershipTargets), so "reset to correct values"
+         * genuinely means the same values the system set at creation time.
          */
         foreach (SiteProvisioner::ownershipTargets($site) as $target) {
             $path = $executor->path($target);
@@ -120,14 +129,14 @@ final class SiteResetOwner extends SiteCapability implements Capability
                 continue;
             }
 
-            // -h เปลี่ยนตัว symlink เอง ไม่ไล่ตามไปเปลี่ยนปลายทาง
+            // -h changes the symlink itself, without following it to its target
             $result = $executor->exec(
                 ['/usr/bin/chown', '-Rh', $owner . ':' . $group, $path],
                 timeout: 300,
             );
 
             if (!$result->ok()) {
-                throw new ExecutionFailed('เปลี่ยนเจ้าของไฟล์ไม่สำเร็จ: ' . trim($result->stderr));
+                throw new ExecutionFailed('Failed to change file ownership: ' . trim($result->stderr));
             }
         }
 
@@ -150,23 +159,24 @@ final class SiteResetOwner extends SiteCapability implements Capability
             'permissions_reset' => $args['fix_permissions'],
             'permission_passes' => $changedModes,
             'message' => sprintf(
-                'ตั้งเจ้าของไฟล์ของ %s เป็น %s:%s เรียบร้อยแล้ว%s',
+                "Set %s's file ownership to %s:%s%s",
                 $site->domain,
                 $owner,
                 $group,
                 $args['fix_permissions']
-                    ? ' และตั้งสิทธิ์ไดเรกทอรีเป็น 0750 ไฟล์เป็น 0640'
+                    ? ' and set directory permissions to 0750, files to 0640'
                     : '',
             ),
         ];
     }
 
     /**
-     * ตั้งสิทธิ์กลับเป็นค่ามาตรฐานของระบบ
+     * Resets permissions back to the system's standard values
      *
-     * 0750 / 0640 ไม่ใช่ 0755 / 0644 ที่คุ้นตากว่า — เพราะแต่ละเว็บมีผู้ใช้ของตัวเอง
-     * และไฟล์ตั้งเป็นกลุ่มของเว็บเซิร์ฟเวอร์อยู่แล้ว การให้สิทธิ์ "ผู้ใช้อื่น"
-     * จึงหมายถึงให้ผู้ใช้ของ *เว็บไซต์อื่น* อ่านได้ ซึ่งทำลายการแยกเว็บออกจากกัน
+     * 0750 / 0640, not the more familiar 0755 / 0644 — because each website
+     * has its own user, and files are already set to the web server's group,
+     * so granting "other" permission would mean letting *other websites'*
+     * users read them, breaking the separation between sites.
      */
     private function resetModes(Executor $executor, string $root): int
     {
@@ -187,7 +197,7 @@ final class SiteResetOwner extends SiteCapability implements Capability
     }
 
     /**
-     * เจ้าของปัจจุบันของไดเรกทอรีหลัก ใช้แสดงผลก่อน/หลังให้เห็นว่าเปลี่ยนอะไรไป
+     * The main directory's current owner — used to display a before/after view of what changed
      *
      * @return array<string,string>
      */
@@ -220,11 +230,12 @@ final class SiteResetOwner extends SiteCapability implements Capability
     }
 
     /**
-     * แปลง uid/gid เป็นชื่อ ถ้าแปลงไม่ได้ให้แสดงตัวเลขไปตามตรง
+     * Resolves a uid/gid to a name; shows the raw number if it can't be resolved
      *
-     * แปลงไม่ได้เป็นเรื่องปกติเมื่อเว็บถูกย้ายมาจากเครื่องอื่นที่ใช้เลข uid คนละชุด —
-     * ซึ่งเป็นหนึ่งในสาเหตุหลักที่ต้องใช้คำสั่งนี้ การแสดงเลขดิบจึงมีประโยชน์กว่า
-     * การแสดงเครื่องหมายคำถาม
+     * Failing to resolve is normal when a site was migrated from another
+     * machine using a different set of uid numbers — which is one of the
+     * main reasons this command exists in the first place, so showing the
+     * raw number is more useful than showing a question mark.
      */
     private static function nameOf(string $function, int $id, string $key): string
     {

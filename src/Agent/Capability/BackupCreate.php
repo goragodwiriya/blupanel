@@ -16,27 +16,32 @@ use Phpcp\Driver\Db\MariaDbManager;
 use Phpcp\Support\Validator;
 
 /**
- * สร้างไฟล์สำรอง **ลงบ้านของเจ้าของเว็บ** — ไฟล์เว็บหรือฐานข้อมูล
+ * Creates a backup file **into the website owner's own home** — website files or a database
  *
- * ## สิ่งที่เปลี่ยนไปจากของเดิม (PLAN-BACKUP-V2)
+ * ## What changed from the original design (PLAN-BACKUP-V2)
  *
- * เดิมเขียนลง `/var/lib/phpcp/backups` ซึ่งเป็นพื้นที่ของ panel แล้วบันทึกแถวลงตาราง
- * `backups` เป็นแหล่งความจริง · ตอนนี้ไฟล์ไปอยู่ที่ `<บ้าน>/backup` ของลูกค้า:
- * เขาดาวน์โหลดเองได้ ลบเองได้ และมันนับในโควตาของเขา — **จึงไม่บันทึกแถวคู่ขนานอีก**
- * (ดู {@see \Phpcp\Domain\BackupFiles} ว่าทำไมแถวที่ลูกค้าลบไฟล์ทิ้งได้จึงเป็นโทษ)
+ * It used to write into `/var/lib/phpcp/backups`, the panel's own space, and
+ * treat a row in the `backups` table as the source of truth · now the file
+ * lives at the customer's own `<home>/backup`: they can download it
+ * themselves, delete it themselves, and it counts against their own quota —
+ * **so no parallel row is recorded anymore** (see
+ * {@see \Phpcp\Domain\BackupFiles} for why a row a customer can delete the
+ * underlying file out from under is actively harmful).
  *
- * ชนิด `config`/`full` ถูกตัดทิ้ง — ค่าตั้งของเครื่องไม่ใช่ของลูกค้าคนไหน จึงไม่มีบ้าน
- * ให้ไปอยู่ · สำรองด้วย snapshot ของ VPS หรือ git ตรงกว่า (ข้อ B2)
+ * The `config`/`full` types were cut — machine-level settings don't belong
+ * to any one customer, so there's no home for them to live in · a VPS
+ * snapshot or git is a more direct way to back those up (item B2).
  *
- * `destination_id` ยังอยู่ เพราะงานตามเวลาเรียก capability ได้ทีละตัวต่อหนึ่งงาน —
- * ถ้าต้องแยก "สร้าง" กับ "ส่งออก" เป็นสองคำสั่ง จะมีช่วงที่ไฟล์สำรองอยู่บนดิสก์ก้อน
- * เดียวกับข้อมูลจริงโดยไม่มีอะไรพามันออกไป
+ * `destination_id` is still here, because a scheduled job calls a capability
+ * once per job — splitting "create" and "push offsite" into two separate
+ * commands would leave a window where the backup file sits on the same disk
+ * as the real data with nothing carrying it away.
  */
 final class BackupCreate extends BackupCapability implements Capability
 {
     private const DU = '/usr/bin/du';
 
-    /** วัดขนาดต้องไม่กลายเป็นตัวที่ทำให้งานสำรองค้าง — เพดานเดียวกับ DiskQuotaCheck */
+    /** Measuring size must never itself become the reason a backup job hangs — same ceiling as DiskQuotaCheck */
     private const MEASURE_TIMEOUT = 120;
 
     public static function name(): string
@@ -45,14 +50,17 @@ final class BackupCreate extends BackupCapability implements Capability
     }
 
     /**
-     * **สิทธิ์ของผู้ดูแลเซิร์ฟเวอร์ ไม่ใช่ของลูกค้า**
+     * **A server admin's permission, not a customer's**
      *
-     * การสร้างไฟล์สำรองหนึ่งครั้งกินพื้นที่เท่าเว็บทั้งเว็บในโควตาของลูกค้า และกิน CPU
-     * ของเครื่องที่เว็บทุกรายใช้ร่วมกัน · ผู้ดูแลเป็นคนตัดสินว่าบัญชีไหนถูกสำรองบ้าง
-     * (สวิตช์รายบัญชี + รอบเดียวทั้งเครื่อง) ปุ่ม "สำรองเดี๋ยวนี้" จึงต้องอยู่ในมือ
-     * คนเดียวกัน ไม่ใช่ให้ลูกค้ากดเองได้ไม่จำกัด
+     * Creating one backup file consumes space equal to the whole site
+     * against the customer's own quota, and CPU on a machine every site
+     * shares · an admin is the one who decides which accounts get backed up
+     * at all (per-account switch + a single machine-wide schedule), so the
+     * "back up now" button has to sit in the same hands, not be something a
+     * customer can click without limit.
      *
-     * ลูกค้ายังมี `backup.manage` สำหรับ **ลบ** สำเนาของตัวเอง — ซึ่งคืนพื้นที่ ไม่ใช่กิน
+     * A customer still has `backup.manage` to **delete** their own copies —
+     * which returns space, rather than consuming it.
      */
     public function permission(): string
     {
@@ -66,7 +74,7 @@ final class BackupCreate extends BackupCapability implements Capability
 
     public function summary(): string
     {
-        return 'สร้างไฟล์สำรองของเว็บไซต์หรือฐานข้อมูล ลงในโฟลเดอร์สำรองของเจ้าของ';
+        return "Create a website or database backup into the owner's backup folder";
     }
 
     public function validate(array $args): array
@@ -75,7 +83,7 @@ final class BackupCreate extends BackupCapability implements Capability
             'type' => BackupManager::assertType(Validator::requireString($args, 'type', 16)),
             'site_id' => Validator::requireInt($args, 'site_id', 1),
             'database' => Validator::optionalString($args, 'database', '', 64),
-            // 0 = เก็บไว้ในเครื่องอย่างเดียว · ระบุมาแล้วจะส่งออกต่อทันทีหลังสร้างเสร็จ
+            // 0 = keep it on this machine only · when given, pushed offsite immediately after creation
             'destination_id' => Validator::optionalInt($args, 'destination_id', 0, 0),
         ];
     }
@@ -85,8 +93,10 @@ final class BackupCreate extends BackupCapability implements Capability
         $site = $this->siteFor($context, $args['site_id']);
         $owner = $site->owner;
 
-        // ต้องรู้ว่าจะสำรองฐานไหนก่อนวัดขนาด — และผู้ใช้ควรเห็น "เว็บนี้ไม่มีฐานข้อมูล"
-        // ก่อนเห็น "โควตาไม่พอ" เสมอ เพราะข้อแรกเจาะจงกว่าและแก้ได้ตรงกว่า
+        // Has to know which database to back up before measuring size — and
+        // a user should always see "this site has no database" before
+        // "quota exceeded", since the first is more specific and more
+        // directly actionable
         $database = $args['type'] === 'database'
             ? $this->database($context, $site->id, $args['database'])
             : '';
@@ -118,8 +128,11 @@ final class BackupCreate extends BackupCapability implements Capability
             'bytes' => $created['bytes'],
             'offsite' => $offsite,
             'message' => sprintf(
-                'สำรอง%s %s แล้ว (%s ไบต์) เก็บที่ %s',
-                BackupManager::typeLabel($args['type']),
+                // BackupManager::typeLabel() returns a Thai label (src/Driver
+                // is not yet converted) — mapped to English here instead of
+                // calling it, so this message doesn't end up half-translated
+                'Backed up %s for %s (%s bytes), saved to %s',
+                $args['type'] === 'database' ? 'database' : 'website files',
                 $site->domain,
                 number_format($created['bytes']),
                 $owner->backupDir(),
@@ -128,16 +141,22 @@ final class BackupCreate extends BackupCapability implements Capability
     }
 
     /**
-     * ขนาดที่ไฟล์สำรองนี้จะกินอย่างมากที่สุด — ตัวเลขที่ด่านโควตาต้องใช้
+     * The most this backup file could possibly consume — the number the quota gate needs
      *
-     * **เป็นขนาดก่อนบีบอัดโดยตั้งใจ** · ไฟล์จริงที่ได้เล็กกว่านี้เกือบเสมอ (ข้อความ
-     * ของเว็บและ SQL บีบได้ราว 5-10 เท่า) แต่ด่านโควตาต้องเผื่อไว้ทางที่ปลอดภัย —
-     * เดาต่ำแล้วผิดคือดิสก์เต็มจนเว็บของลูกค้ารายอื่นเขียนไฟล์ไม่ได้ ส่วนเดาสูงแล้วผิด
-     * คือข้อความที่บอกให้ลบไฟล์เก่าก่อน ซึ่งลูกค้าแก้เองได้ใน 10 วินาที · ข้อความ
-     * ของด่านจึงเขียนว่า "ไม่เกิน" ไม่ใช่ "ต้องการ" ({@see DiskQuota::assertFits()})
+     * **Deliberately the pre-compression size** · the real file that comes
+     * out is almost always smaller (web text and SQL compress roughly
+     * 5–10×), but the quota gate has to err on the safe side — guessing low
+     * and being wrong means the disk fills until other customers' sites
+     * can't write files at all, while guessing high and being wrong just
+     * means a message telling the customer to delete old files first, which
+     * they can fix themselves in 10 seconds · that's why the gate's own
+     * message says "no more than", not "requires"
+     * ({@see DiskQuota::assertFits()}).
      *
-     * วัดไม่ได้ = คืน UNKNOWN ไม่ใช่ 0 ที่แปลว่า "ไม่กินที่เลย" — บัญชีที่วัดบ้านไม่ได้
-     * ต้องตกไปใช้ด่าน "เต็มหรือยัง" ไม่ใช่ผ่านฉลุยเพราะการวัดล้ม
+     * Can't be measured = returns UNKNOWN, not 0, which would mean "takes no
+     * space at all" — an account whose home can't be measured has to fall
+     * through to the "already full?" gate, not sail through just because
+     * measuring failed.
      */
     private function estimateBytes(Executor $executor, Site $site, string $database): int
     {
@@ -148,16 +167,17 @@ final class BackupCreate extends BackupCapability implements Capability
 
             return $this->measureDirectory($executor, $site);
         } catch (\Throwable) {
-            // วัดไม่ได้ต้องไม่ทำให้การสำรองล้มทั้งงาน — ด่านที่เหลือยังกัน "โควตาเต็ม" อยู่
+            // A failed measurement must never fail the whole backup job — the remaining gate still blocks a genuinely full quota
             return DiskQuota::UNKNOWN;
         }
     }
 
     /**
-     * ขนาดของ docroot เป็นไบต์ — เดินไฟล์ด้วยสิทธิ์เจ้าของตาม ARCHITECTURE §4.4
+     * The docroot's size in bytes — walks files under the owner's own privileges, per ARCHITECTURE §4.4
      *
-     * เดินต้นไม้ไฟล์เพิ่มอีกรอบก่อน tar จะเดินซ้ำ ซึ่งยอมรับได้: `du` อ่านแต่ metadata
-     * ส่วน tar อ่านเนื้อไฟล์ทั้งหมดแล้วบีบอัด — ต้นทุนต่างกันคนละระดับ
+     * Walks the file tree an extra time before tar walks it again, which is
+     * acceptable: `du` only reads metadata, while tar reads every file's
+     * whole content and compresses it — an entirely different order of cost.
      */
     private function measureDirectory(Executor $executor, Site $site): int
     {
@@ -182,10 +202,11 @@ final class BackupCreate extends BackupCapability implements Capability
     }
 
     /**
-     * ฐานข้อมูลที่จะสำรอง — ต้องเป็นของเว็บนี้จริง
+     * The database to back up — must genuinely belong to this site
      *
-     * เว็บที่มีฐานเดียวไม่ต้องระบุ · การเดาให้เมื่อมีหลายฐานคือการสำรองผิดฐานแล้ว
-     * รายงานว่าสำเร็จ ซึ่งรู้ตัวตอนกู้คืนเท่านั้น
+     * A site with only one database doesn't need to specify it · guessing
+     * when there are several would mean backing up the wrong database while
+     * reporting success, only noticed at restore time.
      *
      * @throws ValidationError|PermissionDenied
      */
@@ -197,13 +218,13 @@ final class BackupCreate extends BackupCapability implements Capability
         );
 
         if ($owned === []) {
-            throw new ValidationError('เว็บไซต์นี้ยังไม่มีฐานข้อมูลให้สำรอง');
+            throw new ValidationError('This website has no database to back up yet');
         }
 
         if ($requested === '') {
             if (count($owned) > 1) {
                 throw new ValidationError(
-                    'เว็บไซต์นี้มีหลายฐานข้อมูล (' . implode(', ', $owned) . ') — ต้องเลือกว่าจะสำรองฐานไหน',
+                    'This website has several databases (' . implode(', ', $owned) . ') — pick which one to back up',
                 );
             }
 
@@ -211,18 +232,20 @@ final class BackupCreate extends BackupCapability implements Capability
         }
 
         if (!in_array($requested, $owned, true)) {
-            throw new PermissionDenied('ฐานข้อมูลนี้ไม่ได้เป็นของเว็บไซต์ที่เลือก');
+            throw new PermissionDenied('This database does not belong to the selected website');
         }
 
         return $requested;
     }
 
     /**
-     * ส่งไฟล์ที่เพิ่งสร้างออกไปยังปลายทาง — ขั้นที่ทำให้ "สำรองอัตโนมัติ" มีความหมายจริง
+     * Pushes the file just created out to a destination — the step that makes "automatic backup" actually mean something
      *
-     * **ส่งไม่สำเร็จไม่ทำให้ทั้งคำสั่งล้ม** โดยตั้งใจ · ไฟล์ในเครื่องสร้างเสร็จแล้วและ
-     * ใช้กู้คืนได้อยู่ · การโยน error ทิ้งทั้งงานจะทำให้ผู้ใช้เข้าใจว่าไม่มีไฟล์สำรองเลย
-     * ทั้งที่มี — ผลการส่งจึงกลับไปกับคำตอบให้เห็นแทน
+     * **A failed push deliberately doesn't fail the whole command** · the
+     * local file was already created successfully and can still be restored
+     * from · throwing away the whole job would leave the user thinking there
+     * is no backup at all when there genuinely is one — so the push result
+     * is returned alongside the response instead.
      *
      * @param  array<string,mixed> $file
      * @return array<string,mixed>
@@ -240,9 +263,9 @@ final class BackupCreate extends BackupCapability implements Capability
                 'destination_id' => $destinationId,
             ], $executor, $context);
 
-            return ['ok' => true, 'message' => (string) ($result['message'] ?? 'ส่งออกนอกเครื่องแล้ว')];
+            return ['ok' => true, 'message' => (string) ($result['message'] ?? 'Pushed offsite')];
         } catch (\Throwable $e) {
-            return ['ok' => false, 'message' => 'ส่งออกนอกเครื่องไม่สำเร็จ: ' . $e->getMessage()];
+            return ['ok' => false, 'message' => 'Failed to push offsite: ' . $e->getMessage()];
         }
     }
 }
