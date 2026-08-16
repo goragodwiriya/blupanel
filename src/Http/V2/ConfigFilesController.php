@@ -64,7 +64,9 @@ final class ConfigFilesController extends HostingController
         $result = $this->agent()->data($capability, $args, $this->ctx->actor($request));
 
         $rows = array_map(
-            fn (array $file): array => $file + [
+            fn (array $file): array => [
+                'label' => $this->t((string) ($file['label'] ?? '')),
+            ] + $file + [
                 'row_id' => $file['key'],
                 // ปุ่มในแถวประกอบ URL จากค่าในแถว — ต้องมีทั้งสองค่าติดไปด้วย
                 // ไม่งั้นตัวแปรกลายเป็นค่าว่างแล้วเปิดไฟล์ไม่ได้
