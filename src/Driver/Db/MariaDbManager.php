@@ -444,6 +444,28 @@ final class MariaDbManager
             throw new ExecutionFailed('No command for backing up databases was found on this machine');
         }
 
+        /*
+         * **Checked before dumping, so the operator gets an answer instead of a driver error**
+         *
+         * The panel's own table and MariaDB drift apart in ordinary ways: a
+         * database dropped straight from the mysql client, a panel.db
+         * restored from a backup taken before one was removed. What the
+         * operator saw then was the raw line `mysqldump: Got error: 1049:
+         * Unknown database 'x'` — true, but it says nothing about which of the
+         * two sides is wrong, or what to do about it.
+         *
+         * It matters most in the automatic round, which runs unattended and
+         * would otherwise report that same driver error every night with no
+         * hint that the fix is to remove one stale row.
+         */
+        if (!in_array($database, $this->databases($executor), true)) {
+            throw new ExecutionFailed(sprintf(
+                'Database %s no longer exists on this machine, but the panel still has a record of it'
+                . ' — remove that record from the Databases page, or restore the database, and try again',
+                $database,
+            ));
+        }
+
         $result = $executor->exec([
             $binary,
             ...$this->defaultsFlag($executor),

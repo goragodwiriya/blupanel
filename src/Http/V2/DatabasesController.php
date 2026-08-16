@@ -49,7 +49,25 @@ final class DatabasesController extends ApiController
         // เงื่อนไขปุ่มลบในตารางอ่านได้แค่ค่าในแถวเดียวกัน — สิทธิ์จึงต้องมากับแถว
         $manage = $this->ctx->can('db.manage');
         $slice = array_map(
-            static fn (array $db): array => $db + ['can_manage' => $manage],
+            function (array $db) use ($manage): array {
+                /*
+                 * **แถวที่ panel รู้จักแต่เครื่องไม่มี ต้องเห็นได้ตั้งแต่ในตาราง**
+                 *
+                 * ทั้งสองฝั่งเพี้ยนจากกันได้ตามปกติ (ลบจาก mysql client ตรง ๆ หรือกู้
+                 * panel.db รุ่นก่อนหน้ากลับมา) · ก่อนหน้านี้ไม่มีอะไรบอกเลย ผู้ใช้จะรู้
+                 * ก็ต่อเมื่อกดสำรองแล้วได้ error ของ mysqldump ดิบ ๆ หรือรอบอัตโนมัติ
+                 * ล้มทุกคืน · `db.list` รู้คำตอบนี้อยู่แล้ว แค่ไม่เคยถูกส่งออกมา
+                 */
+                $exists = ($db['exists_on_server'] ?? true) === true;
+
+                return $db + [
+                    'can_manage' => $manage,
+                    'status' => $exists ? 'ok' : 'missing',
+                    'status_label' => $exists ? $this->t('OK') : $this->t('Missing on server'),
+                    // สีของป้ายมาจากฝั่งเซิร์ฟเวอร์ เทมเพลตจึงเขียน `pill-${status_tone}` ได้ตรง ๆ
+                    'status_tone' => $exists ? 'ok' : 'danger',
+                ];
+            },
             $slice,
         );
 
@@ -277,13 +295,23 @@ final class DatabasesController extends ApiController
         $confirm = trim($request->payloadString('confirm')) ?: trim($request->get('confirm'));
         $dropUser = $request->payload('drop_user', $request->get('drop_user'));
 
-        $this->agent()->data('db.drop', [
+        $result = $this->agent()->data('db.drop', [
             'name' => $name,
             'confirm' => $confirm,
             'drop_user' => in_array($dropUser, [true, '1', 1, 'true'], true) ? '1' : '0',
         ], $this->ctx->actor($request));
 
-        return $this->completed($this->t('Database {name} deleted', ['name' => $name]), 'databases', ['name' => $name]);
+        /*
+         * ข้อความจาก capability มาก่อนข้อความปริยาย — สองกรณีนี้ต่างกันมากเกินกว่าจะ
+         * พูดเหมือนกัน: ลบจริง (สำรองไว้ให้แล้วที่ไฟล์ชื่อนี้) กับ **ลบแค่แถวที่ค้าง
+         * อยู่ในฐานข้อมูลของ panel** เพราะฐานนั้นไม่มีอยู่บนเครื่องแล้ว · การบอกว่า
+         * "ลบฐานข้อมูลแล้ว" ในกรณีหลังทำให้ผู้ใช้เข้าใจว่ามีข้อมูลถูกลบไปจริง
+         */
+        return $this->completed(
+            (string) ($result['message'] ?? $this->t('Database {name} deleted', ['name' => $name])),
+            'databases',
+            is_array($result) ? $result : ['name' => $name],
+        );
     }
 
     /**
