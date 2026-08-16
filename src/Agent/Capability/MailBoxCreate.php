@@ -15,18 +15,19 @@ use Phpcp\Security\Password;
 use Phpcp\Support\Validator;
 
 /**
- * สร้างกล่องจดหมายใหม่ — PLAN-MAIL เฟส M1
+ * Creates a new mailbox — PLAN-MAIL Phase M1
  *
- * **รหัสผ่านถูกแฮชที่นี่ ไม่ใช่ที่ชั้นเว็บ** และแฮชด้วย `doveadm pw` ของ Dovecot เอง
- * ไม่ใช่ `password_hash()` ของ PHP — รูปแบบต้องเป็นของ Dovecot ({ARGON2ID}...)
- * ไม่งั้นล็อกอินไม่ผ่านโดยไม่มีข้อความบอกสาเหตุ
+ * **The password is hashed right here, not at the web tier**, and hashed with
+ * Dovecot's own `doveadm pw`, not PHP's `password_hash()` — the format has to be
+ * Dovecot's own ({ARGON2ID}...), or login fails with no message explaining why.
  *
- * รหัสจริงถูกส่งกลับไปแสดง **ครั้งเดียว** เหมือนรหัสของฐานข้อมูล — ระบบไม่เก็บไว้
- * ที่ไหนเลย ลืมแล้วต้องตั้งใหม่
+ * The real password is sent back to display **exactly once**, same as a
+ * database password — the system never stores it anywhere; forget it and it has
+ * to be reset.
  */
 final class MailBoxCreate extends MailCapability
 {
-    /** ขนาดกล่องเริ่มต้น — พอสำหรับใช้งานทั่วไปและไม่กินดิสก์จนน่ากลัว */
+    /** Default mailbox size — enough for typical use, without eating disk alarmingly */
     private const DEFAULT_QUOTA_MB = 1024;
 
     public static function name(): string
@@ -36,7 +37,7 @@ final class MailBoxCreate extends MailCapability
 
     public function summary(): string
     {
-        return 'สร้างกล่องจดหมายใหม่';
+        return 'Create new mailbox';
     }
 
     public function validate(array $args): array
@@ -45,7 +46,7 @@ final class MailBoxCreate extends MailCapability
         $quota = (int) ($args['quota_mb'] ?? self::DEFAULT_QUOTA_MB);
 
         if ($quota < 1 || $quota > 1024 * 100) {
-            throw new ValidationError('ขนาดกล่องต้องอยู่ระหว่าง 1 MB ถึง 100 GB');
+            throw new ValidationError('Mailbox size must be between 1 MB and 100 GB');
         }
 
         return [
@@ -63,18 +64,19 @@ final class MailBoxCreate extends MailCapability
 
         if ((int) ($domain['mail_enabled'] ?? 0) !== 1) {
             throw new ValidationError(
-                'โดเมน ' . $args['domain'] . ' ยังไม่ได้เปิดเมล — เปิดก่อนแล้วค่อยสร้างกล่อง',
+                'Domain ' . $args['domain'] . ' does not have mail enabled yet — enable it before creating a mailbox',
             );
         }
 
         if ($repository->findMailbox((int) $domain['id'], $args['local_part']) !== null) {
-            throw new ValidationError('มีกล่อง ' . $args['local_part'] . '@' . $args['domain'] . ' อยู่แล้ว');
+            throw new ValidationError('Mailbox ' . $args['local_part'] . '@' . $args['domain'] . ' already exists');
         }
 
         /*
-         * โควตาจำนวนกล่องของเจ้าของ — ช่อง `quota_emails` ในหน้าลูกค้ามีมาตั้งแต่ต้น
-         * แต่ไม่เคยมีอะไรบังคับ เพราะยังไม่มีระบบเมลจริง · ตรวจที่นี่จุดเดียว ทั้ง
-         * หน้าเว็บและ CLI จึงได้กติกาเดียวกัน
+         * The owner's mailbox-count quota — the `quota_emails` field on the
+         * customer page has existed from the start, but nothing ever enforced
+         * it, since there was no real mail system yet · checked in this one
+         * place, so the web page and the CLI share the exact same rule
          */
         $owner = $repository->ownerOf((int) $domain['id']);
 
@@ -86,7 +88,7 @@ final class MailBoxCreate extends MailCapability
             }
         }
 
-        // สุ่มให้ถ้าไม่ได้ระบุมา — ผู้ดูแลไม่ต้องคิดรหัสเอง (ซึ่งมักจะได้รหัสที่อ่อน)
+        // Generated randomly if not specified — the admin doesn't have to come up with one (which usually produces a weak password)
         $plain = $args['password'] !== '' ? $args['password'] : Password::random(16);
         $manager = $this->mailboxes($context);
 
@@ -100,8 +102,9 @@ final class MailBoxCreate extends MailCapability
             $args['quota_mb'],
         );
 
-        // สร้างโฟลเดอร์ก่อนเขียนตาราง — ถ้าเขียนตารางก่อนแล้วสร้างโฟลเดอร์ไม่สำเร็จ
-        // จะมีช่วงที่ Postfix รับเมลของกล่องที่ยังไม่มีที่เก็บ แล้วเมลตีกลับ
+        // The folder is created before writing the table — writing the table
+        // first and having folder creation fail would leave a window where
+        // Postfix accepts mail for a mailbox with nowhere to store it, and mail bounces
         $manager->createMaildir($executor, $maildir);
 
         $result = $this->sync($executor, $context);
@@ -110,18 +113,22 @@ final class MailBoxCreate extends MailCapability
             'id' => $id,
             'address' => $address->full(),
             'quota_mb' => $args['quota_mb'],
-            // แสดงครั้งเดียวเท่านั้น ระบบไม่เก็บรหัสจริงไว้ที่ไหนเลย
+            // Shown exactly once — the system never stores the real password anywhere
             'password' => $plain,
             /*
-             * ต้องเอาไปโชว์หรือเปล่า — คนละเรื่องกับ "มีรหัสในคำตอบไหม"
+             * Whether it needs to be shown at all — a different question from "is
+             * the password in the response"
              *
-             * รหัสอยู่ในคำตอบเสมอ ทั้งที่ระบบสุ่มให้และที่ผู้ดูแลพิมพ์เอง · ถ้าใช้แค่
-             * `password !== ''` เป็นเงื่อนไข หน้าต่างรหัสผ่านจะเด้งทุกครั้งที่บันทึก
-             * รวมถึงตอนที่ผู้ดูแลเพิ่งพิมพ์รหัสนั้นมากับมือ — เขาเห็นหน้าต่างค้างอยู่
-             * แล้วเข้าใจว่าฟอร์มยังไม่ปิด ทั้งที่กล่องถูกสร้างไปแล้ว
+             * The password is always in the response, whether the system
+             * generated it or the admin typed it themselves · using only
+             * `password !== ''` as the condition would pop the password window
+             * open on every save, including right after the admin typed that
+             * exact password by hand — they'd see the window still sitting there
+             * and think the form hadn't closed, even though the mailbox had
+             * already been created.
              */
             'password_generated' => $args['password'] === '',
-            'message' => sprintf('สร้างกล่อง %s แล้ว', $address->full()),
+            'message' => sprintf('Created mailbox %s', $address->full()),
         ];
     }
 }

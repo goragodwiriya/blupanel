@@ -13,14 +13,17 @@ use Phpcp\Driver\Template;
 use Phpcp\Support\Validator;
 
 /**
- * เปิดหรือปิดเมลของโดเมนหนึ่ง — PLAN-MAIL เฟส M1
+ * Enables or disables mail for one domain — PLAN-MAIL Phase M1
  *
- * **เปิดเป็นรายโดเมน ไม่ใช่เปิดทั้งเครื่อง** โดเมนที่ไม่ได้ใช้เมลต้องไม่โผล่ใน
- * `virtual_mailbox_domains` เลย เพราะโดเมนที่อยู่ในนั้นแปลว่าเครื่องนี้ประกาศตัวว่า
- * เป็นปลายทางสุดท้ายของเมลโดเมนนั้น — เมลที่ส่งมาจะไม่ถูกส่งต่อไปที่อื่นอีก
- * ถ้าเผลอเปิดให้โดเมนที่จริง ๆ ใช้ Gmail อยู่ เมลของลูกค้าจะหายเข้าเครื่องนี้ทั้งหมด
+ * **Enabled per domain, never for the whole machine** — a domain not using mail
+ * must never appear in `virtual_mailbox_domains` at all, because a domain listed
+ * there means this machine has declared itself the final destination for that
+ * domain's mail — nothing arriving there gets forwarded on anywhere else. Enable
+ * it by mistake for a domain actually running on Gmail, and that customer's mail
+ * vanishes into this machine entirely.
  *
- * ปิดเมลไม่ลบกล่อง — แถวยังอยู่ในฐานข้อมูลเผื่อเปิดกลับ แต่หายจากไฟล์ตั้งค่าจริง
+ * Disabling mail never deletes a mailbox — the row stays in the database in case
+ * it's re-enabled, but disappears from the real config file.
  */
 final class MailDomainSet extends MailCapability
 {
@@ -31,7 +34,7 @@ final class MailDomainSet extends MailCapability
 
     public function summary(): string
     {
-        return 'เปิดหรือปิดเมลของโดเมน';
+        return 'Enable or disable domain mail';
     }
 
     public function validate(array $args): array
@@ -49,7 +52,7 @@ final class MailDomainSet extends MailCapability
 
         if (!$this->mailboxes($context)->isInstalled($executor)) {
             throw new ValidationError(
-                'ไม่พบ Dovecot บนเครื่องนี้ — ติดตั้งด้วย apt install dovecot-imapd dovecot-pop3d dovecot-lmtpd ก่อน',
+                'Dovecot was not found on this machine — install it with apt install dovecot-imapd dovecot-pop3d dovecot-lmtpd first',
             );
         }
 
@@ -65,8 +68,9 @@ final class MailDomainSet extends MailCapability
                 $dkim = $manager->ensureKey($executor, (string) $domain['domain']);
             }
 
-            // เรกคอร์ดที่ต้องมีจริงถึงจะส่งถึงปลายทาง — เพิ่มให้เองถ้าโดเมนใช้ DNS
-            // ของเครื่องนี้ · ถ้าใช้ DNS ที่อื่น ค่าเหล่านี้คือสิ่งที่ต้องไปใส่เอง
+            // The records genuinely required to actually deliver mail — added
+            // automatically if the domain uses this machine's DNS · for a domain
+            // using DNS elsewhere, these are the values that need adding by hand
             $records = $this->ensureDnsRecords($context, $domain, $dkim);
         } else {
             $manager->removeKey($executor, (string) $domain['domain']);
@@ -80,22 +84,23 @@ final class MailDomainSet extends MailCapability
             'dkim' => $dkim,
             'dns_records' => $records,
             'message' => $args['enabled']
-                ? sprintf('เปิดเมลของ %s แล้ว — ต้องชี้เรกคอร์ด MX มาที่เครื่องนี้ด้วย', $domain['domain'])
-                : sprintf('ปิดเมลของ %s แล้ว — กล่องยังอยู่ในระบบแต่ไม่รับเมลอีก', $domain['domain']),
+                ? sprintf('Enabled mail for %s — the MX record must also point at this machine', $domain['domain'])
+                : sprintf('Disabled mail for %s — the mailbox still exists but no longer accepts mail', $domain['domain']),
         ];
     }
 
     /**
-     * เรกคอร์ด DNS ที่ทำให้เมลของโดเมนนี้ส่งถึงปลายทางจริง
+     * The DNS records that let this domain's mail actually reach its destination
      *
-     * สี่ตัวนี้ทำงานร่วมกัน ขาดตัวใดตัวหนึ่งเมลก็เข้าถังขยะ:
-     *   MX     บอกว่าเมลของโดเมนนี้ส่งมาที่เครื่องไหน
-     *   SPF    บอกว่าเครื่องไหนส่งเมลในนามโดเมนนี้ได้
-     *   DKIM   กุญแจสาธารณะสำหรับตรวจลายเซ็น
-     *   DMARC  บอกปลายทางว่าให้ทำยังไงเมื่อสองตัวบนไม่ผ่าน
+     * These four work together — missing any one of them and mail ends up in the trash:
+     *   MX     says which machine this domain's mail is sent to
+     *   SPF    says which machines are allowed to send mail as this domain
+     *   DKIM   the public key used to verify the signature
+     *   DMARC  tells the destination what to do when the two above fail
      *
-     * เขียนลงตารางของ panel เท่านั้น — จะไปถึง BIND9 จริงก็ต่อเมื่อเปิด `dns.enabled`
-     * ไว้ · โดเมนที่ใช้ DNS ที่อื่นยังได้ค่าไปวางเองผ่านหน้าความพร้อมของเมล
+     * Only written into the panel's own table — it only reaches the real BIND9
+     * once `dns.enabled` is on · a domain using DNS elsewhere still gets these
+     * values to place by hand, through the mail readiness page.
      *
      * @param array<string,mixed> $domain
      * @param array{selector:string,record:string,created:bool} $dkim
@@ -127,8 +132,9 @@ final class MailDomainSet extends MailCapability
                 0,
             );
 
-            // ไม่เขียนทับของเดิม — ผู้ดูแลอาจตั้ง SPF ที่รวมผู้ให้บริการอื่นไว้แล้ว
-            // การเขียนทับจะทำให้เมลที่ส่งผ่านที่นั่นตรวจไม่ผ่านทันที
+            // Never overwrites an existing record — an admin may have already
+            // set up SPF that includes another provider, and overwriting it
+            // would instantly break verification for mail sent through there
             if ((int) $exists > 0) {
                 continue;
             }
@@ -139,7 +145,7 @@ final class MailDomainSet extends MailCapability
                 'name' => $record['name'],
                 'value' => $record['value'],
                 'ttl' => 3600,
-                // ตารางนี้ไม่มีคอลัมน์เวลา — เรกคอร์ด DNS ไม่ได้สนใจว่าใครเพิ่มเมื่อไหร่
+                // This table has no timestamp column — a DNS record doesn't care who added it or when
                 'priority' => $record['type'] === 'MX' ? 10 : null,
             ]);
         }
