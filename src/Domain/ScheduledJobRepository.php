@@ -7,73 +7,92 @@ namespace Phpcp\Domain;
 use Phpcp\Kernel\Db;
 
 /**
- * งานตามเวลาระดับระบบ — ตาราง scheduled_jobs
+ * System-level scheduled jobs — the `scheduled_jobs` table
  *
- * ต่างจาก cron_jobs ตรงที่ cron_jobs เป็นของ "เว็บไซต์ของลูกค้า" และไปจบที่ crontab ของระบบ
- * ส่วนตารางนี้เป็นงานของตัว panel เอง ที่ bin/phpcp-scheduler อ่านแล้วสั่งผ่าน agent
+ * Differs from cron_jobs in that cron_jobs belongs to "the customer's own site" and
+ * ends up in the system crontab; this table holds the panel's own jobs, which
+ * `bin/phpcp-scheduler` reads and dispatches through the agent.
  *
- * รายการตั้งต้นอยู่ในโค้ดไม่ใช่ในไฟล์ migration เพราะต้องเติมให้เครื่องที่ติดตั้งไปแล้วด้วย
- * ทุกครั้งที่อัปเดต (install.sh เรียก `phpcp db:migrate` ทุกรอบ) — ถ้าอยู่ใน migration
- * เครื่องที่ผ่าน migration นั้นไปแล้วจะไม่มีวันได้งานที่เพิ่มเข้ามาทีหลังเลย
+ * The default list lives in code, not a migration file, because it has to be
+ * backfilled into machines that are already installed, on every update
+ * (install.sh runs `phpcp db:migrate` every time) — if it lived in a migration,
+ * a machine that already passed that migration would never get a job added
+ * afterward.
  */
 final class ScheduledJobRepository
 {
     /**
-     * งานที่ระบบต้องมีเสมอ — ชื่อซ้ำจะไม่ถูกเขียนทับ ผู้ดูแลจึงปรับเวลาเองได้โดยไม่ถูกย้อน
+     * Jobs the system must always have — a duplicate name is never overwritten, so
+     * the admin can adjust the schedule themselves without it being reverted
      *
      * @var list<array{name:string,capability:string,schedule:string,args:array<string,mixed>}>
      */
     public const DEFAULTS = [
-        // ทุกนาที — กลไกคืนค่าอัตโนมัติต้องทำงานได้แม้ไม่มีใครเปิดหน้าเว็บ
-        // นี่คือกรณีที่กลไกนี้ถูกออกแบบมาเพื่อรับมือโดยเฉพาะ (ผู้ดูแลหลุดการเชื่อมต่อไปแล้ว)
+        // Every minute — the auto-rollback mechanism must work even when nobody has
+        // the web page open. This is exactly the scenario it was designed to
+        // handle (the admin has already lost their connection).
         ['name' => 'rollback.run', 'capability' => 'rollback.run', 'schedule' => '* * * * *', 'args' => []],
 
-        // ทุกวันตี 3 — แจ้งเตือนล่วงหน้าและเปลี่ยนสถานะลูกค้าที่หมดอายุ
+        // Daily at 3am — sends advance warnings and changes the status of expired customers
         ['name' => 'expiry.check', 'capability' => 'expiry.check', 'schedule' => '0 3 * * *', 'args' => []],
 
-        // ทุก 15 นาที ตาม ARCHITECTURE §14
+        // Every 15 minutes per ARCHITECTURE §14
         ['name' => 'disk.usage', 'capability' => 'disk.usage', 'schedule' => '*/15 * * * *', 'args' => []],
 
-        // ทุกนาที — ความละเอียดของชั้นล่างสุดคือ 1 นาที ถ้าเก็บถี่กว่านี้ค่าจะถูกเฉลี่ยรวม
-        // เข้าแถวเดิมอยู่ดี · ถ้าห่างกว่านี้จะมีช่วงที่ไม่มีข้อมูลเลยในกราฟ 24 ชั่วโมง
-        // (PLAN-V2 เฟส E6) · งานนี้เบามาก: อ่าน /proc แล้วเขียนหนึ่งแถว
+        // Every minute — the finest tier's resolution is 1 minute; recording more
+        // often would just get averaged back into the same row anyway · less often
+        // would leave gaps with no data at all in the 24-hour graph (PLAN-V2 Phase
+        // E6) · this job is very cheap: reads /proc and writes one row.
         ['name' => 'metrics.record', 'capability' => 'metrics.record', 'schedule' => '* * * * *', 'args' => []],
 
-        // ทุกชั่วโมง — วัดพื้นที่ดิสก์ระดับบัญชี (ทั้งบ้าน ไม่ใช่รายเว็บ) แล้วแจ้งเตือน
-        // ที่ 80/90/100% · เบากว่า disk.usage ต่อครั้งแต่ยังเป็นการเดินทั้งต้นไม้ไฟล์
-        // ของบัญชี จึงไม่ตั้งถี่เท่า (PLAN-V2 เฟส E2)
+        // Hourly — measures disk usage at the account level (the whole home, not
+        // per site) and notifies at 80/90/100% · cheaper per run than disk.usage,
+        // but still walks the account's entire file tree, so it isn't run as
+        // often (PLAN-V2 Phase E2).
         ['name' => 'quota.disk_check', 'capability' => 'quota.disk_check', 'schedule' => '0 * * * *', 'args' => []],
 
-        // ทุก 5 นาที — ตรวจเกณฑ์เตือนของเครื่อง (ดิสก์ แรม โหลด บริการ ใบรับรอง)
-        // ถี่พอให้รู้เร็วเมื่อบริการสำคัญล่ม แต่ไม่ถี่จนเปลืองเพราะต้องถาม systemctl ทีละบริการ
-        // · การกันข้อความซ้ำอยู่ที่ `AlertRules` ไม่ใช่ที่ความถี่ของงานนี้ (PLAN-V2 เฟส E6)
+        // Every 5 minutes — checks the machine's alert thresholds (disk, RAM,
+        // load, services, certificates). Frequent enough to notice quickly when a
+        // critical service goes down, but not so frequent it wastes resources
+        // querying systemctl for each service one at a time · deduplicating
+        // repeated notifications lives in `AlertRules`, not in this job's
+        // frequency (PLAN-V2 Phase E6).
         ['name' => 'alert.check', 'capability' => 'alert.check', 'schedule' => '*/5 * * * *', 'args' => []],
 
-        // ทุกชั่วโมง — ลูกค้าแก้ .htaccess เองได้ตลอดผ่าน SFTP ซึ่งเปลี่ยนคำตอบว่า
-        // nginx ตอบไฟล์ static ของเว็บนั้นเองได้ไหม · ไม่มีงานนี้ กฎป้องกันที่ลูกค้า
-        // เพิ่งใส่จะยังไม่มีผลกับไฟล์ที่รากเว็บจนกว่าจะมีใครไปกดแก้เว็บนั้น
-        // เขียนไฟล์ใหม่เฉพาะเมื่อเนื้อหาต่างจริง จึงเงียบสนิทเมื่อไม่มีอะไรเปลี่ยน
+        // Hourly — a customer can edit their own .htaccess at any time over SFTP,
+        // which changes whether nginx can serve that site's static files itself ·
+        // without this job, a protection rule a customer just added would have no
+        // effect on the site's root files until someone happens to edit that site
+        // again. Only rewrites the file when the content actually differs, so
+        // it's completely silent when nothing changed.
         ['name' => 'webserver.rescan', 'capability' => 'webserver.rescan', 'schedule' => '20 * * * *', 'args' => []],
 
-        // ทุกวันตี 4 ครึ่ง — หลัง timer ของ certbot ที่มักทำงานช่วงเช้ามืด
+        // Daily at 4:30am — after certbot's own timer, which usually runs in the early morning
         ['name' => 'cert.sync', 'capability' => 'cert.sync', 'schedule' => '30 4 * * *', 'args' => []],
 
-        // ทุกวันตี 4 สี่สิบห้า — ต่อจาก cert.sync · certbot ต่ออายุใบเองโดยไม่ผ่าน panel
-        // และ **Dovecot ถือใบที่อ่านตอนสตาร์ตไว้จนกว่าจะถูกสั่ง reload** · ไม่มีงานนี้
-        // ลูกค้าจะเจอคำเตือนใบหมดอายุตอนเปิดกล่อง ทั้งที่ไฟล์บนดิสก์เป็นใบใหม่แล้ว
-        // และไม่มีอะไรบนหน้าจอผิดปกติสักอย่าง (PLAN-MAIL เฟส M3)
+        // Daily at 4:45am — right after cert.sync · certbot renews its own
+        // certificates without going through the panel, and **Dovecot holds onto
+        // the certificate it read at startup until it's told to reload** ·
+        // without this job, a customer would see an expired-certificate warning
+        // when opening their mailbox even though the file on disk is already the
+        // new certificate, with nothing on screen looking wrong at all
+        // (PLAN-MAIL Phase M3).
         ['name' => 'mail.cert', 'capability' => 'mail.cert', 'schedule' => '45 4 * * *', 'args' => []],
 
         /*
-         * **ไม่มี `backup.prune` เป็นงานตั้งต้นอีกแล้ว** (PLAN-BACKUP-V2)
+         * **There is no longer a `backup.prune` default job** (PLAN-BACKUP-V2)
          *
-         * ตอนที่ไฟล์สำรองอยู่ในพื้นที่ของ panel ตัวเก็บกวาดลบได้แต่ของที่ panel สร้างเอง
-         * · ตั้งแต่ไฟล์ย้ายไปอยู่ `<บ้าน>/backup` ของลูกค้า งานที่เปิดไว้ตั้งแต่ติดตั้ง
-         * จะกลายเป็น **การลบไฟล์ในบ้านลูกค้าทุกตี 5 โดยที่ไม่มีใครสั่ง** — รวมถึงสำเนา
-         * ที่เขากดสร้างเองและตั้งใจเก็บไว้นานกว่านโยบายปริยาย
+         * Back when backup files lived in the panel's own space, the pruner could
+         * only delete what the panel itself had created · once files moved into
+         * the customer's own `<home>/backup`, a job left enabled from
+         * installation would turn into **deleting files in the customer's own
+         * home every day at 5am with nobody having asked for it** — including
+         * copies they created themselves and deliberately intended to keep
+         * longer than the default policy.
          *
-         * ตอนนี้การเก็บกวาดเป็นขั้นตอนหนึ่ง**ในรอบสำรองอัตโนมัติ** (`backup.run`) ซึ่ง
-         * ผู้ดูแลเป็นคนเปิดเองและตั้งนโยบายเองพร้อมกัน · ไม่เปิดรอบ = ไม่มีอะไรถูกลบ
+         * Pruning is now one step **inside the automated backup run**
+         * (`backup.run`), which the admin turns on and configures the policy for
+         * at the same time · no run enabled = nothing gets deleted.
          */
     ];
 
@@ -100,9 +119,9 @@ final class ScheduledJobRepository
     }
 
     /**
-     * เติมงานตั้งต้นที่ยังไม่มี — ปลอดภัยที่จะเรียกซ้ำกี่ครั้งก็ได้
+     * Insert any default job that doesn't already exist — safe to call as many times as needed
      *
-     * @return list<string> ชื่องานที่เพิ่งถูกเพิ่ม
+     * @return list<string> names of jobs that were just added
      */
     public function installDefaults(): array
     {
@@ -130,7 +149,7 @@ final class ScheduledJobRepository
         return $added;
     }
 
-    /** บันทึกผลการรันหนึ่งรอบ — last_error ว่างเสมอเมื่อสำเร็จ ไม่ปล่อยข้อความเก่าค้าง */
+    /** Record the result of one run — last_error is always cleared on success, never left stale */
     public function recordRun(int $id, string $status, string $error = '', ?int $ranAt = null): void
     {
         $this->db->update('scheduled_jobs', [
@@ -151,10 +170,11 @@ final class ScheduledJobRepository
     }
 
     /**
-     * รอบล่าสุดที่ scheduler แตะตารางนี้ ไม่ว่างานไหน
+     * The most recent time the scheduler touched this table, regardless of which job
      *
-     * ใช้เป็นชีพจรของตัว scheduler เอง: ถ้าค่านี้ค้างเกินไม่กี่นาที แปลว่า timer ไม่ทำงาน
-     * ซึ่งอันตรายกว่างานใดงานหนึ่งล้มเหลว เพราะ auto-rollback จะไม่มีใครกระตุ้นเลย
+     * Used as the scheduler's own heartbeat: if this value hasn't moved in more
+     * than a few minutes, the timer isn't running, which is more dangerous than
+     * any single job failing, since nothing will ever trigger auto-rollback.
      */
     public function lastRunAt(): ?int
     {
@@ -163,7 +183,7 @@ final class ScheduledJobRepository
         return $value === null ? null : (int) $value;
     }
 
-    /** @return list<array<string,mixed>> งานที่รอบล่าสุดล้มเหลว */
+    /** @return list<array<string,mixed>> jobs whose most recent run failed */
     public function failing(): array
     {
         return $this->db->all("SELECT * FROM scheduled_jobs WHERE last_status = 'error' ORDER BY name");
