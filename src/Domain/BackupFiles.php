@@ -8,46 +8,54 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\ValidationError;
 
 /**
- * รายการไฟล์สำรองของบัญชีหนึ่ง — **อ่านจากโฟลเดอร์จริง ไม่ใช่จากตาราง**
+ * One account's list of backup files — **read from the real folder, not from a table**
  *
- * ## ทำไมตัวไฟล์ถึงเป็นแหล่งความจริง
+ * ## Why the files themselves are the source of truth
  *
- * โฟลเดอร์ `<บ้าน>/backup` เปิดให้ลูกค้าเข้าถึงผ่าน SFTP และตัวจัดการไฟล์ **โดยตั้งใจ**
- * — เขาดาวน์โหลดสำเนาของตัวเองได้ และลบทิ้งเองได้ · แถวในตารางที่บันทึกไว้ตอนสร้าง
- * จึงเพี้ยนทันทีที่เขาลบไฟล์: หน้าจอยังโชว์รายการ ปุ่มกู้คืนยังกดได้ แล้วล้มตอนที่
- * ผู้ใช้ต้องการมันที่สุด · ตรงข้ามกัน ไฟล์ที่เขาคัดลอกกลับเข้ามาเองจะไม่มีวันโผล่ในรายการ
+ * The `<home>/backup` folder is open to the customer through SFTP and the file
+ * manager **deliberately** — they can download their own copy, and they can delete
+ * it themselves · a table row recorded at creation time would go stale the instant
+ * they delete a file: the screen would still show the entry, the restore button
+ * would still be clickable, and it would fail exactly when the user needs it most ·
+ * conversely, a file they copy back in themselves would never show up in the list at all.
  *
- * `backup.json` ที่ฝังอยู่ในไฟล์อยู่แล้วทำให้ไฟล์อธิบายตัวเองได้ครบ (โดเมน · ผู้ใช้ระบบ ·
- * เลย์เอาต์ · เครื่องต้นทาง) จึงไม่ต้องมีแถวคู่ขนานอีก — ดู PLAN-BACKUP-V2 ข้อ B4
+ * The `backup.json` already embedded inside each file already makes it fully
+ * self-describing (domain · system user · layout · source machine), so there's no
+ * need for a parallel row at all — see PLAN-BACKUP-V2 item B4.
  *
- * ## สิ่งที่คลาสนี้ตอบและไม่ตอบ
+ * ## What this class answers, and what it doesn't
  *
- * ตอบจาก**ชื่อไฟล์กับ stat เท่านั้น** ไม่แตะข้างในไฟล์ · การอ่าน `backup.json` ต้องเรียก
- * tar หนึ่งครั้งต่อไฟล์ ซึ่งบัญชีที่สำรองทุกคืนมาหนึ่งปีแปลว่า 700 กระบวนการต่อการเปิด
- * หน้าจอหนึ่งครั้ง · ผู้ที่ต้องรู้ที่มาแน่ ๆ (ตอนกู้คืน) อ่านใบแจ้งข้อมูลเองตอนนั้น
+ * Answers using **only the filename and its stat**, never touching what's inside the
+ * file · reading `backup.json` requires one tar invocation per file, and an account
+ * that's been backed up nightly for a year means 700 processes just to open the
+ * screen once · whoever genuinely needs to know the origin for certain (at restore
+ * time) reads the manifest themselves at that point.
  */
 final class BackupFiles
 {
-    /** ไฟล์เว็บ — ต่อท้ายด้วยนามสกุลนี้เสมอ */
+    /** Site files — always end with this extension */
     public const SITE_SUFFIX = '.tar.gz';
 
-    /** ฐานข้อมูล — `.sql.gz` ตั้งแต่ PLAN-BACKUP-V2 ข้อ B9 */
+    /** Database — `.sql.gz` since PLAN-BACKUP-V2 item B9 */
     public const DB_SUFFIX = '.sql.gz';
 
     /**
-     * เพดานจำนวนไฟล์ต่อหนึ่งบัญชี
+     * Ceiling on the number of files per account
      *
-     * โฟลเดอร์นี้เป็นของลูกค้า เขาวางอะไรไว้ในนั้นกี่ไฟล์ก็ได้ · การอ่านทั้งหมดแล้วส่ง
-     * ออกจาก agent ทีเดียวจะชนขนาด frame ของโปรโตคอลเหมือนที่ `FileList` เคยเจอ
+     * This folder belongs to the customer — they can put as many files in it as
+     * they want · reading all of them and sending them out of the agent at once
+     * would hit the protocol's frame size limit, the same problem `FileList` ran into.
      */
     public const MAX_FILES = 500;
 
     /**
-     * ไฟล์สำรองทั้งหมดในโฟลเดอร์ของบัญชีนี้ เรียงใหม่สุดขึ้นก่อน
+     * Every backup file in this account's folder, newest first
      *
-     * `$domains` คือโดเมนของบัญชีนี้ ใช้จับว่าไฟล์เป็นของเว็บไหนจากชื่อไฟล์ — ไฟล์ที่
-     * จับคู่ไม่ได้ (ลูกค้าคัดลอกมาเอง หรือมาจากเว็บที่ลบไปแล้ว) ยังแสดงในรายการเสมอ
-     * เพราะมันกินโควตาของเขาจริง · แต่จะกู้คืนอัตโนมัติไม่ได้ ต้องบอกให้เห็นชัด
+     * `$domains` is this account's own domains, used to tell which site a file
+     * belongs to from its filename — a file that can't be matched (the customer
+     * copied it in themselves, or it belongs to a site that's since been deleted)
+     * is still always shown in the list, since it genuinely counts against their
+     * quota · but it can't be auto-restored, and that must be made clearly visible.
      *
      * @param  list<string> $domains
      * @return list<array{name:string,path:string,type:string,domain:string,bytes:int,modified_at:int,restorable:bool}>
@@ -57,7 +65,7 @@ final class BackupFiles
         $dir = $owner->backupDir();
         $resolved = $executor->path($dir);
 
-        // ยังไม่เคยสำรอง = ยังไม่มีโฟลเดอร์ · ไม่ใช่ข้อผิดพลาด
+        // Never backed up = the folder doesn't exist yet · not an error
         if (!$executor->exists($resolved)) {
             return [];
         }
@@ -77,8 +85,9 @@ final class BackupFiles
                 'type' => (string) self::typeOf($name),
                 'domain' => self::domainOf($name, $domains),
                 'bytes' => (int) ($entry['size'] ?? 0),
-                // เวลาจากไฟล์เอง ไม่ใช่จากชื่อไฟล์ — ไฟล์ที่ถูกคัดลอกกลับเข้ามาหรือ
-                // ถูกเปลี่ยนชื่อยังตอบได้ว่ามีมาตั้งแต่เมื่อไร
+                // Time comes from the file itself, not the filename — a file
+                // that's been copied back in or renamed can still answer how
+                // long it's actually existed
                 'modified_at' => (int) ($entry['mtime'] ?? 0),
                 'restorable' => self::typeOf($name) === 'site' && self::domainOf($name, $domains) !== '',
             ];
@@ -90,10 +99,11 @@ final class BackupFiles
     }
 
     /**
-     * ชนิดของไฟล์จากนามสกุล — null = ไม่ใช่ไฟล์สำรอง
+     * A file's type from its extension — null = not a backup file
      *
-     * ตัดสินจากนามสกุลอย่างเดียวโดยตั้งใจ · ชื่อที่เหลือเป็นของลูกค้า เขาเปลี่ยนชื่อ
-     * ไฟล์สำรองของตัวเองได้และมันก็ยังเป็นไฟล์สำรองอยู่
+     * Deliberately decided from the extension alone · the rest of the name belongs
+     * to the customer — they can rename their own backup file and it's still a
+     * backup file.
      */
     public static function typeOf(string $name): ?string
     {
@@ -105,14 +115,17 @@ final class BackupFiles
     }
 
     /**
-     * โดเมนที่ชื่อไฟล์นี้อ้างถึง — ค่าว่างแปลว่าจับคู่ไม่ได้
+     * The domain this filename refers to — an empty value means no match
      *
-     * เทียบกับรายชื่อโดเมนจริงของบัญชี แทนการแยกส่วนชื่อไฟล์ด้วยขีดกลาง เพราะชื่อโดเมน
-     * มีขีดกลางได้เอง (`my-shop.example.com`) และมีคำว่า `files` หรือ `db` ในตัวได้ด้วย
-     * — กฎที่แยกจากรูปแบบชื่อล้วนจะตัดผิดที่ในกรณีพวกนั้นโดยไม่มีอะไรฟ้อง
+     * Compared against the account's real list of domains, instead of splitting the
+     * filename on hyphens, since a domain name can contain hyphens itself
+     * (`my-shop.example.com`) and can also contain the words `files` or `db` — a
+     * rule based purely on name shape would split in the wrong place in those cases
+     * with nothing to flag it.
      *
-     * เลือกโดเมนที่**ยาวที่สุด**ที่เข้าเงื่อนไข: `shop.example.com` กับ `example.com`
-     * อยู่บัญชีเดียวกันได้ และชื่อไฟล์ของอันแรกขึ้นต้นด้วยอันหลังไม่ได้ แต่กลับกันได้
+     * Picks the **longest** matching domain: `shop.example.com` and `example.com`
+     * can both belong to the same account, and the first one's filename can't start
+     * with the second — but the reverse can happen.
      *
      * @param list<string> $domains
      */
@@ -130,11 +143,12 @@ final class BackupFiles
     }
 
     /**
-     * ชื่อไฟล์ที่รับจากผู้เรียกได้ — **ชื่อล้วนเท่านั้น**
+     * A filename that's acceptable from a caller — **name only, nothing else**
      *
-     * ค่านี้ถูกต่อเข้ากับเส้นทางบ้านของลูกค้าแล้วเอาไปลบหรือแตกไฟล์ทับเว็บ · ยอมให้มี
-     * `/` หรือ `..` แม้แต่ตัวเดียวแปลว่าผู้เรียกเลือกได้ว่าจะให้ระบบไปหยิบไฟล์ไหนบน
-     * เครื่อง แล้วสั่งลบมันด้วยสิทธิ์ root
+     * This value gets appended to the customer's home path and is then used to
+     * delete a file or extract an archive over a site · allowing even a single `/`
+     * or `..` would mean the caller gets to choose which file on the machine the
+     * system reaches for, then delete it with root privileges.
      *
      * @throws ValidationError
      */
@@ -143,12 +157,12 @@ final class BackupFiles
         $name = trim($name);
 
         if ($name === '' || $name !== basename($name) || str_contains($name, '..') || str_contains($name, "\0")) {
-            throw new ValidationError('ชื่อไฟล์สำรองต้องเป็นชื่อล้วน ไม่มีเส้นทางนำหน้า');
+            throw new ValidationError('A backup filename must be a bare name, with no leading path');
         }
 
         if (self::typeOf($name) === null) {
             throw new ValidationError(
-                'ชื่อไฟล์สำรองต้องลงท้ายด้วย ' . self::SITE_SUFFIX . ' หรือ ' . self::DB_SUFFIX,
+                'A backup filename must end with ' . self::SITE_SUFFIX . ' or ' . self::DB_SUFFIX,
             );
         }
 
@@ -156,7 +170,7 @@ final class BackupFiles
     }
 
     /**
-     * เส้นทางเต็มของไฟล์ในโฟลเดอร์ของบัญชีนี้ — ผ่าน {@see assertName()} แล้วเท่านั้น
+     * The full path of a file inside this account's folder — only after passing through {@see assertName()}
      *
      * @throws ValidationError
      */

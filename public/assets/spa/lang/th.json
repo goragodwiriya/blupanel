@@ -5,6 +5,8 @@
     "/proc is a kernel filesystem and cannot be modified": "/proc เป็น filesystem ของ kernel แก้ไขไม่ได้",
     "/sys is a kernel filesystem and cannot be modified": "/sys เป็น filesystem ของ kernel แก้ไขไม่ได้",
     "0 = keep forever": "0 = เก็บตลอดไป",
+    "A backup filename must be a bare name, with no leading path": "ชื่อไฟล์สำรองต้องเป็นชื่อล้วน ไม่มีเส้นทางนำหน้า",
+    "A backup filename must end with .tar.gz or .sql.gz": "ชื่อไฟล์สำรองต้องลงท้ายด้วย .tar.gz หรือ .sql.gz",
     "A ban blocks every port, including this control panel. Put your own IP in the exempt list, and remember you can always unban from SSH.": "การแบนตัดขาดทุกพอร์ต รวมถึงหน้าจัดการนี้ด้วย · ใส่ไอพีของคุณเองไว้ในรายการยกเว้น และจำไว้ว่าปลดแบนจาก SSH ได้เสมอ",
     "A change is waiting for confirmation — confirm it or let it roll back before making another": "มีการเปลี่ยนแปลงที่รอการยืนยันอยู่ — ยืนยันหรือรอให้คืนค่าก่อนจึงจะแก้ใหม่ได้",
     "A command to run must be specified": "ต้องระบุคำสั่งที่จะให้ทำงาน",
