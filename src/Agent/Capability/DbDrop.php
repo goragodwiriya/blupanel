@@ -13,11 +13,13 @@ use Phpcp\Driver\Db\MariaDbManager;
 use Phpcp\Support\Validator;
 
 /**
- * ลบฐานข้อมูล — งานที่ย้อนกลับไม่ได้ จึงบังคับสำรองอัตโนมัติก่อนเสมอ
+ * Drops a database — an irreversible operation, so an automatic backup is always
+ * forced first
  *
- * ต่างจากการลบเว็บไซต์ที่ย้ายไฟล์ไปถังพักได้ ฐานข้อมูลที่ DROP แล้วหายทันที
- * ทางเดียวที่จะกู้คืนได้คือมีไฟล์ dump อยู่ก่อน — ระบบจึงสำรองให้เองโดยไม่ถาม
- * และจะยกเลิกการลบทั้งหมดถ้าสำรองไม่สำเร็จ
+ * Unlike deleting a website, where files can move to a holding area, a database
+ * that's been DROPped is gone instantly — the only way back is having a dump
+ * file beforehand, so the system backs it up on its own without asking, and
+ * cancels the whole deletion if that backup fails.
  */
 final class DbDrop extends DbCapability
 {
@@ -38,7 +40,7 @@ final class DbDrop extends DbCapability
 
     public function summary(): string
     {
-        return 'ลบฐานข้อมูล (สำรองอัตโนมัติก่อนลบเสมอ)';
+        return 'Drop database (always backed up automatically first)';
     }
 
     public function validate(array $args): array
@@ -56,16 +58,16 @@ final class DbDrop extends DbCapability
         $name = $args['name'];
 
         if ($args['confirm'] !== $name) {
-            throw new ValidationError('ชื่อฐานข้อมูลที่ยืนยันไม่ตรงกับที่จะลบ — ยกเลิกเพื่อความปลอดภัย');
+            throw new ValidationError('The confirmation database name does not match the one being dropped — cancelled for safety');
         }
 
         $this->assertOwnership($context, $name);
 
         if (!$manager->isInstalled($executor)) {
-            throw new ValidationError('เครื่องนี้ยังไม่ได้ติดตั้ง MariaDB หรือ MySQL');
+            throw new ValidationError('MariaDB or MySQL is not installed on this machine');
         }
 
-        // สำรองก่อนเสมอ — ถ้าสำรองไม่ได้ก็ไม่ลบ
+        // Always backed up first — no backup means no drop
         $site = $this->ownerSite($context, $name);
         $backupPath = $this->safetyPath($context, $site, $name);
 
@@ -73,8 +75,9 @@ final class DbDrop extends DbCapability
 
         $bytes = $manager->dump($executor, $name, $backupPath);
 
-        // ยกไฟล์ให้เจ้าของข้อมูล — ไม่งั้นลูกค้าที่ลบผิดตัวต้องขอให้ผู้ดูแลไปหยิบ
-        // ไฟล์ของเขาเองให้ ทั้งที่มันอยู่ในบ้านของเขาแล้ว
+        // Hands the file over to the data's owner — otherwise a customer who
+        // dropped the wrong database would have to ask an admin to fetch their
+        // own file for them, even though it's already sitting in their own home
         $owner = $site === null ? '' : BackupCapability::ownerString($context, $site->owner);
 
         if ($owner !== '') {
@@ -87,7 +90,7 @@ final class DbDrop extends DbCapability
         $users = $this->removeRecords($context, $name, $args['drop_user']);
 
         foreach ($users as $user) {
-            // ลบผู้ใช้ที่ไม่มีฐานข้อมูลอื่นใช้อยู่แล้วเท่านั้น
+            // Only deletes a user with no other database still using them
             $manager->dropUser($executor, $user['username'], $user['host']);
         }
 
@@ -99,7 +102,7 @@ final class DbDrop extends DbCapability
             'backup_bytes' => $bytes,
             'users_removed' => array_column($users, 'username'),
             'message' => sprintf(
-                'ลบฐานข้อมูล %s แล้ว — สำรองไว้ที่ %s (%s ไบต์) ก่อนลบ',
+                'Dropped database %s — backed up to %s (%s bytes) before dropping',
                 $name,
                 basename($backupPath),
                 number_format($bytes),
@@ -108,7 +111,7 @@ final class DbDrop extends DbCapability
     }
 
     /**
-     * ลบแถวใน panel แล้วคืนรายชื่อผู้ใช้ที่ควรลบตามไปด้วย
+     * Deletes the panel's own row and returns the list of users that should be deleted along with it
      *
      * @return list<array{username:string,host:string}>
      */
@@ -118,7 +121,7 @@ final class DbDrop extends DbCapability
             $row = $db->first('SELECT id FROM databases_ WHERE db_name = :n', ['n' => $name]);
 
             if ($row === null) {
-                return [];   // ไม่ได้อยู่ในความดูแลของ panel — ลบบนเครื่องอย่างเดียวพอ
+                return [];   // Not managed by the panel — dropping it on the machine is all that's needed
             }
 
             $databaseId = (int) $row['id'];
@@ -132,7 +135,7 @@ final class DbDrop extends DbCapability
                 );
 
                 foreach ($candidates as $candidate) {
-                    // ผู้ใช้ที่ยังผูกกับฐานข้อมูลอื่นอยู่ต้องไม่ถูกลบ
+                    // A user still bound to another database must never be deleted
                     $others = (int) $db->value(
                         'SELECT count(*) FROM db_grants WHERE db_user_id = :u AND db_id != :d',
                         ['u' => $candidate['id'], 'd' => $databaseId],
@@ -153,15 +156,18 @@ final class DbDrop extends DbCapability
     }
 
     /**
-     * ไฟล์สำรองก่อนลบไปอยู่ที่ไหน — **ในบ้านของเจ้าของฐานข้อมูลนั้น**
+     * Where the pre-drop backup file goes — **inside that database's owner's own home**
      *
-     * เดิมไปกองที่ `/var/lib/phpcp/backups` แล้วบันทึกแถวไว้ในตาราง · ลูกค้าที่ลบ
-     * ฐานข้อมูลผิดตัวจึงต้องขอให้ผู้ดูแลไปหยิบไฟล์ให้ ทั้งที่มันเป็นข้อมูลของเขาเอง
-     * · ตอนนี้ไฟล์ลงในโฟลเดอร์สำรองของเขา แล้วโผล่ในรายการเองเพราะรายการอ่านจาก
-     * โฟลเดอร์จริง (PLAN-BACKUP-V2 ข้อ B4) — ไม่ต้องมีแถวไหนคอยชี้ให้
+     * Used to pile up at `/var/lib/phpcp/backups` with a row recorded in a table
+     * · a customer who dropped the wrong database had to ask an admin to fetch
+     * the file for them, even though it was their own data · now the file lands
+     * in their own backup folder and shows up in the listing on its own, since
+     * that listing reads from the real folder (PLAN-BACKUP-V2 item B4) — no row
+     * needed to point at it.
      *
-     * ฐานข้อมูลที่ไม่ได้ผูกกับเว็บของ panel ไม่มีบ้านให้ไปอยู่ จึงตกไปที่ที่พักของ panel
-     * ตามเดิม — ไม่ใช่เหตุผลที่จะข้ามการสำรอง
+     * A database not bound to a panel-managed website has no home to go to, so
+     * it falls back to the panel's own holding area as before — that's not a
+     * reason to skip the backup.
      */
     private function safetyPath(Context $context, ?Site $site, string $name): string
     {
@@ -171,13 +177,14 @@ final class DbDrop extends DbCapability
             return $context->config->paths->backups() . '/db-' . $name . '-' . $stamp . '.sql.gz';
         }
 
-        // ขึ้นต้นด้วยโดเมนเหมือนไฟล์สำรองอื่น ๆ เพื่อให้รายการที่อ่านจากโฟลเดอร์
-        // จับคู่ไฟล์กับเว็บได้ (ดู BackupFiles::domainOf) · ASCII ล้วนเพราะชื่อนี้
-        // ถูกส่งกลับมาเป็นส่วนหนึ่งของ URL ตอนกดลบจากหน้าจอ
+        // Starts with the domain like every other backup file, so a listing
+        // reading from the folder can match the file back to its site (see
+        // BackupFiles::domainOf) · pure ASCII, since this name gets sent back as
+        // part of a URL when deleted from the screen
         return sprintf('%s/%s-db-%s-before-drop-%s.sql.gz', $site->backupDir(), $site->domain, $name, $stamp);
     }
 
-    /** เว็บที่เป็นเจ้าของฐานข้อมูลนี้ — null = ฐานที่ไม่ได้อยู่ในความดูแลของ panel */
+    /** The website that owns this database — null = a database not managed by the panel */
     private function ownerSite(Context $context, string $name): ?Site
     {
         $row = $context->db->first(

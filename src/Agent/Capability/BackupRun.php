@@ -12,23 +12,28 @@ use Phpcp\Security\Secret;
 use Phpcp\Support\Validator;
 
 /**
- * รอบสำรองอัตโนมัติของทั้งเครื่อง — **กระบวนการเดียวทั้งระบบ** (ข้อ B6, B10)
+ * The whole machine's automatic backup cycle — **a single process for the entire
+ * system** (items B6, B10)
  *
- * ## ทำไมเป็นตัวเดียว ไม่ใช่ตารางเวลาหลายชุด
+ * ## Why one process, not many schedules
  *
- * ของเดิมเป็นแถวใน `scheduled_jobs` หนึ่งแถวต่อหนึ่งเว็บหนึ่งชนิด ผู้ดูแลสร้างเอง ·
- * เครื่องที่มีลูกค้าห้าสิบรายต้องมีตารางเวลาเป็นร้อยชุดที่ต้องดูแลด้วยมือ และ**เว็บที่
- * สร้างใหม่จะไม่ถูกสำรองเลย**จนกว่าจะมีใครนึกได้ว่าต้องไปเพิ่มตารางเวลาให้มัน —
- * ความล้มเหลวที่เงียบสนิทจนถึงวันที่ต้องใช้ไฟล์สำรอง
+ * The original design was a row in `scheduled_jobs` per site per backup type,
+ * created by hand by an admin · a machine with fifty customers ended up with a
+ * hundred-plus schedules to maintain by hand, and **a newly created site got no
+ * backups at all** until someone remembered to add a schedule for it — a failure
+ * completely silent until the day the backup file was actually needed.
  *
- * ตอนนี้เป็นสวิตช์บนบัญชี (`users.backup_files`, `users.backup_database`) แล้วตัวนี้
- * เดินตามสวิตช์ในทุกรอบ · เว็บใหม่ของบัญชีที่เปิดไว้เข้ารอบเองทันที
+ * Now it's a switch on the account (`users.backup_files`, `users.backup_database`),
+ * and this capability follows those switches every cycle · a new site under an
+ * account with the switch on is included automatically.
  *
- * ## ล้มหนึ่งบัญชีต้องไม่ล้มทั้งรอบ
+ * ## One account failing must never fail the whole cycle
  *
- * เว็บเดียวที่ดิสก์เต็มหรือฐานข้อมูลล่มต้องไม่ทำให้อีกสี่สิบเก้าบัญชีไม่ได้สำรองในคืนนั้น
- * · ความล้มเหลวจึงถูกเก็บเป็นรายการแล้วรายงานกลับ ไม่ใช่โยนออกไปหยุดทั้งกระบวนการ
- * — แต่ต้อง**นับและรายงานให้เห็น** ไม่ใช่กลืนเงียบ ๆ ซึ่งเป็นความผิดพลาดตรงข้ามที่แย่พอกัน
+ * A single site with a full disk or a crashed database must never stop the other
+ * forty-nine accounts from getting backed up that night · so failures are
+ * collected into a list and reported back, never thrown to halt the whole
+ * process — but they must be **counted and reported visibly**, never silently
+ * swallowed, which is the opposite mistake and just as bad.
  */
 final class BackupRun extends BackupCapability implements Capability
 {
@@ -38,8 +43,9 @@ final class BackupRun extends BackupCapability implements Capability
     }
 
     /**
-     * สิทธิ์ของ**ทั้งเครื่อง** — รอบนี้สร้างไฟล์ในบ้านของลูกค้าทุกรายที่ถูกเปิดสวิตช์ไว้
-     * และหักโควตาของพวกเขา · เป็นการตัดสินใจระดับผู้ดูแลเซิร์ฟเวอร์ ไม่ใช่ของลูกค้า
+     * A **whole-machine** permission — this cycle creates files inside every
+     * customer's home who has the switch on, and counts against their quota ·
+     * this is a server admin's decision, not a customer's.
      */
     public function permission(): string
     {
@@ -53,13 +59,13 @@ final class BackupRun extends BackupCapability implements Capability
 
     public function summary(): string
     {
-        return 'สำรองข้อมูลของทุกบัญชีที่ผู้ดูแลเปิดไว้ แล้วเก็บกวาดไฟล์เก่า';
+        return 'Back up every account the admin has enabled, then clean up old files';
     }
 
     public function validate(array $args): array
     {
         return [
-            // 0 = ใช้ปลายทางที่เปิดใช้งานอยู่ (ถ้ามี) · ระบุมาเพื่อบังคับปลายทางเดียว
+            // 0 = use the currently enabled destination (if any) · specified to force one particular destination
             'destination_id' => Validator::optionalInt($args, 'destination_id', 0, 0),
             'prune' => (bool) ($args['prune'] ?? true),
             'days' => Validator::optionalInt($args, 'days', 30, 0),
@@ -123,23 +129,25 @@ final class BackupRun extends BackupCapability implements Capability
             'pruned_count' => (int) ($pruned['removed_count'] ?? 0),
             'freed_bytes' => (int) ($pruned['freed_bytes'] ?? 0),
             'message' => sprintf(
-                'สำรอง %d รายการ (%s ไบต์)%s · เก็บกวาด %d ไฟล์',
+                'Backed up %d item(s) (%s bytes)%s · cleaned up %d file(s)',
                 count($done),
                 number_format($bytes),
-                $failed === [] ? '' : sprintf(' · ล้มเหลว %d รายการ', count($failed)),
+                $failed === [] ? '' : sprintf(' · %d failed', count($failed)),
                 (int) ($pruned['removed_count'] ?? 0),
             ),
         ];
     }
 
     /**
-     * เว็บที่ต้องสำรองในรอบนี้ พร้อมชนิดที่เจ้าของถูกเปิดสวิตช์ไว้
+     * The sites to back up this cycle, with the types their owner has switched on
      *
-     * เว็บที่ถูกระงับบริการยังถูกสำรองต่อ — บัญชีที่หยุดจ่ายเป็นบัญชีที่**ต้องการ**
-     * ไฟล์สำรองมากที่สุด เพราะขั้นถัดไปของมันคือการถูกลบ
+     * A suspended site is still backed up — an account that stopped paying is
+     * the account that **needs** a backup file the most, since its next step is deletion.
      *
-     * ชนิด `database` ถูกใส่มาเฉพาะเว็บที่มีฐานข้อมูลจริง · ใส่ให้ทุกเว็บแปลว่าเว็บ
-     * สแตติกทุกแห่งจะรายงานว่าล้มเหลวทุกคืน แล้วรายการที่ล้มจริงจะจมหายไปในนั้น
+     * The `database` type is only included for sites that genuinely have a
+     * database · including it for every site would mean every static site
+     * reports a failure every night, and the failures that actually matter would
+     * drown in the noise.
      *
      * @return list<array{site_id:int,domain:string,types:list<string>}>
      */
@@ -163,8 +171,9 @@ final class BackupRun extends BackupCapability implements Capability
                 $types[] = 'site';
             }
 
-            // เว็บที่มีหลายฐานข้อมูลข้ามไป — `backup.create` ปฏิเสธการเดาว่าจะสำรองฐานไหน
-            // และรอบอัตโนมัติต้องไม่ตัดสินใจแทนในสิ่งที่คนยังไม่ได้ตัดสินใจ
+            // A site with multiple databases is skipped — `backup.create` refuses
+            // to guess which database to back up, and an automatic cycle must
+            // never decide something a human hasn't decided yet
             if ((int) $row['backup_database'] === 1 && (int) $row['databases'] === 1) {
                 $types[] = 'database';
             }
@@ -181,7 +190,7 @@ final class BackupRun extends BackupCapability implements Capability
         return $targets;
     }
 
-    /** ปลายทางนอกเครื่องที่เปิดใช้งานอยู่ — 0 = ไม่มี เก็บไว้ในเครื่องอย่างเดียว */
+    /** The currently enabled offsite destination — 0 = none, kept local only */
     private function defaultDestination(Context $context): int
     {
         $enabled = (new BackupDestinationRepository($context->db, new Secret($context->config->secretKey())))

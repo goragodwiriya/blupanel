@@ -11,27 +11,32 @@ use Phpcp\Domain\FileCatalog;
 use Phpcp\Support\Validator;
 
 /**
- * ส่งเนื้อไฟล์กลับไปให้ผู้ใช้ดาวน์โหลด — **ทีละก้อน ไม่จำกัดขนาดไฟล์**
+ * Sends a file's content back for the user to download — **in chunks, with no file size limit**
  *
- * ## ทำไมต้องเป็นก้อน
+ * ## Why chunks are necessary
  *
- * เนื้อไฟล์ถูกเข้ารหัส base64 เพราะโปรโตคอลเป็น JSON บรรทัดเดียวที่มีเพดาน 4 MB ต่อ
- * เฟรม · เดิมจึงปฏิเสธไฟล์ที่ใหญ่กว่า 2.5 MB ไปเลย พร้อมข้อความว่า "ให้บีบอัดเป็น zip
- * ก่อน" ซึ่งเป็นคำแนะนำที่ใช้ไม่ได้กับสิ่งที่ผู้ใช้อยากดาวน์โหลดมากที่สุด: **ไฟล์สำรอง
- * ของตัวเอง** ที่บีบอัดมาแล้วและใหญ่กว่านั้นเสมอ (ตั้งแต่ PLAN-BACKUP-V2 ไฟล์พวกนั้น
- * อยู่ในบ้านของลูกค้าและเขาต้องหยิบออกมาได้จริง ไม่งั้นการรื้อทั้งครั้งไม่มีความหมาย)
+ * The file's content is base64-encoded, because the protocol is single-line JSON
+ * with a 4 MB per-frame ceiling · this used to mean flatly refusing any file
+ * larger than 2.5 MB, with a message saying "compress it into a zip first" —
+ * advice that doesn't work for the thing a user most wants to download: **their
+ * own backup file**, already compressed and always larger than that (ever since
+ * PLAN-BACKUP-V2, those files live in the customer's own home, and they genuinely
+ * need to be able to pull them out, or the whole point of keeping them there is lost).
  *
- * ผู้เรียกจึงขอทีละช่วง (`offset`/`length`) แล้วต่อกันเองที่ชั้น HTTP ซึ่งสตรีมออก
- * ไปเรื่อย ๆ โดยไม่เก็บทั้งไฟล์ไว้ในหน่วยความจำ · คำตอบบอก `size` (ขนาดทั้งไฟล์)
- * และ `eof` มาด้วย ผู้เรียกจึงรู้ว่าต้องขอต่ออีกไหมโดยไม่ต้องเดา
+ * So a caller requests one range at a time (`offset`/`length`) and the HTTP tier
+ * concatenates them itself, streaming continuously without holding the whole
+ * file in memory · the response includes `size` (the file's total size) and
+ * `eof`, so the caller knows whether to request more without having to guess.
  *
- * ## ทำไมอ่านไฟล์ด้วยฟังก์ชันของ PHP ตรง ๆ
+ * ## Why the file is read with plain PHP functions directly
  *
- * `Executor` ไม่มีเมธอดอ่านบางส่วน และการเพิ่มเข้าไปแปลว่าต้องแก้ตัวมันทุกตัวรวมถึง
- * ของปลอมในเทสต์อีกเก้าไฟล์ เพื่อความสามารถที่ใช้ที่เดียว · เส้นทางที่ `path()` แปลง
- * ให้แล้วเป็นเส้นทางจริงบนดิสก์ และ agent รันเป็น root จึงอ่านได้เสมอ — รูปแบบเดียว
- * กับที่ `BackupManager` เรียก `hash_file()` บนเส้นทางที่แปลงแล้ว · **ด่านสิทธิ์ยัง
- * อยู่ครบ** เพราะเส้นทางผ่าน `withPath()` ซึ่งตรวจขอบเขตกับ symlink มาแล้ว
+ * `Executor` has no partial-read method, and adding one would mean editing every
+ * implementation of it, including nine test doubles, for a capability used in
+ * exactly one place · the path `path()` has already translated is a real path on
+ * disk, and the agent runs as root, so it can always read it — the same pattern
+ * `BackupManager` uses when it calls `hash_file()` on an already-translated path
+ * · **the permission gate is still fully intact**, since the path goes through
+ * `withPath()`, which has already checked scope and symlinks.
  */
 final class FileDownload extends FileCapability
 {
@@ -47,7 +52,7 @@ final class FileDownload extends FileCapability
 
     public function summary(): string
     {
-        return 'ดาวน์โหลดไฟล์';
+        return 'Download file';
     }
 
     /**
@@ -59,13 +64,14 @@ final class FileDownload extends FileCapability
         $base = self::baseArgs($args);
 
         if ($base['path'] === '') {
-            throw new ValidationError('ต้องระบุไฟล์ที่จะดาวน์โหลด');
+            throw new ValidationError('A file to download must be specified');
         }
 
         return $base + [
             'offset' => Validator::optionalInt($args, 'offset', 0, 0),
-            // 0 = เท่าที่ส่งได้ในเฟรมเดียว · ค่าที่ใหญ่กว่านั้นถูกบีบลงมา ไม่ใช่ปฏิเสธ
-            // เพราะผู้เรียกที่ขอเกินไม่ได้ทำอะไรผิด แค่ไม่รู้เพดานของโปรโตคอล
+            // 0 = as much as fits in one frame · a larger value gets clamped
+            // down, never rejected, since a caller asking for too much hasn't
+            // done anything wrong, they just don't know the protocol's ceiling
             'length' => Validator::optionalInt($args, 'length', 0, 0),
         ];
     }
@@ -89,12 +95,12 @@ final class FileDownload extends FileCapability
             $info = $executor->stat($target);
 
             if ($info === null || $info['type'] !== 'file') {
-                throw new ValidationError('ดาวน์โหลดได้เฉพาะไฟล์ธรรมดา (โฟลเดอร์ให้บีบอัดเป็น zip ก่อน)');
+                throw new ValidationError('Only regular files can be downloaded (compress a folder into a zip first)');
             }
 
             $size = (int) $info['size'];
 
-            // ขอเลยท้ายไฟล์ = จบแล้ว ไม่ใช่ข้อผิดพลาด · ไฟล์ว่างก็เดินทางนี้
+            // Requesting past the end of the file = done, not an error · an empty file also travels this path
             if ($offset >= $size) {
                 return ['content' => '', 'size' => $size, 'bytes' => 0];
             }
@@ -102,12 +108,12 @@ final class FileDownload extends FileCapability
             $handle = @fopen($target, 'rb');
 
             if ($handle === false) {
-                throw new \Phpcp\Agent\ExecutionFailed('เปิดไฟล์เพื่อดาวน์โหลดไม่ได้');
+                throw new \Phpcp\Agent\ExecutionFailed('Failed to open file for download');
             }
 
             try {
                 if ($offset > 0 && fseek($handle, $offset) !== 0) {
-                    throw new \Phpcp\Agent\ExecutionFailed('เลื่อนตำแหน่งในไฟล์ไม่สำเร็จ');
+                    throw new \Phpcp\Agent\ExecutionFailed('Failed to seek within the file');
                 }
 
                 $chunk = fread($handle, $length);
@@ -116,7 +122,7 @@ final class FileDownload extends FileCapability
             }
 
             if ($chunk === false) {
-                throw new \Phpcp\Agent\ExecutionFailed('อ่านไฟล์เพื่อดาวน์โหลดไม่ได้');
+                throw new \Phpcp\Agent\ExecutionFailed('Failed to read file for download');
             }
 
             return ['content' => base64_encode($chunk), 'size' => $size, 'bytes' => strlen($chunk)];
@@ -132,7 +138,7 @@ final class FileDownload extends FileCapability
             'size' => $result['size'],
             'offset' => $offset,
             'bytes' => $result['bytes'],
-            // ผู้เรียกต้องรู้ว่าจบแล้วโดยไม่ต้องคำนวณเอง — คำนวณผิดข้างเดียวคือไฟล์ขาด
+            // The caller needs to know it's done without computing it themselves — one miscalculation and the file comes out truncated
             'eof' => $end >= $result['size'],
             'content' => $result['content']
         ];

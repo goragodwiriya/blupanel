@@ -628,7 +628,7 @@ test('ตัดสิทธิ์ SFTP ตามแพ็กเกจ ต้อ�
         (int) $fixture['db']->value('SELECT sftp_enabled FROM users WHERE id = :id', ['id' => $account['id']]),
         'สถานะ SFTP ต้องถูกปิดจริงในฐานข้อมูล ไม่ใช่แค่โควตาเปลี่ยน',
     );
-    assertTrue(str_contains($result['message'], 'ปิดการเข้าถึง SFTP'), 'ข้อความต้องบอกผู้ดูแลว่าลูกค้าจะเข้าไม่ได้แล้ว: ' . $result['message']);
+    assertTrue(str_contains($result['message'], 'revoked SFTP access'), 'ข้อความต้องบอกผู้ดูแลว่าลูกค้าจะเข้าไม่ได้แล้ว: ' . $result['message']);
 });
 
 test('ลดโควตาชนิดอื่นต้องไม่ไปแตะสถานะ SFTP', static function (): void {
