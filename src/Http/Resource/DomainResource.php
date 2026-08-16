@@ -5,11 +5,12 @@ declare(strict_types=1);
 namespace Phpcp\Http\Resource;
 
 /**
- * โดเมนหนึ่งรายการที่ผูกกับเว็บไซต์
+ * One domain tied to a website
  *
- * `type` บอกว่าลบได้หรือไม่: `primary` ลบเดี่ยว ๆ ไม่ได้ (ต้องลบทั้งเว็บไซต์)
- * ส่วน `subdomain`/`alias`/`redirect` ลบได้ — ส่ง `removable` มาให้ตรง ๆ
- * เพื่อให้หน้าจอไม่ต้องรู้กฎนี้เองแล้วเผลอแสดงปุ่มลบที่กดแล้วได้ error
+ * `type` says whether it can be deleted: `primary` can't be deleted on its
+ * own (the whole website must be deleted instead), while
+ * `subdomain`/`alias`/`redirect` can — `removable` is sent directly so the
+ * screen never has to know this rule itself and risk showing a delete button that errors when clicked
  */
 final class DomainResource extends Resource
 {
@@ -21,11 +22,13 @@ final class DomainResource extends Resource
 
         $domain = [
             'id' => $id,
-            // ซ้ำกับ id โดยตั้งใจ — ใช้ในหน้าที่ URL ของหน้าเองมี ?id= อยู่แล้ว (เช่น
-            // site.html คือ /site?id={เว็บไซต์}) การใส่ {id} ใน data-row-actions ตรงนั้น
-            // จะถูก RouterManager.render (js/ui.js) แทนค่าด้วย id ของ "หน้า" ก่อนที่
-            // TableManager จะได้เห็นเทมเพลตด้วยซ้ำ — ปุ่มทุกแถวจึงพาไปที่ id เดียวกันหมด
-            // แทนที่จะเป็น id ของแถวนั้นเอง ชื่อที่ไม่ชนกับพารามิเตอร์ของหน้าไหนเลยแก้ที่ต้นตอ
+            // Deliberately a duplicate of id — used on pages whose own URL
+            // already has a ?id= (e.g. site.html is /site?id={website}).
+            // Putting {id} in data-row-actions there would get replaced by
+            // RouterManager.render (js/ui.js) with the "page's" id before
+            // TableManager even sees the template — every row's button would
+            // go to that same id instead of the row's own · a name that never
+            // collides with any page's own parameter fixes it at the source
             'row_id' => $id,
             'site_id' => (int) ($row['site_id'] ?? 0),
             'domain' => self::string($row['domain'] ?? ''),
@@ -36,7 +39,7 @@ final class DomainResource extends Resource
             'created_at' => self::intOrNull($row['created_at'] ?? null),
         ];
 
-        // มาจาก JOIN ตอนดึงรายการโดเมนทั้งระบบ — ไม่มีตอนดึงเฉพาะของเว็บเดียว
+        // Comes from a JOIN when fetching the system-wide domain list — absent when fetching a single website's own
         foreach ([ 'primary_domain' => 'site_domain', 'site_status' => 'site_status'] as $column => $key) {
             if (array_key_exists($column, $row)) {
                 $domain[$key] = self::string($row[$column]);

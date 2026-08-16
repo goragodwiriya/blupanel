@@ -10,14 +10,16 @@ use Phpcp\Http\ApiProblem;
 use Phpcp\Security\Permissions;
 
 /**
- * ฐานร่วมของ endpoint ฝั่ง Hosting ที่ผูกกับเว็บไซต์
+ * The shared base for Hosting-side endpoints tied to a website
  *
- * รวมกฎ "ผู้ดูแลเว็บไซต์เห็นเฉพาะเว็บของตัวเอง" ไว้ที่เดียว — กฎนี้ต้องบังคับ
- * ที่ระดับ query ไม่ใช่ที่หน้าจอ (SECURITY §2.5 กัน IDOR) และต้องถูกเรียกจากทุก endpoint
- * ที่รับ `site_id` มาจากผู้ใช้ · การมีที่เดียวทำให้ตรวจได้ว่าครบทุกจุดจริง
+ * Consolidates the "a webadmin sees only their own websites" rule into one
+ * place — this rule must be enforced at the query level, not the screen
+ * (SECURITY §2.5, prevents IDOR), and must be called from every endpoint that
+ * takes a `site_id` from the user · having a single place makes it possible to actually verify every call site does it
  *
- * ตรวจที่นี่ **เพิ่มเติมจาก** ที่ agent ตรวจ ไม่ใช่แทนกัน: permission ตอบได้แค่ว่า
- * "แก้เว็บไซต์ได้ไหม" ไม่ได้ตอบว่า "แก้เว็บไซต์ตัวไหนได้"
+ * The check here is **in addition to**, not instead of, what the agent
+ * checks: a permission can only answer "can this user edit websites at all?",
+ * never "which specific website can they edit?"
  */
 abstract class HostingController extends ApiController
 {
@@ -26,7 +28,7 @@ abstract class HostingController extends ApiController
         return new SiteRepository($this->app->db());
     }
 
-    /** id ของเจ้าของที่ต้องใช้กรองรายการ — null = เห็นทั้งหมด */
+    /** The owner id to filter the list by — null = sees everything */
     protected function scopeOwner(): ?int
     {
         return $this->ctx->role() === Permissions::WEBADMIN ? $this->ctx->userId() : null;
@@ -42,10 +44,10 @@ abstract class HostingController extends ApiController
     }
 
     /**
-     * โหลดเว็บไซต์ที่ผู้เรียกมีสิทธิ์เห็น — คืน null ถ้าไม่มีสิทธิ์หรือไม่มีอยู่จริง
+     * Load a website the caller has permission to see — returns null if not permitted or it doesn't exist
      *
-     * ตอบ 404 เหมือนกันทั้งสองกรณีโดยเจตนา: ถ้าตอบ 403 เมื่อ "มีอยู่แต่ไม่ใช่ของคุณ"
-     * ลูกค้ารายหนึ่งจะไล่เดา id เพื่อดูว่ามีเว็บไซต์อะไรอยู่บนเครื่องบ้างได้
+     * Deliberately answers 404 for both cases: answering 403 for "exists but
+     * isn't yours" would let a customer probe ids to find out what websites exist on the machine
      *
      * @return array<string,mixed>|null
      */

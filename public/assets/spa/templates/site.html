@@ -201,7 +201,7 @@
             <thead>
               <tr>
                 <th data-field="domain" data-cell-class="mono" data-i18n>{LNG_Domain}</th>
-                <th data-field="type" class="center" data-cell-class="center" data-i18n>{LNG_Type}</th>
+                <th data-field="type" class="center" data-cell-class="center" data-template="{LNG_${type}}" data-i18n>{LNG_Type}</th>
                 <th data-field="docroot" data-cell-class="mono" data-i18n>Serves from</th>
               </tr>
             </thead>
@@ -301,7 +301,7 @@
             <thead>
               <tr>
                 <th data-field="name" data-i18n>{LNG_Name}</th>
-                <th data-field="type" class="center" data-cell-class="center" data-i18n>{LNG_Type}</th>
+                <th data-field="type_label" class="center" data-cell-class="center" data-template="<span class='pill pill-${type_tone}'>{LNG_${type_label}}</span>" data-i18n>{LNG_Type}</th>
                 <th data-field="size_bytes" class="center" data-cell-class="center" data-format="bytes" data-i18n>{LNG_Size}</th>
                 <th data-field="status" class="center" data-cell-class="center" data-template="<span class='pill pill-${status_tone}'>{LNG_${status}}</span>" data-i18n>{LNG_Status}
                 </th>

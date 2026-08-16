@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace Phpcp\Http\Resource;
 
 /**
- * DNS record หนึ่งแถว
+ * One DNS record
  *
- * `priority` เป็น null สำหรับทุกชนิดยกเว้น MX — คืน null จริง ๆ ไม่ใช่ 0
- * เพราะ "ไม่มีลำดับความสำคัญ" กับ "ลำดับความสำคัญเท่ากับ 0" เป็นคนละความหมายใน DNS
+ * `priority` is null for every type except MX — genuinely returns null, not
+ * 0, because "no priority" and "priority equal to 0" mean different things in DNS
  */
 final class DnsRecordResource extends Resource
 {
@@ -18,11 +18,13 @@ final class DnsRecordResource extends Resource
 
         return [
             'id' => $id,
-            // ซ้ำกับ id โดยตั้งใจ — domain.html เองมี ?id= (id ของโดเมน) ใน URL
-            // การใส่ {id} ใน data-row-actions ของตารางนี้จะถูก RouterManager.render
-            // (js/ui.js) แทนค่าด้วย id ของโดเมนก่อนที่ TableManager จะเห็นเทมเพลตด้วยซ้ำ —
-            // ปุ่มลบทุกแถวจะยิงไปที่เรกคอร์ดเดียวกันหมด ชื่อที่ไม่ชนกับพารามิเตอร์ของ
-            // หน้าไหนเลยแก้ที่ต้นตอ (ดู DomainResource::row_id ปัญหาเดียวกัน)
+            // Deliberately a duplicate of id — domain.html itself has ?id=
+            // (the domain's id) in the URL. Putting {id} in this table's
+            // data-row-actions would get replaced by RouterManager.render
+            // (js/ui.js) with the domain's id before TableManager even sees
+            // the template — every row's delete button would hit the same
+            // record · a name that never collides with any page's own
+            // parameter fixes it at the source (see DomainResource::row_id, same issue)
             'row_id' => $id,
             'domain_id' => (int) ($row['domain_id'] ?? 0),
             'type' => self::string($row['type'] ?? ''),

@@ -7,18 +7,20 @@ namespace Phpcp\Http;
 use Phpcp\Kernel\Response;
 
 /**
- * หน้าข้อผิดพลาดแบบ HTML — ทางออกสุดท้ายเมื่อคำขอไม่ใช่ JSON
+ * The HTML error page — the last resort when a request isn't JSON
  *
- * **ทำไมยังต้องมีทั้งที่ระบบเหลือแต่ SPA แล้ว:** ผู้ใช้พิมพ์ URL เองได้ และ middleware
- * บางตัวตัดสินใจ*ก่อน*ที่ router จะรู้ว่าเส้นทางนั้นคืออะไร (เช่นตัวจำกัดอัตราที่
- * ทำงานก่อนทุกอย่าง) · คำขอเหล่านั้นไม่มี `Accept: application/json` ติดมา จะตอบ
- * JSON ก้อนหนึ่งใส่หน้าเบราว์เซอร์ก็ไม่มีประโยชน์กับคนอ่าน
+ * **Why this still needs to exist when everything else is the SPA:** a user
+ * can type a URL by hand, and some middleware decides *before* the router
+ * even knows what that route is (such as the rate limiter, which runs ahead
+ * of everything) · those requests never carry `Accept: application/json` —
+ * answering with a blob of JSON on the browser page would be useless to whoever's reading it
  *
- * ประกอบ HTML ด้วยมือแทนที่จะมีเอนจินเทมเพลต — มีอยู่สี่จุดที่เรียก และทุกจุดคือ
- * จังหวะที่ระบบกำลังมีปัญหาอยู่แล้ว ยิ่งชั้นที่ต้องทำงานถูกน้อยยิ่งดี · CSS อยู่ที่
- * `/assets/css/error.css` ไฟล์เดียวที่ไม่พึ่ง bundle ของ SPA เลย
+ * Assembles HTML by hand instead of using a template engine — there are only
+ * four call sites, and every one of them fires at a moment when the system
+ * is already having a problem · the fewer layers that need to work correctly
+ * here, the better · the CSS lives at `/assets/css/error.css`, the one file that depends on none of the SPA's bundle
  *
- * ห้ามใส่ `style="..."` — CSP ของ panel บล็อก inline style ทั้งหมด (SECURITY §2.3)
+ * Never add `style="..."` — the panel's CSP blocks all inline styles (SECURITY §2.3)
  */
 final class ErrorPage
 {
@@ -31,7 +33,7 @@ final class ErrorPage
     {
         $safe = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES, 'UTF-8');
 
-        return '<!doctype html><html lang="th"><meta charset="utf-8">'
+        return '<!doctype html><html lang="en"><meta charset="utf-8">'
             .'<meta name="viewport" content="width=device-width, initial-scale=1">'
             .'<title>'.$safe($title).'</title>'
             .'<link rel="stylesheet" href="/assets/css/error.css">'
@@ -39,7 +41,7 @@ final class ErrorPage
             .'<div class="error-code">'.$status.'</div>'
             .'<h1 class="error-title">'.$safe($title).'</h1>'
             .'<p class="error-message">'.$safe($message).'</p>'
-            .($home ? '<a class="error-link" href="/app/">กลับหน้าหลัก</a>' : '')
+            .($home ? '<a class="error-link" href="/app/">Back to home</a>' : '')
             .'</div>';
     }
 }
