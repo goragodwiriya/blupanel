@@ -10,27 +10,30 @@ use Phpcp\Driver\Firewall\UfwDriver;
 use Phpcp\Kernel\Db;
 
 /**
- * ยืนยันภายในเวลา ไม่อย่างนั้นคืนค่าเดิม — ARCHITECTURE §5.4
+ * Confirm within a window, or the previous state comes back — ARCHITECTURE §5.4
  *
- * ใช้กับการเปลี่ยนค่าที่อาจตัดการเชื่อมต่อของตัวเอง: พอร์ต SSH, ปิด password auth,
- * กฎ firewall, การเปิด firewall ครั้งแรก
+ * Used for changes that could cut off their own access: the SSH port,
+ * turning off password auth, a firewall rule, turning the firewall on for
+ * the first time.
  *
- * ลำดับ:
- *   1. สำรอง config เดิม + บันทึกกำหนดเวลาคืนค่า
- *   2. เขียนค่าใหม่ + apply
- *   3. ผู้ใช้กดยืนยันภายในเวลา → ลบรายการรอไว้ ถือว่าถาวร
- *   4. ไม่กดทัน → รายการหมดอายุ ระบบคืนค่าเดิมให้อัตโนมัติ
+ * Order:
+ *   1. Back up the current config + record a restore deadline
+ *   2. Write the new value + apply it
+ *   3. User confirms within the window → the pending entry is deleted, treated as permanent
+ *   4. Not confirmed in time → the entry expires, the system restores the previous state automatically
  *
- * ตัวจับเวลาต้องอยู่ฝั่งเซิร์ฟเวอร์ ไม่ใช่ในเบราว์เซอร์ เพราะกรณีที่ต้องกู้
- * คือกรณีที่ผู้ใช้ "หลุดการเชื่อมต่อไปแล้ว" — เบราว์เซอร์จึงไม่มีโอกาสทำงาน
+ * The timer has to live on the server, never in the browser, because the
+ * exact case this needs to recover from is the user having "already lost
+ * the connection" — at which point the browser never gets a chance to run anything.
  *
- * การคืนค่าจริงถูกกระตุ้นสองทาง: เมื่อมีคำขอใด ๆ เข้ามาแล้วพบว่ามีรายการหมดอายุ
- * และเมื่อ `phpcp rollback:run` ถูกเรียกจาก cron ของ panel — ทางที่สองจำเป็น
- * เพราะถ้าผู้ใช้หลุดจริง จะไม่มีคำขอเข้ามาให้กระตุ้นเลย
+ * The actual restore is triggered two ways: whenever any request comes in
+ * and finds an expired entry, and when `phpcp rollback:run` is called from
+ * the panel's cron — the second path is necessary because if the user
+ * genuinely lost the connection, no request would ever come in to trigger it at all.
  */
 final class RollbackGuard
 {
-    /** เวลาเริ่มต้นที่ให้ยืนยัน — พอสำหรับเปิดหน้าต่างใหม่แล้วลองเชื่อมต่อ */
+    /** The default window given to confirm — enough to open a new window and try to connect */
     public const DEFAULT_WINDOW = 120;
 
     public function __construct(private readonly Db $db)
@@ -38,11 +41,11 @@ final class RollbackGuard
     }
 
     /**
-     * บันทึกรายการรอยืนยัน คืน id ที่ใช้ยืนยันหรือยกเลิก
+     * Records a pending entry, returning the id used to confirm or cancel it
      *
-     * @param array<string,string>        $files เส้นทางไฟล์ => เนื้อหาเดิม (null-safe ผ่าน '')
-     * @param list<string>                $reloadUnits บริการที่ต้อง reload ตอนคืนค่า
-     * @param list<array<string,mixed>>   $undo คำสั่งย้อนกลับแบบมีชนิด (ดู applyUndo)
+     * @param array<string,string>        $files file path => original content (null-safe via '')
+     * @param list<string>                $reloadUnits services that need reloading on restore
+     * @param list<array<string,mixed>>   $undo typed reversal operations (see applyUndo)
      */
     public function arm(
         string $action,
@@ -68,17 +71,17 @@ final class RollbackGuard
         ]);
     }
 
-    /** ผู้ใช้ยืนยันว่ายังเชื่อมต่อได้ — ยกเลิกการคืนค่า */
+    /** The user confirmed the connection still works — cancels the restore */
     public function confirm(int $id): array
     {
         $row = $this->db->first('SELECT * FROM pending_rollbacks WHERE id = :id', ['id' => $id]);
 
         if ($row === null) {
-            throw new ValidationError('ไม่พบรายการที่รอยืนยัน — อาจถูกคืนค่าไปแล้วเพราะหมดเวลา');
+            throw new ValidationError('This pending entry was not found — it may have already been restored after expiring');
         }
 
         if ((int) $row['expires_at'] <= time()) {
-            throw new ValidationError('หมดเวลายืนยันแล้ว ระบบกำลังคืนค่าเดิมให้');
+            throw new ValidationError('The confirmation window has expired — the system is restoring the previous state');
         }
 
         $this->db->run('DELETE FROM pending_rollbacks WHERE id = :id', ['id' => $id]);
@@ -86,7 +89,7 @@ final class RollbackGuard
         return $row;
     }
 
-    /** @return array<string,mixed>|null รายการที่ยังรอยืนยันอยู่ */
+    /** @return array<string,mixed>|null the entry still waiting to be confirmed */
     public function pending(): ?array
     {
         return $this->db->first(
@@ -95,7 +98,7 @@ final class RollbackGuard
         );
     }
 
-    /** @return list<array<string,mixed>> รายการที่หมดเวลาแล้วและต้องคืนค่า */
+    /** @return list<array<string,mixed>> entries that have expired and need restoring */
     public function expired(): array
     {
         return $this->db->all(
@@ -105,7 +108,7 @@ final class RollbackGuard
     }
 
     /**
-     * คืนค่าทุกรายการที่หมดเวลา
+     * Restores every entry that has expired
      *
      * @return list<array{id:int,action:string,files:int,undo:int}>
      */
@@ -128,7 +131,7 @@ final class RollbackGuard
                 $resolved = $executor->path((string) $path);
 
                 if ($original === null || $original === false) {
-                    // เดิมไม่มีไฟล์นี้ — ลบทิ้งให้กลับไปเหมือนเดิม
+                    // This file didn't exist originally — deleting it restores that state
                     if ($executor->exists($resolved)) {
                         $executor->removePath($resolved);
                     }
@@ -144,7 +147,7 @@ final class RollbackGuard
                     continue;
                 }
 
-                // ล้มก็ต้องไปต่อ — งานคืนค่าที่เหลือสำคัญกว่าการหยุดที่ข้อผิดพลาดแรก
+                // A failure here must not stop the loop — the rest of the restore work matters more than halting on the first error
                 try {
                     $this->applyUndo($executor, $operation);
                     $undone++;
@@ -153,7 +156,7 @@ final class RollbackGuard
             }
 
             foreach (($payload['units'] ?? []) as $unit) {
-                // ล้มก็ต้องไปต่อ — คืนไฟล์ได้แล้วสำคัญกว่าการ reload สำเร็จ
+                // A failure here must not stop the loop — restoring the files matters more than a successful reload
                 $executor->exec(
                     [$executor->path('/usr/bin/systemctl'), 'reload-or-restart', (string) $unit],
                     timeout: 30,
@@ -174,14 +177,16 @@ final class RollbackGuard
     }
 
     /**
-     * ทำคำสั่งย้อนกลับที่ไม่ใช่ไฟล์ — ปัจจุบันมีแค่ firewall
+     * Runs a reversal that isn't a file — currently only firewall
      *
-     * บางการเปลี่ยนแปลงไม่ได้อยู่ในไฟล์ที่คัดลอกกลับได้ง่าย ๆ กฎ firewall เป็นตัวอย่างชัดเจน:
-     * ufw เก็บสถานะไว้หลายไฟล์และมีกฎ iptables ที่โหลดอยู่ในเคอร์เนลด้วย
-     * การย้อนกลับจึงต้องสั่งผ่าน ufw เอง ไม่ใช่เขียนไฟล์ทับ
+     * Some changes don't live in a file that can simply be copied back —
+     * firewall rules are the clearest example: ufw keeps state across
+     * several files and also has iptables rules loaded into the kernel
+     * itself, so reversing it has to go through ufw itself, never by overwriting a file.
      *
-     * ค่าที่อ่านจากฐานข้อมูลถูกตรวจซ้ำด้วย validator ชุดเดียวกับตอนสร้าง —
-     * ถึงมีใครแก้แถวในฐานข้อมูลได้ ก็ยังฉีดคำสั่งผ่านทางนี้ไม่ได้
+     * A value read from the database is validated again with the exact
+     * same validator used at creation time — even if someone could edit the
+     * database row directly, they still couldn't inject a command through this path.
      *
      * @param array<string,mixed> $operation
      */
@@ -221,11 +226,11 @@ final class RollbackGuard
                 break;
 
             default:
-                throw new ValidationError("ไม่รู้จักคำสั่งย้อนกลับชนิด {$type}");
+                throw new ValidationError("Unrecognized reversal operation type: {$type}");
         }
     }
 
-    /** เหลือเวลายืนยันอีกกี่วินาที */
+    /** How many seconds are left to confirm */
     public static function remaining(array $row): int
     {
         return max(0, (int) $row['expires_at'] - time());

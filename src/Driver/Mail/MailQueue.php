@@ -9,21 +9,23 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\ValidationError;
 
 /**
- * คิวเมลขาออกของ Postfix — PLAN-MAIL §5 (`mail.queue`)
+ * Postfix's outbound mail queue — PLAN-MAIL §5 (`mail.queue`)
  *
- * ## ทำไมคิวถึงเป็นที่ที่ต้องดูเวลาเมลไม่ถึง
+ * ## Why the queue is the place to look when mail doesn't arrive
  *
- * เมลที่ส่งไม่สำเร็จไม่ได้หายไปไหน มันค้างอยู่ในคิวพร้อม**เหตุผลรายฉบับ**ที่ปลายทาง
- * ตอบกลับมา ("Connection refused", "550 spam", "Recipient address rejected") · Postfix
- * ลองส่งใหม่ให้เองไปเรื่อย ๆ หลายวันก่อนจะยอมแพ้ ผู้ดูแลจึงมีเวลาเห็นและแก้
+ * Mail that fails to send doesn't go anywhere — it sits in the queue with
+ * **a reason per message** that the destination sent back ("Connection
+ * refused", "550 spam", "Recipient address rejected") · Postfix keeps
+ * retrying on its own for several days before giving up, so an admin has
+ * time to see it and fix it.
  *
- * ถ้าไม่มีหน้าจอนี้ คำถาม "ทำไมเมลไม่ถึง" ตอบได้ทางเดียวคือ ssh เข้าไปแล้วพิมพ์
- * `postqueue -p` ซึ่งเท่ากับว่าคนที่ไม่มี ssh ตอบคำถามนี้ไม่ได้เลย
+ * Without this screen, the only way to answer "why didn't my mail arrive"
+ * is to ssh in and type `postqueue -p`, which means anyone without ssh access can't answer it at all.
  *
- * ## เมลในคิวยังไม่ได้ถูกส่งเข้ากล่องใคร
+ * ## Mail sitting in the queue has never been delivered into anyone's mailbox
  *
- * การเปิดดูเนื้อเมลในคิวจึงไม่ได้แตะกล่องจดหมายของใครทั้งสิ้น และไม่มีเรื่อง
- * "มาร์คว่าอ่านแล้ว" ให้ต้องกังวล — ต่างจากการเปิดอ่าน Maildir ซึ่งเป็นคนละเรื่องกัน
+ * So viewing a queued message's content never touches anyone's mailbox, and
+ * there's no "mark as read" to worry about — unlike opening a Maildir, which is an entirely separate matter.
  */
 final class MailQueue
 {
@@ -32,11 +34,12 @@ final class MailQueue
     private const POSTCAT = '/usr/sbin/postcat';
 
     /**
-     * รายการในคิวทั้งหมด
+     * The full list of everything in the queue
      *
-     * `postqueue -j` คืน JSON บรรทัดละหนึ่งฉบับ (Postfix 3.1 ขึ้นไป) · เครื่องที่เก่ากว่า
-     * นั้นไม่มีตัวเลือกนี้ — คืน `available: false` ไปให้หน้าจอบอกตรง ๆ ดีกว่าโชว์คิวว่าง
-     * ซึ่งอ่านได้ว่า "ไม่มีเมลค้าง" ทั้งที่ความจริงคือ "ดูไม่ได้"
+     * `postqueue -j` returns one JSON object per line (Postfix 3.1+) · an
+     * older machine has no such option — this returns `available: false` so
+     * the screen can say so directly, better than showing an empty queue
+     * that reads as "nothing is stuck" when the truth is "cannot be viewed".
      *
      * @return array{available:bool,messages:list<array<string,mixed>>,total:int,deferred:int,oldest:int}
      */
@@ -83,8 +86,9 @@ final class MailQueue
             foreach ((array) ($row['recipients'] ?? []) as $recipient) {
                 $recipients[] = (string) ($recipient['address'] ?? '');
 
-                // เหตุผลของฉบับนี้ = เหตุผลแรกที่เจอ · หลายผู้รับที่ล้มด้วยเหตุผลต่างกัน
-                // พบน้อยมาก และการโชว์เหตุผลเดียวยังดีกว่าไม่โชว์เลย
+                // This message's reason = the first one found · several
+                // recipients failing for different reasons is very rare,
+                // and showing one reason still beats showing none at all
                 if ($reason === '' && ($recipient['delay_reason'] ?? '') !== '') {
                     $reason = (string) $recipient['delay_reason'];
                 }
@@ -111,45 +115,47 @@ final class MailQueue
         ];
     }
 
-    /** สั่งให้ Postfix ลองส่งทุกฉบับในคิวใหม่เดี๋ยวนี้ ไม่ต้องรอรอบถัดไป */
+    /** Tells Postfix to try sending every message in the queue right now, without waiting for the next cycle */
     public function flush(Executor $executor): void
     {
         $result = $executor->exec([$executor->path(self::POSTQUEUE), '-f'], timeout: 60);
 
         if (!$result->ok()) {
-            throw new ExecutionFailed('สั่งส่งคิวใหม่ไม่สำเร็จ: ' . trim($result->stderr ?: $result->stdout));
+            throw new ExecutionFailed('Failed to flush the queue: ' . trim($result->stderr ?: $result->stdout));
         }
     }
 
-    /** ลบเมลฉบับเดียวออกจากคิว — เมลฉบับนั้นหายถาวร ไม่มีการแจ้งผู้ส่ง */
+    /** Deletes a single message from the queue — it's gone permanently, with no notice sent to the sender */
     public function delete(Executor $executor, string $id): void
     {
         $this->postsuper($executor, '-d', self::assertId($id));
     }
 
     /**
-     * ลบทั้งคิว — แยกเป็นเมธอดของตัวเอง **ไม่ใช่ delete('ALL')**
+     * Deletes the entire queue — its own separate method, **never `delete('ALL')`**
      *
-     * `postsuper -d ALL` ล้างคิวทั้งเครื่อง · ถ้าปล่อยให้เดินทางเดียวกับการลบฉบับเดียว
-     * ค่า `ALL` ที่หลุดมาจากพารามิเตอร์ (หรือผู้เรียกที่พิมพ์ผิด) จะกลายเป็นการลบ
-     * เมลของลูกค้าทุกฉบับที่รอส่งอยู่ทันที โดยที่ทุกด่านตรวจมองว่าเป็นรหัสที่ถูกต้อง
+     * `postsuper -d ALL` clears the whole machine's queue · if this shared
+     * the same path as deleting a single message, an `ALL` value leaking in
+     * from a parameter (or a caller's typo) would delete every customer's
+     * waiting mail instantly, with every validation gate seeing it as a
+     * perfectly valid id.
      */
     public function deleteAll(Executor $executor): void
     {
         $this->postsuper($executor, '-d', 'ALL');
     }
 
-    /** ปล่อยเมลที่ถูกพักไว้กลับเข้าคิวปกติ */
+    /** Releases a held message back into the normal queue */
     public function release(Executor $executor, string $id): void
     {
         $this->postsuper($executor, '-H', self::assertId($id));
     }
 
     /**
-     * เนื้อเมลในคิวหนึ่งฉบับ — หัวจดหมายกับเนื้อความ
+     * A single queued message's content — headers and body
      *
-     * ตัดความยาวไว้ เพราะไฟล์แนบขนาดใหญ่ที่ถูกเข้ารหัส base64 ไม่มีประโยชน์กับการ
-     * ไล่ปัญหา แต่ทำให้คำตอบใหญ่จนเบราว์เซอร์อืดได้จริง
+     * Truncated, because a large base64-encoded attachment is no help at
+     * all for troubleshooting, but can genuinely make the response large enough to slow the browser down.
      */
     public function message(Executor $executor, string $id, int $limit = 60000): string
     {
@@ -160,7 +166,7 @@ final class MailQueue
 
         if (!$result->ok()) {
             throw new ExecutionFailed(
-                'อ่านเมลฉบับนี้ไม่ได้ — อาจถูกส่งออกไปแล้วหรือถูกลบไปแล้ว: '
+                'Failed to read this message — it may have already been sent or deleted: '
                 . trim($result->stderr ?: $result->stdout),
             );
         }
@@ -176,28 +182,29 @@ final class MailQueue
         );
 
         if (!$result->ok()) {
-            throw new ExecutionFailed('คำสั่งกับคิวเมลไม่สำเร็จ: ' . trim($result->stderr ?: $result->stdout));
+            throw new ExecutionFailed('Mail queue command failed: ' . trim($result->stderr ?: $result->stdout));
         }
     }
 
     /**
-     * รหัสในคิวต้องเป็นรหัสจริงเท่านั้น
+     * A queue id must be a genuine id, nothing else
      *
-     * **`ALL` ต้องถูกปฏิเสธที่นี่** — มันผ่านกติกาตัวอักษร/ตัวเลขได้สบาย ๆ แต่สำหรับ
-     * `postsuper` มันคือคำสั่งลบทั้งคิว · การลบทั้งคิวมีเมธอดของตัวเองที่ผู้เรียกต้อง
-     * ตั้งใจเรียกเท่านั้น
+     * **`ALL` must be rejected here** — it would sail right through an
+     * alphanumeric check, but to `postsuper` it means "delete the entire
+     * queue" · deleting the whole queue has its own separate method that a
+     * caller has to deliberately call instead.
      */
     public static function assertId(string $id): string
     {
         $id = trim($id);
 
         if (strtoupper($id) === 'ALL') {
-            throw new ValidationError('ต้องระบุรหัสของเมลฉบับที่ต้องการ — ล้างทั้งคิวเป็นคำสั่งแยกต่างหาก');
+            throw new ValidationError('The id of the specific message must be given — clearing the whole queue is a separate command');
         }
 
-        // รหัสของ Postfix เป็นเลขฐานสิบหก หรือ base52 เมื่อเปิด long queue id
+        // Postfix's ids are hexadecimal, or base52 when long queue ids are turned on
         if (preg_match('/^[A-Za-z0-9]{4,40}$/', $id) !== 1) {
-            throw new ValidationError('รหัสเมลในคิวไม่ถูกต้อง: ' . $id);
+            throw new ValidationError('Invalid queue message id: ' . $id);
         }
 
         return $id;
