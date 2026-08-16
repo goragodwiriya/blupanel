@@ -7,10 +7,11 @@ namespace Phpcp\Domain;
 use Phpcp\Kernel\Db;
 
 /**
- * เว็บไซต์ในฐานข้อมูลของ panel
+ * A site in the panel's database
  *
- * แถวในตารางนี้คือ "ความจริงที่ panel รู้" ส่วนไฟล์ vhost กับ pool คือ "ความจริงบนเครื่อง"
- * สองอย่างนี้ต้องตรงกันเสมอ ทุกคำสั่งที่แก้อย่างหนึ่งจึงต้องแก้อีกอย่างในทรานแซกชันเดียวกัน
+ * A row in this table is "what the panel believes is true," while the vhost and pool
+ * files are "what's true on the machine." These two must always agree, so every
+ * command that changes one must change the other within the same transaction.
  */
 final class SiteRepository
 {
@@ -23,14 +24,15 @@ final class SiteRepository
 
     /** @return array<string,mixed>|null */
     /**
-     * แถวของเว็บพร้อมชื่อบัญชีระบบของเจ้าของเสมอ
+     * A site's row, always joined with its owner's system account name
      *
-     * ตั้งแต่ migration 0006 แถว sites เพียว ๆ ประกอบเส้นทางไฟล์ไม่ได้เลย เพราะเส้นทาง
-     * ทุกอย่างอนุมานจากบ้านของเจ้าของ · การ join จึงเป็นส่วนหนึ่งของ "โหลดเว็บหนึ่งแห่ง"
-     * ไม่ใช่ทางเลือกเสริม — เคยลืม join แล้วได้ docroot เป็น /srv/phpcp/users//domains/…
-     * โผล่ออก API จริง โดยไม่มีอะไรฟ้อง
+     * Since migration 0006, a bare `sites` row can't build a file path at all,
+     * because every path is derived from the owner's home · the join is therefore
+     * part of "loading one site," not an optional extra — this was once forgotten,
+     * and produced a docroot of `/srv/phpcp/users//domains/…` that reached the real
+     * API with nothing to flag it.
      *
-     * owner_user_id เป็น NOT NULL และมี FK อยู่แล้ว การ join จึงไม่ทำให้แถวหายไปไหน
+     * owner_user_id is NOT NULL and already has an FK, so the join never drops a row.
      */
     private const WITH_OWNER = 'SELECT s.*, u.username AS owner_username, u.system_user AS owner_system_user,
                     u.site_layout AS owner_site_layout, u.main_domain AS owner_main_domain
@@ -49,10 +51,11 @@ final class SiteRepository
     }
 
     /**
-     * แถวของเว็บพร้อมชื่อบัญชีระบบของเจ้าของ
+     * A site's row along with its owner's system account name
      *
-     * เส้นทางทุกอย่างของเว็บอนุมานจากชื่อเจ้าของ การโหลดเว็บโดยไม่รู้เจ้าของจึงประกอบ
-     * เส้นทางไม่ได้เลย — ใช้ query นี้ทุกครั้งที่จะสร้าง Site เป็น value object
+     * Every path for a site is derived from its owner's name, so loading a site
+     * without knowing its owner means no path can be built at all — use this query
+     * whenever a Site value object is about to be constructed.
      *
      * @return array<string,mixed>|null
      */
@@ -62,7 +65,7 @@ final class SiteRepository
     }
 
     /**
-     * โหลดเป็น value object พร้อม alias — ใช้เวลาจะสร้าง vhost หรือ pool
+     * Load as a value object with aliases — used when building a vhost or a pool
      */
     public function load(int $id): ?Site
     {
@@ -73,15 +76,19 @@ final class SiteRepository
         }
 
         /*
-         * **ห้ามประกอบ UserAccount เองที่นี่** — ปล่อยให้ Site::fromRow อ่านจากแถวเดียวกัน
+         * **Never construct UserAccount by hand here** — let Site::fromRow read it
+         * from the same row instead
          *
-         * เดิมที่นี่เรียก `new UserAccount($id, $username)` ด้วยสองอาร์กิวเมนต์ ซึ่งทิ้ง
-         * เลย์เอาต์กับโดเมนหลักไปเงียบ ๆ · ผลคือ `load()` คืน Site ที่เจ้าของถูกมองเป็น
-         * เลย์เอาต์เริ่มต้นเสมอ แม้ฐานข้อมูลจะบอกว่า cpanel — เส้นทางที่ได้จึงเป็นของ
-         * เลย์เอาต์ผิด ทั้งที่ทุกอย่างอื่นในระบบเห็นถูก
+         * This used to call `new UserAccount($id, $username)` with only two
+         * arguments, which silently dropped the layout and main domain · the result
+         * was `load()` returning a Site whose owner was always treated as the
+         * default layout, even when the database said cpanel — the resulting path
+         * was for the wrong layout, even though everything else in the system saw
+         * it correctly.
          *
-         * เจอบนเซิร์ฟเวอร์จริงตอนทดสอบการย้ายเลย์เอาต์: ไฟล์ไม่ถูกย้าย vhost ชี้ไปที่
-         * ไดเรกทอรีเปล่า แล้วเว็บ 404 ทั้งที่ทุกขั้นตอนรายงานว่าสำเร็จ
+         * Found on a real server while testing a layout migration: the files
+         * weren't moved, the vhost pointed at an empty directory, and the site
+         * returned 404 even though every step reported success.
          */
         return Site::fromRow($row, $this->aliasesOf($id), $this->subdomainPathsOf($id));
     }
@@ -105,8 +112,9 @@ final class SiteRepository
     public function aliasesOf(int $siteId): array
     {
         $rows = $this->db->all(
-            // wildcard รวมอยู่ด้วยเพราะต้องไปโผล่ใน ServerAlias และในใบรับรอง
-            // เหมือน alias ทุกประการ — ต่างกันแค่วิธีพิสูจน์ตอนขอใบ (DNS-01)
+            // wildcard is included too, since it must appear in ServerAlias and in
+            // the certificate exactly like any other alias — the only difference
+            // is how it's validated when requesting the certificate (DNS-01)
             "SELECT domain FROM domains WHERE site_id = :id AND type IN ('alias','subdomain','wildcard') ORDER BY domain",
             ['id' => $siteId],
         );
@@ -115,7 +123,7 @@ final class SiteRepository
     }
 
     /**
-     * รายการเว็บไซต์พร้อมตัวเลขที่หน้าจอต้องใช้ — query เดียว ไม่มี N+1
+     * A list of sites with the numbers the screen needs — a single query, no N+1
      *
      * @return list<array<string,mixed>>
      */
@@ -124,9 +132,10 @@ final class SiteRepository
         $where = $ownerId === null ? '' : ' WHERE s.owner_user_id = :owner';
         $params = $ownerId === null ? [] : ['owner' => $ownerId];
 
-        // ต้อง join users มาด้วยเสมอ — เส้นทางทุกอย่างของเว็บอนุมานจากบ้านของเจ้าของ
-        // ถ้าไม่มีชื่อเจ้าของมาด้วย Site จะประกอบเส้นทางออกมาเป็น /srv/phpcp/users//domains/…
-        // ซึ่งเป็นเส้นทางที่ผิดแต่ไม่มีอะไรฟ้อง (เคยหลุดไปโผล่บน API จริงมาแล้ว)
+        // Must always join users — every path for a site is derived from its
+        // owner's home. Without the owner's name, Site would build a path like
+        // /srv/phpcp/users//domains/…, which is wrong but has nothing to flag it
+        // (this has actually reached the real API before).
         return $this->db->all(
             'SELECT s.*,
                     u.username     AS owner_username,
@@ -188,10 +197,11 @@ final class SiteRepository
     }
 
     /**
-     * จองแถวไว้ก่อนเพื่อให้ได้ id สำหรับตั้งชื่อผู้ใช้ระบบ (web_<id>)
+     * Reserve a row first to get an id for naming the system user (web_<id>)
      *
-     * ต้องทำก่อนงานฝั่งระบบปฏิบัติการ เพราะชื่อผู้ใช้ต้องไม่ซ้ำและต้องคาดเดาได้
-     * ถ้างานฝั่งระบบล้ม ผู้เรียกมีหน้าที่ลบแถวนี้ทิ้ง
+     * Must happen before the OS-level work, since the username must be both unique
+     * and predictable. If the OS-level work fails, the caller is responsible for
+     * deleting this row.
      */
     public function reserve(
         string $domain,
@@ -218,7 +228,7 @@ final class SiteRepository
      * @param int $uid
      * @param int $gid
      */
-    /** จำนวนเว็บที่ผู้ใช้คนนี้เป็นเจ้าของอยู่ — ใช้ตัดสินว่าจะคืนบัญชีระบบได้หรือยัง */
+    /** Number of sites this user owns — used to decide whether their system account can be reclaimed yet */
     public function countOwnedBy(int $userId): int
     {
         return (int) $this->db->value(
@@ -229,10 +239,11 @@ final class SiteRepository
     }
 
     /**
-     * Domain Pointer ของทุกเว็บที่ใช้ pool เดียวกัน (เจ้าของ + เวอร์ชัน PHP เดียวกัน)
+     * The Domain Pointer of every site sharing the same pool (same owner + same PHP version)
      *
-     * pool ใช้ร่วมกันทั้งบัญชี open_basedir จึงต้องครอบโฟลเดอร์นอกบ้านของทุกเว็บที่ใช้ pool นั้น
-     * ไม่ใช่แค่ของเว็บที่กำลังแก้อยู่ ไม่งั้นการแก้เว็บหนึ่งจะไปตัดสิทธิ์การอ่านของอีกเว็บ
+     * A pool is shared across the whole account, so open_basedir must cover the
+     * outside-home folder of every site using that pool, not just the one currently
+     * being edited — otherwise editing one site would cut off another site's read access.
      *
      * @return list<string>
      */
@@ -248,10 +259,11 @@ final class SiteRepository
     }
 
     /**
-     * เวอร์ชัน PHP ที่ผู้ใช้คนนี้ใช้อยู่จริง
+     * The PHP versions this user actually has in use
      *
-     * ใช้ตัดสินว่าไฟล์ FPM pool ของเวอร์ชันไหนยังต้องอยู่ต่อ — pool ใช้ร่วมกันทั้งบัญชี
-     * การลบไฟล์ของเวอร์ชันที่ยังมีเว็บใช้อยู่ = เว็บพี่น้องดับทันที
+     * Used to decide which version's FPM pool file still needs to exist — a pool is
+     * shared across the whole account, so deleting the file for a version that still
+     * has a site using it = the sibling site goes down immediately.
      *
      * @return list<string>
      */
@@ -266,7 +278,7 @@ final class SiteRepository
     }
 
     /**
-     * เว็บทุกแห่งของผู้ใช้ที่ใช้ PHP เวอร์ชันนี้ — ใช้เขียนไฟล์ FPM pool ที่ใช้ร่วมกัน
+     * Every site belonging to this user that uses this PHP version — used when writing the shared FPM pool file
      *
      * @return list<int>
      */
@@ -284,10 +296,10 @@ final class SiteRepository
     }
 
     /**
-     * บันทึกเส้นทางจริงหลัง provision เสร็จ
+     * Record the real path once provisioning has finished
      *
-     * uid/gid ไม่ได้อยู่ที่เว็บอีกแล้ว — ย้ายไปอยู่กับผู้ใช้ตั้งแต่ migration 0006
-     * เพราะบัญชีระบบหนึ่งบัญชีรับหลายเว็บของเจ้าของคนเดียวกัน
+     * uid/gid no longer live on the site — they moved to the user since migration
+     * 0006, since one system account now serves multiple sites of the same owner.
      */
     public function completeProvisioning(Site $site): void
     {
@@ -336,7 +348,7 @@ final class SiteRepository
         $this->db->run('DELETE FROM sites WHERE id = :id', ['id' => $siteId]);
     }
 
-    /** @return array<string,int> เวอร์ชัน PHP => จำนวนเว็บไซต์ที่ใช้ */
+    /** @return array<string,int> PHP version => number of sites using it */
     public function countByPhpVersion(): array
     {
         $rows = $this->db->all('SELECT php_version, count(*) AS n FROM sites GROUP BY php_version');
