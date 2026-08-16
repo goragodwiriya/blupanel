@@ -11,14 +11,16 @@ use Phpcp\Kernel\Response;
 use Phpcp\Security\Permissions;
 
 /**
- * ฐานข้อมูล MariaDB — `/api/v2/databases`
+ * MariaDB databases — `/api/v2/databases`
  *
- * ตัวระบุคือ **ชื่อฐานข้อมูล** ไม่ใช่ id ตัวเลข เพราะชื่อคือสิ่งที่ไม่ซ้ำจริงบน MariaDB
- * และเป็นสิ่งที่ผู้ดูแลใช้อ้างถึงมันทุกที่ (ใน mysql client, ในไฟล์ config ของเว็บ)
- * การใช้ id ของตาราง panel จะทำให้ API อ้างถึงสิ่งที่ MariaDB ไม่รู้จัก
+ * The identifier is the **database name**, not a numeric id, because the name is
+ * what's genuinely unique on MariaDB and what an admin refers to it by
+ * everywhere (in the mysql client, in a website's config files) — using the
+ * panel table's id would make the API refer to something MariaDB doesn't know
  *
- * การแบ่งขอบเขตตามเจ้าของทำที่ capability `db.list` (ฝั่ง agent) อยู่แล้ว —
- * webadmin จะได้เฉพาะฐานข้อมูลของเว็บตัวเองกลับมา ชั้นนี้จึงไม่ต้องกรองซ้ำ
+ * Scoping by owner already happens in the `db.list` capability (agent side) — a
+ * webadmin gets back only their own website's databases, so this layer doesn't
+ * need to filter again
  */
 final class DatabasesController extends ApiController
 {
@@ -32,8 +34,8 @@ final class DatabasesController extends ApiController
             $all = self::filter($all, $query);
         }
 
-        // กรองด้วยชื่อฟิลด์ตรง ๆ ตาม §4.5 — หน้ารายละเอียดเว็บไซต์ใช้ตัวนี้เพื่อไม่ต้อง
-        // ดึงฐานข้อมูลของลูกค้ารายอื่นมาทั้งหมดแล้วค่อยกรองทิ้งฝั่งหน้าเว็บ
+        // A direct field-name filter per §4.5 — the website detail page uses this
+        // so it doesn't have to fetch every other customer's databases and filter them out client-side
         $siteId = $request->queryInt('site_id', 0);
         if ($siteId > 0) {
             $all = array_values(array_filter(
@@ -46,17 +48,20 @@ final class DatabasesController extends ApiController
         $total = count($all);
         $slice = array_slice($all, $page['offset'], $page['per_page']);
 
-        // เงื่อนไขปุ่มลบในตารางอ่านได้แค่ค่าในแถวเดียวกัน — สิทธิ์จึงต้องมากับแถว
+        // The delete button's condition in the table can only read values in the same row — so permission must travel with the row
         $manage = $this->ctx->can('db.manage');
         $slice = array_map(
             function (array $db) use ($manage): array {
                 /*
-                 * **แถวที่ panel รู้จักแต่เครื่องไม่มี ต้องเห็นได้ตั้งแต่ในตาราง**
+                 * **A row the panel knows about but the machine doesn't have must be
+                 * visible right in the table**
                  *
-                 * ทั้งสองฝั่งเพี้ยนจากกันได้ตามปกติ (ลบจาก mysql client ตรง ๆ หรือกู้
-                 * panel.db รุ่นก่อนหน้ากลับมา) · ก่อนหน้านี้ไม่มีอะไรบอกเลย ผู้ใช้จะรู้
-                 * ก็ต่อเมื่อกดสำรองแล้วได้ error ของ mysqldump ดิบ ๆ หรือรอบอัตโนมัติ
-                 * ล้มทุกคืน · `db.list` รู้คำตอบนี้อยู่แล้ว แค่ไม่เคยถูกส่งออกมา
+                 * The two sides can genuinely drift apart (deleted straight from the
+                 * mysql client, or an older panel.db restored back) · before this,
+                 * nothing said so at all — the user would only find out after
+                 * clicking backup and getting a raw mysqldump error, or the nightly
+                 * automatic round failing · `db.list` already knows this answer, it
+                 * was just never sent out
                  */
                 $exists = ($db['exists_on_server'] ?? true) === true;
 
@@ -64,7 +69,7 @@ final class DatabasesController extends ApiController
                     'can_manage' => $manage,
                     'status' => $exists ? 'ok' : 'missing',
                     'status_label' => $exists ? $this->t('OK') : $this->t('Missing on server'),
-                    // สีของป้ายมาจากฝั่งเซิร์ฟเวอร์ เทมเพลตจึงเขียน `pill-${status_tone}` ได้ตรง ๆ
+                    // The pill's color comes from the server, so the template can write `pill-${status_tone}` directly
                     'status_tone' => $exists ? 'ok' : 'danger',
                 ];
             },
@@ -83,29 +88,32 @@ final class DatabasesController extends ApiController
     }
 
     /**
-     * สร้างฐานข้อมูลพร้อมผู้ใช้
+     * Create a database with its user
      *
-     * รหัสผ่านที่สุ่มให้อยู่ในคำตอบ **ครั้งเดียวเท่านั้น** — panel ไม่เก็บไว้ที่ไหนเลย
-     * (ของเดิมส่งผ่าน query string ตอน redirect ซึ่งไปโผล่ใน log ของเว็บเซิร์ฟเวอร์
-     * และในประวัติเบราว์เซอร์ · การส่งใน body ของคำตอบไม่มีปัญหานั้น)
+     * The generated password is in the response **exactly once** — the panel
+     * never stores it anywhere (the old version sent it via query string during a
+     * redirect, which ended up in the web server's log and the browser's history
+     * · sending it in the response body has no such problem)
      */
     /**
-     * โครงเปล่าของฟอร์มสร้างฐานข้อมูล พร้อมคำสั่งเปิด modal
+     * The empty shell of the create-database form, with the command to open its modal
      *
-     * ฐานข้อมูลแก้ไขไม่ได้ (สร้างกับลบเท่านั้น) จึงไม่มี `show` แบบ cron-jobs —
-     * แต่ยังใช้เส้นทางเดียวกันเพื่อให้หน้าเว็บทำสิ่งเดียวกันทุกหน้า: ยิงคำขอ
-     * แล้วส่งคำตอบต่อให้ ResponseHandler โดยไม่ต้องรู้ว่าเทมเพลตชื่ออะไร
+     * A database can't be edited (only created or deleted), so there's no `show`
+     * the way cron-jobs has one — but it still uses the same route so every page
+     * does the same thing: fire the request and hand the response to
+     * ResponseHandler, with no need to know what the template is called
      */
     public function form(Request $request): Response
     {
         $owner = $this->scopeOwner();
 
         /*
-         * รายชื่อบัญชีกับเว็บไซต์เดินทางมาใน `data` **ไม่ใช่ `meta`**
+         * The account and website lists travel in `data`, **not `meta`**
          *
-         * `meta.*` ผูกกับ `data-for`/`data-text` ของ Now.js ไม่ได้ — คอมโพเนนต์เห็น
-         * เฉพาะชั้น `data` · รายการที่ใส่ไว้ใน meta จะกลายเป็น <select> ว่างเปล่า
-         * โดยไม่มีข้อผิดพลาดอะไรให้เห็นเลย (เสียเวลาไปแล้วหนึ่งรอบในหน้า Mailboxes)
+         * `meta.*` can't be bound by Now.js's `data-for`/`data-text` — the
+         * component only sees the `data` layer · a list placed in meta becomes an
+         * empty `<select>` with no error shown at all (already cost one round of
+         * debugging time on the Mailboxes page)
          */
         return $this->ok(
             [
@@ -127,20 +135,23 @@ final class DatabasesController extends ApiController
         );
     }
 
-    /** null = ผู้ดูแลที่เห็นทั้งเครื่อง · ค่าอื่น = ลูกค้าที่เห็นเฉพาะของตัวเอง */
+    /** null = an admin who sees the whole machine · anything else = a customer who sees only their own */
     private function scopeOwner(): ?int
     {
         return $this->ctx->role() === Permissions::WEBADMIN ? $this->ctx->userId() : null;
     }
 
     /**
-     * บัญชีโฮสติ้งที่ผู้เรียกเลือกเป็นเจ้าของฐานข้อมูลได้
+     * The hosting accounts the caller may pick as a database's owner
      *
-     * **ลูกค้าเลือกได้แค่ตัวเอง** จึงเหลือรายการเดียว · ผู้ดูแลเห็นทุกบัญชีที่มีบ้านจริง
-     * (บัญชีที่ยังไม่มีบัญชีระบบไม่มี prefix ให้ใช้ และยังไม่มีที่ให้เก็บอะไร)
+     * **A customer can only pick themselves**, so there's just the one entry ·
+     * an admin sees every account that genuinely has a home directory (an
+     * account with no system account yet has no prefix to use, and nowhere to
+     * store anything yet)
      *
-     * ชื่อที่แสดงมี prefix ติดไปด้วย เพราะนั่นคือสิ่งที่ผู้ใช้ต้องเห็นก่อนพิมพ์ชื่อ
-     * ฐานข้อมูล — ไม่งั้นเขาจะพิมพ์ `shop` แล้วประหลาดใจที่ได้ `alice_shop`
+     * The displayed name carries its prefix, because that's what the user needs
+     * to see before typing a database name — otherwise they'd type `shop` and be
+     * surprised to get `alice_shop`
      *
      * @return list<array<string,mixed>>
      */
@@ -168,14 +179,15 @@ final class DatabasesController extends ApiController
     }
 
     /**
-     * เว็บไซต์ที่ผูกฐานข้อมูลนี้ไว้ได้ · รายการแรกคือ "ไม่ผูกกับเว็บไซต์"
+     * The websites this database may be linked to · the first entry is "not linked to a website"
      *
-     * ตัวเลือก "ไม่ผูก" มาจากเซิร์ฟเวอร์ ไม่ใช่ `<option>` นิ่ง ๆ ในเทมเพลต เพราะ
-     * `data-for` เขียนทับลูกทั้งหมดของ `<select>` — option ที่เขียนไว้ในเทมเพลตจะหาย
-     * ไปทันทีที่ข้อมูลมาถึง
+     * The "not linked" choice comes from the server, not a static `<option>` in
+     * the template, because `data-for` overwrites every child of the `<select>` —
+     * an option written in the template disappears the moment data arrives
      *
-     * **การผูกกับเว็บมีผลจริง ไม่ใช่แค่ป้าย** — รอบสำรองอัตโนมัติหาฐานข้อมูลของเว็บ
-     * จากค่านี้ ฐานที่ไม่ผูกกับเว็บไหนเลยจึงไม่ถูกสำรองให้
+     * **The website link has a real effect, not just a label** — the automatic
+     * backup round finds a website's databases from this value, so a database
+     * linked to no website at all doesn't get backed up
      *
      * @return list<array<string,mixed>>
      */
@@ -208,9 +220,10 @@ final class DatabasesController extends ApiController
     {
         $result = $this->agent()->data('db.create', [
             'name' => trim($request->payloadString('name')),
-            // ชื่อผู้ใช้ฐานข้อมูลไม่รับจากฟอร์มอีกแล้ว — capability ตั้งให้จากชื่อฐาน
-            // ที่เติม prefix แล้ว (ดู DbCreate::dedicatedUser) เพื่อไม่ให้ลูกค้าสองราย
-            // ที่ตั้งชื่อฐานเหมือนกันไปชนผู้ใช้คนเดียวกัน
+            // The database username is no longer accepted from the form — the
+            // capability sets it from the prefixed database name instead (see
+            // DbCreate::dedicatedUser), so two customers naming their database
+            // the same thing never collide on the same user
             'host' => $request->payloadString('host') ?: 'localhost',
             'privileges' => $request->payloadString('privileges') ?: 'readwrite',
             'owner_user_id' => (int) $request->payload('owner_user_id', 0),
@@ -225,18 +238,19 @@ final class DatabasesController extends ApiController
     }
 
     /**
-     * คำสั่งหน้าจอหลังสร้างฐานข้อมูลสำเร็จ — ลำดับเดียวกับทุกหน้าในระบบ
+     * The screen actions after a database is created successfully — the same order every page in the system uses
      *
-     * `ปิด Modal → แถบแจ้งผล → (หน้าต่างรหัสผ่าน) → โหลดตารางใหม่`
+     * `Close modal → notification bar → (password dialog) → reload table`
      *
-     * สามอย่างที่เคยผิดตรงนี้:
+     * Three things that were once wrong here:
      *
-     *   1. **ไม่มีแถบแจ้งผลเลย** — กดบันทึกแล้ว Modal หายไปเฉย ๆ ผู้ใช้ที่ไม่ได้จ้อง
-     *      ตารางอยู่จึงไม่รู้ว่าสำเร็จหรือเงียบหาย แล้วมักกดซ้ำ
-     *   2. **หน้าต่างรหัสผ่านส่ง `content`** ซึ่ง `ResponseHandler` ไม่รู้จัก (มันอ่าน
-     *      `html` หรือ `template`) — หน้าต่างจึงเปิดมาว่างเปล่า และรหัสที่ไม่มีที่อื่น
-     *      ให้ดูย้อนหลังก็หายไปพร้อมกัน
-     *   3. ข้อความในหน้าต่างเป็นภาษาไทยฝังในโค้ด ไม่ผ่านตัวแปลภาษา
+     *   1. **No notification bar at all** — clicking save just made the modal
+     *      disappear, and a user not watching the table closely couldn't tell
+     *      whether it succeeded or silently vanished, so they'd often click again.
+     *   2. **The password dialog sent `content`**, which `ResponseHandler` doesn't
+     *      recognize (it reads `html` or `template`) — so the dialog opened empty,
+     *      and the password, which has nowhere else to be seen again, vanished with it.
+     *   3. The dialog's text was Thai hardcoded in the source, bypassing the translator entirely.
      *
      * @param array<string,mixed> $result
      * @return list<array<string,mixed>>
@@ -250,7 +264,7 @@ final class DatabasesController extends ApiController
 
         $password = (string) ($result['password'] ?? '');
 
-        // รหัสที่สุ่มให้ต้องอยู่ในกล่องที่ผู้ใช้กดปิดเอง ไม่ใช่แถบที่หายไปเองใน 5 วินาที
+        // A generated password must sit in a box the user closes themselves, not a bar that vanishes on its own after 5 seconds
         if ($password !== '') {
             $actions[] = [
                 'type' => 'modal',
@@ -284,10 +298,11 @@ final class DatabasesController extends ApiController
     }
 
     /**
-     * ลบฐานข้อมูล — ต้องยืนยันด้วยชื่อ และเลือกได้ว่าจะลบผู้ใช้ที่ผูกอยู่ด้วยหรือไม่
+     * Delete a database — requires confirming with the name, and a choice of whether to also delete its user
      *
-     * `drop_user` ไม่ใช่ค่าปริยาย เพราะผู้ใช้ฐานข้อมูลหนึ่งคนอาจมีสิทธิ์กับหลายฐานข้อมูล
-     * การลบทิ้งอัตโนมัติจะทำให้เว็บอื่นที่ใช้ผู้ใช้เดียวกันต่อฐานข้อมูลไม่ได้ทันที
+     * `drop_user` is never the default, because one database user can hold
+     * privileges on several databases — deleting it automatically would
+     * instantly cut off another website using the same user from its own database
      */
     public function destroy(Request $request): Response
     {
@@ -302,10 +317,12 @@ final class DatabasesController extends ApiController
         ], $this->ctx->actor($request));
 
         /*
-         * ข้อความจาก capability มาก่อนข้อความปริยาย — สองกรณีนี้ต่างกันมากเกินกว่าจะ
-         * พูดเหมือนกัน: ลบจริง (สำรองไว้ให้แล้วที่ไฟล์ชื่อนี้) กับ **ลบแค่แถวที่ค้าง
-         * อยู่ในฐานข้อมูลของ panel** เพราะฐานนั้นไม่มีอยู่บนเครื่องแล้ว · การบอกว่า
-         * "ลบฐานข้อมูลแล้ว" ในกรณีหลังทำให้ผู้ใช้เข้าใจว่ามีข้อมูลถูกลบไปจริง
+         * The capability's own message takes priority over the default one — the
+         * two cases are too different to phrase the same way: a real deletion
+         * (already backed up under this file's name) versus **only removing the
+         * leftover row in the panel's own database** because that database no
+         * longer exists on the machine at all · saying "database deleted" in the
+         * latter case would make the user believe real data was actually removed
          */
         return $this->completed(
             (string) ($result['message'] ?? $this->t('Database {name} deleted', ['name' => $name])),
@@ -315,10 +332,11 @@ final class DatabasesController extends ApiController
     }
 
     /**
-     * ตั้งรหัสผ่านใหม่ให้ผู้ใช้ฐานข้อมูล
+     * Set a new password for a database user
      *
-     * เป็น sub-resource ของ `database-users` ไม่ใช่ของ `databases` เพราะผู้ใช้หนึ่งคน
-     * ใช้ได้กับหลายฐานข้อมูล — การวางไว้ใต้ฐานข้อมูลใดฐานข้อมูลหนึ่งจะสื่อความหมายผิด
+     * A sub-resource of `database-users`, not `databases`, because one user can
+     * work with several databases — nesting it under any single database would
+     * be misleading
      */
     public function resetPassword(Request $request): Response
     {
@@ -334,8 +352,8 @@ final class DatabasesController extends ApiController
                 'action' => 'show',
                 'title' => $this->t('New password'),
                 'titleClass' => 'icon-lock',
-                // `html` ไม่ใช่ `content` — ResponseHandler อ่านคีย์นี้เท่านั้น
-                // (ของเดิมส่ง `content` หน้าต่างจึงเปิดมาว่างเปล่าพร้อมรหัสที่หายไปด้วย)
+                // `html`, not `content` — ResponseHandler only reads this key
+                // (the old version sent `content`, so the dialog opened empty with the password gone along with it)
                 'html' => sprintf(
                     '<p>%s</p><p class="mono selectable">%s</p>',
                     htmlspecialchars(
@@ -353,7 +371,7 @@ final class DatabasesController extends ApiController
     }
 
     /**
-     * กรองตามชื่อฐานข้อมูล ชื่อเว็บไซต์ หรือชื่อผู้ใช้
+     * Filter by database name, website name, or username
      *
      * @param list<array<string,mixed>> $databases
      * @return list<array<string,mixed>>
