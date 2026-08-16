@@ -97,7 +97,7 @@ test('เกินโควตาต้องถูกปฏิเสธพร�
 
     $over = $quota->canCreate($userId, 'domain', 2);
     assertTrue(!$over['ok'], 'ขอเกินโควตาต้องถูกปฏิเสธ');
-    assertTrue(str_contains($over['message'], '2 จาก 3'), 'ข้อความต้องบอกตัวเลขจริง ไม่ใช่บอกแค่ว่าเต็ม');
+    assertTrue(str_contains($over['message'], '2 of 3'), 'ข้อความต้องบอกตัวเลขจริง ไม่ใช่บอกแค่ว่าเต็ม');
 
     // ฐานข้อมูล: โควตา 2 ใช้ไป 1 → เพิ่มได้อีก 1 เท่านั้น
     assertTrue($quota->canCreate($userId, 'database', 1)['ok'], 'ช่องว่างที่เหลือพอดีต้องสร้างได้');
@@ -111,7 +111,7 @@ test('โควตา 0 คือปิดใช้งาน ส่วน -1 ค
     // fixture ตั้ง ftp_users = 0
     $disabled = $quota->canCreate($userId, 'ftp_user', 1);
     assertTrue(!$disabled['ok'], 'โควตา 0 ต้องสร้างไม่ได้');
-    assertTrue(str_contains($disabled['message'], 'ปิดการใช้งาน'), 'ต้องบอกว่าปิดไว้ ไม่ใช่บอกว่าเต็ม');
+    assertTrue(str_contains($disabled['message'], 'is disabled'), 'ต้องบอกว่าปิดไว้ ไม่ใช่บอกว่าเต็ม');
 
     $users->updateQuota($userId, ['domains' => -1]);
     $unlimited = $quota->canCreate($userId, 'domain', 9999);

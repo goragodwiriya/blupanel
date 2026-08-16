@@ -128,7 +128,7 @@ test('สร้างทรัพยากรใหม่ไม่ได้เ�
     $result = $quota->checkOwnerCanCreate($account['id'], 'database');
 
     assertSame(false, $result['ok'], 'ต้องถูกปฏิเสธเมื่อ used >= limit');
-    assertTrue(str_contains($result['message'], 'พื้นที่ดิสก์เต็ม'), 'ข้อความต้องบอกสาเหตุว่าเป็นเรื่องดิสก์ ไม่ใช่โควตาชนิดอื่น: ' . $result['message']);
+    assertTrue(str_contains($result['message'], 'Disk space is full'), 'ข้อความต้องบอกสาเหตุว่าเป็นเรื่องดิสก์ ไม่ใช่โควตาชนิดอื่น: ' . $result['message']);
 });
 
 test('ยังสร้างทรัพยากรใหม่ได้เมื่อพื้นที่ดิสก์ยังไม่เต็ม', static function (): void {

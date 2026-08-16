@@ -7,14 +7,17 @@ namespace Phpcp\Domain;
 use Phpcp\Security\Permissions;
 
 /**
- * ตัวตัดสินว่าผู้ใช้สร้างทรัพยากรเพิ่มได้อีกหรือไม่
+ * Decides whether a user can create more of a given resource
  *
- * ตั้งแต่ migration 0005 โควตาอยู่บนแถว users เดียวกับที่ใช้ล็อกอิน จึงไม่มีทาง
- * เกิดสภาพ "ผู้ใช้ที่ไม่มีโควตา" อีกต่อไป — เดิมโควตาอยู่ตาราง customers แยกต่างหาก
- * และ webadmin ที่สร้างจาก CLI/API จะไม่มีแถวลูกค้า ทำให้ตัวตรวจหาไม่เจอแล้วปล่อยผ่าน
- * ทุกคำขอแบบไม่จำกัด ซึ่งเป็นช่องโหว่ที่หายไปพร้อมกับการยุบตาราง ไม่ใช่ด้วยการเพิ่ม if
+ * Since migration 0005, quotas live on the same `users` row used for login, so
+ * there is no longer any way to end up with a "user that has no quota" — quotas used
+ * to live in a separate `customers` table, and a webadmin created from the CLI/API
+ * would have no customer row, so the check simply couldn't find one and let every
+ * request through unlimited. That hole disappeared along with the table being
+ * merged away, not by adding an if-statement.
  *
- * กฎของตัวเลขอยู่ที่คลาส Quota ที่เดียว: -1 = ไม่จำกัด · 0 = ปิด · >0 = จำกัดตามจำนวน
+ * The rules for the numbers themselves live in one place, the Quota class:
+ * -1 = unlimited · 0 = disabled · >0 = limited by count
  */
 final class QuotaChecker
 {
@@ -23,27 +26,29 @@ final class QuotaChecker
     }
 
     /**
-     * ผู้ใช้สร้างทรัพยากรชนิดนี้เพิ่มอีก $amount ชิ้นได้หรือไม่
+     * Whether the user can create $amount more of this resource
      *
-     * รับชื่อชนิดได้ทั้งเอกพจน์ ('domain') และพหูพจน์ ('domains') เพราะผู้เรียกในระบบ
-     * ใช้คนละแบบกันมาแต่ไหนแต่ไร และความไม่ตรงกันนั้นเคยทำให้โควตาปฏิเสธทุกคำขอ
+     * Accepts the type name as either singular ('domain') or plural ('domains'),
+     * since callers throughout the system have always used one or the other, and
+     * that mismatch used to make quota checks reject every single request.
      *
      * @return array{ok:bool,message:string,used:int,limit:int}
      */
     public function canCreate(int $userId, string $type, int $amount = 1): array
     {
         if ($amount <= 0) {
-            return ['ok' => false, 'message' => 'จำนวนต้องมากกว่า 0', 'used' => 0, 'limit' => 0];
+            return ['ok' => false, 'message' => 'Amount must be greater than 0', 'used' => 0, 'limit' => 0];
         }
 
         $name = Quota::normalize($type);
 
-        // ทรัพยากรที่ไม่มีคอลัมน์โควตาเลย (เช่น redirect) คือ "ไม่ได้จำกัดไว้"
-        // ต่างจาก "จำกัดเป็น 0" — ถ้าแยกไม่ออก การเพิ่มชนิดใหม่จะทำให้ของเดิมพังเงียบ ๆ
+        // A resource with no quota column at all (e.g. redirect) means "not
+        // limited," different from "limited to 0" — failing to tell these apart
+        // would mean adding a new type silently breaks the existing ones.
         if ($name === null) {
             return [
                 'ok' => true,
-                'message' => 'ไม่ได้จำกัดจำนวนของทรัพยากรชนิดนี้',
+                'message' => 'This resource type has no limit',
                 'used' => 0,
                 'limit' => Quota::UNLIMITED,
             ];
@@ -52,7 +57,7 @@ final class QuotaChecker
         $quotas = $this->users->quotas($userId);
 
         if ($quotas === null) {
-            return ['ok' => false, 'message' => 'ไม่พบผู้ใช้', 'used' => 0, 'limit' => 0];
+            return ['ok' => false, 'message' => 'User not found', 'used' => 0, 'limit' => 0];
         }
 
         $limit = $quotas[$name];
@@ -60,13 +65,13 @@ final class QuotaChecker
         $label = Quota::label($name);
 
         if (Quota::isUnlimited($limit)) {
-            return ['ok' => true, 'message' => 'สามารถสร้างได้', 'used' => $used, 'limit' => $limit];
+            return ['ok' => true, 'message' => 'Can be created', 'used' => $used, 'limit' => $limit];
         }
 
         if (Quota::isDisabled($limit)) {
             return [
                 'ok' => false,
-                'message' => "โควตา{$label}ถูกปิดการใช้งาน",
+                'message' => "{$label} quota is disabled",
                 'used' => $used,
                 'limit' => $limit,
             ];
@@ -75,19 +80,19 @@ final class QuotaChecker
         if ($used + $amount > $limit) {
             return [
                 'ok' => false,
-                'message' => "โควตา{$label}เต็ม (ใช้ {$used} จาก {$limit})",
+                'message' => "{$label} quota is full (using {$used} of {$limit})",
                 'used' => $used,
                 'limit' => $limit,
             ];
         }
 
-        return ['ok' => true, 'message' => 'สามารถสร้างได้', 'used' => $used, 'limit' => $limit];
+        return ['ok' => true, 'message' => 'Can be created', 'used' => $used, 'limit' => $limit];
     }
 
     /**
-     * ตรวจทั้งสถานะบริการและโควตา — ด่านเดียวที่ capability ควรเรียก
+     * Check both service status and quota — the single guard a capability should call
      *
-     * เจ้าของเป็น 0 หมายถึงทรัพยากรที่ไม่มีเจ้าของ จึงไม่ต้องคิดโควตา
+     * An owner of 0 means an unowned resource, so no quota needs to be considered.
      *
      * @return array{ok:bool,message:string,used:int,limit:int}
      */
@@ -96,24 +101,26 @@ final class QuotaChecker
         if ($ownerUserId <= 0) {
             return [
                 'ok' => true,
-                'message' => 'ไม่มีเจ้าของ จึงไม่คิดโควตา',
+                'message' => 'No owner, so no quota is considered',
                 'used' => 0,
                 'limit' => Quota::UNLIMITED,
             ];
         }
 
-        // โควตาเป็นข้อจำกัดเชิงธุรกิจของ**ลูกค้า** ไม่ใช่ของผู้ดูแลเซิร์ฟเวอร์
+        // A quota is a business constraint on **the customer**, not on server admins.
         //
-        // ต้องตัดสินจากบทบาท ไม่ใช่จากตัวเลขที่เก็บไว้ เพราะการเปลี่ยนบทบาททีหลัง
-        // ไม่ได้ล้างตัวเลขเดิม — ลูกค้าที่ถูกเลื่อนเป็นผู้ดูแลจะยังติดโควตาเดิมค้างอยู่
-        // แล้วแก้ไม่ได้ด้วย เพราะเส้นทางจัดการโควตารับเฉพาะบัญชี webadmin (ตั้งใจให้เป็นแบบนั้น
-        // เพื่อกัน sysadmin ไปยุ่งกับบัญชีผู้ดูแล) · เจอจากการทดสอบบนเครื่องจริง
+        // This has to be decided from the role, not from the stored number, because
+        // changing a role later doesn't clear the old numbers — a customer promoted
+        // to admin would still be stuck with their old quota, and would have no way
+        // to fix it either, since the quota-management path only accepts webadmin
+        // accounts (deliberately, to keep sysadmins from touching admin accounts) ·
+        // found through testing on a real machine.
         $owner = $this->users->find($ownerUserId);
 
         if ($owner !== null && $owner['role'] !== Permissions::WEBADMIN) {
             return [
                 'ok' => true,
-                'message' => 'บัญชีผู้ดูแลไม่ถูกจำกัดโควตา',
+                'message' => 'Admin accounts are not subject to quotas',
                 'used' => 0,
                 'limit' => Quota::UNLIMITED,
             ];
@@ -125,9 +132,11 @@ final class QuotaChecker
             return ['ok' => false, 'message' => $service['message'], 'used' => 0, 'limit' => 0];
         }
 
-        // โควตาดิสก์กันทรัพยากรใหม่ทุกชนิด ไม่ใช่แค่ชนิดที่ตัวเองมีคอลัมน์นับ — เว็บไซต์
-        // ใหม่ ฐานข้อมูลใหม่ หรือโดเมนใหม่ ล้วนต้องเขียนไฟล์ลงบ้านของบัญชีนี้ทั้งนั้น
-        // (PLAN-V2 เฟส E2 — ทางที่ทำได้จริงในชั้นแอปโดยไม่ต้องมี project quota ของ OS)
+        // Disk quota blocks every new resource type, not just the ones that have
+        // their own counting column — a new site, a new database, or a new domain
+        // all have to write files into this account's home regardless (PLAN-V2
+        // Phase E2 — the approach that's actually achievable at the app layer
+        // without an OS-level project quota).
         $diskMessage = $this->diskQuotaExceeded($owner);
 
         if ($diskMessage !== null) {
@@ -141,13 +150,16 @@ final class QuotaChecker
     }
 
     /**
-     * ข้อความบอกเหตุผลถ้าโควตาดิสก์เต็มแล้ว — null ถ้ายังไม่เต็มหรือไม่จำกัด
+     * A reason message if the disk quota is already exceeded — null if not yet full or unlimited
      *
-     * **ข้อจำกัดที่ต้องรู้:** นี่บล็อกได้แค่การ "สร้างทรัพยากรใหม่ผ่าน panel" เท่านั้น
-     * ไฟล์ที่แอปของลูกค้าเขียนเองผ่านโค้ด PHP ของเขาไม่ผ่านด่านนี้เลย — การบล็อกที่จุดนั้น
-     * จริง ๆ ต้องใช้ project quota ของ filesystem (XFS/ext4) ซึ่งยังไม่ได้ทำในเฟสนี้
-     * (ดู "ที่ยังเหลือ" ของเฟส E2 ใน PLAN-V2.md) ข้อความนี้จึงต้องไม่สื่อว่า "เขียนไฟล์ไม่ได้
-     * แล้ว" แต่บอกแค่ว่า "สร้างของใหม่ไม่ได้" ซึ่งเป็นสิ่งที่ระบบรับประกันได้จริง
+     * **A limitation worth knowing:** this only blocks "creating a new resource
+     * through the panel" — a file the customer's own application writes through
+     * their own PHP code never passes through this guard at all. Blocking that
+     * would really require a filesystem-level project quota (XFS/ext4), which
+     * hasn't been implemented in this phase (see Phase E2's "remaining work" in
+     * PLAN-V2.md). This message must therefore never imply "can no longer write
+     * files," only "can no longer create something new," which is what the system
+     * can actually guarantee.
      *
      * @param array<string,mixed>|null $owner
      */
@@ -170,14 +182,14 @@ final class QuotaChecker
         }
 
         return sprintf(
-            'พื้นที่ดิสก์เต็ม (ใช้ %d MB จาก %d MB) — ต้องลบไฟล์หรือขยายโควตาก่อนสร้างทรัพยากรใหม่',
+            'Disk space is full (using %d MB of %d MB) — delete files or increase the quota before creating a new resource',
             $used,
             $limit,
         );
     }
 
     /**
-     * สรุปโควตาทุกชนิดของผู้ใช้สำหรับแสดงผลและสำหรับ REST
+     * A summary of every quota a user has, for display and for REST
      *
      * @return array<string,array{used:int,limit:int,label:string,unlimited:bool,disabled:bool}>|null
      */
@@ -199,8 +211,10 @@ final class QuotaChecker
                 'label' => Quota::label($type),
                 'unlimited' => Quota::isUnlimited($limit),
                 'disabled' => Quota::isDisabled($limit),
-                // ชนิดที่ตัวเลขไม่มีความหมาย (เช่น SFTP ที่มีได้บัญชีเดียวเสมอ) — หน้าจอ
-                // แสดงเป็น "เปิด/ปิด" แทน "0 / 5" ซึ่งสื่อผิด · กฎอยู่ที่คลาส Quota ที่เดียว
+                // A type whose number has no meaning (e.g. SFTP, which always has
+                // exactly one account) — the screen shows "on/off" instead of
+                // "0 / 5," which would be misleading · the rule lives in the Quota
+                // class alone.
                 'toggle' => Quota::isToggle($type),
                 'enabled' => !Quota::isDisabled($limit),
                 'in_use' => $usage[$type] > 0,
