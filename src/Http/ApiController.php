@@ -10,31 +10,33 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * ฐานของ controller ทุกตัวใน REST API v2 — PLAN-V2 §4
+ * The base of every controller in REST API v2 — PLAN-V2 §4
  *
- * กฎเดียวที่ทุกตัวต้องทำตาม: **ไม่มี HTML ออกจากที่นี่แม้แต่ไบต์เดียว** ไม่ว่าจะสำเร็จ
- * ล้มเหลว หรือระเบิดกลางทาง · ไม่มี redirect · ไม่มีการส่งผลลัพธ์ผ่าน query string
+ * The one rule everything here must follow: **not one byte of HTML ever leaves
+ * here** — success, failure, or blowing up mid-request · no redirects · no
+ * results sent through a query string
  *
- * สืบทอดจาก Controller เดิมเพราะ HttpKernel สร้าง controller ด้วยลายเซ็นเดียวกันหมด
- * แต่ห้ามเรียก view()/redirect() ที่ได้มา — สองเมธอดนั้นเป็นของ UI แบบ HTML ที่จะถูก
- * ปลดระวางในเฟส D
+ * Inherits from the old Controller because HttpKernel constructs every
+ * controller with the same signature, but view()/redirect() inherited from it
+ * must never be called — those two methods belong to the HTML UI, which is
+ * being retired in phase D
  */
 abstract class ApiController extends Controller
 {
-    /** ค่าเริ่มต้นและเพดานของการแบ่งหน้า — §4.5 */
+    /** Pagination's default and ceiling — §4.5 */
     protected const PER_PAGE_DEFAULT = 50;
     protected const PER_PAGE_MAX = 200;
 
     /**
-     * ชื่อเหตุการณ์ที่หน้ารายละเอียดใช้สั่งให้ตัวเองโหลดข้อมูลใหม่
+     * The event name a detail page uses to tell itself to reload its data
      *
-     * มีชื่อเดียวทั้งระบบ เพื่อให้เทมเพลตทุกหน้าเขียน `data-refresh-event` ค่าเดียวกัน
-     * และ controller ไม่ต้องรู้ว่าหน้าไหนตั้งชื่ออะไรไว้
+     * One single name across the whole system, so every template writes the same
+     * `data-refresh-event` value and no controller needs to know which page named what
      */
     protected const RELOAD_EVENT = 'phpcp:reload';
 
     /**
-     * สำเร็จ พร้อมข้อมูล
+     * Success, with data
      *
      * @param array<string,mixed>|list<mixed> $data
      * @param array<string,mixed>             $meta
@@ -50,26 +52,27 @@ abstract class ApiController extends Controller
             $body['meta'] = $meta;
         }
 
-        // สั่งงานหน้าจอจากฝั่งเซิร์ฟเวอร์ — `ResponseHandler` ของ Now.js อ่านคีย์นี้เอง
+        // Commands the screen from the server side — Now.js's `ResponseHandler` reads this key itself
         //
-        // ใช้กับผลลัพธ์ที่ **ต้องให้ผู้ใช้เห็นเนื้อหาในคำตอบ** ไม่ใช่แค่รู้ว่าสำเร็จ
-        // เช่นรหัสผ่านที่ระบบสุ่มให้ ซึ่งไม่มีที่อื่นให้ดูย้อนหลังอีกเลย · หน้าจอ
-        // จึงไม่ต้องมีโค้ดเฉพาะกิจสำหรับ endpoint ไหนเลย
+        // Used for a result whose **content the user must see in the response**,
+        // not just that it succeeded — such as a system-generated random password,
+        // which has no other place it can ever be viewed again · so the screen
+        // never needs bespoke code for any given endpoint
         //
-        // ชนิดที่ใช้ได้: notification · alert · modal · redirect · update · render ·
+        // Valid types: notification · alert · modal · redirect · update · render ·
         // remove · class · attribute · focus · scroll · clipboard · download · event
         if ($actions !== []) {
             $body['actions'] = $actions;
         }
 
-        // ตัวกรองที่ผู้เรียกขอ — `filters` ตามสัญญา §4.5
+        // The filters the caller asked for — `filters` per §4.5's contract
         // ['status' => [['value'=> '1', 'text' => 'Active'], ['value'=> '0', 'text' => 'Inactive']],
         // 'department' => [['value'=> '1', 'text' => 'Department 1'], ['value'=> '2', 'text' => 'Department 2']]]
         if ($filters !== []) {
             $body['filters'] = $filters;
         }
 
-        // ตัวเลือกที่ผู้เรียกขอ — `options` ตามสัญญา §4.5
+        // The options the caller asked for — `options` per §4.5's contract
         // ['status' => [['value'=> '1', 'text' => 'Active'], ['value'=> '0', 'text' => 'Inactive']],
         // 'department' => [['value'=> '1', 'text' => 'Department 1'], ['value'=> '2', 'text' => 'Department 2']]]
         if ($filters !== []) {
@@ -83,15 +86,18 @@ abstract class ApiController extends Controller
     }
 
     /**
-     * คำตอบของคำสั่ง — **ห้ามมีคีย์ `data`**
+     * A command's response — **must never have a `data` key**
      *
-     * Now.js แกะคำตอบด้วย `response.data.data ?? response.data` · กฎที่ทำให้มันใช้ได้คือ
-     * **คำตอบหนึ่งทำหน้าที่เดียว**: คำตอบสำหรับ*อ่าน*มี `data` ให้ผูกกับหน้าจอ ส่วนคำตอบ
-     * สำหรับ*สั่งงาน*มี `actions` ให้เฟรมเวิร์กทำตาม · ถ้าส่งทั้งสองอย่างมาพร้อมกัน
-     * มันจะเลือกชั้นในแล้วมองไม่เห็น `actions` เลย ผลลัพธ์ที่ผู้ใช้ต้องอ่านก็หายไปเงียบ ๆ
+     * Now.js unwraps a response with `response.data.data ?? response.data` · the
+     * rule that makes that work is **one response does one job**: a *read*
+     * response has `data` to bind to the screen, a *command* response has
+     * `actions` for the framework to carry out · sending both at once means it
+     * picks the inner layer and never sees `actions` at all — the result the user
+     * was supposed to read just silently vanishes
      *
-     * ค่าที่ผู้เรียกต้องใช้จริง (รหัสผ่านที่สุ่มให้ · เส้นทางไฟล์ที่ส่งออก) ใส่ผ่าน
-     * `$extra` ซึ่งไปอยู่ **ระดับบนสุดของคำตอบ** ไม่ใช่ในชั้น `data`
+     * Values the caller genuinely needs (a system-generated password · an
+     * exported file's path) go through `$extra`, which lands at the **top level
+     * of the response**, not inside the `data` layer
      *
      * @param array<string,mixed> $extra
      * @param list<array<string,mixed>> $actions
@@ -111,9 +117,9 @@ abstract class ApiController extends Controller
     }
 
     /**
-     * แจ้งผลสำเร็จพร้อมโหลดตารางใหม่ — รูปที่ใช้บ่อยที่สุดของ `done()`
+     * Report success and reload a table — `done()`'s most common shape
      *
-     * @param string $table ชื่อ `data-table` ที่ต้องโหลดใหม่ · ว่าง = ไม่โหลดอะไร
+     * @param string $table the `data-table` name to reload · empty = reload nothing
      * @param array<string,mixed> $extra
      */
     protected function completed(string $message, string $table = '', array $extra = []): Response
@@ -128,17 +134,19 @@ abstract class ApiController extends Controller
     }
 
     /**
-     * บันทึกจากฟอร์มใน Modal สำเร็จ — **ปิด Modal แล้วโหลดตารางใหม่**
+     * A modal form saved successfully — **close the modal, then reload the table**
      *
-     * ฟอร์มที่เปิดใน Modal ถูกเปิดด้วยคำสั่งจากเซิร์ฟเวอร์ (`$this->modal(...)`) การปิดจึง
-     * ต้องเป็นคำสั่งจากเซิร์ฟเวอร์เหมือนกัน · ไม่มีบรรทัดนี้ Modal จะค้างอยู่บนจอทั้งที่
-     * บันทึกสำเร็จไปแล้ว — ผู้ใช้เห็นฟอร์มเดิมพร้อมข้อความว่าสำเร็จ แล้วมักกดบันทึกซ้ำ
-     * เพราะเข้าใจว่ายังไม่ติด ได้ข้อมูลซ้ำสองรายการ
+     * A form opened in a modal was opened by a server command (`$this->modal(...)`),
+     * so closing it must be a server command too · without this line the modal
+     * would stay stuck on screen even though the save already succeeded — the user
+     * sees the same form with a success message and often clicks save again,
+     * thinking it didn't go through, creating a duplicate record
      *
-     * **ลำดับสำคัญ:** ปิด Modal ก่อนโหลดตาราง · สลับกันแล้วตารางจะถูกวาดใหม่ใต้ Modal
-     * ที่ยังเปิดค้างอยู่ ซึ่งผู้ใช้มองไม่เห็นความเปลี่ยนแปลงอยู่ดี
+     * **Order matters:** close the modal before reloading the table · swap the
+     * order and the table gets redrawn underneath a modal that's still open,
+     * where the user can't see the change happen anyway
      *
-     * @param string $table ชื่อ `data-table` ที่ต้องโหลดใหม่ · ว่าง = ไม่โหลดอะไร
+     * @param string $table the `data-table` name to reload · empty = reload nothing
      * @param array<string,mixed> $extra
      */
     protected function saved(string $message, string $table = '', array $extra = [], int $status = 200): Response
@@ -156,13 +164,14 @@ abstract class ApiController extends Controller
     }
 
     /**
-     * แจ้งผลสำเร็จพร้อมสั่งให้หน้ารายละเอียดโหลดตัวเองใหม่
+     * Report success and tell a detail page to reload itself
      *
-     * ใช้แทน `completed()` เมื่อสิ่งที่ต้องอัปเดตไม่ใช่ตารางที่ดึงข้อมูลเอง แต่เป็น
-     * `data-component="api"` ที่ครอบทั้งหน้า (เช่นหน้าเว็บไซต์เดียว) — ตารางลูกของมัน
-     * รับข้อมูลผ่าน `data-attr="data:domains"` จึงสั่ง reload ตรง ๆ ไม่ได้
+     * Used instead of `completed()` when what needs updating isn't a
+     * self-fetching table but the `data-component="api"` wrapping the whole page
+     * (a single website's page, for example) — its child tables receive data via
+     * `data-attr="data:domains"`, so they can't be told to reload directly
      *
-     * ชื่อเหตุการณ์ต้องตรงกับ `data-refresh-event` ของหน้านั้น
+     * The event name must match that page's `data-refresh-event`
      *
      * @param array<string,mixed> $extra
      */
@@ -175,7 +184,7 @@ abstract class ApiController extends Controller
     }
 
     /**
-     * สร้างสำเร็จ — ต้องแนบ Location ของทรัพยากรที่เพิ่งเกิดขึ้นเสมอ
+     * Created successfully — must always attach the Location of the resource that was just created
      *
      * @param array<string,mixed> $data
      */
@@ -192,7 +201,7 @@ abstract class ApiController extends Controller
     }
 
     /**
-     * รับงานเข้าคิวแล้ว ใช้กับงานยาวที่ผลลัพธ์ยังไม่พร้อม (เช่นสำรองข้อมูล)
+     * The job has been queued — used for long-running work whose result isn't ready yet (a backup, for example)
      *
      * @param array<string,mixed> $data
      */
@@ -202,11 +211,12 @@ abstract class ApiController extends Controller
     }
 
     /**
-     * สำเร็จ ไม่มีอะไรต้องตอบกลับ
+     * Success, nothing to answer back with
      *
-     * body ต้องว่างจริง ๆ ตามมาตรฐาน HTTP (204 ห้ามมีเนื้อหา) แต่ยังตั้ง Content-Type
-     * เป็น JSON เพื่อให้คำตอบทุกชนิดของ v2 มี Content-Type เดียวกันหมด — ฝั่ง SPA
-     * จึงตรวจชนิดคำตอบได้ที่เดียวโดยไม่ต้องแยกกรณี 204 ออกมาเป็นพิเศษ
+     * The body must genuinely be empty per the HTTP standard (204 must have no
+     * content), but Content-Type is still set to JSON so every kind of v2 response
+     * shares the same Content-Type — the SPA can then check the response type in
+     * one place without treating 204 as a special case
      */
     protected function noContent(): Response
     {
@@ -214,17 +224,21 @@ abstract class ApiController extends Controller
     }
 
     /**
-     * สิทธิ์ที่ผู้เรียกมีกับทรัพยากรที่กำลังตอบอยู่
+     * The permissions the caller has on the resource currently being answered
      *
-     * ใส่ไปกับทรัพยากรเดี่ยวในคีย์ `can` เพื่อให้หน้าจอเขียน `data-if="can['delete']"`
-     * ได้ตรง ๆ · **เป็นคำตอบจากเซิร์ฟเวอร์ ไม่ใช่การคำนวณซ้ำฝั่งหน้าจอ** — หน้าจอ
-     * ไม่ต้องรู้ว่าบทบาทไหนทำอะไรได้ ซึ่งเป็นความรู้ที่ซ้ำแล้วเพี้ยนได้ง่ายที่สุด
+     * Attached to a single resource under the `can` key, so a screen can write
+     * `data-if="can['delete']"` directly · **it's a server-side answer, not a
+     * calculation duplicated on the screen** — the screen never needs to know
+     * which role can do what, which is exactly the kind of duplicated knowledge
+     * that drifts out of sync easiest
      *
-     * ค่าที่ได้เป็น map เสมอ (ทุกคีย์มีค่า true/false) ไม่ใช่รายการเฉพาะที่อนุญาต —
-     * `data-if` ของ Now.js เปิดเผยเมื่อเจอค่า undefined การส่งเฉพาะที่อนุญาตจึงทำให้
-     * ปุ่มที่ควรถูกซ่อนกลับโผล่ · เหตุผลเดียวกับ permission map ของ /api/v2/session
+     * The result is always a map (every key has a true/false value), never a list
+     * of only the allowed ones — Now.js's `data-if` reveals an element when it
+     * hits an undefined value, so sending only the allowed keys would make a
+     * button that should be hidden show up instead · same reasoning as
+     * /api/v2/session's permission map
      *
-     * @param array<string,string> $map ชื่อที่หน้าจอใช้ => permission ที่ต้องมี
+     * @param array<string,string> $map the screen's name for it => the permission it requires
      * @return array<string,bool>
      */
     protected function can(array $map): array
@@ -233,7 +247,7 @@ abstract class ApiController extends Controller
     }
 
     /**
-     * ตอบแบบแบ่งหน้า — meta ต้องมีครบทั้งสี่ค่าเสมอเพื่อให้ฝั่ง SPA คำนวณตัวแบ่งหน้าได้
+     * A paginated response — meta must always carry all four values so the SPA can compute the pager
      *
      * @param list<mixed> $items
      */
@@ -257,13 +271,14 @@ abstract class ApiController extends Controller
     }
 
     /**
-     * แปลข้อความที่จะส่งออกไปให้คนอ่าน
+     * Translate a message before it goes out to be read
      *
-     * **โค้ดเขียนภาษาอังกฤษเสมอ** — ข้อความอังกฤษคือคีย์ของคลังคำไปในตัว ตามกติกา
-     * เดียวกับที่หน้าเว็บใช้ (`public/assets/spa/lang/th.json` คือไฟล์เดียวกัน)
-     * คีย์ที่ยังไม่มีคำแปลจะออกไปเป็นอังกฤษ ซึ่งอ่านรู้เรื่อง ไม่ใช่รหัสที่ไม่มีความหมาย
+     * **Code is always written in English** — the English text is itself the
+     * catalogue's key, the same rule the frontend follows (`public/assets/spa/lang/th.json`
+     * is the very same file) · a key with no translation yet goes out in English,
+     * which reads fine, not a meaningless code
      *
-     * @param array<string,string|int|float> $params ค่าที่แทนที่ `{ชื่อ}` ในข้อความ
+     * @param array<string,string|int|float> $params values that replace `{name}` in the message
      */
     protected function t(string $key, array $params = []): string
     {
@@ -271,10 +286,11 @@ abstract class ApiController extends Controller
     }
 
     /**
-     * แปลข้อความในคำสั่งที่ส่งไปให้หน้าจอทำงานต่อ
+     * Translate the message inside an action sent to the screen to act on
      *
-     * `notification` กับ `alert` มีข้อความที่ผู้ใช้อ่าน ส่วนชนิดอื่น (redirect, event,
-     * modal) ไม่มี · หัวข้อของ modal ใช้รูป `{LNG_...}` ซึ่งหน้าเว็บแปลเองอยู่แล้ว
+     * `notification` and `alert` carry a message the user reads · other types
+     * (redirect, event, modal) don't · a modal's title uses the `{LNG_...}` shape,
+     * which the frontend already translates on its own
      *
      * @param array<int,array<string,mixed>> $actions
      * @return array<int,array<string,mixed>>
@@ -291,24 +307,24 @@ abstract class ApiController extends Controller
     }
 
     /**
-     * เวอร์ชัน PHP ที่ติดตั้งจริงจาก agent เรียง "ใช้งานได้ก่อน แล้วค่อยใหม่สุด"
+     * The PHP versions actually installed, from the agent, sorted "usable first, then newest"
      *
-     * ตัวแรกหลังเรียงคือค่าที่ควรใช้เป็นค่าเริ่มต้นของ `<select>` เสมอ — ทั้ง
-     * PhpVersionsController (หน้ารายการ) และ SitesController (ฟอร์มสร้าง/แก้ไขเว็บไซต์)
-     * เรียกใช้ร่วมกัน เพื่อไม่ให้เว็บใหม่ได้ default ที่ FPM ไม่ทำงานจริงจากการเรียง
-     * คนละแบบระหว่างสองหน้า
+     * The first entry after sorting is always what should be the `<select>`'s
+     * default — both PhpVersionsController (the list page) and SitesController
+     * (the website create/edit form) share this, so a new website never gets a
+     * default whose FPM isn't actually running from the two pages sorting differently
      *
-     * ไม่เช็ค `isAvailable()` ให้ — ผู้เรียกตัดสินใจเองว่าจะยอมให้ agent ล่มแล้วได้
-     * รายการว่างกลับมา หรือปล่อยให้ AgentException ลอยขึ้นไป
+     * Doesn't check `isAvailable()` for the caller — the caller decides whether to
+     * accept an empty list back if the agent is down, or let AgentException propagate
      *
-     * @return array<string,mixed> โครงเดิมจาก agent แต่ `versions` เรียงแล้วเป็น list
+     * @return array<string,mixed> the agent's original shape, but `versions` sorted into a list
      */
     protected function fetchPhpVersions(Request $request): array
     {
         $data = $this->agent()->data('php.list', [], $this->ctx->actor($request));
 
-        // agent คืนเป็น map ที่คีย์เป็นเลขเวอร์ชัน — REST ต้องเป็น array เรียงลำดับ
-        // ไม่งั้น JSON จะกลายเป็น object ที่ฝั่ง client วนซ้ำแล้วได้ลำดับไม่แน่นอน
+        // The agent returns a map keyed by version number — REST needs an ordered
+        // array, or the JSON becomes an object the client iterates in an unpredictable order
         $versions = array_values($data['versions'] ?? []);
 
         usort($versions, static function (array $a, array $b): int {
@@ -325,11 +341,12 @@ abstract class ApiController extends Controller
     }
 
     /**
-     * แปลงข้อผิดพลาดจาก agent เป็นคำตอบตามสัญญา
+     * Convert an agent error into a contract-shaped response
      *
-     * ใช้เมื่อ controller ต้องทำอย่างอื่นต่อหลังจาก agent ล้ม (เช่นย้อนสิ่งที่ทำไปแล้ว)
-     * กรณีทั่วไปไม่ต้องเรียกเอง — ปล่อยให้ exception ลอยขึ้นไปให้ HttpKernel จัดการ
-     * ซึ่งได้ผลเหมือนกันเป๊ะและได้บันทึก log ด้วย
+     * Used when the controller must do something else after the agent fails
+     * (rolling back what was already done, for example) · the common case never
+     * needs to call this itself — let the exception propagate up for HttpKernel
+     * to handle, which produces exactly the same result and also logs it
      */
     protected function failFromAgent(AgentException $e): Response
     {
@@ -337,16 +354,17 @@ abstract class ApiController extends Controller
     }
 
     /**
-     * พารามิเตอร์การแบ่งหน้าที่ถูกบีบเข้าช่วงแล้ว — §4.5
+     * Pagination parameters, already clamped into range — §4.5
      *
      * @return array{page:int,per_page:int,offset:int}
      */
     protected function pagination(Request $request): array
     {
         $page = max(1, $request->queryInt('page', 1));
-        // `per_page` คือชื่อในสัญญา §4.5 · `pageSize` คือชื่อที่ตารางของ Now.js ส่งมา
-        // รับทั้งสองชื่อที่นี่ที่เดียว ทุก endpoint รายการจึงพูดภาษาเดียวกับหน้าจอได้
-        // โดยไม่ต้องมี JS แปลงพารามิเตอร์ และไม่ต้องแก้เฟรมเวิร์ก
+        // `per_page` is §4.5's contract name · `pageSize` is what Now.js's table sends
+        // Both names are accepted right here in one place, so every list endpoint
+        // speaks the same language as the screen with no parameter-converting JS
+        // and no framework change needed
         $perPage = $request->get('per_page') !== ''
             ? $request->queryInt('per_page', self::PER_PAGE_DEFAULT)
             : $request->queryInt('pageSize', self::PER_PAGE_DEFAULT);
@@ -356,7 +374,7 @@ abstract class ApiController extends Controller
     }
 
     /**
-     * คำค้นที่ผู้เรียกขอ — `q` ตามสัญญา หรือ `search` ตามที่ตารางของ Now.js ส่งมา
+     * The search term the caller asked for — `q` per the contract, or `search` as sent by Now.js's table
      */
     protected function searchTerm(Request $request): string
     {
@@ -366,13 +384,15 @@ abstract class ApiController extends Controller
     }
 
     /**
-     * การเรียงลำดับที่ผู้เรียกขอ
+     * The sort order the caller asked for
      *
-     * รับสองรูปแบบ: `-field` ตามสัญญา §4.5 และ `field desc` ที่ตารางของ Now.js ส่งมา
-     * (ตารางส่งได้หลายคู่คั่นด้วยจุลภาค — ใช้คู่แรก เพราะทุก endpoint เรียงได้ชั้นเดียว)
+     * Accepts two shapes: `-field` per §4.5's contract, and `field desc` as sent
+     * by Now.js's table (a table can send multiple comma-separated pairs — only
+     * the first is used, since every endpoint sorts on a single level)
      *
-     * ชื่อฟิลด์ถูกจำกัดด้วย allowlist ของผู้เรียกเสมอ เพราะค่านี้ไปต่อท้าย ORDER BY
-     * ห้ามส่งค่าดิบจากผู้ใช้เข้า SQL ไม่ว่ากรณีใด
+     * The field name is always constrained by the caller's own allowlist, because
+     * this value is appended to ORDER BY — a raw user value must never reach SQL,
+     * under any circumstance
      *
      * @param list<string> $allowed
      * @return array{field:string,desc:bool}
