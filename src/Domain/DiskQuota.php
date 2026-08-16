@@ -9,42 +9,52 @@ use Phpcp\Kernel\Db;
 use Phpcp\Security\Permissions;
 
 /**
- * ด่านโควตาดิสก์ของ "การเขียนหนึ่งครั้ง" — แหล่งความจริงเดียวว่าเขียนต่อได้ไหม
+ * The disk-quota guard for "a single write" — the single source of truth for
+ * whether a write can proceed
  *
- * ## ทำไมต้องมีคลาสนี้ ทั้งที่มี QuotaChecker อยู่แล้ว
+ * ## Why this class exists when QuotaChecker already does
  *
- * {@see QuotaChecker::checkOwnerCanCreate()} ตอบคำถามว่า "สร้าง**ทรัพยากร**ใหม่ได้ไหม"
- * (เว็บ ฐานข้อมูล อีเมล) ซึ่งเป็นของนับเป็นชิ้น · ที่นี่ตอบอีกคำถามหนึ่งคือ "เขียนข้อมูล
- * อีก N ไบต์ลงบ้านของบัญชีนี้ได้ไหม" ซึ่งเป็นของนับเป็นขนาด — คำถามคนละข้อ แต่ใช้ตัวเลข
- * ชุดเดียวกัน (`disk_quota_mb`/`disk_used_mb`) จึงต้องตีความเหมือนกันเป๊ะ
+ * {@see QuotaChecker::checkOwnerCanCreate()} answers "can a new **resource** be
+ * created" (a site, a database, a mailbox) — things counted by item · this answers
+ * a different question: "can N more bytes be written into this account's home" —
+ * something counted by size. Different question, but it uses the exact same
+ * numbers (`disk_quota_mb`/`disk_used_mb`), so they must be interpreted identically.
  *
- * ก่อนหน้านี้กฎถูกเขียนซ้ำในแต่ละที่แล้วเพี้ยนกันจริง: ด่านของไฟล์สำรองผ่านเมื่อ
- * "เหลือมากกว่า 0" เฉย ๆ ไม่เคยเทียบกับขนาดที่กำลังจะเขียน — บัญชีที่เหลือโควตา 1 MB
- * จึงสร้างไฟล์สำรองขนาด 40 GB ได้ · ส่วนตัวจัดการไฟล์ (อัปโหลด เขียนไฟล์ แตกไฟล์ บีบไฟล์)
- * ไม่มีด่านเลยสักตัว ทั้งที่เป็นทางที่เขียนข้อมูลเข้าเครื่องได้ตรงที่สุด
+ * This rule used to be duplicated in each place and genuinely drifted apart: the
+ * backup file's guard passed whenever "more than 0 remained," never comparing
+ * against the size actually about to be written — an account with 1 MB of quota
+ * left could create a 40 GB backup file · the file manager (upload, write, extract,
+ * compress) had no guard at all, despite being the most direct way to write data
+ * onto the machine.
  *
- * ## ขอบเขตของสิ่งที่ด่านนี้รับประกัน
+ * ## The limits of what this guard actually guarantees
  *
- * นี่คือการบังคับใช้ระดับ**แอปพลิเคชัน** เหมือนที่ `QuotaChecker` อธิบายไว้ — มันกัน
- * การเขียนที่เดินผ่าน panel เท่านั้น · ไฟล์ที่โค้ด PHP ของลูกค้าเขียนเองไม่ผ่านที่นี่เลย
- * การกันจุดนั้นต้องใช้ project quota ของ filesystem ซึ่งยังไม่ได้ทำ (PLAN-V2 เฟส E2)
+ * This is **application-level** enforcement, the same as `QuotaChecker` describes
+ * — it only blocks writes that go through the panel · a file the customer's own
+ * PHP code writes itself never passes through here at all. Blocking that requires
+ * a filesystem-level project quota, which hasn't been implemented yet (PLAN-V2
+ * Phase E2).
  *
- * และ `disk_used_mb` เป็นค่าที่วัดไว้**รอบก่อน** ({@see \Phpcp\Agent\Capability\DiskQuotaCheck})
- * ไม่ใช่ค่าสด — ด่านนี้จึงคลาดเคลื่อนได้เท่ากับข้อมูลที่เขียนไประหว่างสองรอบวัด
- * ซึ่งยอมรับได้สำหรับด่านที่ทำหน้าที่ "กันการเบียดพื้นที่กันจนเว็บคนอื่นล่ม"
+ * And `disk_used_mb` is a value measured **on the previous cycle**
+ * ({@see \Phpcp\Agent\Capability\DiskQuotaCheck}), not a live reading — so this
+ * guard can be off by however much was written between the two measurement
+ * cycles, which is acceptable for a guard whose job is "prevent one account from
+ * crowding out space until someone else's site goes down."
  */
 final class DiskQuota
 {
-    /** ขนาดที่ยังไม่รู้ล่วงหน้า — ตรวจได้แค่ว่าตอนนี้ยังไม่เต็ม */
+    /** A size that isn't known in advance — can only check that it isn't already full */
     public const UNKNOWN = 0;
 
     private const MB = 1_048_576;
 
     /**
-     * บัญชีนี้รับข้อมูลอีก `$bytes` ไบต์ไหวหรือไม่
+     * Can this account fit `$bytes` more bytes
      *
-     * `$bytes = self::UNKNOWN` ใช้กับงานที่รู้ขนาดผลลัพธ์ไม่ได้ก่อนลงมือ (บีบอัดไฟล์,
-     * แตกไฟล์ tar) — กรณีนั้นตรวจได้แค่ว่าโควตายังไม่เต็ม ซึ่งยังดีกว่าไม่ตรวจเลย
+     * `$bytes = self::UNKNOWN` is used for work whose output size can't be known
+     * beforehand (compressing a file, extracting a tar) — in that case, this can
+     * only check that the quota isn't already full, which is still better than no
+     * check at all.
      *
      * @throws ValidationError
      */
@@ -55,7 +65,7 @@ final class DiskQuota
             ['id' => $userId],
         );
 
-        // บัญชีผู้ดูแลไม่ถูกจำกัดโควตา — กฎเดียวกับ QuotaChecker::checkOwnerCanCreate()
+        // Admin accounts are not subject to quotas — the same rule as QuotaChecker::checkOwnerCanCreate()
         if ($row === null || ($row['role'] ?? '') !== Permissions::WEBADMIN) {
             return;
         }
@@ -76,12 +86,13 @@ final class DiskQuota
 
         $username = (string) ($row['username'] ?? '');
 
-        // ข้อความต้องบอก "เหลือเท่าไร" ไม่ใช่แค่ "เต็ม" — ลูกค้าต้องตัดสินใจได้ว่าจะลบ
-        // ไฟล์เก่ากี่ไฟล์หรือขอขยายโควตาเท่าไร โดยไม่ต้องเดา
+        // The message must say "how much is left," not just "full" — the customer
+        // needs to decide how many old files to delete or how much to request the
+        // quota be raised by, without having to guess.
         throw new ValidationError($free > 0
             ? sprintf(
-                'พื้นที่ของบัญชี %s ไม่พอ — ต้องการอีกไม่เกิน %s MB แต่เหลือ %s MB'
-                . ' (ใช้ %s MB จาก %s MB) จึงต้องลบไฟล์เก่าหรือขยายโควตาก่อน',
+                'Account %s does not have enough space — needs up to %s MB more, but only %s MB'
+                . ' remains (using %s MB of %s MB) — delete old files or increase the quota first',
                 $username,
                 number_format($need),
                 number_format($free),
@@ -89,8 +100,8 @@ final class DiskQuota
                 number_format($limit),
             )
             : sprintf(
-                'พื้นที่ของบัญชี %s เต็มแล้ว (ใช้ %s MB จาก %s MB) — ไฟล์สำรองและไฟล์ที่อัปโหลด'
-                . ' นับในโควตาด้วย จึงต้องลบไฟล์เก่าหรือขยายโควตาก่อน',
+                'Account %s is already full (using %s MB of %s MB) — backup files and uploaded files'
+                . ' also count toward the quota, so delete old files or increase the quota first',
                 $username,
                 number_format($used),
                 number_format($limit),
