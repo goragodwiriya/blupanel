@@ -7,18 +7,21 @@ namespace Phpcp\Domain;
 use Phpcp\Kernel\Paths;
 
 /**
- * ขอบเขตหนึ่งขอบเขตที่ตัวจัดการไฟล์เปิดดูได้
+ * A single scope the file manager can open
  *
- * มีสองชนิด และต่างกันตรงสิทธิ์ที่ใช้ทำงานไฟล์:
+ * There are two kinds, differing in which privileges file operations run with:
  *
- *   site   — ไดเรกทอรีของเว็บไซต์ ทำงานในสิทธิ์ของเจ้าของเว็บ (web_<id>)
- *            บั๊กเรื่องเส้นทางที่หลุดรอด (ถ้ามี) จึงมีผลได้แค่ในขอบเขตเว็บนั้น
+ *   site   — a site's own directory, runs with the site owner's privileges
+ *            (web_<id>) · a path-escape bug, if one existed, could therefore only
+ *            ever reach that one site's own scope
  *
- *   server — เส้นทางระดับเครื่อง ทำงานในสิทธิ์ของ agent เอง (root บนเซิร์ฟเวอร์จริง)
- *            เปิดให้เฉพาะผู้ดูแลระดับเซิร์ฟเวอร์ และทุกการกระทำถูกบันทึก audit
+ *   server — a machine-level path, runs with the agent's own privileges (root, on
+ *            a real server) · open only to server-level admins, and every action
+ *            gets recorded to the audit log
  *
- * การแยกเป็น object แทนที่จะส่ง site_id ไปทุกที่ ทำให้ capability ชุดเดียว
- * ใช้ได้กับทั้งสองชนิดโดยไม่ต้องรู้ว่ากำลังทำงานกับอะไรอยู่
+ * Splitting this out as an object instead of passing a site_id everywhere means a
+ * single set of capabilities works for both kinds without ever needing to know
+ * which one it's operating on.
  */
 final readonly class FileScope
 {
@@ -41,7 +44,7 @@ final readonly class FileScope
         public string $root,
         public string $kind,
         public string $group,
-        /** ผู้ใช้ระบบที่จะลดสิทธิ์ไปเป็น — null = ทำงานด้วยสิทธิ์ของ agent เอง */
+        /** The system user to drop privileges to — null = run with the agent's own privileges */
         public ?string $systemUser = null,
         public int $siteId = 0,
         public bool $writable = true,
@@ -49,9 +52,9 @@ final readonly class FileScope
     }
 
     /**
-     * บ้านของเว็บหนึ่งแห่ง — อยู่ใต้บ้านของเจ้าของตั้งแต่ migration 0006
+     * One site's own home — has lived under its owner's home since migration 0006
      *
-     * @param array<string,mixed> $site แถวที่ join users มาแล้ว จึงมี system_user ของเจ้าของ
+     * @param array<string,mixed> $site a row already joined with users, so it has the owner's system_user
      */
     private static function siteRoot(array $site): string
     {
@@ -59,14 +62,15 @@ final readonly class FileScope
     }
 
     /**
-     * เจ้าของเว็บพร้อมเลย์เอาต์ — **ต้องมีเลย์เอาต์เสมอ ไม่ใช่สร้าง UserAccount เปล่า**
+     * The site's owner, with its layout intact — **must always carry the layout, never construct a bare UserAccount**
      *
-     * เดิมสร้างด้วย `new UserAccount(0, $systemUser)` ซึ่งได้เลย์เอาต์เริ่มต้นของระบบ
-     * ติดมาด้วยเสมอ · เจ้าของที่ตั้ง cpanel ไว้จึงถูกมองเป็น phpcp ที่นี่ที่เดียว
-     * แล้วตัวจัดการไฟล์จะเปิดไปที่ `<บ้าน>/domains/<โดเมน>` ที่ไม่มีอยู่จริง
-     * — ผู้ใช้เห็นโฟลเดอร์ว่างเปล่าและไม่มีอะไรบอกว่าทำไม
+     * This used to be built with `new UserAccount(0, $systemUser)`, which always
+     * carried the system default layout along with it · an owner who had set
+     * cpanel would therefore get treated as phpcp in this one place, and the file
+     * manager would open to `<home>/domains/<domain>`, which doesn't actually
+     * exist — the user would see an empty folder with nothing explaining why.
      *
-     * @param array<string,mixed> $site แถวที่ join users มาแล้ว
+     * @param array<string,mixed> $site a row already joined with users
      */
     private static function owner(array $site): UserAccount
     {
@@ -88,21 +92,24 @@ final readonly class FileScope
             label: (string) $site['primary_domain'],
             root: self::siteRoot($site),
             kind: self::KIND_SITE,
-            group: 'เว็บไซต์',
+            group: 'Websites',
             systemUser: (string) $site['system_user'],
             siteId: (int) $site['id'],
         );
     }
 
     /**
-     * ขอบเขตของ "ไฟล์เว็บจริง" เมื่อเว็บนี้ใช้ Domain Pointer
+     * The scope for a site's "real files" when it uses a Domain Pointer
      *
-     * เว็บที่ตั้ง docroot_override เก็บไฟล์ไว้นอกบ้านของตัวเอง (เช่นชี้ไปยังโปรเจกต์เดิม
-     * ที่มีอยู่ก่อนย้ายเข้า panel) ถ้าไม่มีขอบเขตนี้ ตัวจัดการไฟล์จะเปิดได้แค่บ้าน
-     * ซึ่งมีแต่ backups/logs/tmp กับ __suspended.html — เข้าไม่ถึงไฟล์เว็บของตัวเองเลย
+     * A site with `docroot_override` set stores its files outside its own home
+     * (e.g. pointing at an existing project that predates being brought into the
+     * panel). Without this scope, the file manager could only open the home
+     * itself, which only has backups/logs/tmp and `__suspended.html` — the site's
+     * own files would be completely unreachable.
      *
-     * คืน null เมื่อไม่ได้ตั้ง pointer หรือ docroot ยังอยู่ใต้บ้านอยู่แล้ว
-     * กรณีหลังเปิดจากขอบเขตบ้านได้ตรง ๆ อยู่แล้ว ไม่ต้องมีรายการซ้ำให้สับสน
+     * Returns null when no pointer is set, or the docroot is already under the
+     * home anyway — the latter case can already be opened directly from the home
+     * scope, so there's no need for a duplicate entry to cause confusion.
      *
      * @param array $site
      */
@@ -122,10 +129,10 @@ final readonly class FileScope
 
         return new self(
             key: 'site-'.$site['id'].'-docroot',
-            label: $site['primary_domain'].' (ไฟล์เว็บ)',
+            label: $site['primary_domain'].' (site files)',
             root: $docroot,
             kind: self::KIND_SITE,
-            group: 'เว็บไซต์',
+            group: 'Websites',
             systemUser: (string) $site['system_user'],
             siteId: (int) $site['id'],
         );
@@ -144,7 +151,7 @@ final readonly class FileScope
             label: $label,
             root: $path,
             kind: self::KIND_SERVER,
-            group: 'เซิร์ฟเวอร์',
+            group: 'Server',
             writable: $writable,
         );
     }
@@ -157,7 +164,7 @@ final readonly class FileScope
         return $this->kind === self::KIND_SITE;
     }
 
-    /** @return array<string,mixed> ข้อมูลที่ส่งไปให้หน้าเว็บ */
+    /** @return array<string,mixed> the data sent to the web page */
     public function toArray(): array
     {
         return [
