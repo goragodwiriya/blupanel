@@ -7,17 +7,20 @@ namespace Phpcp\Driver;
 use Phpcp\Agent\ValidationError;
 
 /**
- * เติมค่าลงเทมเพลตไฟล์ config — ARCHITECTURE §4.3 "เขียนไฟล์จาก template + ค่าที่ตรวจแล้ว"
+ * Fills values into a config file template — ARCHITECTURE §4.3 "write files from a template + validated values"
  *
- * กฎที่บังคับที่นี่: ค่าที่แทนลงเทมเพลตห้ามมีขึ้นบรรทัดใหม่หรืออักขระควบคุม
+ * The rule enforced here: a value substituted into a template must never contain a newline or a control character.
  *
- * เหตุผล: ไฟล์ config ของ Apache และ FPM แยกคำสั่งด้วยบรรทัด ถ้าปล่อยให้ค่าหนึ่งค่า
- * มี "\n" ติดไปได้ ผู้โจมตีจะแทรก directive ใหม่เข้าไปในไฟล์ config ได้ทันที
- * ซึ่งอันตรายเทียบเท่า command injection — ต้องกันที่ชั้นนี้ ไม่ใช่หวังว่า validator
- * ของ capability จะกันครบทุกกรณี
+ * Why: Apache's and FPM's config files separate directives by line — if a
+ * single value were allowed to carry a "\n" through, an attacker could
+ * inject a new directive straight into the config file, a risk on the same
+ * level as command injection — this has to be blocked at this layer, not
+ * left hoping a capability's own validator catches every case.
  *
- * ค่าที่ตั้งใจให้เป็นหลายบรรทัด (เช่นรายการ ServerAlias) ต้องสร้างผ่าน lines()
- * ซึ่งตรวจทีละบรรทัดแล้วห่อเป็น SafeBlock — เห็นชัดในโค้ดว่าจุดไหนอนุญาตหลายบรรทัด
+ * A value deliberately meant to be multi-line (e.g. a list of ServerAlias
+ * entries) has to be built through lines(), which checks line by line and
+ * wraps the result in a SafeBlock — making it obvious in the code exactly
+ * where multiple lines are allowed.
  */
 final class Template
 {
@@ -33,34 +36,36 @@ final class Template
         $file = $this->directory . '/' . str_replace(['..', "\0"], '', $name);
 
         if (!is_file($file)) {
-            throw new \RuntimeException("ไม่พบเทมเพลต: {$name}");
+            throw new \RuntimeException("Template not found: {$name}");
         }
 
         $content = file_get_contents($file);
         if ($content === false) {
-            throw new \RuntimeException("อ่านเทมเพลตไม่ได้: {$name}");
+            throw new \RuntimeException("Failed to read template: {$name}");
         }
 
         $replacements = [];
         foreach ($values as $key => $value) {
             $replacements['{{' . $key . '}}'] = $value instanceof SafeBlock
-                ? $value->text                              // ตรวจมาแล้วทีละบรรทัดใน lines()
+                ? $value->text                              // already checked line by line in lines()
                 : self::assertSafe($key, (string) $value);
         }
 
         $result = strtr($content, $replacements);
 
-        // เหลือ placeholder ที่ไม่ได้แทนค่า = เทมเพลตกับโค้ดไม่ตรงกัน ต้องหยุดทันที
-        // ปล่อยไฟล์ config ที่ยังมี {{...}} ออกไปจะทำให้ configtest ล้มโดยไม่รู้สาเหตุ
+        // A placeholder left unreplaced = the template and the code
+        // disagree, and this must stop immediately — letting a config file
+        // with a stray {{...}} go out would make configtest fail for a
+        // reason nobody can see
         if (preg_match('/\{\{([A-Z_]+)\}\}/', $result, $m) === 1) {
-            throw new \RuntimeException("เทมเพลต {$name} ยังมีค่าที่ไม่ได้กำหนด: {$m[1]}");
+            throw new \RuntimeException("Template {$name} still has an unset value: {$m[1]}");
         }
 
         return $result;
     }
 
     /**
-     * สร้างหลายบรรทัดของ directive เดียวกัน เช่น ServerAlias หลายโดเมน
+     * Builds several lines of the same directive, e.g. several ServerAlias domains
      *
      * @param list<string> $values
      */
@@ -76,11 +81,12 @@ final class Template
     }
 
     /**
-     * ตรวจค่าเดี่ยวก่อนนำไปประกอบ SafeBlock ด้วยมือ
+     * Checks a single value before it's assembled into a SafeBlock by hand
      *
-     * มีไว้สำหรับกรณีที่รูปแบบไม่ใช่ "หนึ่ง directive ต่อหนึ่งบรรทัด" อย่างที่ lines() รองรับ
-     * เช่น server_name ของ nginx ที่ใส่ทุกโดเมนไว้ในบรรทัดเดียว — ถ้าไม่มีทางนี้
-     * ผู้เขียนโค้ดจะเลี่ยงไปสร้าง SafeBlock จากสตริงดิบ ซึ่งข้ามการตรวจไปทั้งหมด
+     * Exists for the shape that isn't "one directive per line" the way
+     * lines() supports — e.g. nginx's server_name, which puts every domain
+     * on a single line — without this path, whoever wrote the code would
+     * end up building a SafeBlock from a raw string instead, skipping the check entirely.
      */
     public static function assertValue(string $key, string $value): string
     {
@@ -90,7 +96,7 @@ final class Template
     private static function assertSafe(string $key, string $value): string
     {
         if (preg_match('/[\x00-\x08\x0A-\x1F\x7F]/', $value) === 1) {
-            throw new ValidationError("ค่าของ {$key} มีอักขระที่ไม่อนุญาตในไฟล์ config");
+            throw new ValidationError("The value of {$key} contains a character not allowed in a config file");
         }
 
         return $value;

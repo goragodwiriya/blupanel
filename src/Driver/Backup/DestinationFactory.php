@@ -8,11 +8,12 @@ use Phpcp\Agent\ValidationError;
 use Phpcp\Domain\BackupDestinationRepository;
 
 /**
- * ประกอบ driver ของปลายทางจากแถวในฐานข้อมูล — จุดเดียวที่ความลับถูกนำมาใช้
+ * Assembles a destination driver from a database row — the single place where a secret is ever used
  *
- * แยกออกมาจาก repository เพราะ repository ไม่ควรรู้จัก driver และ driver ไม่ควรรู้จัก
- * ฐานข้อมูล · ตัวนี้เป็นที่เดียวที่ทั้งสองฝั่งมาเจอกัน ทำให้ตอบคำถาม "ความลับถูกใช้
- * ที่ไหนบ้าง" ได้ด้วยการอ่านไฟล์เดียว
+ * Kept separate from the repository, because the repository shouldn't know
+ * about drivers and a driver shouldn't know about the database · this class
+ * is the one place both sides meet, so "where is a secret used" can be
+ * answered by reading a single file.
  */
 final class DestinationFactory
 {
@@ -23,7 +24,7 @@ final class DestinationFactory
     }
 
     /**
-     * @param array<string,mixed> $row แถวที่ผ่าน `present()` มาแล้ว (ไม่มีความลับ)
+     * @param array<string,mixed> $row a row that has already passed through `present()` (no secret in it)
      */
     public function make(array $row): Destination
     {
@@ -62,12 +63,12 @@ final class DestinationFactory
                 pathStyle: (bool) ($config['path_style'] ?? false),
             ),
 
-            default => throw new ValidationError('ไม่รู้จักชนิดปลายทาง: ' . $driver),
+            default => throw new ValidationError('Unrecognized destination type: ' . $driver),
         };
     }
 
     /**
-     * ฟิลด์ที่แต่ละ driver ต้องการ — หน้าจอกับตัวตรวจค่าใช้รายการเดียวกัน
+     * The fields each driver requires — the screen and the validator share the same list
      *
      * @return array<string,list<string>>
      */
@@ -81,7 +82,7 @@ final class DestinationFactory
         ];
     }
 
-    /** driver ที่ต้องมีความลับ (กุญแจ ssh / secret key) จึงจะทำงานได้ */
+    /** A driver that needs a secret (an ssh key / secret key) before it can work at all */
     public static function needsSecret(string $driver): bool
     {
         return in_array($driver, ['sftp', 'rsync', 's3'], true);

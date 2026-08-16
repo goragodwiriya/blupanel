@@ -9,30 +9,33 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\ValidationError;
 
 /**
- * ปลายทางที่เป็นเส้นทางอื่นบนเครื่องนี้ — จุดเมานต์ของ NAS, ดิสก์ก้อนที่สอง, USB
+ * A destination that's just another path on this same machine — a NAS mount point, a second disk, a USB drive
  *
- * **ยังนับว่า "นอกเครื่อง" ไหม:** ขึ้นกับว่าเมานต์อะไรไว้ · ถ้าเป็นดิสก์คนละก้อนหรือ NFS
- * ของเครื่องอื่น ก็แก้ปัญหาที่ E1 ตั้งใจแก้ได้จริง · ถ้าเป็นโฟลเดอร์บนดิสก์ก้อนเดิม
- * ก็ไม่ได้แก้อะไรเลย — `test()` จึงบอกกลับมาว่าปลายทางอยู่บนอุปกรณ์เดียวกับไดเรกทอรี
- * สำรองต้นทางหรือเปล่า เพื่อให้ผู้ดูแลเห็นความจริงข้อนี้ตั้งแต่ตอนตั้งค่า ไม่ใช่ตอนดิสก์พัง
+ * **Does this still count as "offsite"?** Depends entirely on what's
+ * mounted there · if it's a genuinely separate disk or another machine's
+ * NFS share, it genuinely solves the problem E1 was meant to solve · if
+ * it's just a folder on the same disk, it solves nothing at all — so
+ * `test()` reports back whether the destination sits on the same device as
+ * the source backup directory, so an admin sees this truth at setup time,
+ * not the day the disk dies.
  *
- * driver นี้ยังเป็นตัวที่ใช้ทดสอบทั้งกลไกได้โดยไม่ต้องมีเครื่องที่สอง
+ * This driver also doubles as the one used to test the whole mechanism without needing a second machine.
  */
 final class LocalDestination implements Destination
 {
     /**
-     * @param string $sourceDir ไดเรกทอรีสำรองต้นทาง — ใช้ตอบว่าปลายทางอยู่บนอุปกรณ์เดียวกันไหม
+     * @param string $sourceDir the source backup directory — used to answer whether the destination is on the same device
      */
     public function __construct(
         private readonly string $root,
         private readonly string $sourceDir = '',
     ) {
         if ($this->root === '' || !str_starts_with($this->root, '/')) {
-            throw new ValidationError('เส้นทางปลายทางต้องเป็นเส้นทางเต็มที่ขึ้นต้นด้วย /');
+            throw new ValidationError('The destination path must be a full path starting with /');
         }
 
         if (preg_match('#(^|/)\.\.(/|$)#', $this->root) === 1) {
-            throw new ValidationError('เส้นทางปลายทางต้องไม่มี ..');
+            throw new ValidationError('The destination path must not contain ..');
         }
     }
 
@@ -48,10 +51,11 @@ final class LocalDestination implements Destination
         $executor->makeDirectory($executor->path($this->root), 0750);
         $executor->copyPath($executor->path($localPath), $executor->path($target));
 
-        // ยืนยันว่าไฟล์ถึงปลายทางครบจริง ไม่ใช่แค่คำสั่งคัดลอกไม่ error
+        // Confirms the file genuinely arrived at the destination complete, not just that the copy command didn't error
         //
-        // เทียบขนาดอย่างเดียวไม่พอสำหรับสิ่งที่มีไว้กู้ข้อมูล — ดิสก์ที่กำลังจะพัง
-        // คืนไฟล์ขนาดถูกต้องแต่เนื้อในเสียได้ · จึงเทียบ checksum เต็มไฟล์
+        // Comparing size alone isn't enough for something meant to recover
+        // data — a disk on its way to failing can return a file with the
+        // right size but corrupted content · so a full-file checksum is compared instead
         $this->assertSameContent($executor, $localPath, $target);
 
         return $target;
@@ -62,7 +66,7 @@ final class LocalDestination implements Destination
         $this->assertInsideRoot($remotePath);
 
         if (!$executor->exists($executor->path($remotePath))) {
-            throw new ExecutionFailed('ไม่พบไฟล์สำรองที่ปลายทาง: ' . $remotePath);
+            throw new ExecutionFailed('Backup file not found at destination: ' . $remotePath);
         }
 
         $executor->copyPath($executor->path($remotePath), $executor->path($localPath));
@@ -76,15 +80,15 @@ final class LocalDestination implements Destination
         $resolved = $executor->path($remotePath);
 
         if (!$executor->exists($resolved)) {
-            return;   // ลบไปแล้ว — ตัวเก็บกวาดต้องเรียกซ้ำได้โดยไม่ล้ม
+            return;   // Already deleted — the cleanup job must be able to call this again without failing
         }
 
-        // คลาย symlink ก่อนลบ · ลิงก์ที่ชี้ออกนอกปลายทางผ่านการเทียบสตริงข้างบนได้
+        // Symlinks are resolved before deleting · a link pointing outside the destination could pass the string comparison above
         $real = $executor->realPath($resolved);
         $root = rtrim($executor->path($this->root), '/');
 
         if ($real === null || !str_starts_with($real, $root . '/')) {
-            throw new ValidationError('ไฟล์นี้ชี้ออกนอกปลายทางสำรอง จึงลบผ่านระบบนี้ไม่ได้');
+            throw new ValidationError('This file points outside the backup destination, so it cannot be deleted through this path');
         }
 
         $executor->removePath($real);
@@ -103,7 +107,7 @@ final class LocalDestination implements Destination
         $executor->removePath($executor->path($probe));
 
         if ($readBack !== $content) {
-            throw new ExecutionFailed('เขียนไฟล์ทดสอบได้ แต่อ่านกลับมาแล้วเนื้อหาไม่ตรง');
+            throw new ExecutionFailed('Wrote the test file successfully, but reading it back returned different content');
         }
 
         $space = $executor->diskSpace($executor->path($this->root));
@@ -112,22 +116,23 @@ final class LocalDestination implements Destination
             'root' => $this->root,
             'free_bytes' => (int) ($space['free'] ?? 0),
             'total_bytes' => (int) ($space['total'] ?? 0),
-            // ผู้ดูแลต้องเห็นข้อนี้ตั้งแต่ตอนตั้งค่า ไม่ใช่ตอนดิสก์พัง
+            // An admin has to see this at setup time, not the day the disk dies
             'same_device' => $this->sameDeviceAsSource($executor),
         ];
     }
 
     /**
-     * ปลายทางอยู่บนอุปกรณ์เดียวกับไดเรกทอรีสำรองต้นทางหรือไม่
+     * Does the destination sit on the same device as the source backup directory?
      *
-     * `stat()` ของ Executor ไม่ได้คืนหมายเลขอุปกรณ์ จึงเทียบด้วยพื้นที่ว่างทั้งก้อน
-     * ซึ่งเป็นตัวบ่งชี้ที่ใช้ได้จริงและไม่ต้องขยาย interface — สองเส้นทางบน filesystem
-     * เดียวกันรายงานพื้นที่ว่างเท่ากันเสมอ
+     * The Executor's `stat()` doesn't return a device number, so this is
+     * compared by total free space instead — a genuinely usable indicator
+     * that needs no interface change — two paths on the same filesystem
+     * always report identical free space.
      */
     private function sameDeviceAsSource(Executor $executor): bool
     {
         if ($this->sourceDir === '') {
-            return false;   // ไม่รู้ต้นทาง = ตอบไม่ได้ · อย่าเดาเป็น "ปลอดภัย"
+            return false;   // Source unknown = cannot answer · never guess "safe"
         }
 
         $source = $executor->diskSpace($executor->path($this->sourceDir));
@@ -140,7 +145,7 @@ final class LocalDestination implements Destination
     private function remotePathFor(string $name): string
     {
         if ($name === '' || str_contains($name, '/')) {
-            throw new ValidationError('ชื่อไฟล์ปลายทางต้องเป็นชื่อล้วน ไม่มีไดเรกทอรี');
+            throw new ValidationError('The destination filename must be a name only, no directory');
         }
 
         return rtrim($this->root, '/') . '/' . $name;
@@ -149,11 +154,11 @@ final class LocalDestination implements Destination
     private function assertInsideRoot(string $path): void
     {
         if (preg_match('#(^|/)\.\.(/|$)#', $path) === 1) {
-            throw new ValidationError('เส้นทางไฟล์ปลายทางต้องไม่มี ..');
+            throw new ValidationError('The destination file path must not contain ..');
         }
 
         if (!str_starts_with($path, rtrim($this->root, '/') . '/')) {
-            throw new ValidationError('เส้นทางนี้อยู่นอกปลายทางสำรองที่กำหนดไว้');
+            throw new ValidationError('This path is outside the configured backup destination');
         }
     }
 
@@ -163,11 +168,11 @@ final class LocalDestination implements Destination
         $right = @hash_file('sha256', $executor->path($b));
 
         if ($left === false || $right === false) {
-            throw new ExecutionFailed('อ่านไฟล์เพื่อยืนยันความครบถ้วนไม่ได้');
+            throw new ExecutionFailed('Failed to read the files to confirm they arrived complete');
         }
 
         if (!hash_equals($left, $right)) {
-            throw new ExecutionFailed('ไฟล์ที่ปลายทางไม่ตรงกับต้นฉบับ — ถือว่าส่งไม่สำเร็จ');
+            throw new ExecutionFailed('The file at the destination does not match the original — treated as a failed push');
         }
     }
 }

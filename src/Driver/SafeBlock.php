@@ -5,12 +5,13 @@ declare(strict_types=1);
 namespace Phpcp\Driver;
 
 /**
- * ข้อความหลายบรรทัดที่ผ่านการตรวจทีละบรรทัดมาแล้ว
+ * Multi-line text that has already been checked line by line
  *
- * มีไว้เพื่อให้ Template แยกออกได้ว่า "ค่าหลายบรรทัดนี้ตั้งใจให้เป็นหลายบรรทัด"
- * ต่างจากค่าธรรมดาที่ถ้ามีขึ้นบรรทัดใหม่แปลว่ามีคนพยายามแทรก directive เข้ามา
+ * Exists so Template can tell apart "this multi-line value is meant to be
+ * multi-line" from an ordinary value, where a newline in it means someone is
+ * attempting to inject a directive.
  *
- * สร้างได้ทางเดียวคือผ่าน Template::lines() ซึ่งตรวจทุกบรรทัดก่อนเสมอ
+ * The only way to construct one is through Template::lines(), which always checks every line first.
  */
 final readonly class SafeBlock
 {

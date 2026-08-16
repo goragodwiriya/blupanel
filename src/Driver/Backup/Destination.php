@@ -7,57 +7,67 @@ namespace Phpcp\Driver\Backup;
 use Phpcp\Agent\Executor\Executor;
 
 /**
- * ปลายทางที่ไฟล์สำรองถูกส่งไปเก็บ — PLAN-V2 เฟส E1
+ * A destination a backup file is pushed off to — PLAN-V2 phase E1
  *
- * **สัญญาที่ทุก driver ต้องรักษา**
+ * **The contract every driver has to keep**
  *
- * 1. `push()` ต้องยืนยันว่าไฟล์ถึงปลายทางครบถ้วนจริง ไม่ใช่แค่ "คำสั่งไม่ error" ·
- *    ไฟล์สำรองที่ส่งไปครึ่งเดียวอันตรายกว่าไม่มีไฟล์เลย เพราะผู้ดูแลจะเชื่อว่ามีของอยู่
- * 2. ล้มเหลวต้องโยน `ExecutionFailed` พร้อมข้อความที่บอกว่า**ทำอะไรต่อ**ได้ ไม่ใช่คืน
- *    ค่าเท็จเงียบ ๆ — ปลายทางที่ล้มเงียบคือกรณีที่แย่ที่สุดของทั้งเรื่องนี้
- * 3. `delete()` ต้องลบเฉพาะภายในเส้นทางของปลายทางนั้น และต้องทนต่อไฟล์ที่หายไปแล้ว
- *    (ตัวเก็บกวาดจะเรียกซ้ำได้โดยไม่ล้ม)
+ * 1. `push()` must confirm the file genuinely arrived at the destination
+ *    complete, not just that "the command didn't error" · a backup file
+ *    that arrived half-written is more dangerous than no file at all,
+ *    because an admin would believe something is there.
+ * 2. A failure must throw `ExecutionFailed` with a message that says **what
+ *    to do next**, never silently return false — a destination that fails
+ *    silently is the worst possible outcome in this whole area.
+ * 3. `delete()` must only ever delete within that destination's own path,
+ *    and must tolerate a file that's already gone (so the cleanup job can
+ *    call it again without failing).
  *
- * **ทำไมไม่ใช้ไลบรารีสำเร็จรูป:** โปรเจกต์นี้ไม่มี Composer โดยตั้งใจ (ARCHITECTURE §2)
- * ทุก driver จึงสั่งเครื่องมือที่มากับระบบผ่าน `Executor` ซึ่งเป็นทางเดียวกับที่ capability
- * อื่นใช้ — ได้ทั้ง audit, โหมด dryrun และการจำกัดสิทธิ์มาฟรีทั้งชุด
+ * **Why no off-the-shelf library:** this project deliberately has no
+ * Composer (ARCHITECTURE §2), so every driver runs the system's own tools
+ * through `Executor`, the same path every other capability uses — getting
+ * audit logging, dryrun mode, and permission limits all for free.
  */
 interface Destination
 {
-    /** ชื่อ driver ที่เก็บในคอลัมน์ `driver` */
+    /** The driver name stored in the `driver` column */
     public static function driver(): string;
 
     /**
-     * ส่งไฟล์สำรองออกไปยังปลายทาง
+     * Pushes a backup file out to the destination
      *
-     * @param string $localPath เส้นทางเต็มบนเครื่องนี้
-     * @param string $remoteName ชื่อไฟล์ปลายทาง (ชื่อล้วน ไม่มีไดเรกทอรี)
-     * @return string เส้นทางปลายทางที่ใช้อ้างถึงไฟล์นั้นได้ในภายหลัง
+     * @param string $localPath the full path on this machine
+     * @param string $remoteName the destination filename (name only, no directory)
+     * @return string the destination path that can be used to refer to this file later
      */
     public function push(Executor $executor, string $localPath, string $remoteName): string;
 
     /**
-     * ดึงไฟล์กลับมาไว้ที่เส้นทางบนเครื่องนี้
+     * Pulls a file back down to a path on this machine
      *
-     * ใช้โดย `test()` ของ driver ที่คุยกับเครื่องอื่น (ssh/rsync/s3) เพื่อพิสูจน์ว่า
-     * **เขียนแล้วอ่านกลับมาได้เนื้อเดียวกัน** ไม่ใช่แค่ "คำสั่งไม่ error" — ปลายทางที่
-     * รับไฟล์แล้วคืนไม่ได้คือปลายทางที่รู้ตัวตอนต้องใช้ไฟล์เท่านั้น
+     * Used by a driver's own `test()`, for drivers that talk to another
+     * machine (ssh/rsync/s3), to prove that **what was written and what
+     * gets read back are the same content** — not just that "the command
+     * didn't error" — a destination that accepts a file but can't return it
+     * is a destination that's only discovered broken the moment the file is actually needed.
      *
-     * (เดิม `backup.import` ใช้ตัวนี้ดึงไฟล์กลับมาลงทะเบียนด้วย · ความสามารถนั้นถูก
-     * ถอดออกแล้ว — ปลายทางมีชุดเดียวและผู้ดูแลคัดลอกไฟล์กลับมาเองตรงกว่า)
+     * (`backup.import` used to also use this to pull a file back and
+     * register it · that capability has since been removed — a destination
+     * only ever has one set of files, and having an admin copy the file
+     * back manually is more direct.)
      */
     public function pull(Executor $executor, string $remotePath, string $localPath): void;
 
-    /** ลบไฟล์ที่ปลายทาง — ไฟล์ที่ไม่มีอยู่แล้วถือว่าสำเร็จ */
+    /** Deletes a file at the destination — a file that's already gone counts as success */
     public function delete(Executor $executor, string $remotePath): void;
 
     /**
-     * ทดสอบว่าปลายทางใช้งานได้จริง — เขียนได้ อ่านกลับได้ ลบได้
+     * Tests that the destination genuinely works — can write, can read back, can delete
      *
-     * ทดสอบด้วยการ**เขียนไฟล์จริงแล้วอ่านกลับ** ไม่ใช่แค่เชื่อมต่อได้ เพราะกรณีที่พบบ่อย
-     * ที่สุดคือเชื่อมต่อผ่านแต่ไม่มีสิทธิ์เขียนในไดเรกทอรีนั้น
+     * Tests by **genuinely writing a file and reading it back**, not just
+     * connecting, because the most common failure is a connection that
+     * succeeds but has no write permission in that directory.
      *
-     * @return array<string,mixed> รายละเอียดที่หน้าจอเอาไปแสดงได้
+     * @return array<string,mixed> details the screen can display
      */
     public function test(Executor $executor): array;
 }

@@ -8,26 +8,27 @@ use Phpcp\Agent\ExecutionFailed;
 use Phpcp\Agent\Executor\Executor;
 
 /**
- * เขียนไฟล์ config หลายไฟล์แบบย้อนกลับได้ — ARCHITECTURE §10
+ * Writes several config files reversibly — ARCHITECTURE §10
  *
- * แก้ config เว็บเซิร์ฟเวอร์ผิดแล้ว reload คืออุบัติเหตุอันดับหนึ่งของ control panel
- * เพราะทำให้เว็บ "ทุกเว็บ" บนเครื่องดับพร้อมกัน ไม่ใช่แค่เว็บที่กำลังแก้
+ * Writing a web server config wrong and then reloading it is a control
+ * panel's single most common accident, because it takes down *every* site
+ * on the machine at once, not just the one being edited.
  *
- * ลำดับที่บังคับ:
- *   1. สำรองไฟล์เดิมทุกไฟล์ที่จะแตะ
- *   2. เขียนไฟล์ใหม่ทั้งหมด
- *   3. ตรวจ config ด้วยเครื่องมือของบริการนั้น ๆ
- *   4a. ผ่าน    → reload → ลบไฟล์สำรอง
- *   4b. ไม่ผ่าน → คืนไฟล์เดิมทั้งหมด → ไม่ reload → โยน error พร้อม stderr จริง
+ * The order enforced here:
+ *   1. Back up every original file about to be touched
+ *   2. Write all the new files
+ *   3. Validate the config with that service's own tool
+ *   4a. Passes    → reload → delete the backups
+ *   4b. Fails     → restore every original file → never reload → throw with the real stderr
  *
- * ข้อ 4b คือเหตุผลทั้งหมดที่คลาสนี้มีอยู่
+ * Step 4b is this class's entire reason for existing.
  */
 final class ConfigTransaction
 {
-    /** @var array<string,string|null> path => เนื้อหาเดิม (null = ไม่เคยมีไฟล์นี้) */
+    /** @var array<string,string|null> path => original content (null = this file never existed) */
     private array $backups = [];
 
-    /** @var list<string> ไฟล์ที่ถูกเขียนหรือลบไปแล้วในทรานแซกชันนี้ */
+    /** @var list<string> files written or deleted so far in this transaction */
     private array $touched = [];
 
     private bool $finished = false;
@@ -37,9 +38,9 @@ final class ConfigTransaction
     }
 
     /**
-     * เขียนไฟล์ config หนึ่งไฟล์ (ยังไม่ถือว่าสำเร็จจนกว่าจะ commit)
+     * Writes a single config file (not considered successful until commit)
      *
-     * @param string $path เส้นทางแบบระบบจริง — จะถูกแมปตามโหมดให้เอง
+     * @param string $path a real-system path — automatically mapped to match the current mode
      */
     public function write(string $path, string $content, int $mode = 0644): void
     {
@@ -60,8 +61,9 @@ final class ConfigTransaction
         $this->backup($path, $resolved);
 
         if ($this->executor->exists($resolved)) {
-            // ลบด้วยการเขียนทับเป็นไฟล์ว่างไม่ได้ — Apache จะยัง include ไฟล์ว่างอยู่
-            // จึงต้องลบจริง แล้วอาศัย backup ในการคืนค่า
+            // Cannot delete by overwriting with an empty file — Apache
+            // would still include an empty file — so it has to be genuinely
+            // deleted, relying on the backup to restore it
             @unlink($resolved);
         }
 
@@ -69,7 +71,7 @@ final class ConfigTransaction
     }
 
     /**
-     * ตรวจแล้วยืนยัน — $validate ต้องคืน [ok, ข้อความผิดพลาด]
+     * Validates, then commits — $validate must return [ok, error message]
      *
      * @param callable():array{0:bool,1:string} $validate
      */
@@ -83,7 +85,7 @@ final class ConfigTransaction
             $this->rollback();
 
             throw new ExecutionFailed(
-                "การตั้งค่าที่สร้างขึ้นไม่ผ่านการตรวจสอบ จึงคืนค่าเดิมทั้งหมดแล้ว\n\n" . trim($error),
+                "The generated configuration failed validation, so everything was reverted\n\n" . trim($error),
             );
         }
 
@@ -91,7 +93,7 @@ final class ConfigTransaction
         $this->backups = [];
     }
 
-    /** ยืนยันโดยไม่ต้องตรวจ — ใช้กับไฟล์ที่ไม่มีเครื่องมือตรวจ เช่น pool ของ FPM */
+    /** Commits without validating — used for files with no validation tool of their own, e.g. an FPM pool */
     public function commitWithoutValidation(): void
     {
         $this->assertOpen();
@@ -100,14 +102,14 @@ final class ConfigTransaction
         $this->backups = [];
     }
 
-    /** คืนไฟล์ทุกไฟล์กลับสู่สภาพก่อนเริ่มทรานแซกชัน */
+    /** Restores every file back to its state before the transaction began */
     public function rollback(): void
     {
         foreach ($this->backups as $path => $original) {
             $resolved = $this->executor->path($path);
 
             if ($original === null) {
-                // เดิมไม่มีไฟล์นี้ — ลบทิ้งให้กลับไปเหมือนเดิม
+                // This file never existed — delete it to restore that state
                 if ($this->executor->exists($resolved)) {
                     @unlink($resolved);
                 }
@@ -130,7 +132,7 @@ final class ConfigTransaction
     private function backup(string $path, string $resolved): void
     {
         if (array_key_exists($path, $this->backups)) {
-            return;   // สำรองไปแล้วในทรานแซกชันนี้ อย่าทับด้วยเนื้อหาที่เพิ่งเขียน
+            return;   // Already backed up in this transaction — never overwrite it with content just written
         }
 
         $this->backups[$path] = $this->executor->exists($resolved)
@@ -141,7 +143,7 @@ final class ConfigTransaction
     private function assertOpen(): void
     {
         if ($this->finished) {
-            throw new \LogicException('ทรานแซกชันนี้จบไปแล้ว');
+            throw new \LogicException('This transaction has already finished');
         }
     }
 }
