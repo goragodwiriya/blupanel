@@ -10,10 +10,11 @@ use Phpcp\Agent\ValidationError;
 use Phpcp\Domain\FileCatalog;
 
 /**
- * บันทึกเนื้อไฟล์ข้อความจากตัวแก้ไข
+ * Saves a text file's content from the editor
  *
- * เขียนผ่านไฟล์ชั่วคราวแล้ว rename ทับ (atomic) — ถ้าเครื่องดับกลางทาง
- * ไฟล์เดิมยังอยู่ครบ ไม่เหลือไฟล์ที่เขียนค้างครึ่งเดียวซึ่งจะทำให้เว็บล่มทันที
+ * Writes through a temporary file, then renames over the original (atomic) — if
+ * the machine loses power mid-write, the original file is still fully intact,
+ * with no half-written file left behind that would break the site instantly.
  */
 final class FileWrite extends FileCapability
 {
@@ -29,7 +30,7 @@ final class FileWrite extends FileCapability
 
     public function summary(): string
     {
-        return 'บันทึกเนื้อหาไฟล์';
+        return 'Save file content';
     }
 
     /**
@@ -41,23 +42,23 @@ final class FileWrite extends FileCapability
         $base = self::baseArgs($args);
 
         if ($base['path'] === '') {
-            throw new ValidationError('ต้องระบุไฟล์ที่จะบันทึก');
+            throw new ValidationError('A file to save must be specified');
         }
 
         $content = $args['content'] ?? '';
         if (!is_string($content)) {
-            throw new ValidationError('เนื้อหาไฟล์ต้องเป็นข้อความ');
+            throw new ValidationError('File content must be text');
         }
         if (strlen($content) > FileCatalog::MAX_EDIT_BYTES) {
-            throw new ValidationError('เนื้อหายาวเกิน 5 MB');
+            throw new ValidationError('Content exceeds 5 MB');
         }
         if (!mb_check_encoding($content, 'UTF-8')) {
-            throw new ValidationError('เนื้อหาต้องเป็นข้อความ UTF-8');
+            throw new ValidationError('Content must be UTF-8 text');
         }
 
         return $base + [
             'content' => $content,
-            // สร้างไฟล์ใหม่ได้เมื่อผู้ใช้กด "ไฟล์ใหม่" — ค่าปริยายคือเขียนทับของเดิมเท่านั้น
+            // A new file can be created when the user clicks "New file" — the default is to overwrite the existing one only
             'create' => self::flag($args, 'create')
         ];
     }
@@ -76,11 +77,12 @@ final class FileWrite extends FileCapability
         $create = $args['create'];
 
         if (!FileCatalog::isEditable($name, strlen($content))) {
-            throw new ValidationError('ไฟล์ชนิดนี้แก้ไขผ่านตัวจัดการไฟล์ไม่ได้');
+            throw new ValidationError('This file type cannot be edited through the file manager');
         }
 
-        // เทียบกับขนาดทั้งไฟล์ ไม่ใช่ส่วนต่างจากของเดิม — ไฟล์ถูกเขียนใหม่ทั้งไฟล์
-        // ผ่านไฟล์ชั่วคราวข้าง ๆ กัน จึงมีจังหวะที่ทั้งสองรุ่นอยู่บนดิสก์พร้อมกัน
+        // Compared against the whole file's size, not the difference from the
+        // original — the file is entirely rewritten through an adjacent
+        // temporary file, so there's a moment when both versions sit on disk at once
         $this->assertQuotaAllows($context, $scope, strlen($content));
 
         $result = $this->withPath(
@@ -92,31 +94,35 @@ final class FileWrite extends FileCapability
 
                 if ($info !== null) {
                     if ($create) {
-                        throw new ValidationError('มีไฟล์ชื่อนี้อยู่แล้ว');
+                        throw new ValidationError('A file with this name already exists');
                     }
                     if ($info['type'] !== 'file') {
-                        throw new ValidationError('เขียนทับได้เฉพาะไฟล์ธรรมดา');
+                        throw new ValidationError('Only regular files can be overwritten');
                     }
                 } elseif (!$create) {
-                    throw new ValidationError('ไม่พบไฟล์ที่จะบันทึก');
+                    throw new ValidationError('The file to save was not found');
                 }
 
-                // เขียนไฟล์ชั่วคราวข้าง ๆ ของเดิม (โฟลเดอร์เดียวกัน) เพื่อให้ rename
-                // อยู่ใน filesystem เดียวกันและเป็น atomic จริง
+                // The temporary file is written right next to the original
+                // (same folder), so the rename stays within the same filesystem
+                // and is genuinely atomic
                 $mode = $info['mode'] ?? 0o640;
                 $temporary = $target.'.phpcp-'.bin2hex(random_bytes(6));
 
                 /*
-                 * เจ้าของเดิมของไฟล์ (หรือของโฟลเดอร์แม่ ถ้าเป็นไฟล์ใหม่)
+                 * The file's original owner (or the parent folder's, for a new file)
                  *
-                 * **การแก้ไฟล์ต้องไม่เปลี่ยนเจ้าของ** — ผู้ดูแลระบบเปิดไฟล์ของลูกค้าผ่าน
-                 * ขอบเขต "เว็บไซต์ทั้งหมด" ซึ่งทำงานด้วยสิทธิ์ของ agent (root) เพราะไฟล์
-                 * ระดับเซิร์ฟเวอร์ไม่ได้เป็นของผู้ใช้คนใดคนหนึ่ง · ไฟล์ที่เขียนออกมาจึงเป็น
-                 * ของ root แล้ว **FPM pool ของลูกค้าอ่านไม่ได้อีกเลย**
+                 * **Editing a file must never change its owner** — an admin
+                 * opening a customer's file through the "all websites" scope
+                 * runs with the agent's own privileges (root), because a
+                 * server-level scope doesn't belong to any one user · a file
+                 * written out that way would end up owned by root, and **the
+                 * customer's own FPM pool could never read it again**
                  *
-                 * เจอบนเซิร์ฟเวอร์จริง (2026-08-14): แก้ index.php จากตัวจัดการไฟล์แล้ว
-                 * ทั้งเว็บตอบ 403 ทันที · Apache บอกว่า "Unable to open primary script
-                 * (Permission denied)" ซึ่งไม่มีอะไรโยงกลับมาที่การกดบันทึกเมื่อครู่เลย
+                 * Found on the real server (2026-08-14): edited index.php from
+                 * the file manager, and the whole site answered 403 instantly ·
+                 * Apache said "Unable to open primary script (Permission
+                 * denied)", with nothing connecting it back to that save click at all.
                  */
                 $owner = $info ?? $executor->stat(dirname($target));
 
@@ -147,14 +153,17 @@ final class FileWrite extends FileCapability
     }
 
     /**
-     * คืนเจ้าของไฟล์ให้เป็นคนเดิม — ทำก่อน rename เพื่อไม่ให้มีจังหวะที่ไฟล์จริงเป็นของ root
+     * Restores the file's owner to who it was — done before rename, so there's
+     * never a moment where the real file is owned by root
      *
-     * ข้ามเมื่อไม่รู้เจ้าของ หรือเมื่อทำงานในสิทธิ์ที่ลดแล้วอยู่แล้ว (ขอบเขตของเว็บไซต์
-     * ลดสิทธิ์เป็นเจ้าของก่อนแตะไฟล์ ไฟล์ที่เขียนออกมาจึงเป็นของเขาตั้งแต่แรก และ
-     * `chown` จะล้มเพราะผู้ใช้ธรรมดาเปลี่ยนเจ้าของไฟล์ไม่ได้) · ล้มแล้วไม่โยนต่อ
-     * ด้วยเหตุผลนั้น — แต่ยังต้องพยายาม เพราะกรณีที่สำคัญคือตอนทำงานเป็น root
+     * Skipped when the owner is unknown, or when already running under reduced
+     * privileges (the website scope drops to the owner's privileges before
+     * touching any file, so the file written out already belongs to them, and
+     * `chown` would fail anyway since an ordinary user can't change a file's
+     * owner) · a failure here is never rethrown for that reason — but it's still
+     * always attempted, since the case that matters is running as root.
      *
-     * @param array<string,mixed>|null $owner ผลจาก stat() ของไฟล์เดิมหรือโฟลเดอร์แม่
+     * @param array<string,mixed>|null $owner the result of stat() on the original file or its parent folder
      */
     private static function restoreOwner(Executor $executor, string $path, ?array $owner): void
     {

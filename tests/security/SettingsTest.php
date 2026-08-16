@@ -440,7 +440,7 @@ test('เปิดสวิตช์ DNS โดยยังไม่มี names
     );
 
     assertTrue(
-        str_contains((string) $result['message'], 'เนมเซิร์ฟเวอร์'),
+        str_contains((string) $result['message'], 'nameserver'),
         'ต้องบอกว่ายังขาดชื่อเนมเซิร์ฟเวอร์ · ได้: ' . $result['message'],
     );
     assertTrue(

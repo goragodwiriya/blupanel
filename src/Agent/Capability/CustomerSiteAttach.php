@@ -12,12 +12,12 @@ use Phpcp\Security\Permissions;
 use Phpcp\Support\Validator;
 
 /**
- * มอบเว็บไซต์ที่ผู้ดูแลถืออยู่ให้บัญชีโฮสติ้ง
+ * Hands a website an admin holds over to a hosting account
  *
- * ทำงาน:
- * - ตรวจว่าเว็บมีอยู่จริงและยังไม่ได้เป็นของลูกค้ารายอื่น (ถ้าเป็น ต้องใช้คำสั่งย้ายเจ้าของ)
- * - ตรวจสถานะบริการและโควตาของผู้รับ รวมของที่ติดมากับเว็บทั้งก้อน
- * - ตั้ง sites.owner_user_id ซึ่งเป็นแหล่งความจริงเดียวของความเป็นเจ้าของตั้งแต่ migration 0005
+ * Does:
+ * - checks the site genuinely exists and isn't already owned by another customer (if it is, the owner-transfer command is required instead)
+ * - checks the recipient's service status and quota, including everything the site carries with it
+ * - sets sites.owner_user_id, the single source of truth for ownership since migration 0005
  */
 final class CustomerSiteAttach extends CustomerCapability implements Capability
 {
@@ -38,14 +38,14 @@ final class CustomerSiteAttach extends CustomerCapability implements Capability
 
     public function summary(): string
     {
-        return 'เชื่อมเว็บไซต์ให้ลูกค้าเป็นเจ้าของ';
+        return 'Attach website to customer as owner';
     }
 
     public function validate(array $args): array
     {
         $userId = Validator::requireInt($args, 'user_id', 1);
 
-        // ตรวจสอบ site_id (สามารถเป็น array เพื่อเชื่อมหลาย site)
+        // Validates site_id (can be an array to attach several sites at once)
         if (isset($args['site_ids']) && is_array($args['site_ids'])) {
             $siteIds = [];
             foreach ($args['site_ids'] as $id) {
@@ -57,9 +57,9 @@ final class CustomerSiteAttach extends CustomerCapability implements Capability
             $siteIds = [$siteId];
         }
 
-        // ตรวจสอบว่ามี site_id อย่างน้อย 1 ตัว
+        // Checks that at least one site_id was given
         if (empty($siteIds)) {
-            throw new ValidationError('ต้องระบุอย่างน้อย 1 เว็บไซต์ที่จะเชื่อม');
+            throw new ValidationError('At least one website to attach must be specified');
         }
 
         return [
@@ -86,32 +86,38 @@ final class CustomerSiteAttach extends CustomerCapability implements Capability
                 $results[] = [
                     'site_id' => $siteId,
                     'status' => 'not_found',
-                    'message' => 'ไม่พบเว็บไซต์',
+                    'message' => 'Website not found',
                 ];
                 $siteNotFoundCount++;
                 continue;
             }
 
-            // เจ้าของอยู่ที่ sites.owner_user_id ที่เดียวแล้ว — เดิมความเป็นเจ้าของถูกเก็บ
-            // ทั้งใน customer_sites และ owner_user_id ซึ่งในฐานข้อมูลจริงขัดกันเองอยู่
+            // Ownership now lives in exactly one place, sites.owner_user_id —
+            // ownership used to be stored in both customer_sites and
+            // owner_user_id, which could genuinely disagree with each other in
+            // the real database
             //
-            // และเว็บทุกแห่งมีเจ้าของเสมอ (ฐานข้อมูลบังคับไว้) · "เว็บที่ยังไม่ได้ขาย" จึงหมายถึง
-            // เว็บที่ผู้ดูแลถือไว้ ไม่ใช่เว็บที่ไม่มีใครเป็นเจ้าของ
+            // And every site always has an owner (the database enforces it) — so
+            // "a site not yet sold" means a site an admin is holding, not a site
+            // with no owner at all
             $currentOwner = (int) ($site['owner_user_id'] ?? 0);
 
             if ($currentOwner === $args['user_id']) {
                 $results[] = [
                     'site_id' => $siteId,
                     'status' => 'already_attached',
-                    'message' => 'เว็บไซต์นี้เป็นของบัญชีนี้อยู่แล้ว',
+                    'message' => 'This website already belongs to this account',
                 ];
                 $alreadyAttachedCount++;
                 continue;
             }
 
-            // ดึงเว็บจากลูกค้ารายอื่นด้วยคำสั่งนี้ไม่ได้ — ต้องเป็นคำสั่งย้ายเจ้าของที่ตั้งใจ
-            // เพราะตั้งแต่เฟส M3 การย้ายเจ้าของหมายถึงย้ายไฟล์ข้ามบ้านและเปลี่ยน uid ทั้งต้นไม้
-            // (เว็บที่ผู้ดูแลถืออยู่ไม่เข้าเงื่อนไขนี้ — การมอบให้ลูกค้าคือหน้าที่ของคำสั่งนี้)
+            // A site can't be pulled away from another customer with this
+            // command — it requires the deliberate owner-transfer command,
+            // because since Phase M3, transferring ownership means moving files
+            // across homes and changing uid throughout the whole tree
+            // (a site an admin is holding doesn't meet this condition — handing
+            // it to a customer is exactly what this command is for)
             $currentRole = (string) $context->db->value(
                 'SELECT role FROM users WHERE id = :id',
                 ['id' => $currentOwner],
@@ -122,7 +128,7 @@ final class CustomerSiteAttach extends CustomerCapability implements Capability
                 $results[] = [
                     'site_id' => $siteId,
                     'status' => 'already_attached',
-                    'message' => 'เว็บไซต์นี้เป็นของลูกค้ารายอื่นอยู่แล้ว ต้องย้ายเจ้าของก่อน',
+                    'message' => 'This website already belongs to another customer — transfer ownership first',
                 ];
                 continue;
             }
@@ -137,9 +143,11 @@ final class CustomerSiteAttach extends CustomerCapability implements Capability
                 continue;
             }
 
-            // เว็บที่จะเชื่อมมีโดเมนย่อย/alias/ฐานข้อมูลติดมาอยู่แล้ว ต้องนับเข้าโควตาก่อนเชื่อม
-            // ไม่ใช่ปล่อยให้ทะลุแล้วค่อยไปเจอตอนลูกค้าเพิ่มโดเมนถัดไปไม่ได้โดยไม่รู้สาเหตุ
-            // ตรวจสดทุกรอบ จึงนับรวมเว็บอื่นที่เพิ่งเชื่อมไปในคำสั่งเดียวกันนี้ด้วย
+            // A site being attached already carries its own subdomains/aliases/databases
+            // with it, so those have to count against quota before attaching —
+            // not let it overflow and only get discovered when the customer
+            // can't add their next domain with no idea why. Checked fresh every
+            // time, so it also counts other sites just attached in this same command.
             $quotaCheck = $this->checkAttachQuota($context, $args['user_id'], $siteId);
             if (!$quotaCheck['ok']) {
                 $results[] = [
@@ -159,20 +167,21 @@ final class CustomerSiteAttach extends CustomerCapability implements Capability
             $results[] = [
                 'site_id' => $siteId,
                 'status' => 'attached',
-                'message' => "เชื่อมเว็บไซต์ {$site['primary_domain']} ให้ {$owner['username']} แล้ว",
+                'message' => "Attached website {$site['primary_domain']} to {$owner['username']}",
             ];
             $attachedCount++;
         }
 
-        // audit log บันทึกโดย Dispatcher ให้แล้วรอบ run() ทุกคำสั่ง (ARCHITECTURE §4.1)
+        // The audit log is already written by Dispatcher around every run() call (ARCHITECTURE §4.1)
         $message = $attachedCount > 0
-            ? "เชื่อมเว็บไซต์ {$attachedCount} แห่งให้ {$owner['username']} แล้ว"
-            : 'ไม่มีเว็บไซต์ที่เชื่อมใหม่';
+            ? "Attached {$attachedCount} website(s) to {$owner['username']}"
+            : 'No websites were newly attached';
 
-        // เว็บที่ถูกข้ามเพราะโควตาเต็มต้องอยู่ในข้อความสรุป ไม่ใช่ซ่อนอยู่ใน results
-        // ผู้ดูแลที่เลือก 5 เว็บแล้วเชื่อมได้ 2 ต้องรู้ทันทีว่าทำไมอีก 3 ไม่เข้า
+        // A site skipped for exceeding quota has to be in the summary message,
+        // not hidden inside results — an admin who selected 5 sites and got 2
+        // attached needs to know immediately why the other 3 didn't go through
         if ($quotaExceededCount > 0) {
-            $message .= " (ข้าม {$quotaExceededCount} แห่งเพราะเกินโควตา)";
+            $message .= " ({$quotaExceededCount} skipped for exceeding quota)";
         }
 
         return [

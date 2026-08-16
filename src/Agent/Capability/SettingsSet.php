@@ -15,11 +15,13 @@ use Phpcp\Driver\Notify\WebhookNotifier;
 use Phpcp\Support\Validator;
 
 /**
- * บันทึกค่าตั้ง
+ * Saves settings
  *
- * ค่าที่เป็นความลับ (token, รหัสผ่าน) ถ้าส่งมาเป็นค่าที่ปิดบังไว้ (********)
- * แปลว่าผู้ใช้ไม่ได้แก้ช่องนั้น ต้องเก็บค่าเดิมไว้ ไม่ใช่เขียนทับด้วยดอกจัน —
- * ถ้าเขียนทับ การกดบันทึกเพื่อแก้ค่าอื่นเพียงค่าเดียวจะทำลาย token ทิ้งทุกครั้ง
+ * A secret value (a token, a password) sent back as the masked placeholder
+ * (********) means the user never touched that field — the existing value must
+ * be kept, never overwritten with the asterisks themselves — overwriting it
+ * would destroy the token every single time the save button is clicked to
+ * change just one unrelated value.
  */
 final class SettingsSet implements Capability
 {
@@ -40,7 +42,7 @@ final class SettingsSet implements Capability
 
     public function summary(): string
     {
-        return 'บันทึกค่าตั้งของระบบ';
+        return 'Save system settings';
     }
 
     public function validate(array $args): array
@@ -59,14 +61,14 @@ final class SettingsSet implements Capability
                 'int' => (string) (int) $value,
                 default => Validator::pattern(
                     trim($value),
-                    // กันอักขระควบคุมและขึ้นบรรทัดใหม่ — ค่าเหล่านี้ถูกนำไปเขียนลงไฟล์ config
+                    // Guards against control characters and newlines — these values get written into config files
                     '/^[^\x00-\x1F\x7F]{0,255}$/u',
-                    "ค่าของ {$key} มีอักขระที่ใช้ไม่ได้",
+                    "The value for {$key} contains an unusable character",
                 ),
             };
         }
 
-        // ตรวจรูปแบบเฉพาะทางหลังจากล้างค่าพื้นฐานแล้ว
+        // Format-specific checks run after the basic values are cleaned
         if (isset($out['notify.telegram.token']) && $out['notify.telegram.token'] !== '********') {
             TelegramNotifier::assertToken($out['notify.telegram.token']);
         }
@@ -83,8 +85,9 @@ final class SettingsSet implements Capability
             MailManager::assertEmail($out['notify.email.to']);
         }
 
-        // บังคับ https และรูปแบบ URL ตั้งแต่ตอนบันทึก — จับความผิดพลาดตอนกรอก
-        // ไม่ใช่ตอนที่การแจ้งเตือนสำคัญส่งไม่ออกในจังหวะที่ต้องการที่สุด
+        // https and the URL format are enforced right at save time — catches
+        // the mistake while it's being typed, not the moment a critical
+        // notification fails to send exactly when it was needed most
         if (isset($out['notify.webhook.url'])) {
             WebhookNotifier::assertUrl($out['notify.webhook.url']);
         }
@@ -106,7 +109,7 @@ final class SettingsSet implements Capability
         $values = $args['values'];
 
         foreach ($values as $key => $value) {
-            // ค่าที่ยังเป็นดอกจัน = ผู้ใช้ไม่ได้แตะช่องนั้น เก็บของเดิมไว้
+            // A value still holding asterisks = the user never touched that field, keep the existing value
             if (SettingsRepository::isSecret($key) && $value === '********') {
                 unset($values[$key]);
             }
@@ -114,10 +117,10 @@ final class SettingsSet implements Capability
 
         $settings->save($values);
 
-        $message = sprintf('บันทึกค่าตั้ง %d รายการแล้ว', count($values));
+        $message = sprintf('Saved %d setting(s)', count($values));
         $dns = [];
 
-        // เปิดสวิตช์ DNS ต้อง "เปิดจริง" ไม่ใช่แค่จำค่าไว้ — ดู activateDns()
+        // Turning the DNS switch on has to "actually turn it on", not just remember the value — see activateDns()
         if (($values['dns.enabled'] ?? '') === '1') {
             $dns = $this->activateDns($executor, $settings, $context->config->dnsZoneDir());
             $message .= ' · ' . $dns['message'];
@@ -133,19 +136,23 @@ final class SettingsSet implements Capability
     }
 
     /**
-     * ทำให้ BIND9 พร้อมใช้งานจริงหลังผู้ดูแลเปิดสวิตช์ `dns.enabled`
+     * Makes BIND9 genuinely usable after an admin turns on the `dns.enabled` switch
      *
-     * **เดิมสวิตช์นี้แค่บันทึกค่าลงฐานข้อมูลเฉย ๆ** ผลคือบนเครื่องที่ติดตั้งโดยไม่ได้ส่ง
-     * `--dns-ns` (ซึ่งเป็นค่าเริ่มต้นของ install.sh) ตัวแพ็กเกจ bind9 ถูกลงไว้แล้วก็จริง
-     * แต่ service ไม่เคยถูก enable/start และ `/etc/bind/zones` ไม่เคยถูกสร้าง · ผู้ดูแล
-     * กดเปิดสวิตช์แล้วหน้าจอบอก "บันทึกแล้ว" แต่พอไปเพิ่มเรกคอร์ดจริงกลับล้มที่
-     * `rndc reload` ด้วยข้อความที่ไม่ได้ชี้ว่าต้องไป start service ก่อน
+     * **This switch used to just save a value to the database** — the result on
+     * a machine installed without `--dns-ns` (install.sh's default) was that the
+     * bind9 package was already installed, but the service had never been
+     * enabled/started, and `/etc/bind/zones` was never created · an admin would
+     * click the switch on, the screen would say "saved", and then adding a real
+     * record would fail at `rndc reload` with a message that never pointed at
+     * needing to start the service first.
      *
-     * ที่นี่จึงทำสิ่งที่ `install.sh --dns-ns` ทำให้ตอนติดตั้ง ให้ครบในคำขอเดียว
-     * — นี่คือความหมายของ "ตั้งค่าให้เสร็จได้จากหน้าเว็บ" ไม่ใช่แค่บันทึกความตั้งใจไว้
+     * So this does everything `install.sh --dns-ns` does at install time, all in
+     * one request — this is what "can be fully configured from the web page"
+     * actually means, not just recording an intention.
      *
-     * ไม่โยน exception เมื่อล้ม เพราะค่าถูกบันทึกไปแล้วและยังแก้ต่อได้จากหน้า Services —
-     * รายงานสิ่งที่เกิดขึ้นจริงกลับไปแทน ผู้ดูแลจะได้รู้ว่าเหลืออะไรต้องทำ
+     * Never throws on failure, because the value has already been saved and can
+     * still be fixed from the Services page — instead it reports back what
+     * genuinely happened, so the admin knows what's left to do.
      *
      * @return array{ready:bool,unit:string,message:string}
      */
@@ -157,14 +164,14 @@ final class SettingsSet implements Capability
             return [
                 'ready' => false,
                 'unit' => '',
-                'message' => 'ยังสร้าง zone ไม่ได้จนกว่าจะกรอกชื่อเนมเซิร์ฟเวอร์ — BIND9 ปฏิเสธ zone ที่ไม่มี NS record',
+                'message' => 'Zones cannot be created yet until nameserver names are filled in — BIND9 rejects a zone with no NS record',
             ];
         }
 
-        // zone dir ต้องมีก่อน BindZoneManager จะเขียนไฟล์ลงไปได้
+        // The zone directory has to exist before BindZoneManager can write files into it
         $executor->makeDirectory($executor->path(rtrim($zoneDir, '/')), 0755);
 
-        // ชื่อ unit ต่างกันตาม distro/รุ่น: Debian รุ่นใหม่ใช้ `named`, รุ่นเก่าใช้ `bind9`
+        // Unit name differs by distro/version: newer Debian uses `named`, older uses `bind9`
         foreach (['named', 'bind9'] as $unit) {
             if (!(ServiceProbe::read($executor, $unit)['installed'] ?? false)) {
                 continue;
@@ -181,7 +188,7 @@ final class SettingsSet implements Capability
                 return [
                     'ready' => true,
                     'unit' => $unit,
-                    'message' => sprintf('เปิดบริการ %s และตั้งให้เริ่มตอนบูตแล้ว', $unit),
+                    'message' => sprintf('Enabled service %s and set it to start on boot', $unit),
                 ];
             }
 
@@ -189,9 +196,9 @@ final class SettingsSet implements Capability
                 'ready' => false,
                 'unit' => $unit,
                 'message' => sprintf(
-                    'เปิดบริการ %s ไม่สำเร็จ: %s — สั่งเองได้ที่หน้าบริการ',
+                    'Failed to enable service %s: %s — start it manually from the Services page',
                     $unit,
-                    trim($result->stderr) !== '' ? trim($result->stderr) : 'ไม่ทราบสาเหตุ',
+                    trim($result->stderr) !== '' ? trim($result->stderr) : 'Unknown cause',
                 ),
             ];
         }
@@ -199,7 +206,7 @@ final class SettingsSet implements Capability
         return [
             'ready' => false,
             'unit' => '',
-            'message' => 'เครื่องนี้ยังไม่ได้ติดตั้ง BIND9 — ติดตั้งด้วย `sudo apt install bind9` แล้วเปิดสวิตช์นี้อีกครั้ง',
+            'message' => 'BIND9 is not installed on this machine — install it with `sudo apt install bind9`, then turn this switch on again',
         ];
     }
 }
