@@ -12,35 +12,39 @@ use Phpcp\Driver\Ssl\CertbotManager;
 use Phpcp\Driver\Template;
 
 /**
- * nginx — ทางเลือกที่สองของเว็บเซิร์ฟเวอร์ (ARCHITECTURE §10)
+ * nginx — the second web server option (ARCHITECTURE §10)
  *
- * โครงสร้างเหมือน ApacheDriver ทุกอย่างโดยเจตนา: ไฟล์ต่อหนึ่งเว็บไซต์ ชื่อขึ้นต้นด้วย
- * phpcp- ส่วนกลางของ config สร้างครั้งเดียวใช้ทั้งบล็อก HTTP และ HTTPS
- * และ configtest ต้องผ่านก่อน reload เสมอ — คนที่อ่านโค้ดสองไฟล์นี้ต่อกัน
- * ควรเห็นว่าเป็นเรื่องเดียวกันที่เขียนคนละภาษา ไม่ใช่สองระบบที่ต้องเรียนรู้แยกกัน
+ * Deliberately structured identically to ApacheDriver: one file per
+ * website, named with a `phpcp-` prefix, a shared config section built once
+ * and used by both the HTTP and HTTPS blocks, and configtest always
+ * required to pass before a reload — someone reading these two files
+ * side by side should see the same thing written in two languages, not two
+ * separate systems that each need learning on their own.
  *
- * ความต่างที่สำคัญจาก Apache:
- *   - ไม่มีระบบเปิด/ปิดโมดูลตอนรัน ทุกอย่างคอมไพล์มาแล้ว ensureModules() จึงคืน []
- *   - ไม่มี .htaccess เว็บที่พึ่ง .htaccess จะทำงานไม่เหมือนเดิม ต้องแปลงกฎเอง
- *   - ต้องกัน path info ปลอมของ fastcgi เอง (ดูคำอธิบายในเทมเพลต)
+ * The important differences from Apache:
+ *   - No runtime enable/disable module system — everything is already
+ *     compiled in, so ensureModules() just returns []
+ *   - No .htaccess — a site that depends on .htaccess won't behave the same
+ *     way, and its rules have to be translated by hand
+ *   - Has to guard against fastcgi's forged path info itself (see the explanation in the template)
  */
 final class NginxDriver implements WebServerDriver
 {
     private const CONFIG_ROOT = '/etc/nginx';
     private const SITES_DIR = self::CONFIG_ROOT . '/conf.d';
 
-    /** ไฟล์ระดับเครื่อง ไม่ใช่ของเว็บใดเว็บหนึ่ง — ชื่อเดียวกันทุกโหมด */
+    /** A machine-level file, not belonging to any one website — same name across every mode */
     public const LOCALHOST_FILE = self::SITES_DIR . '/phpcp-000-localhost.conf';
 
     private const HTTP_PORT = 80;
     private const HTTPS_PORT = 443;
 
-    /** เท่ากับค่าเริ่มต้นของเว็บทั่วไป — โฟลเดอร์พัฒนาไม่ได้ตั้งโควตาอัปโหลดไว้ */
+    /** Matches an ordinary site's default — the dev folder has no upload quota configured */
     private const UPLOAD_LIMIT_MB = 64;
 
     public function __construct(
         private readonly Template $templates,
-        /** null = ไม่เปิด http://localhost (ค่าเริ่มต้นของเครื่องที่ให้บริการจริง) */
+        /** null = don't enable http://localhost (the default for a real production machine) */
         private readonly ?LocalhostSite $localhost = null,
     ) {
     }
@@ -66,10 +70,11 @@ final class NginxDriver implements WebServerDriver
     }
 
     /**
-     * nginx ผูกโมดูลไว้ตอนคอมไพล์ ไม่มีอะไรให้เปิดตอนรัน
+     * nginx binds its modules in at compile time — nothing to turn on at runtime
      *
-     * ถ้าเครื่องใช้ nginx ที่ไม่ได้คอมไพล์ ngx_http_ssl_module มา จะรู้ตอน configtest
-     * ซึ่งเป็นความล้มเหลวที่ปลอดภัยเพราะ ConfigTransaction คืนไฟล์เดิมให้อยู่แล้ว
+     * If a machine is running an nginx that wasn't compiled with
+     * ngx_http_ssl_module, that surfaces at configtest — a safe failure,
+     * since ConfigTransaction already restores the original file.
      */
     public function ensureModules(Executor $executor, bool $withSsl = false): array
     {
@@ -78,15 +83,18 @@ final class NginxDriver implements WebServerDriver
 
     public function vhostPath(Site $site): string
     {
-        // ชื่อไฟล์มาจากโดเมนที่ผ่าน Validator::domain() แล้ว จึงมีแต่ [a-z0-9.-]
+        // The filename comes from a domain that already passed
+        // Validator::domain(), so it only ever contains [a-z0-9.-]
         //
-        // **vhost ของเว็บที่รับ wildcard ต้องถูกอ่านท้ายสุด** (PLAN-V2 เฟส E7) — nginx
-        // อ่านไฟล์ตามลำดับตัวอักษร ถ้า `*.example.com` ถูกอ่านก่อน vhost ที่ระบุ
-        // `blog.example.com` ไว้เต็ม ๆ คำขอของ blog จะตกไปที่เว็บ wildcard แทน
-        // ซึ่งเป็นการรั่วข้ามเว็บไซต์ระหว่างลูกค้าคนละราย
+        // **A wildcard-accepting site's vhost must always be read last**
+        // (PLAN-V2 phase E7) — nginx reads files in alphabetical order, and
+        // if `*.example.com` gets read before a vhost that fully specifies
+        // `blog.example.com`, a request for blog falls through to the
+        // wildcard site instead — a cross-site leak between two different customers.
         //
-        // คำนำหน้า `zz-` ทำให้มันไปอยู่ท้ายเสมอโดยไม่ต้องพึ่งความบังเอิญของชื่อโดเมน
-        // · `$site->domain` ยังเป็นชื่อจริงที่ผ่านการตรวจแล้ว ไม่มี `*` ปนมา
+        // The `zz-` prefix always pushes it to the end without relying on
+        // any coincidence of domain naming · `$site->domain` is still the
+        // genuine, already-validated name, with no `*` mixed in.
         return self::SITES_DIR . '/phpcp-' . ($site->hasWildcard() ? 'zz-wildcard-' : '') . $site->domain . '.conf';
     }
 
@@ -98,9 +106,9 @@ final class NginxDriver implements WebServerDriver
 
     /** @return array<string,string> */
     /**
-     * ไม่แตะ `ports.conf` ของ Apache โดยตั้งใจ — โหมดนี้ไม่ได้ใช้ Apache เลย และ
-     * nginx ถือพอร์ต 80 อยู่ · การเขียนคืนให้ Apache ฟัง 80 มีแต่จะทำให้ Apache
-     * (ถ้ายังเปิดอยู่) สตาร์ตไม่ขึ้นเพราะพอร์ตชน
+     * Deliberately never touches Apache's `ports.conf` — this mode doesn't
+     * use Apache at all, and nginx holds port 80 · writing Apache back to
+     * listen on 80 would only make Apache (if it's still enabled) fail to start due to a port collision.
      *
      * @return array<string,string>
      */
@@ -129,7 +137,7 @@ final class NginxDriver implements WebServerDriver
 
     public function renderVhost(Site $site, Executor $executor): string
     {
-        // nginx ใส่ทุกโดเมนไว้ใน server_name บรรทัดเดียว ต่างจาก ServerAlias ของ Apache
+        // nginx puts every domain on a single server_name line, unlike Apache's ServerAlias
         $aliases = new SafeBlock(
             $site->aliases === [] ? '' : ' ' . implode(' ', array_map(
                 static fn (string $d): string => Template::assertValue('server_name', $d),
@@ -150,7 +158,7 @@ final class NginxDriver implements WebServerDriver
 
         $body = new SafeBlock($this->templates->render('nginx/vhost-body.conf.tpl', [
             'PROBE_DENY' => new SafeBlock(ProbeBlocklist::nginx()),
-            // ไดเรกทอรีของผู้ดูแล — vhost อ่านเป็นอันสุดท้าย ค่าที่นั่นจึงชนะค่าเริ่มต้น
+            // The admin's own directory — read last by the vhost, so its values win over the defaults
             'CUSTOM_DIR' => $executor->path(CustomConfig::siteDirectory('nginx', $site->domain)),
             'DOCROOT' => $executor->path($site->docroot()),
             'FPM_SOCKET' => $executor->path($site->fpmSocket()),
@@ -180,23 +188,23 @@ final class NginxDriver implements WebServerDriver
             'DOCROOT' => $executor->path($site->docroot()),
             'SSL_CERT' => $executor->path($certificate . '/fullchain.pem'),
             'SSL_KEY' => $executor->path($certificate . '/privkey.pem'),
-            'SSL_MODE_LABEL' => $site->sslMode === 'forced' ? 'บังคับ HTTPS' : 'เปิดใช้งาน',
+            'SSL_MODE_LABEL' => $site->sslMode === 'forced' ? 'Forced HTTPS' : 'Enabled',
             'HTTP_SECTION' => $this->httpSection($site, $body),
             'HSTS_HEADER' => $this->hstsHeader($site),
         ]);
     }
 
-    /** บล็อก HTTP ต่างกันตามโหมด — บังคับ HTTPS แล้วต้อง redirect ทุกอย่างที่ไม่ใช่ acme */
+    /** The HTTP block differs by mode — forced HTTPS has to redirect everything that isn't acme */
     private function httpSection(Site $site, SafeBlock $body): SafeBlock
     {
         if ($site->sslMode !== 'forced') {
             return $body;
         }
 
-        // location ^~ ของ acme ด้านบนมีลำดับความสำคัญเหนือ location / นี้อยู่แล้ว
-        // จึงไม่ต้องเขียนเงื่อนไขยกเว้นซ้ำเหมือนที่ต้องทำใน Apache
+        // The acme location ^~ above already takes priority over this location /,
+        // so there's no need to write a duplicate exception the way Apache requires
         return new SafeBlock(
-            "\n    # บังคับ HTTPS — เส้นทางตรวจสอบของ Let's Encrypt ด้านบนถูกจับก่อนด้วย ^~\n"
+            "\n    # Forced HTTPS — Let's Encrypt's validation path above is already matched first via ^~\n"
             . "    location / {\n"
             . "        return 301 https://\$host\$request_uri;\n"
             . '    }',
@@ -204,7 +212,7 @@ final class NginxDriver implements WebServerDriver
     }
 
     /**
-     * HSTS ใส่เฉพาะตอนบังคับ HTTPS เท่านั้น — เหตุผลเดียวกับ ApacheDriver
+     * HSTS is only ever added when HTTPS is forced — same reasoning as ApacheDriver
      */
     private function hstsHeader(Site $site): SafeBlock
     {
@@ -217,7 +225,7 @@ final class NginxDriver implements WebServerDriver
         );
     }
 
-    /** ที่อยู่ของใบรับรองที่ใช้จริง — ใบของ Let's Encrypt มาก่อนใบที่เซ็นเอง */
+    /** The genuinely-used certificate's location — a Let's Encrypt certificate wins over a self-signed one */
     public function certificatePath(Site $site, Executor $executor): string
     {
         $selfSigned = CertbotManager::SELF_SIGNED_DIR . '/' . $site->domain;
@@ -231,10 +239,11 @@ final class NginxDriver implements WebServerDriver
     }
 
     /**
-     * ตรวจ config ทั้งหมดด้วย nginx ตัวจริง
+     * Validates the whole config with the real nginx binary
      *
-     * เลือกคำสั่งตาม config tree ที่กำลังตรวจเหมือน ApacheDriver:
-     * tree ของระบบใช้ `nginx -t` เปล่า ๆ ส่วน tree อื่น (sandbox) ต้องชี้ไฟล์หลักให้ชัด
+     * Picks its command based on which config tree is being validated, the
+     * same as ApacheDriver: the system's own tree uses a bare `nginx -t`,
+     * while any other tree (sandbox) has to point explicitly at the main config file.
      */
     public function testConfig(Executor $executor): array
     {
@@ -246,20 +255,20 @@ final class NginxDriver implements WebServerDriver
 
         $result = $executor->exec($argv, timeout: 20);
 
-        // nginx -t เขียนผลลัพธ์ลง stderr แม้ตอนผ่าน ("syntax is ok")
+        // nginx -t writes its result to stderr even when it passes ("syntax is ok")
         $output = trim($result->stderr) !== '' ? $result->stderr : $result->stdout;
 
         return [$result->ok(), $output];
     }
 
-    /** ดูรหัสออกด้วยเสมอ — reload ที่ล้มเงียบ ๆ ทำให้ค่าตั้งใหม่ไม่มีผลโดยไม่มีใครรู้ */
+    /** The exit code is always checked — a reload that fails silently leaves new config with no effect, with nobody knowing */
     public function reload(Executor $executor): void
     {
         $result = $executor->exec([$executor->path('/usr/bin/systemctl'), 'reload', $this->unit()], timeout: 30);
 
         if (!$result->ok()) {
             throw new ExecutionFailed(sprintf(
-                "เขียนค่าตั้งเรียบร้อยแล้วแต่สั่ง reload %s ไม่สำเร็จ — ค่าตั้งใหม่จะยังไม่มีผลจนกว่าจะ reload สำเร็จ\n\n%s",
+                "The configuration was written successfully, but reloading %s failed — the new configuration will have no effect until the reload succeeds\n\n%s",
                 $this->unit(),
                 trim($result->stderr ?: $result->stdout),
             ));
@@ -271,7 +280,7 @@ final class NginxDriver implements WebServerDriver
         return $executor->exists($executor->path(self::CONFIG_ROOT));
     }
 
-    /** ไดเรกทอรีที่เก็บ vhost — ใช้ตอนสร้างโครงสร้างครั้งแรก */
+    /** The directory holding vhosts — used when scaffolding for the first time */
     public static function sitesDir(): string
     {
         return self::SITES_DIR;

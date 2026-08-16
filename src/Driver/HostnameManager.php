@@ -10,41 +10,49 @@ use Phpcp\Agent\ValidationError;
 use Phpcp\Support\BinaryPath;
 
 /**
- * ชื่อโฮสต์ของเครื่อง — อ่านและเปลี่ยนจากหน้าเว็บได้
+ * The machine's hostname — readable and changeable from the web page
  *
- * ## ทำไมต้องมี
+ * ## Why this needs to exist
  *
- * ชื่อโฮสต์ไม่ใช่ของประดับ · Postfix ใช้เป็น `myhostname` ตอนแนะนำตัวกับเซิร์ฟเวอร์เมล
- * ปลายทาง (ปลายทางที่ตรวจเข้มปฏิเสธเมลจากเครื่องที่ชื่อไม่ตรงกับ rDNS) และเป็นชื่อที่
- * ใช้ขอใบรับรองให้ตัวหน้าจัดการเอง · เดิมเปลี่ยนได้จาก `hostnamectl` ที่คอนโซลเท่านั้น
- * ซึ่งขัดกับหลักของ panel ที่ว่าสิ่งที่ต้องตั้งตอนติดตั้งต้องแก้จากหน้าเว็บได้ภายหลัง
+ * A hostname isn't decoration · Postfix uses it as `myhostname` when
+ * introducing itself to a destination mail server (a destination with
+ * strict checks rejects mail from a machine whose name doesn't match its
+ * rDNS), and it's also the name used to request a certificate for the
+ * panel's own login page · this used to be changeable only through
+ * `hostnamectl` at the console, which goes against the panel's own
+ * principle that anything set at install time must remain editable from
+ * the web page afterward.
  *
- * ## `/etc/hosts` ต้องแก้ตามเสมอ
+ * ## `/etc/hosts` must always be updated to match
  *
- * `hostnamectl set-hostname` เปลี่ยนแค่ชื่อใน kernel — **ไม่แตะ `/etc/hosts`**
- * ผลคือ `hostname -f` ต้องพึ่ง DNS ล้วน ๆ ถ้า DNS ยังไม่กระจายหรือล่ม คำสั่งนั้นจะ
- * ค้างจนหมดเวลาแล้วคืนชื่อสั้น ซึ่งลามไปทำให้ Postfix แนะนำตัวด้วยชื่อผิดและ
- * `MailReadiness` รายงานผิด · เครื่องนี้เป็นตัวอย่าง: `/etc/hosts` มีแต่ `localhost`
- * บรรทัดเดียว FQDN จึงมาจาก DNS ทั้งหมด
+ * `hostnamectl set-hostname` only changes the name inside the kernel — **it
+ * never touches `/etc/hosts`** — the result is that `hostname -f` has to
+ * rely entirely on DNS; if DNS hasn't propagated yet or is down, that
+ * command hangs until it times out and falls back to the short name, which
+ * cascades into Postfix introducing itself with the wrong name and
+ * `MailReadiness` reporting incorrectly · this very machine is an example:
+ * `/etc/hosts` has only a single `localhost` line, so its FQDN comes entirely from DNS.
  *
- * บรรทัด `127.0.1.1` เป็นธรรมเนียมของ Debian/Ubuntu สำหรับชื่อเครื่องที่ไม่ผูกกับ
- * การ์ดเน็ตใบใดใบหนึ่ง — ตรงข้ามกับการชี้ `127.0.0.1` ซึ่งจะทับรายการของ `localhost`
+ * The `127.0.1.1` line is Debian/Ubuntu's own convention for a hostname
+ * that isn't tied to any one network card — the opposite of pointing at
+ * `127.0.0.1`, which would overwrite `localhost`'s own entry.
  *
- * ## สิ่งที่ **ไม่** ทำให้
+ * ## What this deliberately does **not** do
  *
- * ไม่แก้ rDNS (ต้องขอกับผู้ให้บริการคลาวด์) ไม่ขอใบรับรองใหม่ และไม่รีสตาร์ต Postfix
- * — ทั้งสามอย่างเป็นการตัดสินใจแยกที่ผู้ดูแลควรสั่งเอง ผู้เรียกได้รายการนั้นกลับไป
- * เพื่อบอกต่อ ไม่ใช่ให้ระบบทำเงียบ ๆ แล้วเมลล่มโดยไม่มีใครรู้ว่าเพราะอะไร
+ * Never fixes rDNS (has to be requested from the cloud provider), never
+ * requests a new certificate, and never restarts Postfix — all three are
+ * separate decisions an admin should make deliberately · a caller gets that
+ * list back to pass along, instead of the system doing it silently and mail breaking with nobody knowing why.
  */
 final class HostnameManager
 {
     public const HOSTS_FILE = '/etc/hosts';
 
-    /** @var list<string> hostnamectl อยู่ /usr/bin บน Debian/Ubuntu · /bin บางระบบ */
+    /** @var list<string> hostnamectl lives at /usr/bin on Debian/Ubuntu · /bin on some other systems */
     private const HOSTNAMECTL_PATHS = ['/usr/bin/hostnamectl', '/bin/hostnamectl'];
 
     /**
-     * ชื่อที่ตั้งอยู่ตอนนี้
+     * The currently-set name
      *
      * @return array{hostname:string,short:string,fqdn_resolves:bool}
      */
@@ -60,13 +68,13 @@ final class HostnameManager
         return [
             'hostname' => $static,
             'short' => $short,
-            // มีบรรทัดใน /etc/hosts ไหม — ตัวชี้ว่าชื่อเต็มใช้ได้โดยไม่ต้องพึ่ง DNS
+            // Is there a line in /etc/hosts? — an indicator that the full name resolves without relying on DNS
             'fqdn_resolves' => $static !== '' && $this->hostsHas($executor, $static),
         ];
     }
 
     /**
-     * ตั้งชื่อใหม่ พร้อมดูแล `/etc/hosts` ให้สอดคล้อง
+     * Sets a new name, keeping `/etc/hosts` in sync with it
      *
      * @return array{hostname:string,previous:string,hosts_updated:bool,follow_up:list<string>}
      */
@@ -91,7 +99,7 @@ final class HostnameManager
 
         if (!$result->ok()) {
             throw new ExecutionFailed(
-                'ตั้งชื่อโฮสต์ไม่สำเร็จ: ' . (trim($result->stderr) ?: trim($result->output())),
+                'Failed to set the hostname: ' . (trim($result->stderr) ?: trim($result->output())),
             );
         }
 
@@ -99,22 +107,23 @@ final class HostnameManager
             'hostname' => $hostname,
             'previous' => $previous,
             'hosts_updated' => $this->syncHostsFile($executor, $hostname),
-            // สิ่งที่ผู้ดูแลต้องตามไปทำเอง — ระบบทำให้ไม่ได้หรือไม่ควรทำเงียบ ๆ
+            // Things the admin has to go do themselves — the system either can't do these, or shouldn't do them silently
             'follow_up' => [
-                sprintf('ตั้ง rDNS ของไอพีให้ชี้กลับมาที่ %s ที่ผู้ให้บริการคลาวด์ — เมลปลายทางที่ตรวจเข้มจะปฏิเสธถ้าไม่ตรง', $hostname),
-                'ขอใบรับรองใหม่ให้ชื่อนี้ถ้าจะใช้กับหน้าจัดการหรือเมล',
-                'รีสตาร์ต Postfix เพื่อให้แนะนำตัวด้วยชื่อใหม่ (ถ้าเปิดเมลไว้)',
+                sprintf("Set the IP's rDNS to point back at %s at the cloud provider — a destination with strict checks will reject mail if it doesn't match", $hostname),
+                'Request a new certificate for this name if it will be used for the panel or for mail',
+                'Restart Postfix so it introduces itself with the new name (if mail is enabled)',
             ],
         ];
     }
 
     /**
-     * ให้ `/etc/hosts` มีบรรทัดของชื่อเต็มเสมอ — เขียนทับบรรทัด `127.0.1.1` เดิมถ้ามี
+     * Ensures `/etc/hosts` always has a line for the full name — overwrites the existing `127.0.1.1` line if there is one
      *
-     * แก้เฉพาะบรรทัดนั้นบรรทัดเดียว ไม่แตะที่เหลือ — ไฟล์นี้มักมีรายการที่ผู้ดูแล
-     * เพิ่มเอง (เครื่องในวงแลน, การชี้โดเมนทดสอบ) การเขียนทั้งไฟล์คือการลบของคนอื่น
+     * Only ever edits that one line, never touches the rest — this file
+     * often has entries an admin added by hand (a machine on the LAN,
+     * pointing a test domain) — writing the whole file would delete someone else's entries.
      *
-     * @return bool มีการเปลี่ยนแปลงจริงหรือไม่
+     * @return bool whether anything genuinely changed
      */
     private function syncHostsFile(Executor $executor, string $hostname): bool
     {
@@ -135,7 +144,7 @@ final class HostnameManager
 
         foreach ($lines as $line) {
             if (preg_match('/^\s*127\.0\.1\.1\s/', $line) === 1) {
-                // บรรทัดของเราเอง — แทนที่ ไม่ใช่เพิ่มซ้ำจนมีหลายบรรทัดขัดกัน
+                // This is our own line — replaced, not appended again into several conflicting lines
                 if (!$replaced) {
                     $out[] = $wanted;
                     $replaced = true;
@@ -148,7 +157,7 @@ final class HostnameManager
         }
 
         if (!$replaced) {
-            // วางไว้หลัง localhost ซึ่งเป็นบรรทัดแรกตามธรรมเนียม — ถ้าหาไม่เจอก็ต่อท้าย
+            // Placed right after localhost, its conventional first line — appended at the end if that can't be found
             $at = null;
             foreach ($out as $i => $line) {
                 if (preg_match('/^\s*127\.0\.0\.1\s/', $line) === 1) {
@@ -198,29 +207,31 @@ final class HostnameManager
     }
 
     /**
-     * ชื่อโฮสต์ต้องสะอาดพอจะเขียนลง `/etc/hosts` และส่งให้ `hostnamectl` ได้
+     * A hostname has to be clean enough to write into `/etc/hosts` and pass to `hostnamectl`
      *
-     * เข้มกว่าที่ RFC อนุญาตโดยตั้งใจ: ห้ามขึ้นต้น/ลงท้ายด้วยขีดหรือจุด ห้ามจุดติดกัน
-     * ห้าม label ยาวเกิน 63 ตัว และความยาวรวมไม่เกิน 253 · ค่านี้ถูกนำไปเขียนลงไฟล์
-     * ของระบบและส่งเป็นอาร์กิวเมนต์ จึงต้องกันที่ต้นทาง ไม่ใช่หวังว่าปลายทางจะตรวจให้
+     * Deliberately stricter than what the RFC actually permits: no leading
+     * or trailing hyphen or dot, no consecutive dots, no label longer than
+     * 63 characters, total length no more than 253 · this value gets
+     * written into a system file and passed as a command argument, so it
+     * has to be guarded at the source, not left hoping the destination validates it.
      */
     public static function assertHostname(string $hostname): string
     {
         $hostname = strtolower(trim($hostname));
 
         if ($hostname === '') {
-            throw new ValidationError('ต้องระบุชื่อโฮสต์');
+            throw new ValidationError('A hostname must be specified');
         }
 
         if (strlen($hostname) > 253) {
-            throw new ValidationError('ชื่อโฮสต์ยาวเกิน 253 ตัวอักษร');
+            throw new ValidationError('Hostname exceeds 253 characters');
         }
 
         if (preg_match('/^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))*$/', $hostname) !== 1) {
             throw new ValidationError(
-                "ชื่อโฮสต์ไม่ถูกต้อง: {$hostname}\n\n"
-                . 'ใช้ได้เฉพาะ a-z 0-9 และขีด คั่นด้วยจุด · แต่ละส่วนยาวไม่เกิน 63 ตัว '
-                . 'และห้ามขึ้นต้นหรือลงท้ายด้วยขีด',
+                "Invalid hostname: {$hostname}\n\n"
+                . 'Only a-z, 0-9, and hyphens are allowed, separated by dots · each part must be '
+                . 'no more than 63 characters, and must not start or end with a hyphen',
             );
         }
 
