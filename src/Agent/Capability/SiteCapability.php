@@ -25,10 +25,9 @@ use Phpcp\Security\Permissions;
 use Phpcp\Support\Validator;
 
 /**
- * ฐานร่วมของ capability ที่ทำงานกับเว็บไซต์
+ * The shared base for capabilities that work with websites
  *
- * รวมการประกอบ driver และการโหลดเว็บไซต์ไว้ที่เดียว เพื่อให้ทุก capability
- * เห็นเส้นทางไฟล์และเวอร์ชัน PHP เดียวกันเสมอ
+ * Keeps assembling drivers and loading websites in one place, so every capability always sees the same file paths and PHP version.
  */
 abstract class SiteCapability implements Capability
 {
@@ -41,12 +40,14 @@ abstract class SiteCapability implements Capability
     }
 
     /**
-     * ตัวเดียวกับ provisioner() แต่เรียกได้จากนอกลำดับชั้นนี้
+     * The same thing as provisioner(), but callable from outside this hierarchy
      *
-     * `customer.*` บางตัวต้องเขียน vhost/pool ใหม่ (เช่นตอนเปลี่ยนรูปทรงไฟล์ของบัญชี)
-     * แต่สืบทอดจาก `CustomerCapability` จึงเข้าถึงเมธอด protected ตัวบนไม่ได้ ·
-     * ให้เรียกทางนี้แทนการประกอบ driver ขึ้นเองซ้ำ — ประกอบเองแปลว่าอีกไม่นาน
-     * สองที่จะเห็นเว็บเซิร์ฟเวอร์หรือ shared_owner ไม่ตรงกัน
+     * Some `customer.*` capabilities have to rewrite a vhost/pool (e.g. when
+     * an account's file layout changes), but inherit from
+     * `CustomerCapability`, so they can't reach the protected method above ·
+     * call this instead of assembling a driver by hand again — assembling it
+     * separately means sooner or later the two places disagree about which
+     * web server or shared_owner is in use.
      */
     public static function provisionerFor(Context $context): SiteProvisioner
     {
@@ -60,14 +61,18 @@ abstract class SiteCapability implements Capability
     }
 
     /**
-     * เลือกเว็บเซิร์ฟเวอร์ตามค่าตั้ง
+     * Picks the web server driver to match the setting
      *
-     * **ฐานข้อมูลมาก่อน `config.php`** — ค่านี้ต้องเปลี่ยนได้จากหน้าจอ ไม่ใช่ให้ผู้ดูแล
-     * ไป `sed` ไฟล์เอาเอง · `config.php` ยังเป็นค่าเริ่มต้นสำหรับเครื่องที่ติดตั้งไว้
-     * ก่อนหน้านี้และยังไม่เคยเลือกจากหน้าจอ (ค่าในตารางเป็นสตริงว่าง)
+     * **The database wins over `config.php`** — this value has to be
+     * changeable from the screen, not left to an admin `sed`-ing the file by
+     * hand · `config.php` is still the default for a machine set up before
+     * this existed, and that never picked anything from the screen (the
+     * table's value is an empty string).
      *
-     * ค่าที่ไม่รู้จักตกกลับไปใช้ Apache แทนที่จะโยน error — ถ้าพิมพ์ผิดแล้วระบบไม่ยอม
-     * ทำงานเลย ผู้ดูแลจะเข้าหน้าเว็บไปแก้ค่าไม่ได้ด้วย กลายเป็นล็อกตัวเองออกจากระบบ
+     * An unrecognized value falls back to Apache instead of throwing — if a
+     * typo made the system refuse to run at all, the admin couldn't even get
+     * into the web page to fix the value, effectively locking themselves out
+     * of the system.
      */
     protected static function webServer(Context $context, Template $templates): WebServerDriver
     {
@@ -75,7 +80,7 @@ abstract class SiteCapability implements Capability
 
         return match (self::webServerMode($context)) {
             'nginx' => new NginxDriver($templates, $localhost),
-            // nginx ชั้นหน้า + Apache ชั้นหลัง — โหมดเดียวที่ .htaccess ใช้งานได้บน nginx
+            // nginx in front + Apache behind — the only mode where .htaccess works on nginx
             'nginx-proxy' => new NginxProxyDriver(
                 $templates,
                 (new SettingsRepository($context->db))->bool('webserver.static_by_nginx'),
@@ -86,10 +91,12 @@ abstract class SiteCapability implements Capability
     }
 
     /**
-     * http://localhost ของเครื่องพัฒนา — null เมื่อไม่ได้ตั้ง `sites.localhost_docroot`
+     * The dev machine's http://localhost — null when `sites.localhost_docroot` isn't set
      *
-     * อ่านจากไฟล์ตั้งค่าอย่างเดียว ไม่ใช่ตารางตั้งค่า เพราะเป็นคุณสมบัติของ**เครื่อง**
-     * ไม่ใช่ของผู้ใช้ — และไม่ควรมีปุ่มบนหน้าเว็บที่กดแล้วเสิร์ฟโฟลเดอร์ไหนก็ได้บนเครื่อง
+     * Read only from the config file, never the settings table, because it's
+     * a property of the **machine**, not the user — and there should never
+     * be a button on a web page that, when clicked, serves any folder on the
+     * machine at all.
      */
     protected static function localhostSite(Context $context): ?LocalhostSite
     {
@@ -100,7 +107,7 @@ abstract class SiteCapability implements Capability
             : new LocalhostSite($docroot, $context->config->localhostPhp());
     }
 
-    /** โหมดที่ใช้งานอยู่จริง — ตารางตั้งค่ามาก่อน แล้วค่อยถอยไป config.php */
+    /** The mode genuinely in use — the settings table wins, falling back to config.php */
     public static function webServerMode(Context $context): string
     {
         $stored = trim((new SettingsRepository($context->db))->get('webserver.mode'));
@@ -116,23 +123,25 @@ abstract class SiteCapability implements Capability
         return new SiteRepository($context->db);
     }
 
-    /** โหลดเว็บไซต์ตาม id พร้อม alias — โยน error ถ้าไม่พบ */
+    /** Loads a website by id, with its aliases — throws if not found */
     protected function loadSite(Context $context, int $siteId): Site
     {
         $site = $this->repository($context)->load($siteId);
 
         if ($site === null) {
-            throw new ValidationError("ไม่พบเว็บไซต์รหัส {$siteId}");
+            throw new ValidationError("Website {$siteId} was not found");
         }
 
         return $site;
     }
 
     /**
-     * ผู้ดูแลเว็บไซต์แตะได้เฉพาะเว็บของตัวเอง
+     * A website admin can only touch their own site
      *
-     * ตรวจซ้ำที่ชั้นนี้แม้ web tier ตรวจไปแล้ว เพราะ agent ต้องไม่เชื่อผู้เรียก —
-     * ใบรับรองผูกกับโดเมน ถ้าข้ามการตรวจนี้ได้ ก็ขอใบของโดเมนคนอื่นได้ทันที
+     * Checked again at this layer even though the web tier already checked,
+     * because the agent must never trust the caller — a certificate is
+     * bound to a domain, and skipping this check would mean requesting
+     * someone else's domain's certificate immediately.
      */
     protected function assertSiteAccess(Context $context, int $siteId): void
     {
@@ -149,54 +158,55 @@ abstract class SiteCapability implements Capability
         );
 
         if ($owned === 0) {
-            throw new PermissionDenied('คุณไม่มีสิทธิ์กับเว็บไซต์ที่ระบุ');
+            throw new PermissionDenied('You do not have permission over the specified website');
         }
     }
 
-    /** ตรวจเวอร์ชัน PHP ว่าอยู่ในรายการที่ระบบรู้จัก */
+    /** Checks the PHP version is one the system recognizes */
     protected static function assertPhpVersion(string $version): string
     {
         $version = Validator::phpVersion($version);
 
         if (!in_array($version, ServiceCatalog::PHP_VERSIONS, true)) {
-            throw new ValidationError("ระบบไม่รองรับ PHP เวอร์ชัน {$version}");
+            throw new ValidationError("PHP version {$version} is not supported");
         }
 
         return $version;
     }
 
     /**
-     * ตรวจสอบว่าเป็นเครื่องนักพัฒนาในเครื่อง/สภาวะทดสอบหรือไม่
+     * Checks whether this is a local developer machine / test environment
      *
-     * ตัวเลือก:
-     *   - ถ้า config มี log.force_hosts_update_for_test_domains = true
-     *     จะแก้ไข /etc/hosts สำหรับโดเมน .test เสมอ แม้มี BIND/named รันอยู่
-     *   - ถ้าไม่มี DNS server (named/bind9) รันอยู่ → เป็น local environment
+     * Two ways to trigger it:
+     *   - if config has log.force_hosts_update_for_test_domains = true,
+     *     always edits /etc/hosts for a .test domain, even with BIND/named running
+     *   - if no DNS server (named/bind9) is running → treated as a local environment
      *
-     * บน Server จริงๆ ไม่ต้องตั้งค่านี้ — จะไม่แตะ hosts เพราะมี DNS จัดการอยู่แล้ว
+     * A real server never needs this setting turned on — it never touches hosts, since DNS already handles it.
      *
      * @param Context $context
      */
     protected function isLocalEnvironment(\Phpcp\Agent\Executor\Executor $executor, Context $context): bool
     {
-        // ถ้าตั้งค่าให้บังคับแก้ไข hosts สำหรับโดเมน .test
+        // If set to force-edit hosts for .test domains
         if ($context->config->bool('log.force_hosts_update_for_test_domains', false)) {
             return true;
         }
 
-        // หรือถ้าไม่มี DNS server รันอยู่ (ไม่มี named หรือ bind9)
+        // Or if no DNS server is running at all (neither named nor bind9)
         $namedStatus = ServiceProbe::read($executor, 'named');
         $bind9Status = ServiceProbe::read($executor, 'bind9');
         return !($namedStatus['running'] || $bind9Status['running']);
     }
 
     /**
-     * บันทึกหรือลบข้อมูลในไฟล์ /etc/hosts สำหรับโดเมนย่อยหรือโดเมนหลัก .test
+     * Adds or removes an entry in /etc/hosts for a .test subdomain or root domain
      *
-     * อ่าน/เขียน /etc/hosts ตรง ๆ ผ่าน PHP native ไม่ผ่าน executor เพราะ:
-     *   - agentd รันด้วย root อยู่แล้ว มีสิทธิ์เขียนโดยตรง
-     *   - /etc/hosts ไม่ใช่ config ของ web service จึงไม่ควรถูก SandboxExecutor remap
-     *     ซึ่งจะทำให้เขียนเข้า prefix/etc/hosts แทนที่จะเป็นไฟล์จริง
+     * Reads/writes /etc/hosts directly through native PHP, not through the executor, because:
+     *   - agentd already runs as root, so it can write directly
+     *   - /etc/hosts isn't a web service config file, so it must never be
+     *     remapped by SandboxExecutor, which would write into
+     *     prefix/etc/hosts instead of the real file
      */
     protected function updateHostsFile(\Phpcp\Agent\Executor\Executor $executor, string $domain, bool $add): void
     {
@@ -206,7 +216,7 @@ abstract class SiteCapability implements Capability
 
         $hostsPath = '/etc/hosts';
 
-        // อ่านตรง ๆ ด้วย PHP native — ไม่ผ่าน executor เพื่อหลีกเลี่ยง sandbox path remap
+        // Read directly with native PHP — not through the executor, to avoid the sandbox's path remap
         $content = @file_get_contents($hostsPath);
         if ($content === false) {
             return;
@@ -239,8 +249,8 @@ abstract class SiteCapability implements Capability
         $newContent = implode("\n", $newLines);
         $newContent = rtrim($newContent) . "\n";
 
-        // เขียนแบบ atomic ผ่านไฟล์ชั่วคราวแล้ว rename เพื่อกันไฟล์ครึ่ง ๆ
-        // ทำงานได้เฉพาะเมื่อ process เป็น root (agentd) เท่านั้น
+        // Written atomically through a temp file then renamed, to avoid a half-written file
+        // Only works when the process is root (agentd)
         $tmp = $hostsPath . '.tmp.' . bin2hex(random_bytes(4));
         if (@file_put_contents($tmp, $newContent, LOCK_EX) === false) {
             return;

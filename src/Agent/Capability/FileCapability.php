@@ -16,18 +16,20 @@ use Phpcp\Support\PathGuard;
 use Phpcp\Support\Validator;
 
 /**
- * ฐานร่วมของ capability ทุกตัวในตัวจัดการไฟล์
+ * The shared base for every capability in the file manager
  *
- * ทุกงานไฟล์เดินตามลำดับเดียวกันเสมอ และลำดับนี้คือสิ่งที่กันไม่ให้ตัวจัดการไฟล์
- * กลายเป็นช่องอ่าน/เขียนไฟล์ทั้งเครื่อง:
+ * Every file operation always follows the same order, and that order is
+ * exactly what stops the file manager from turning into a way to read/write
+ * any file on the machine:
  *
- *   1. ตรวจรูปแบบเส้นทาง (PathGuard::clean) ก่อนแตะดิสก์
- *   2. ตรวจว่าผู้สั่งงานเป็นเจ้าของเว็บไซต์นั้นจริง (กัน IDOR)
- *   3. ลดสิทธิ์เป็นผู้ใช้ของเว็บไซต์ (asUser) แล้วค่อยทำงานไฟล์
- *   4. ตรวจเส้นทางหลังคลาย symlink อีกครั้งในสิทธิ์ที่ลดแล้ว
+ *   1. Check the path's shape (PathGuard::clean) before ever touching disk
+ *   2. Check the caller genuinely owns that website (blocks IDOR)
+ *   3. Drop to the website's own user (asUser), only then do the file work
+ *   4. Check the path again, after resolving symlinks, under the already-dropped privileges
  *
- * ขั้นที่ 4 ต้องอยู่ข้างใน asUser เท่านั้น เพราะ realpath() ที่รันด้วย root
- * จะเห็นไฟล์ที่ผู้ใช้เว็บไซต์เข้าไม่ถึง ผลการตรวจจึงไม่ตรงกับความจริงตอนอ่านเขียน
+ * Step 4 has to live inside asUser and nowhere else — a realpath() run as
+ * root would see files the website's user can't reach at all, so its check
+ * result wouldn't match reality at actual read/write time.
  */
 abstract class FileCapability implements Capability
 {
@@ -40,10 +42,11 @@ abstract class FileCapability implements Capability
     }
 
     /**
-     * ส่วนของ argument ที่ทุกตัวใช้เหมือนกัน — คีย์ขอบเขต กับ เส้นทางสัมพัทธ์ในขอบเขตนั้น
+     * The argument shape every one of them shares — a scope key, plus a path relative to that scope
      *
-     * ผู้ใช้ไม่เคยส่ง "เส้นทางเต็ม" มาเลย ส่งได้แค่คีย์ขอบเขตที่ระบบประกาศไว้
-     * กับเส้นทางที่อยู่ภายใต้ขอบเขตนั้น — เส้นทางจริงประกอบขึ้นที่ agent ที่เดียว
+     * A caller never sends a "full path" at all — only a scope key the
+     * system already declared, plus a path underneath that scope — the real
+     * path is assembled in exactly one place, the agent.
      *
      * @param array<string,mixed> $args
      * @return array{root:string,path:string}
@@ -54,17 +57,18 @@ abstract class FileCapability implements Capability
             'root' => Validator::pattern(
                 Validator::requireString($args, 'root', 64),
                 '/^[a-z][a-z0-9-]{0,63}$/',
-                'คีย์ขอบเขตไฟล์ไม่ถูกต้อง',
+                'Invalid file scope key',
             ),
             'path' => PathGuard::clean(Validator::optionalString($args, 'path', max: 4096))
         ];
     }
 
     /**
-     * อ่านค่าจริง/เท็จจาก argument — ฟอร์มบนหน้าเว็บส่งค่ามาเป็นข้อความเสมอ
+     * Reads a true/false value out of an argument — a web form always sends it as text
      *
-     * ยอมรับเฉพาะรูปแบบที่ตั้งใจว่า "จริง" เท่านั้น ค่าอื่นทั้งหมดถือเป็นเท็จ
-     * ไม่ใช้ (bool) ตรง ๆ เพราะสตริง '0' กับ 'false' ให้ผลต่างกันจนสับสน
+     * Only accepts the shapes deliberately meant as "true" — everything else
+     * counts as false · never cast with (bool) directly, since the strings
+     * '0' and 'false' would give confusingly different results.
      *
      * @param array<string,mixed> $args
      */
@@ -76,10 +80,12 @@ abstract class FileCapability implements Capability
     }
 
     /**
-     * เลือกขอบเขตไฟล์พร้อมตรวจสิทธิ์ — ด่านเดียวที่ตัดสินว่าใครเปิดอะไรได้
+     * Resolves the file scope while checking permission — the single gate that decides who can open what
      *
-     * ตรวจซ้ำที่ชั้น agent ทั้งที่ชั้นเว็บตรวจแล้ว เพราะ agent ต้องยืนหยัดได้ลำพัง
-     * ถ้าชั้นเว็บถูกเจาะ (ARCHITECTURE §4.2) — รายละเอียดนโยบายอยู่ใน FileRoots
+     * Checked again at the agent layer even though the web layer already
+     * checked, because the agent has to be able to stand on its own if the
+     * web layer is ever compromised (ARCHITECTURE §4.2) — policy detail
+     * lives in FileRoots.
      *
      * @param array<string,mixed> $args
      * @throws PermissionDenied
@@ -90,17 +96,20 @@ abstract class FileCapability implements Capability
     }
 
     /**
-     * โควตาดิสก์ของเจ้าของเว็บรับการเขียนครั้งนี้ไหวหรือไม่
+     * Can the website owner's disk quota take this write?
      *
-     * **ตัวจัดการไฟล์ไม่เคยมีด่านนี้เลย** ทั้งที่เป็นทางที่เขียนข้อมูลเข้าเครื่องได้ตรง
-     * ที่สุด — อัปโหลด เขียนไฟล์ แตกไฟล์ บีบไฟล์ ล้วนเดินผ่านที่นี่โดยไม่มีใครถามว่า
-     * บัญชีนี้ยังมีที่เหลือไหม · บัญชีเดียวจึงเติมดิสก์ที่ใช้ร่วมกันจนเว็บของลูกค้า
-     * รายอื่นเขียน session หรือไฟล์อัปโหลดไม่ได้
+     * **The file manager never had this gate at all**, despite being the
+     * most direct way to write data onto the machine — uploading, writing a
+     * file, unzipping, zipping all ran through here without anyone ever
+     * asking whether this account had any room left · a single account
+     * could fill the shared disk until other customers' sites could no
+     * longer write a session or an upload at all.
      *
-     * ขอบเขตระดับเครื่องข้ามด่านนี้ เพราะเปิดให้เฉพาะผู้ดูแลระดับเซิร์ฟเวอร์ ซึ่งไม่ถูก
-     * จำกัดโควตาอยู่แล้ว (กฎเดียวกับ QuotaChecker) และไฟล์ระบบไม่ได้เป็นของบัญชีไหน
+     * A machine-level scope skips this gate, since it's only ever open to a
+     * server admin, who already isn't quota-limited (the same rule as
+     * QuotaChecker) and system files don't belong to any one account.
      *
-     * @param int $bytes ขนาดที่กำลังจะเขียน · {@see DiskQuota::UNKNOWN} เมื่อยังไม่รู้
+     * @param int $bytes the size about to be written · {@see DiskQuota::UNKNOWN} when not yet known
      * @throws ValidationError
      */
     protected function assertQuotaAllows(Context $context, FileScope $scope, int $bytes = DiskQuota::UNKNOWN): void
@@ -122,9 +131,9 @@ abstract class FileCapability implements Capability
     }
 
     /**
-     * รากของขอบเขตตามที่ executor ของโหมดนั้นมองเห็น
+     * The scope's root, as that mode's executor sees it
      *
-     * โหมดทดสอบเติม prefix ให้อัตโนมัติ เส้นทางที่ capability ใช้จึงไม่ต้องรู้เรื่องโหมดเลย
+     * Test mode adds its prefix automatically, so the path a capability uses never has to know about mode at all.
      */
     protected function root(Executor $executor, FileScope $scope): string
     {
@@ -132,10 +141,13 @@ abstract class FileCapability implements Capability
     }
 
     /**
-     * ทำงานไฟล์ในสิทธิ์ของเว็บไซต์ โดยส่ง "ตัวคลี่เส้นทาง" ให้แทนเส้นทางสำเร็จรูป
+     * Runs file work under the website's own privileges, passing a "path
+     * resolver" instead of an already-resolved path
      *
-     * งานอย่างย้าย/คัดลอก/บีบอัดมีทั้งต้นทางและปลายทาง และทั้งคู่ต้องถูกคลี่ symlink
-     * ตรวจซ้ำ *ภายในสิทธิ์ที่ลดแล้ว* เหมือนกัน จึงต้องส่งตัวคลี่เข้าไปให้เรียกเองได้หลายครั้ง
+     * Work like move/copy/zip has both a source and a destination, and both
+     * have to be resolved past symlinks and re-checked *under the same
+     * already-dropped privileges* — so the resolver itself is passed in, to
+     * be called as many times as needed.
      *
      * @param callable(callable(string,bool=):string,string):array<string,mixed> $work
      * @return array<string,mixed>
@@ -145,20 +157,20 @@ abstract class FileCapability implements Capability
         $root = $this->root($executor, $scope);
         $mutating = $this->isMutating();
 
-        // ขอบเขตของเว็บไซต์ลดสิทธิ์เป็นเจ้าของเว็บก่อนแตะไฟล์
-        // ขอบเขตระดับเซิร์ฟเวอร์ทำงานด้วยสิทธิ์ของ agent เอง เพราะไฟล์ระบบ
-        // ไม่ได้เป็นของผู้ใช้คนใดคนหนึ่ง — จึงเปิดให้เฉพาะผู้ดูแลระดับเซิร์ฟเวอร์
+        // A website scope drops to that site owner's privileges before touching any file.
+        // A server scope runs under the agent's own privileges, since system
+        // files don't belong to any one user — so it's only ever open to a server admin.
         return $executor->asUser($scope->systemUser, static function () use ($executor, $root, $work, $mutating) {
             $realRoot = $executor->realPath($root);
             if ($realRoot === null) {
-                throw new ValidationError('ยังไม่มีไดเรกทอรีนี้บนเครื่อง');
+                throw new ValidationError('This directory does not exist on the machine yet');
             }
 
             $resolve = static function (string $relative, bool $mustExist = true) use ($executor, $root, $mutating): string {
                 $real = PathGuard::resolve($executor, $root, PathGuard::join($root, $relative), $mustExist);
 
-                // ไฟล์ของ Control Panel เองแตะไม่ได้ทั้งอ่านและเขียน
-                // กันทั้งการทำลายตัวเองจนกู้ไม่ได้ และการอ่าน panel.db ที่มี hash รหัสผ่าน
+                // The control panel's own files can't be touched — neither read nor written.
+                // Blocks both unrecoverably breaking itself, and reading panel.db, which holds password hashes.
                 FileRoots::assertReadable($real);
 
                 if ($mutating) {
@@ -173,10 +185,10 @@ abstract class FileCapability implements Capability
     }
 
     /**
-     * ทำงานไฟล์กับเส้นทางเดียว พร้อมส่งเส้นทางจริงที่ตรวจแล้วให้
+     * Runs file work against a single path, passing along the checked, resolved real path
      *
-     * @param callable(string,string):array<string,mixed> $work รับ (รากจริง, เป้าหมายจริง)
-     * @param bool $mustExist false เมื่อเป้าหมายคือสิ่งที่กำลังจะถูกสร้างขึ้นใหม่
+     * @param callable(string,string):array<string,mixed> $work receives (real root, real target)
+     * @param bool $mustExist false when the target is something about to be newly created
      * @return array<string,mixed>
      */
     protected function withPath(
@@ -195,7 +207,7 @@ abstract class FileCapability implements Capability
     }
 
     /**
-     * แปลงข้อมูลจาก stat เป็นรูปที่หน้าจอใช้ได้ทันที
+     * Turns stat data into the shape the screen can use directly
      *
      * @param array{type:string,size:int,mode:int,mtime:int,uid:int,gid:int,link:?string} $info
      * @return array<string,mixed>

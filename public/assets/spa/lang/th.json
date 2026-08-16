@@ -803,6 +803,7 @@
     "This config file is not in the registry": "ไม่พบไฟล์ตั้งค่านี้ในทะเบียน",
     "This database user was not found": "ไม่พบผู้ใช้ฐานข้อมูลนี้ในระบบ",
     "This destination is currently disabled": "ปลายทางนี้ถูกปิดใช้งานอยู่",
+    "This directory does not exist on the machine yet": "ยังไม่มีไดเรกทอรีนี้บนเครื่อง",
     "This domain has no zone file on the server yet. That is normal when the BIND9 link is switched off, or when no DNS record has been saved since it was switched on. What you see below is built from the records in the panel — it is what the file would contain.": "โดเมนนี้ยังไม่มีไฟล์ zone อยู่บนเครื่อง ซึ่งเป็นเรื่องปกติเมื่อยังไม่ได้เปิดการเชื่อม BIND9 หรือยังไม่มีการบันทึกเรกคอร์ดใดเลยหลังเปิด · ข้อความข้างล่างประกอบจากเรกคอร์ดในระบบ คือสิ่งที่ไฟล์จะมีเมื่อถูกเขียนจริง",
     "This file cannot be edited from the web page — the panel overwrites the whole file every time a zone is added or removed, so anything edited here would silently vanish · write the value into the supplementary file instead": "ไฟล์นี้แก้จากหน้าเว็บไม่ได้ — panel เขียนทับทั้งไฟล์ทุกครั้งที่มีการเพิ่มหรือลบ zone สิ่งที่แก้ลงไปจะหายไปเงียบ ๆ · เขียนค่าที่ต้องการลงไฟล์ส่วนเสริมแทน",
     "This file is not UTF-8 text, so it cannot be edited": "ไฟล์นี้ไม่ใช่ข้อความ UTF-8 จึงแก้ไขไม่ได้",
