@@ -5,15 +5,16 @@ declare(strict_types=1);
 namespace Phpcp\Agent\Executor;
 
 /**
- * จำลอง ufw ในโหมด sandbox
+ * Simulates ufw in sandbox mode
  *
- * จำเป็นด้านความปลอดภัยเหมือน MariaDbSimulator ไม่ใช่แค่ความสะดวก:
- * /usr/sbin อยู่ในรายการ passthrough ของ SandboxExecutor (เพราะเป็นที่อยู่ของ binary)
- * ถ้าไม่จำลอง คำสั่ง `ufw --force enable` ในโหมดทดสอบจะไปเปิด firewall จริงของเครื่อง
- * และอาจตัดการเชื่อมต่อของคนที่กำลังทดสอบอยู่
+ * Needed for security reasons, same as MariaDbSimulator, not just convenience:
+ * /usr/sbin is on SandboxExecutor's passthrough list (since that's where the
+ * binary lives) — without simulating it, `ufw --force enable` in test mode would
+ * enable the machine's real firewall, and could cut off whoever is testing right now.
  *
- * เก็บสถานะไว้ใน SandboxState แล้วพิมพ์ผลลัพธ์ให้มีรูปแบบเดียวกับ ufw จริง
- * เพราะ UfwDriver อ่านผลลัพธ์นั้นด้วย regex — ถ้ารูปแบบเพี้ยน การทดสอบก็ไม่มีความหมาย
+ * State is kept in SandboxState, and output is printed in exactly the same format
+ * as real ufw, because UfwDriver parses that output with a regex — if the format
+ * drifts, the test stops meaning anything.
  */
 final class UfwSimulator implements Simulator
 {
@@ -24,7 +25,7 @@ final class UfwSimulator implements Simulator
 
     public function simulate(array $argv, SandboxState $state, ?string $stdin = null): ExecResult
     {
-        // ตัด --force ทิ้งก่อน เพราะมันแทรกอยู่คนละตำแหน่งแล้วแต่คำสั่ง
+        // Strips out --force first, since it lands in a different position depending on the command
         $args = array_values(array_filter(array_slice($argv, 1), static fn (string $a): bool => $a !== '--force'));
         $command = $args[0] ?? 'status';
 
@@ -35,7 +36,7 @@ final class UfwSimulator implements Simulator
             $command === 'disable' => $this->setActive($argv, $state, false),
             $command === 'allow' || $command === 'deny' => $this->add($argv, $state, $command, array_slice($args, 1)),
             $command === 'delete' => $this->delete($argv, $state, array_slice($args, 1)),
-            default => $this->fail($argv, "sandbox: ยังไม่รองรับคำสั่ง ufw {$command}"),
+            default => $this->fail($argv, "sandbox: the ufw {$command} command isn't supported yet"),
         };
     }
 
@@ -63,7 +64,7 @@ final class UfwSimulator implements Simulator
         return $this->out($argv, $out);
     }
 
-    /** `ufw show added` แสดงกฎที่ตั้งไว้ไม่ว่า firewall จะเปิดอยู่หรือไม่ */
+    /** `ufw show added` shows configured rules regardless of whether the firewall is enabled */
     private function showAdded(array $argv, SandboxState $state): ExecResult
     {
         $out = "Added user rules (see 'ufw status' for running firewall):\n";
@@ -139,9 +140,9 @@ final class UfwSimulator implements Simulator
     }
 
     /**
-     * แปลง argv ส่วนที่บอกขอบเขตของกฎ กลับเป็นโครงสร้าง
+     * Turns the part of argv describing a rule's scope back into a structure
      *
-     * รับได้ทั้งสองรูปแบบที่ UfwDriver สร้าง:
+     * Accepts both forms UfwDriver produces:
      *   8080/tcp
      *   from 203.0.113.5 to any port 8080 proto tcp
      *
@@ -176,7 +177,7 @@ final class UfwSimulator implements Simulator
         return $rule;
     }
 
-    /** @return string ส่วน To ของผลลัพธ์ ufw */
+    /** @return string the "To" column of ufw's output */
     private function target(array $rule): string
     {
         return $rule['protocol'] === 'any' ? $rule['port'] : $rule['port'] . '/' . $rule['protocol'];
@@ -196,8 +197,9 @@ final class UfwSimulator implements Simulator
         $data = $state->read('firewall');
 
         if ($data === []) {
-            // เริ่มด้วย firewall ที่ปิดอยู่และไม่มีกฎเลย — ตรงกับเครื่องที่เพิ่ง apt install ufw
-            // จะได้ทดสอบเส้นทาง "เปิดครั้งแรก" ซึ่งเป็นเส้นทางที่อันตรายที่สุดได้จริง
+            // Starts with the firewall disabled and no rules at all — matches a
+            // machine that just ran apt install ufw, so the "first enable" path,
+            // the most dangerous one, can actually be tested
             $data = ['active' => false, 'rules' => []];
             $state->write('firewall', $data);
         }

@@ -8,19 +8,20 @@ use Phpcp\Agent\ExecutionFailed;
 use Phpcp\Kernel\Mode;
 
 /**
- * โหมดทดสอบ — ARCHITECTURE §6.3
+ * Sandbox mode — ARCHITECTURE §6.3
  *
- * ทำสองอย่าง:
- *   1. แมปทุก path เข้า prefix  → เขียนไฟล์ config ได้จริงโดยไม่แตะ /etc ของเครื่อง
- *   2. จำลองคำสั่งที่เปลี่ยนสถานะระบบ (systemctl, useradd, ufw, certbot)
+ * Does two things:
+ *   1. Maps every path into the prefix → config files can be written for real without touching the machine's own /etc
+ *   2. Simulates commands that change system state (systemctl, useradd, ufw, certbot)
  *
- * คำสั่งที่ไม่มีตัวจำลอง "รันจริง" โดยเจตนา เพราะ path ถูกแมปแล้วจึงปลอดภัย
- * ตัวอย่างสำคัญ: apache2ctl -t ตรวจ vhost ที่เพิ่ง generate — ส่วนที่บั๊กบ่อยที่สุด
- * จึงยังถูกทดสอบด้วยของจริงแม้อยู่ในโหมดทดสอบ
+ * A command with no simulator "runs for real" on purpose, since its path is
+ * already mapped and therefore safe. An important example: `apache2ctl -t` checks
+ * the vhost that was just generated — the part that breaks most often — so it's
+ * still tested against the real thing even in sandbox mode.
  */
 final class SandboxExecutor implements Executor
 {
-    /** path เหล่านี้ไม่ถูกแมป เพราะต้องอ่านของจริงหรือเป็นที่อยู่ของ binary */
+    /** These paths are never mapped, because they must read the real thing, or are where a binary lives */
     private const PASSTHROUGH = [
         '/proc',
         '/sys',
@@ -51,14 +52,17 @@ final class SandboxExecutor implements Executor
         $this->simulators = [
             new SystemctlSimulator(),
             new SystemUserSimulator(),
-            // จำเป็นด้านความปลอดภัย ไม่ใช่แค่ความสะดวก — ถ้าไม่จำลอง คำสั่งฐานข้อมูล
-            // จะไปสร้าง/ลบฐานข้อมูลบน MariaDB จริงของเครื่องในโหมดทดสอบ
+            // Needed for security, not just convenience — without simulating it,
+            // database commands would create/drop databases on the machine's real
+            // MariaDB during a test run
             new MariaDbSimulator(),
-            // ด้วยเหตุผลเดียวกัน — /usr/sbin เป็น passthrough คำสั่ง ufw จริงจึงเปิด
-            // firewall ของเครื่องที่กำลังทดสอบอยู่ได้ถ้าไม่ดักไว้ตรงนี้
+            // Same reason — /usr/sbin is on the passthrough list, so the real ufw
+            // command could enable the firewall on the machine being tested, if it
+            // weren't intercepted here
             new UfwSimulator(),
-            // ด้วยเหตุผลเดียวกัน — ถ้าไม่ดัก การทดสอบจะยิงคำขอจริงไปยัง Let's Encrypt
-            // ซึ่งกินโควตาที่จำกัดต่อโดเมนและอาจล็อกโดเมนจริงของผู้ใช้
+            // Same reason again — without intercepting it, a test run would fire a
+            // real request at Let's Encrypt, burning through its per-domain quota
+            // and potentially locking a real domain of the user's
             new CertbotSimulator(),
         ];
     }
@@ -90,8 +94,9 @@ final class SandboxExecutor implements Executor
     }
 
     /**
-     * แมป absolute path เข้า prefix — เมธอดนี้ต้อง idempotent
-     * เพราะบาง capability เรียก path() เองแล้วส่งต่อให้ readFile() ซึ่งแมปซ้ำ
+     * Maps an absolute path into the prefix — this method must be idempotent,
+     * since some capabilities call path() themselves and then pass the result to
+     * readFile(), which maps it again
      */
     public function path(string $absolutePath): string
     {
@@ -126,7 +131,7 @@ final class SandboxExecutor implements Executor
         ?string $stdin = null,
     ): ExecResult {
         if ($argv === []) {
-            throw new ExecutionFailed('คำสั่งว่างเปล่า');
+            throw new ExecutionFailed('Empty command');
         }
 
         foreach ($this->simulators as $simulator) {
@@ -184,7 +189,7 @@ final class SandboxExecutor implements Executor
      */
     public function diskSpace(string $path): array
     {
-        // พื้นที่ดิสก์รายงานของจริงเสมอ — กราฟบนแดชบอร์ดจึงมีความหมายแม้อยู่ในโหมดทดสอบ
+        // Disk space always reports the real thing — so the dashboard's graph stays meaningful even in sandbox mode
         return $this->real->diskSpace($path);
     }
 
@@ -276,14 +281,15 @@ final class SandboxExecutor implements Executor
     }
 
     /**
-     * โหมดทดสอบไม่มีผู้ใช้ระบบของเว็บไซต์อยู่จริง จึงลดสิทธิ์ไม่ได้และไม่จำเป็น —
-     * ไฟล์ทั้งหมดอยู่ใต้ prefix ที่เป็นของผู้ทดสอบเองอยู่แล้ว
+     * Sandbox mode has no real website system user, so privileges can't be
+     * dropped and don't need to be — every file already lives under a prefix
+     * owned by whoever is running the test.
      *
-     * การตรวจ path ยังทำงานเหมือนโหมดจริงทุกประการ เทสต์เรื่อง traversal จึงมีความหมาย
+     * Path checking still works exactly like real mode, so traversal tests stay meaningful.
      */
     public function asUser(?string $systemUser, callable $work): array
     {
-        // null = ขอบเขตระดับเซิร์ฟเวอร์ ทำงานด้วยสิทธิ์ของ agent เอง
+        // null = server-level scope, runs with the agent's own privileges
         if ($systemUser === null || $systemUser === '') {
             return $work();
         }

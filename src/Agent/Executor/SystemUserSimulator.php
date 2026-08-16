@@ -5,15 +5,16 @@ declare(strict_types=1);
 namespace Phpcp\Agent\Executor;
 
 /**
- * จำลอง useradd / userdel / id และคำสั่งเปลี่ยนเจ้าของไฟล์ในโหมด sandbox
+ * Simulates useradd / userdel / id and file-ownership commands in sandbox mode
  *
- * จำเป็นต้องจำลองเพราะสองเหตุผล:
- *   1. การสร้างผู้ใช้ระบบจริงต้องใช้ root และแตะ /etc/passwd ของเครื่อง
- *      ซึ่งขัดกับหลักของโหมด sandbox โดยตรง
- *   2. chown/chgrp บนไฟล์ใน sandbox ต้องใช้ root เช่นกัน — ปล่อยให้รันจริงจะล้มเสมอ
- *      แล้วทำให้ทดสอบขั้นตอนสร้างเว็บไซต์ไม่ได้เลย
+ * Has to be simulated for two reasons:
+ *   1. Creating a real system user needs root and touches the machine's own
+ *      /etc/passwd, which directly breaks sandbox mode's principle
+ *   2. chown/chgrp on sandbox files also needs root — letting it run for real
+ *      would always fail, making the site-creation flow untestable entirely
  *
- * uid ที่คืนมาเป็นค่าจำลองที่คงที่ต่อชื่อผู้ใช้ เพื่อให้ผลลัพธ์ซ้ำเดิมทุกครั้ง
+ * The returned uid is a simulated value, fixed per username, so results stay
+ * repeatable every time.
  */
 final class SystemUserSimulator implements Simulator
 {
@@ -30,10 +31,10 @@ final class SystemUserSimulator implements Simulator
             'useradd' => $this->useradd($argv, $state),
             'userdel' => $this->userdel($argv, $state),
             'id' => $this->id($argv, $state),
-            // เปลี่ยนเจ้าของไฟล์ไม่มีผลใน sandbox แต่ต้องตอบว่าสำเร็จ
-            // ไม่อย่างนั้นขั้นตอนสร้างเว็บไซต์จะสะดุดตั้งแต่ต้น
+            // Changing file ownership has no effect in the sandbox, but must still report success
+            // — otherwise the site-creation flow would trip up right at the start
             'chown', 'chgrp', 'usermod' => $this->ok($argv),
-            default => $this->fail($argv, 'sandbox: ยังไม่รองรับคำสั่งนี้'),
+            default => $this->fail($argv, 'sandbox: this command isn\'t supported yet'),
         };
     }
 
@@ -41,7 +42,7 @@ final class SystemUserSimulator implements Simulator
     {
         $name = $this->lastWord($argv);
         if ($name === '') {
-            return $this->fail($argv, 'useradd: ไม่ได้ระบุชื่อผู้ใช้', 2);
+            return $this->fail($argv, 'useradd: no username specified', 2);
         }
 
         $users = $state->read('passwd');
@@ -101,7 +102,7 @@ final class SystemUserSimulator implements Simulator
         );
     }
 
-    /** argument ตัวสุดท้ายที่ไม่ใช่ option — คือชื่อผู้ใช้ */
+    /** The last argument that isn't an option — that's the username */
     private function lastWord(array $argv): string
     {
         $words = array_values(array_filter(

@@ -5,14 +5,16 @@ declare(strict_types=1);
 namespace Phpcp\Agent\Executor;
 
 /**
- * จำลอง MariaDB client ในโหมด sandbox
+ * Simulates the MariaDB client in sandbox mode
  *
- * จำเป็นด้วยเหตุผลด้านความปลอดภัยเป็นหลัก ไม่ใช่แค่ความสะดวก:
- * ถ้าไม่จำลอง คำสั่งจะไปเรียก /usr/bin/mariadb ตัวจริง แล้วสร้างหรือลบฐานข้อมูล
- * บน MariaDB จริงของเครื่อง ซึ่งขัดกับสัญญาของโหมด sandbox โดยตรง
+ * Needed mainly for security reasons, not just convenience: without simulating
+ * it, the command would call the real /usr/bin/mariadb and create or drop
+ * databases on the machine's real MariaDB, directly breaking sandbox mode's
+ * contract.
  *
- * รับ SQL ทาง stdin เหมือน client จริง แล้วตีความเฉพาะคำสั่งที่ระบบใช้จริง
- * คำสั่งที่ไม่รู้จักจะถูกปฏิเสธ ไม่ใช่เงียบผ่าน — จะได้รู้ทันทีเมื่อมีการเพิ่มคำสั่งใหม่
+ * Takes SQL over stdin like the real client, and only interprets the commands the
+ * system actually uses. An unrecognized command is rejected, not silently passed
+ * through — so a newly added command gets noticed right away.
  */
 final class MariaDbSimulator implements Simulator
 {
@@ -41,7 +43,7 @@ final class MariaDbSimulator implements Simulator
             preg_match('/^DROP USER \'([^\']+)\'@\'([^\']+)\'/i', $sql, $m) === 1 => $this->dropUser($argv, $state, $m[1], $m[2]),
             preg_match('/^ALTER USER /i', $sql) === 1 => $this->ok($argv),
             preg_match('/^(GRANT|REVOKE|FLUSH) /i', $sql) === 1 => $this->ok($argv),
-            default => $this->fail($argv, 'sandbox: ยังไม่รองรับคำสั่ง SQL นี้ — ' . mb_substr($sql, 0, 60)),
+            default => $this->fail($argv, 'sandbox: this SQL command isn\'t supported yet — ' . mb_substr($sql, 0, 60)),
         };
     }
 
@@ -128,9 +130,9 @@ final class MariaDbSimulator implements Simulator
             return $this->fail($argv, "mysqldump: Got error: Unknown database '{$database}'", 2);
         }
 
-        $sql = "-- sandbox: ไฟล์สำรองจำลองของฐานข้อมูล {$database}\n"
-            . '-- สร้างเมื่อ ' . date('Y-m-d H:i:s') . "\n"
-            . "-- ไม่ใช่ข้อมูลจริง ใช้เพื่อทดสอบขั้นตอนสำรองก่อนลบเท่านั้น\n\n"
+        $sql = "-- sandbox: a simulated backup file for database {$database}\n"
+            . '-- created ' . date('Y-m-d H:i:s') . "\n"
+            . "-- not real data, only for testing the backup-before-delete flow\n\n"
             . "CREATE DATABASE IF NOT EXISTS `{$database}`;\nUSE `{$database}`;\n";
 
         return new ExecResult($argv, 0, $sql, '', 40, simulated: true);
@@ -142,7 +144,7 @@ final class MariaDbSimulator implements Simulator
         $databases = $state->read('databases');
 
         if ($databases === []) {
-            // ค่าเริ่มต้นให้ตรงกับข้อมูลตัวอย่างที่ sandbox:seed ใส่ไว้ในฐานข้อมูลของ panel
+            // Defaults match the sample data sandbox:seed puts into the panel's own database
             $databases = [
                 'example_db' => ['bytes' => 248_000_000],
                 'shop_db' => ['bytes' => 1_450_000_000],

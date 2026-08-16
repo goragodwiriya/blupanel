@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace Phpcp\Agent\Executor;
 
 /**
- * จำลอง systemctl ในโหมด sandbox
+ * Simulates systemctl in sandbox mode
  *
- * ตอบด้วยรูปแบบเดียวกับ systemctl จริงทุกประการ — capability จึง parse ด้วยโค้ดชุดเดียว
- * ไม่ต้องรู้เลยว่ากำลังอยู่โหมดไหน (ARCHITECTURE §6.2)
+ * Answers in exactly the same format as the real systemctl — so a capability
+ * parses it with the same code either way, never needing to know which mode it's
+ * actually running in (ARCHITECTURE §6.2).
  */
 final class SystemctlSimulator implements Simulator
 {
@@ -36,7 +37,7 @@ final class SystemctlSimulator implements Simulator
                 argv: $argv,
                 exitCode: 1,
                 stdout: '',
-                stderr: "sandbox: ยังไม่รองรับคำสั่ง systemctl {$verb}",
+                stderr: "sandbox: the systemctl {$verb} command isn't supported yet",
                 durationMs: 1,
                 simulated: true,
             ),
@@ -51,7 +52,7 @@ final class SystemctlSimulator implements Simulator
     {
         $service = $services[$unit] ?? null;
 
-        // systemctl show ของหน่วยที่ไม่มีอยู่จริงยังคืน exit 0 พร้อมค่าว่าง เลียนแบบให้เหมือนกัน
+        // systemctl show on a unit that doesn't exist still returns exit 0 with empty values — mimic that exactly
         $active = $service['active'] ?? 'inactive';
         $since = $service['since'] ?? null;
 
@@ -67,7 +68,7 @@ final class SystemctlSimulator implements Simulator
             'Version' => (string) ($service['version'] ?? ''),
         ];
 
-        // เคารพ --property=... ที่ผู้เรียกระบุ ถ้าไม่ระบุคืนทั้งหมด
+        // Honors a caller-specified --property=... — returns everything if none was given
         $requested = [];
         foreach ($flags as $flag) {
             if (str_starts_with($flag, '--property=')) {
@@ -134,7 +135,7 @@ final class SystemctlSimulator implements Simulator
             $service['pid'] = 0;
             $service['memory'] = 0;
         } elseif ($verb === 'reload') {
-            // reload ไม่เปลี่ยนสถานะ แต่ล้มถ้าบริการไม่ได้ทำงานอยู่ — เหมือน systemd จริง
+            // reload doesn't change state, but fails if the service isn't running — same as real systemd
             if ($service['active'] !== 'active') {
                 return new ExecResult(
                     argv: $argv,
@@ -156,7 +157,7 @@ final class SystemctlSimulator implements Simulator
         $services[$unit] = $service;
         $state->saveServices($services);
 
-        // หน่วงเวลาเล็กน้อยให้เหมือนของจริง UI จะได้เห็น spinner ทำงานจริง
+        // A small delay to feel like the real thing, so the UI actually gets to show a working spinner
         usleep(150_000);
 
         return new ExecResult(

@@ -7,39 +7,43 @@ namespace Phpcp\Agent\Executor;
 use Phpcp\Kernel\Mode;
 
 /**
- * จุดเดียวในระบบที่โค้ดฝั่ง agent ใช้แตะโลกภายนอก
+ * The single point in the system where agent-side code touches the outside world
  *
- * เหตุผลที่ต้องเป็น interface ตั้งแต่บรรทัดแรกของโปรเจกต์ (ARCHITECTURE §6.2):
- * ถ้าปล่อยให้ Capability เรียก proc_open หรือ file_put_contents เองกระจัดกระจาย
- * จะทำโหมด sandbox/dryrun ไม่ได้อีกเลย และจะไม่มีจุดกลางสำหรับบังคับกฎความปลอดภัย
+ * Why this had to be an interface from line one of the project (ARCHITECTURE
+ * §6.2): letting a Capability call proc_open or file_put_contents directly, spread
+ * across the codebase, would make sandbox/dryrun modes impossible, and there'd be
+ * no central place left to enforce security rules.
  *
- * ห้ามเพิ่มเมธอดที่รับ "คำสั่งเป็นสตริง" เข้ามาใน interface นี้เด็ดขาด
+ * Never add a method to this interface that accepts a "command as a string".
  */
 interface Executor
 {
     /**
-     * เพดานที่ `exec()` เก็บจากแต่ละ stream — **เกินกว่านี้ถูกตัดทิ้งเงียบ ๆ**
+     * The ceiling `exec()` keeps from each stream — **anything past this is silently discarded**
      *
-     * ประกาศไว้ในสัญญา ไม่ใช่ซ่อนไว้ใน RealExecutor เพราะเป็นข้อเท็จจริงที่ผู้เรียก
-     * ต้องรู้ ไม่ใช่รายละเอียดการทำงานภายใน · ด่านความปลอดภัยที่อ่านผลลัพธ์ของคำสั่ง
-     * แล้วตัดสินใจ (เช่นตรวจรายชื่อใน archive ก่อนแตกไฟล์) จะตรวจแค่ส่วนหัวแล้วปล่อย
-     * ส่วนที่เหลือผ่านไปโดยไม่มีอะไรฟ้อง ถ้าไม่รู้ว่ามีเพดานนี้อยู่ — ซึ่งแปลว่า
-     * archive ที่ตั้งใจร้ายเพียงแค่ต้องยาวพอก็เดินผ่านด่านได้
+     * Declared right in the contract, not hidden inside RealExecutor, because it's
+     * a fact a caller must know, not an internal implementation detail · a security
+     * check that reads a command's output and decides based on it (checking an
+     * archive's file listing before extracting, say) would only see the head and
+     * let the rest pass with nothing to complain about, if it didn't know this
+     * ceiling existed — meaning a malicious archive would only need to be long
+     * enough to walk right through the check.
      *
-     * ผู้เรียกที่ต้องการผลลัพธ์**ครบ** ต้องให้คำสั่งเขียนลงไฟล์แทน (เช่น
-     * `tar --index-file`) หรือปฏิเสธเมื่อผลลัพธ์ยาวชนเพดานนี้
+     * A caller that needs the **complete** result must have the command write to a
+     * file instead (`tar --index-file`, for instance), or reject the result when it
+     * bumps up against this ceiling.
      */
     public const MAX_OUTPUT_BYTES = 1_048_576;
 
     public function mode(): Mode;
 
     /**
-     * รันคำสั่ง — argv เป็น array เสมอ ไม่มีการผ่าน shell
+     * Runs a command — argv is always an array, never passed through a shell
      *
-     * ผลลัพธ์ของแต่ละ stream ถูกตัดที่ {@see self::MAX_OUTPUT_BYTES}
+     * Each stream's output is truncated at {@see self::MAX_OUTPUT_BYTES}
      *
-     * @param list<string> $argv  argv[0] ต้องเป็น absolute path ของ binary
-     * @param string|null  $stdin ข้อมูลที่จะป้อนเข้า stdin (null = ปิด stdin ทันที)
+     * @param list<string> $argv  argv[0] must be the binary's absolute path
+     * @param string|null  $stdin data to feed to stdin (null = close stdin immediately)
      */
     public function exec(
         array $argv,
@@ -49,10 +53,11 @@ interface Executor
     ): ExecResult;
 
     /**
-     * แปลง absolute path ของระบบจริงเป็น path ที่ควรใช้ในโหมดปัจจุบัน
+     * Turns a real system absolute path into the path that should be used in the current mode
      *
-     * production/dryrun คืนค่าเดิม · sandbox เติม prefix ให้
-     * Capability ต้องเรียกเมธอดนี้กับทุก path ที่จะเอาไปใช้ — นี่คือจุดเดียวที่ทำการแมป
+     * production/dryrun return the value unchanged · sandbox prepends its prefix.
+     * A Capability must call this on every path it's about to use — this is the
+     * one place that mapping happens.
      */
     public function path(string $absolutePath): string;
 
@@ -65,28 +70,29 @@ interface Executor
 
     public function exists(string $path): bool;
 
-    /** สร้างไดเรกทอรี (รวมไดเรกทอรีแม่) — ไม่ล้มถ้ามีอยู่แล้ว */
+    /** Creates a directory (including parent directories) — doesn't fail if it already exists */
     public function makeDirectory(string $path, int $mode = 0755): void;
 
     /**
-     * พื้นที่ดิสก์ของ filesystem ที่ path นั้นอยู่
+     * Disk space of the filesystem that path lives on
      *
      * @return array{total:int,free:int}
      */
     public function diskSpace(string $path): array;
 
     /**
-     * เส้นทางจริงหลังคลาย symlink และ `..` ทั้งหมด — null เมื่อไม่มีอยู่จริง
+     * The real path after resolving every symlink and `..` — null when it doesn't actually exist
      *
-     * ตัวจัดการไฟล์ต้องเรียกเมธอดนี้ก่อนตัดสินใจว่า path อยู่ในบ้านของเว็บไซต์หรือไม่
-     * เพราะการเทียบสตริงก่อนคลาย symlink หลอกได้ด้วยลิงก์ที่ชี้ออกนอกบ้าน (SECURITY §2.7)
+     * The file manager must call this before deciding whether a path falls inside
+     * a website's own home, because comparing strings before resolving symlinks can
+     * be fooled by a link pointing outside that home (SECURITY §2.7).
      */
     public function realPath(string $path): ?string;
 
     /**
-     * รายการในไดเรกทอรีหนึ่งชั้น (ไม่ลงลึก) พร้อมข้อมูลจาก lstat
+     * A directory's listing, one level deep (not recursive), with lstat data attached
      *
-     * ใช้ lstat ไม่ใช่ stat — symlink จึงถูกรายงานตามตัวมันเอง ไม่ใช่ตามปลายทาง
+     * Uses lstat, not stat — a symlink is reported as itself, not as whatever it points to
      *
      * @return list<array{name:string,type:string,size:int,mode:int,mtime:int,uid:int,gid:int,link:?string}>
      */
@@ -97,19 +103,20 @@ interface Executor
 
     public function rename(string $from, string $to): void;
 
-    /** คัดลอกไฟล์หรือทั้งไดเรกทอรี */
+    /** Copies a file, or a whole directory */
     public function copyPath(string $from, string $to): void;
 
-    /** ลบไฟล์หรือทั้งไดเรกทอรี — ไม่เดินตาม symlink */
+    /** Deletes a file, or a whole directory — never follows symlinks */
     public function removePath(string $path): void;
 
     public function changeMode(string $path, int $mode): void;
 
     /**
-     * บีบอัดรายการที่ระบุเป็นไฟล์ zip
+     * Compresses the given items into a zip file
      *
-     * ชื่อภายในไฟล์บีบอัดอ้างอิงจาก $base — แตกไฟล์ออกมาจึงได้โครงสร้าง
-     * เหมือนที่เห็นบนหน้าจอ ไม่มีเส้นทางเต็มของเครื่องติดไปด้วย
+     * Names inside the archive are relative to $base — so extracting it back out
+     * reproduces the structure seen on screen, with no full machine path carried
+     * along inside it.
      *
      * @param list<string> $sources
      * @return array{entries:int,bytes:int}
@@ -117,28 +124,29 @@ interface Executor
     public function zip(array $sources, string $base, string $archive): array;
 
     /**
-     * แตกไฟล์ zip ลงไดเรกทอรีปลายทาง — ต้องกัน Zip Slip ที่ระดับนี้
+     * Extracts a zip file into a destination directory — Zip Slip must be guarded against at this level
      *
      * @return array{entries:int,bytes:int,skipped:int}
      */
     public function unzip(string $archive, string $destination): array;
 
     /**
-     * ทำงานกับไฟล์ในสิทธิ์ของผู้ใช้ระบบที่กำหนด — ARCHITECTURE §4.4
+     * Does file work under the permissions of a given system user — ARCHITECTURE §4.4
      *
-     * root ต้องไม่แตะไฟล์ของเว็บไซต์โดยตรง ทุกงานไฟล์จึง fork แล้วลดสิทธิ์ก่อนเสมอ
-     * บั๊กใน path handling ที่แย่ที่สุดจึงหลุดได้แค่ในขอบเขตของเว็บไซต์นั้นเอง
+     * root must never touch a website's files directly, so every file job forks
+     * and drops privileges first, always — the worst possible bug in path handling
+     * can then only ever escape as far as that one website's own boundary.
      *
-     * @param callable():array<string,mixed> $work ต้องคืนค่าที่ json_encode ได้
+     * @param callable():array<string,mixed> $work must return a value json_encode can handle
      * @return array<string,mixed>
      */
     public function asUser(?string $systemUser, callable $work): array;
 
-    /** true = การเปลี่ยนแปลงถูกจำลอง ไม่ได้เกิดกับระบบจริง */
+    /** true = the change was simulated, it never happened on the real system */
     public function isSimulated(): bool;
 
     /**
-     * บันทึกคำสั่งที่ถูกจำลอง เอาไว้แสดงในโหมด dryrun
+     * Records the commands that were simulated, for display in dryrun mode
      *
      * @return list<string>
      */

@@ -5,15 +5,18 @@ declare(strict_types=1);
 namespace Phpcp\Agent\Executor;
 
 /**
- * จำลอง certbot ในโหมด sandbox
+ * Simulates certbot in sandbox mode
  *
- * จำเป็นด้านความปลอดภัยเหมือน UfwSimulator และ MariaDbSimulator:
- * /usr/bin เป็น passthrough ของ SandboxExecutor ถ้าไม่ดักไว้ การทดสอบจะยิงคำขอจริง
- * ไปยัง Let's Encrypt ทุกครั้ง ซึ่งกินโควตาที่จำกัดต่อโดเมน (5 ใบต่อสัปดาห์)
- * และอาจล็อกโดเมนจริงของผู้ใช้ไม่ให้ขอใบได้ไปหลายวัน
+ * Needed for security reasons, same as UfwSimulator and MariaDbSimulator: /usr/bin
+ * is on SandboxExecutor's passthrough list — without intercepting it, every test
+ * run would fire a real request at Let's Encrypt, burning through its per-domain
+ * quota (5 certificates a week) and potentially locking a real domain out of
+ * issuing certificates for days.
  *
- * ไม่จำลอง openssl เพราะ openssl ทำงานกับไฟล์ในพื้นที่ที่ถูกแมปแล้ว ไม่ติดต่อภายนอก —
- * ปล่อยให้รันจริงจะได้ทดสอบการอ่านวันหมดอายุด้วยของจริง (ARCHITECTURE §6.3)
+ * openssl itself is not simulated, because openssl works on files inside the
+ * already-mapped sandbox area and never talks to anything external — letting it
+ * run for real means expiry-date reading can be tested against the real thing
+ * (ARCHITECTURE §6.3).
  */
 final class CertbotSimulator implements Simulator
 {
@@ -31,16 +34,17 @@ final class CertbotSimulator implements Simulator
             'renew' => $this->renew($argv, $state),
             'delete' => $this->delete($argv, $state),
             'certificates' => $this->certificates($argv, $state),
-            default => $this->fail($argv, "sandbox: ยังไม่รองรับคำสั่ง certbot {$command}"),
+            default => $this->fail($argv, "sandbox: the certbot {$command} command isn't supported yet"),
         };
     }
 
     /**
-     * ออกใบรับรองปลอมด้วย openssl จริง
+     * Issues a fake certificate using the real openssl
      *
-     * ต้องเป็นไฟล์ PEM ที่ถูกต้องจริง ๆ ไม่ใช่ไฟล์เปล่า เพราะ CertbotManager
-     * อ่านวันหมดอายุด้วย `openssl x509` และ Apache ต้องโหลดไฟล์นี้ได้ตอน configtest
-     * ถ้าจำลองด้วยไฟล์ปลอม การทดสอบจะผ่านทั้งที่เส้นทางจริงพัง
+     * Has to be a genuinely valid PEM file, not an empty one, because
+     * CertbotManager reads the expiry date with `openssl x509`, and Apache has to
+     * be able to load this file during configtest. Simulating it with a fake file
+     * would let the test pass while the real path is actually broken.
      */
     private function certonly(array $argv, SandboxState $state): ExecResult
     {
@@ -52,18 +56,18 @@ final class CertbotSimulator implements Simulator
         }
 
         if ($name === '') {
-            return $this->fail($argv, 'sandbox: ไม่ได้ระบุโดเมน');
+            return $this->fail($argv, 'sandbox: no domain specified');
         }
 
         $dir = $state->prefix() . '/etc/letsencrypt/live/' . $name;
 
         if (!is_dir($dir) && !mkdir($dir, 0700, true) && !is_dir($dir)) {
-            return $this->fail($argv, "sandbox: สร้างไดเรกทอรี {$dir} ไม่ได้");
+            return $this->fail($argv, "sandbox: could not create directory {$dir}");
         }
 
         $alt = implode(',', array_map(static fn (string $d): string => 'DNS:' . $d, $domains ?: [$name]));
 
-        // 90 วันเท่าของจริง เพื่อให้การทดสอบเรื่องวันหมดอายุใช้ตัวเลขชุดเดียวกับ production
+        // 90 days, matching real life, so expiry-date tests use the same numbers as production
         $result = (new RealExecutor())->exec([
             '/usr/bin/openssl', 'req', '-x509', '-nodes',
             '-newkey', 'rsa:2048', '-days', '90',
@@ -71,14 +75,14 @@ final class CertbotSimulator implements Simulator
             '-out', $dir . '/fullchain.pem',
             '-subj', '/CN=' . $name,
             '-addext', 'subjectAltName=' . $alt,
-            // ให้เหมือนใบจริงของ Let's Encrypt — ไม่ใช่ใบ CA
+            // Matches a real Let's Encrypt certificate — not a CA certificate
             '-addext', 'basicConstraints=critical,CA:FALSE',
             '-addext', 'keyUsage=critical,digitalSignature,keyEncipherment',
             '-addext', 'extendedKeyUsage=serverAuth',
         ], 60);
 
         if (!$result->ok()) {
-            return $this->fail($argv, 'sandbox: สร้างใบรับรองจำลองไม่สำเร็จ — ' . trim($result->stderr));
+            return $this->fail($argv, 'sandbox: failed to create the simulated certificate — ' . trim($result->stderr));
         }
 
         @chmod($dir . '/privkey.pem', 0600);
@@ -99,12 +103,13 @@ final class CertbotSimulator implements Simulator
         $certificates = $state->read('certificates');
 
         if ($name === '' || !isset($certificates[$name])) {
-            return $this->fail($argv, "sandbox: ไม่พบใบรับรองชื่อ {$name}");
+            return $this->fail($argv, "sandbox: no certificate named {$name} was found");
         }
 
         if (!in_array('--force-renewal', $argv, true)) {
-            // certbot จริงข้ามใบที่ยังไม่ใกล้หมดอายุ แล้วออกด้วยรหัส 0 —
-            // ต้องจำลองพฤติกรรมนี้ด้วย ไม่งั้นเทสต์จะไม่เจอกรณี "กดต่ออายุแล้วไม่มีอะไรเกิดขึ้น"
+            // The real certbot skips a certificate that isn't close to expiring
+            // and exits with code 0 — this behavior has to be simulated too, or a
+            // test would never catch the "clicked renew and nothing happened" case
             return $this->out($argv, "Certificate not yet due for renewal; no action taken.\n");
         }
 
@@ -124,7 +129,7 @@ final class CertbotSimulator implements Simulator
         $certificates = $state->read('certificates');
 
         if ($name === '' || !isset($certificates[$name])) {
-            return $this->fail($argv, "sandbox: ไม่พบใบรับรองชื่อ {$name}");
+            return $this->fail($argv, "sandbox: no certificate named {$name} was found");
         }
 
         $dir = $state->prefix() . '/etc/letsencrypt/live/' . $name;

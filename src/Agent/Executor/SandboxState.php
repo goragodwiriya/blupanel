@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace Phpcp\Agent\Executor;
 
 /**
- * สถานะจำลองของโหมด sandbox — เก็บเป็นไฟล์ JSON ใต้ prefix
+ * Sandbox mode's simulated state — kept as JSON files under the prefix
  *
- * ทำไมต้องเก็บลงไฟล์แทนที่จะเก็บในหน่วยความจำ: agent fork ลูกต่อ 1 connection
- * ลูกแต่ละตัวจึงไม่แชร์หน่วยความจำกัน — สั่ง restart แล้วรีเฟรชหน้าต้องเห็นผล
+ * Why a file instead of memory: the agent forks a child per connection, so
+ * children never share memory — a restart command, then a page refresh, still
+ * has to show the result.
  */
 final class SandboxState
 {
@@ -54,7 +55,7 @@ final class SandboxState
     {
         $dir = $this->stateDir();
         if (!is_dir($dir) && !@mkdir($dir, 0750, true) && !is_dir($dir)) {
-            throw new \RuntimeException("สร้างไดเรกทอรีสถานะ sandbox ไม่ได้: {$dir}");
+            throw new \RuntimeException("Failed to create the sandbox state directory: {$dir}");
         }
 
         $file = $this->file($name);
@@ -62,7 +63,7 @@ final class SandboxState
         $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
         if ($json === false || @file_put_contents($temp, $json, LOCK_EX) === false) {
-            throw new \RuntimeException("บันทึกสถานะ sandbox ไม่ได้: {$file}");
+            throw new \RuntimeException("Failed to save the sandbox state: {$file}");
         }
 
         @rename($temp, $file);
@@ -83,8 +84,8 @@ final class SandboxState
     }
 
     /**
-     * ชุด service เริ่มต้นของ sandbox — อิงตามที่ PROMPT.md กำหนดให้ต้องมี
-     * บวกเวอร์ชัน PHP ที่พบจริงบนเครื่องพัฒนา
+     * The sandbox's default set of services — based on what PROMPT.md requires to
+     * be present, plus the PHP versions actually found on the development machine
      *
      * @return array<string,array<string,mixed>>
      */

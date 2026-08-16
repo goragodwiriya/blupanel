@@ -7,14 +7,16 @@ namespace Phpcp\Agent\Executor;
 use Phpcp\Kernel\Mode;
 
 /**
- * โหมดจำลอง — ไม่รันอะไรเลย บันทึกว่า "จะรันอะไร" แล้วคืนผลลัพธ์เปล่า
+ * Simulation mode — runs nothing at all, records "what would run", and returns an empty result
  *
- * ใช้กับ capability ที่เปลี่ยนแปลงระบบเท่านั้น ส่วน capability ที่อ่านอย่างเดียว
- * agent จะจ่าย RealExecutor ให้แทน (ดู ExecutorFactory) — ผู้ใช้จึงเห็นสถานะจริง
- * ของเครื่องควบคู่กับคำสั่งที่ระบบ "จะ" ทำ ซึ่งเป็นสิ่งที่ทำให้โหมดนี้มีประโยชน์จริง
+ * Used only for capabilities that change the system; a read-only capability gets a
+ * RealExecutor from the agent instead (see ExecutorFactory) — so the user sees the
+ * machine's real state alongside the commands the system "would" run, which is
+ * what actually makes this mode useful.
  *
- * ข้อจำกัดที่ยอมรับ: capability ที่ต้องอ่าน stdout ของคำสั่งที่ตัวเองเพิ่งรันเพื่อทำงานต่อ
- * จะได้ค่าว่างในโหมดนี้ ถือว่ายอมรับได้เพราะจุดประสงค์คือดูคำสั่ง ไม่ใช่ดูผลลัพธ์
+ * An accepted limitation: a capability that needs to read the stdout of a command
+ * it just ran, to keep working, gets an empty value in this mode. Considered
+ * acceptable, since the point here is to see the commands, not their output.
  */
 final class DryRunExecutor implements Executor
 {
@@ -85,7 +87,7 @@ final class DryRunExecutor implements Executor
      */
     public function readFile(string $path): string
     {
-        // การอ่านไม่เปลี่ยนอะไร จึงให้อ่านของจริงเพื่อให้ผลลัพธ์มีความหมาย
+        // Reading doesn't change anything, so it reads for real — that keeps the result meaningful
         return $this->real->readFile($path);
     }
 
@@ -96,7 +98,7 @@ final class DryRunExecutor implements Executor
      */
     public function writeFile(string $path, string $content, int $mode = 0644): void
     {
-        $this->recorded[] = sprintf('เขียนไฟล์ %s (%s ไบต์ สิทธิ์ %o)', $path, number_format(strlen($content)), $mode);
+        $this->recorded[] = sprintf('write file %s (%s bytes, mode %o)', $path, number_format(strlen($content)), $mode);
     }
 
     /**
@@ -114,7 +116,7 @@ final class DryRunExecutor implements Executor
      */
     public function makeDirectory(string $path, int $mode = 0755): void
     {
-        $this->recorded[] = sprintf('สร้างไดเรกทอรี %s (สิทธิ์ %o)', $path, $mode);
+        $this->recorded[] = sprintf('create directory %s (mode %o)', $path, $mode);
     }
 
     /**
@@ -159,7 +161,7 @@ final class DryRunExecutor implements Executor
      */
     public function rename(string $from, string $to): void
     {
-        $this->recorded[] = sprintf('ย้าย %s ไปเป็น %s', $from, $to);
+        $this->recorded[] = sprintf('move %s to %s', $from, $to);
     }
 
     /**
@@ -168,7 +170,7 @@ final class DryRunExecutor implements Executor
      */
     public function copyPath(string $from, string $to): void
     {
-        $this->recorded[] = sprintf('คัดลอก %s ไปเป็น %s', $from, $to);
+        $this->recorded[] = sprintf('copy %s to %s', $from, $to);
     }
 
     /**
@@ -176,7 +178,7 @@ final class DryRunExecutor implements Executor
      */
     public function removePath(string $path): void
     {
-        $this->recorded[] = sprintf('ลบ %s', $path);
+        $this->recorded[] = sprintf('delete %s', $path);
     }
 
     /**
@@ -185,7 +187,7 @@ final class DryRunExecutor implements Executor
      */
     public function changeMode(string $path, int $mode): void
     {
-        $this->recorded[] = sprintf('เปลี่ยนสิทธิ์ %s เป็น %o', $path, $mode);
+        $this->recorded[] = sprintf('change permissions of %s to %o', $path, $mode);
     }
 
     /**
@@ -195,7 +197,7 @@ final class DryRunExecutor implements Executor
      */
     public function zip(array $sources, string $base, string $archive): array
     {
-        $this->recorded[] = sprintf('บีบอัด %d รายการจาก %s เป็น %s', count($sources), $base, $archive);
+        $this->recorded[] = sprintf('compress %d item(s) from %s into %s', count($sources), $base, $archive);
 
         return ['entries' => 0, 'bytes' => 0];
     }
@@ -206,22 +208,23 @@ final class DryRunExecutor implements Executor
      */
     public function unzip(string $archive, string $destination): array
     {
-        $this->recorded[] = sprintf('แตกไฟล์ %s ลงใน %s', $archive, $destination);
+        $this->recorded[] = sprintf('extract %s into %s', $archive, $destination);
 
         return ['entries' => 0, 'bytes' => 0, 'skipped' => 0];
     }
 
     /**
-     * ไม่ลดสิทธิ์จริงเพราะไม่มีการแตะไฟล์เกิดขึ้น — งานข้างในบันทึกคำสั่งอย่างเดียว
+     * Doesn't actually drop privileges, since no file work happens here — the
+     * inner work just records commands
      */
     public function asUser(?string $systemUser, callable $work): array
     {
-        // null = ขอบเขตระดับเซิร์ฟเวอร์ ทำงานด้วยสิทธิ์ของ agent เอง
+        // null = server-level scope, runs with the agent's own privileges
         if ($systemUser === null || $systemUser === '') {
             return $work();
         }
 
-        $this->recorded[] = sprintf('ลดสิทธิ์เป็นผู้ใช้ %s ก่อนทำงานไฟล์', $systemUser);
+        $this->recorded[] = sprintf('drop privileges to user %s before file work', $systemUser);
 
         return $work();
     }

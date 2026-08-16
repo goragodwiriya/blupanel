@@ -9,30 +9,31 @@ use Phpcp\Agent\ValidationError;
 use Phpcp\Kernel\Mode;
 
 /**
- * รันคำสั่งจริงบนระบบ — ใช้ในโหมด production และใช้กับ capability ที่อ่านอย่างเดียวในโหมด dryrun
+ * Runs real commands on the system — used in production mode, and for read-only capabilities in dryrun mode
  *
- * กฎความปลอดภัยที่บังคับที่นี่ทั้งหมด (SECURITY §2.4):
- *   - proc_open ด้วย array argv  → PHP ข้าม /bin/sh ให้ ไม่มีการตีความ ; | $() ` &&
- *   - binary ต้องเป็น absolute path จริง อยู่ในไดเรกทอรีที่อนุญาต และไม่ใช่ไฟล์ที่ใครก็เขียนได้
- *   - env ถูกล้าง                → ไม่มี LD_PRELOAD, IFS, BASH_ENV, PATH ปลอม ตกค้าง
- *   - stdin ปิดถ้าไม่ได้ระบุ      → คำสั่งที่รอ input จะไม่ค้าง
- *   - timeout บังคับเสมอ         → เกินเวลา SIGTERM แล้ว SIGKILL
- *   - จำกัดขนาด output           → คำสั่งที่พ่นข้อมูลไม่หยุดจะไม่กินหน่วยความจำจนเครื่องล่ม
+ * Every security rule enforced right here (SECURITY §2.4):
+ *   - proc_open with an array argv → PHP skips /bin/sh entirely, no interpreting ; | $() ` &&
+ *   - the binary must be a real absolute path, inside an allowed directory, and not a file anyone can write to
+ *   - env is scrubbed             → no leftover LD_PRELOAD, IFS, BASH_ENV, or a fake PATH
+ *   - stdin closes if not given   → a command waiting on input never hangs
+ *   - a timeout is always enforced → past it, SIGTERM, then SIGKILL
+ *   - output size is capped        → a command that spews data forever can't eat memory until the machine falls over
  */
 final class RealExecutor implements Executor
 {
-    // MAX_OUTPUT_BYTES ย้ายไปประกาศใน Executor แล้ว — เป็นสัญญาที่ผู้เรียกต้องรู้
-    // ไม่ใช่รายละเอียดภายใน · `self::MAX_OUTPUT_BYTES` ข้างล่างอ้างถึงค่านั้น
+    // MAX_OUTPUT_BYTES has moved to being declared on Executor — it's a contract
+    // the caller needs to know, not an internal detail · `self::MAX_OUTPUT_BYTES`
+    // below refers to that same value
 
-    /** จำนวนรายการสูงสุดที่คืนต่อหนึ่งไดเรกทอรี — กันไดเรกทอรีที่มีไฟล์เป็นแสน */
+    /** The most entries returned for one directory — guards against a directory with hundreds of thousands of files */
     private const MAX_ENTRIES = 5000;
 
-    /** เพดานข้อมูลของงานบีบอัด/แตกไฟล์ — กัน zip bomb */
+    /** The data ceiling for a compress/extract job — guards against a zip bomb */
     private const MAX_ARCHIVE_BYTES = 536_870_912; // 512 MB
 
     private const MAX_ARCHIVE_ENTRIES = 20_000;
 
-    /** ไดเรกทอรีที่ยอมให้รัน binary ได้ */
+    /** Directories a binary is allowed to run from */
     private const BINARY_DIRS = [
         '/usr/bin',
         '/usr/sbin',
@@ -100,7 +101,7 @@ final class RealExecutor implements Executor
 
         $process = @proc_open($argv, $descriptors, $pipes, $cwd, self::SAFE_ENV);
         if (!is_resource($process)) {
-            throw new ExecutionFailed('เรียกคำสั่งไม่สำเร็จ: '.$argv[0]);
+            throw new ExecutionFailed('Failed to invoke command: '.$argv[0]);
         }
 
         if ($stdin !== null && $stdin !== '') {
@@ -172,7 +173,7 @@ final class RealExecutor implements Executor
             argv: $argv,
             exitCode: $timedOut ? 124 : $exitCode,
             stdout: $stdout,
-            stderr: $timedOut ? trim($stderr."\nคำสั่งใช้เวลานานเกิน {$timeout} วินาที") : $stderr,
+            stderr: $timedOut ? trim($stderr."\nCommand took longer than {$timeout} seconds") : $stderr,
             durationMs: $durationMs,
             timedOut: $timedOut,
         );
@@ -185,7 +186,7 @@ final class RealExecutor implements Executor
     {
         $content = @file_get_contents($path);
         if ($content === false) {
-            throw new ExecutionFailed("อ่านไฟล์ไม่ได้: {$path}");
+            throw new ExecutionFailed("Failed to read file: {$path}");
         }
 
         return $content;
@@ -200,19 +201,19 @@ final class RealExecutor implements Executor
     {
         $dir = dirname($path);
         if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) {
-            throw new ExecutionFailed("สร้างไดเรกทอรีไม่ได้: {$dir}");
+            throw new ExecutionFailed("Failed to create directory: {$dir}");
         }
 
-        // เขียนไฟล์ชั่วคราวแล้ว rename เพื่อให้เป็น atomic — ผู้อ่านจะไม่เจอไฟล์ครึ่ง ๆ
+        // Writes to a temp file, then renames, to make the write atomic — a reader never sees a half-written file
         $temp = $path.'.tmp.'.bin2hex(random_bytes(4));
         if (@file_put_contents($temp, $content, LOCK_EX) === false) {
-            throw new ExecutionFailed("เขียนไฟล์ไม่ได้: {$path}");
+            throw new ExecutionFailed("Failed to write file: {$path}");
         }
         @chmod($temp, $mode);
 
         if (!@rename($temp, $path)) {
             @unlink($temp);
-            throw new ExecutionFailed("บันทึกไฟล์ไม่สำเร็จ: {$path}");
+            throw new ExecutionFailed("Failed to save file: {$path}");
         }
     }
 
@@ -236,7 +237,7 @@ final class RealExecutor implements Executor
         }
 
         if (!@mkdir($path, $mode, true) && !is_dir($path)) {
-            throw new ExecutionFailed("สร้างไดเรกทอรีไม่สำเร็จ: {$path}");
+            throw new ExecutionFailed("Failed to create directory: {$path}");
         }
 
         @chmod($path, $mode);
@@ -273,12 +274,12 @@ final class RealExecutor implements Executor
     public function listDirectory(string $path): array
     {
         if (!is_dir($path)) {
-            throw new ExecutionFailed("ไม่ใช่ไดเรกทอรี: {$path}");
+            throw new ExecutionFailed("Not a directory: {$path}");
         }
 
         $handle = @opendir($path);
         if ($handle === false) {
-            throw new ExecutionFailed("เปิดไดเรกทอรีไม่ได้: {$path}");
+            throw new ExecutionFailed("Failed to open directory: {$path}");
         }
 
         $entries = [];
@@ -291,7 +292,7 @@ final class RealExecutor implements Executor
 
                 $info = $this->stat($path.'/'.$name);
                 if ($info === null) {
-                    continue; // ถูกลบไประหว่างอ่าน — ข้ามไป ไม่ใช่ error
+                    continue; // Deleted while reading — skip it, not an error
                 }
 
                 $entries[] = ['name' => $name] + $info;
@@ -312,7 +313,7 @@ final class RealExecutor implements Executor
      */
     public function stat(string $path): ?array
     {
-        // lstat ไม่ตามลิงก์ — symlink ที่ชี้ไปไหนก็ตามจึงถูกรายงานว่าเป็น symlink
+        // lstat doesn't follow links — a symlink pointing anywhere is reported as a symlink
         $info = @lstat($path);
         if ($info === false) {
             return null;
@@ -339,7 +340,7 @@ final class RealExecutor implements Executor
     public function rename(string $from, string $to): void
     {
         if (!@rename($from, $to)) {
-            throw new ExecutionFailed('ย้ายหรือเปลี่ยนชื่อไม่สำเร็จ: '.basename($from));
+            throw new ExecutionFailed('Failed to move or rename: '.basename($from));
         }
     }
 
@@ -351,12 +352,12 @@ final class RealExecutor implements Executor
     public function copyPath(string $from, string $to): void
     {
         if (is_link($from)) {
-            throw new ExecutionFailed('ไม่รองรับการคัดลอก symlink: '.basename($from));
+            throw new ExecutionFailed('Copying a symlink is not supported: '.basename($from));
         }
 
         if (is_file($from)) {
             if (!@copy($from, $to)) {
-                throw new ExecutionFailed('คัดลอกไฟล์ไม่สำเร็จ: '.basename($from));
+                throw new ExecutionFailed('Failed to copy file: '.basename($from));
             }
             @chmod($to, (int) (@fileperms($from) & 0o777));
 
@@ -364,13 +365,13 @@ final class RealExecutor implements Executor
         }
 
         if (!is_dir($from)) {
-            throw new ExecutionFailed('ไม่พบต้นทางที่จะคัดลอก: '.basename($from));
+            throw new ExecutionFailed('Copy source not found: '.basename($from));
         }
 
         $this->makeDirectory($to, (int) (@fileperms($from) & 0o777) ?: 0o750);
 
         foreach ($this->listDirectory($from) as $entry) {
-            // ไม่คัดลอก symlink ต่อ — ปลายทางอาจอยู่นอกบ้านของเว็บไซต์
+            // Symlinks are never copied along — the target could sit outside the website's home
             if ($entry['type'] === 'link') {
                 continue;
             }
@@ -385,18 +386,19 @@ final class RealExecutor implements Executor
      */
     public function removePath(string $path): void
     {
-        // is_link ต้องตรวจก่อน is_dir เสมอ ไม่อย่างนั้นลิงก์ที่ชี้ไปยังไดเรกทอรี
-        // จะถูกไล่ลบเนื้อในของปลายทางแทนที่จะลบตัวลิงก์
+        // is_link must always be checked before is_dir — otherwise a symlink
+        // pointing at a directory gets its target's contents deleted instead of
+        // the link itself being removed
         if (is_link($path) || is_file($path)) {
             if (!@unlink($path)) {
-                throw new ExecutionFailed('ลบไม่สำเร็จ: '.basename($path));
+                throw new ExecutionFailed('Failed to delete: '.basename($path));
             }
 
             return;
         }
 
         if (!is_dir($path)) {
-            return; // ไม่มีอยู่แล้ว = ได้ผลลัพธ์ที่ต้องการแล้ว
+            return; // Already gone = the desired outcome is already true
         }
 
         foreach ($this->listDirectory($path) as $entry) {
@@ -404,7 +406,7 @@ final class RealExecutor implements Executor
         }
 
         if (!@rmdir($path)) {
-            throw new ExecutionFailed('ลบไดเรกทอรีไม่สำเร็จ: '.basename($path));
+            throw new ExecutionFailed('Failed to delete directory: '.basename($path));
         }
     }
 
@@ -415,11 +417,11 @@ final class RealExecutor implements Executor
     public function changeMode(string $path, int $mode): void
     {
         if (is_link($path)) {
-            throw new ExecutionFailed('เปลี่ยนสิทธิ์ของ symlink ไม่ได้');
+            throw new ExecutionFailed('Cannot change permissions on a symlink');
         }
 
         if (!@chmod($path, $mode)) {
-            throw new ExecutionFailed('เปลี่ยนสิทธิ์ไม่สำเร็จ: '.basename($path));
+            throw new ExecutionFailed('Failed to change permissions: '.basename($path));
         }
     }
 
@@ -451,11 +453,11 @@ final class RealExecutor implements Executor
 
                     $size = (int) (@filesize($path) ?: 0);
                     if ($bytes + $size > self::MAX_ARCHIVE_BYTES) {
-                        throw new ExecutionFailed('ข้อมูลที่จะบีบอัดใหญ่เกินกำหนด');
+                        throw new ExecutionFailed('The data to compress exceeds the size limit');
                     }
 
                     if (!$zip->addFile($path, $relative)) {
-                        throw new ExecutionFailed('เพิ่มไฟล์เข้าไฟล์บีบอัดไม่สำเร็จ: '.$relative);
+                        throw new ExecutionFailed('Failed to add file to archive: '.$relative);
                     }
 
                     $entries++;
@@ -486,7 +488,7 @@ final class RealExecutor implements Executor
         if ($root === false) {
             $zip->close();
 
-            throw new ExecutionFailed('ไม่พบไดเรกทอรีปลายทาง');
+            throw new ExecutionFailed('Destination directory not found');
         }
 
         $entries = 0;
@@ -495,7 +497,7 @@ final class RealExecutor implements Executor
 
         try {
             if ($zip->numFiles > self::MAX_ARCHIVE_ENTRIES) {
-                throw new ExecutionFailed('ไฟล์บีบอัดมีรายการมากเกินกำหนด');
+                throw new ExecutionFailed('The archive has too many entries');
             }
 
             for ($i = 0; $i < $zip->numFiles; $i++) {
@@ -507,17 +509,19 @@ final class RealExecutor implements Executor
 
                 $target = self::safeEntryPath($root, (string) $info['name']);
                 if ($target === null) {
-                    $skipped++; // Zip Slip หรือชื่อที่ไม่อนุญาต — ข้ามทั้งรายการ
+                    $skipped++; // Zip Slip, or a disallowed name — skip the whole entry
                     continue;
                 }
 
                 /*
-                 * ชื่อรายการที่ "สะอาด" ยังชี้ออกนอกโฟลเดอร์ได้ ถ้ามี symlink คั่นกลาง
+                 * An entry name that's "clean" can still point outside the folder if a symlink sits in the middle
                  *
-                 * `safeEntryPath()` ตรวจแต่**ตัวอักษร**ในชื่อ (ไม่มี `/` นำหน้า ไม่มี `..`)
-                 * ซึ่งไม่พอ เพราะลูกค้าสร้าง symlink ไว้ในโฟลเดอร์ของตัวเองได้เองผ่าน SFTP
-                 * · รายการชื่อ `logs/x.txt` ที่ `logs` เป็น symlink ชี้ออกไปข้างนอก จะถูก
-                 * เขียนทะลุออกไปตามลิงก์นั้นทันที ทั้งที่ชื่อไม่มีอะไรผิดสักตัว
+                 * `safeEntryPath()` only checks the **characters** in the name (no
+                 * leading `/`, no `..`), which isn't enough, because a customer can
+                 * create a symlink inside their own folder over SFTP · an entry
+                 * named `logs/x.txt`, where `logs` is a symlink pointing outside,
+                 * would get written straight through that link, even though the
+                 * name itself has nothing wrong with it.
                  */
                 if (!self::insideRoot($root, $target)) {
                     $skipped++;
@@ -531,7 +535,7 @@ final class RealExecutor implements Executor
 
                 $bytes += (int) $info['size'];
                 if ($bytes > self::MAX_ARCHIVE_BYTES) {
-                    throw new ExecutionFailed('ข้อมูลหลังแตกไฟล์ใหญ่เกินกำหนด (อาจเป็น zip bomb)');
+                    throw new ExecutionFailed('The extracted data exceeds the size limit (possibly a zip bomb)');
                 }
 
                 $stream = $zip->getStream((string) $info['name']);
@@ -542,8 +546,9 @@ final class RealExecutor implements Executor
 
                 $this->makeDirectory(dirname($target), 0o750);
 
-                // ตัวไฟล์ปลายทางเองเป็น symlink ที่วางดักไว้ได้เหมือนกัน — `fopen('wb')`
-                // จะเขียนทะลุไปที่ปลายทางของลิงก์ ไม่ใช่ทับตัวลิงก์
+                // The destination file itself could be a planted symlink too —
+                // `fopen('wb')` would write straight through to the link's target,
+                // not overwrite the link itself
                 if (is_link($target)) {
                     $skipped++;
                     fclose($stream);
@@ -578,25 +583,29 @@ final class RealExecutor implements Executor
      */
     public function asUser(?string $systemUser, callable $work): array
     {
-        // null = ขอบเขตระดับเซิร์ฟเวอร์ ทำงานด้วยสิทธิ์ของ agent เอง
+        // null = server-level scope, runs with the agent's own privileges
         if ($systemUser === null || $systemUser === '') {
             return $work();
         }
 
         /*
-         * **สองกรณีนี้ต่างกันคนละขั้ว ห้ามรวมเป็นเงื่อนไขเดียว**
+         * **These two cases are opposite extremes — they must never be merged into one condition**
          *
-         * *ไม่ได้เป็น root* — ลดสิทธิ์ไม่ได้ แต่ก็ไม่จำเป็น เพราะสิทธิ์ที่มีอยู่ก็จำกัด
-         * ด้วยตัวมันเองแล้ว (CLI ของผู้ใช้ธรรมดา, โหมด portable, ชุดทดสอบ) · ทำงานต่อได้
+         * *Not root* — privileges can't be dropped, but they don't need to be,
+         * because the privileges already held are inherently limited (an ordinary
+         * user's CLI, portable mode, the test suite) · safe to keep going.
          *
-         * *เป็น root แต่ไม่มี pcntl* — คือกรณีที่อันตรายที่สุดที่เป็นไปได้: root กำลังจะ
-         * เดินเข้าไปในต้นไม้ไฟล์ที่ลูกค้าควบคุมได้เอง โดยไม่มีการลดสิทธิ์ใด ๆ ซึ่งเป็น
-         * สิ่งเดียวที่ ARCHITECTURE §4.4 มีอยู่เพื่อป้องกัน · เดิมโค้ดนี้เลือก "ทำงานต่อ"
-         * เงียบ ๆ แปลว่าเครื่องที่ปิด pcntl ไว้ (ซึ่งดูเหมือนการตั้งค่าที่ปลอดภัยกว่า)
-         * กลับเป็นเครื่องที่ไม่มีการแยกสิทธิ์เลยทั้งระบบ โดยไม่มีอะไรฟ้องสักอย่าง
+         * *Root, but no pcntl* — the most dangerous case possible: root is about to
+         * walk into a file tree the customer fully controls, with no privilege drop
+         * at all, which is the one thing ARCHITECTURE §4.4 exists to prevent · this
+         * code used to silently choose to "keep going" here, meaning a machine with
+         * pcntl disabled (which looks like a *safer* configuration) actually ended
+         * up with no privilege separation anywhere in the system at all, with
+         * nothing to say so.
          *
-         * ล้มไปเลยดีกว่า — งานไฟล์ที่ทำไม่ได้ ผู้ดูแลเห็นและแก้ได้ ส่วนงานไฟล์ที่ทำ
-         * ด้วย root ทั้งที่ไม่ควร ไม่มีใครเห็นจนกว่าจะสายเกินไป
+         * Better to fail outright — file work that can't run is something an admin
+         * sees and can fix, while file work done as root when it shouldn't be is
+         * something nobody sees until it's too late.
          */
         if (posix_geteuid() !== 0) {
             return $work();
@@ -605,31 +614,31 @@ final class RealExecutor implements Executor
         foreach (['pcntl_fork', 'pcntl_waitpid', 'socket_create_pair', 'posix_setuid', 'posix_setgid', 'posix_initgroups'] as $required) {
             if (!function_exists($required)) {
                 throw new ExecutionFailed(
-                    "เครื่องนี้ไม่มีฟังก์ชัน {$required} จึงลดสิทธิ์จาก root ไปเป็นเจ้าของไฟล์ไม่ได้"
-                    . ' — ปฏิเสธงานไฟล์แทนที่จะทำด้วยสิทธิ์ root (ARCHITECTURE §4.4)',
+                    "This machine has no {$required} function, so privileges can't be dropped from root to the file's owner"
+                    . ' — file work is refused rather than done as root (ARCHITECTURE §4.4)',
                 );
             }
         }
 
         $identity = @posix_getpwnam($systemUser);
         if ($identity === false) {
-            throw new ExecutionFailed("ไม่พบผู้ใช้ระบบ: {$systemUser}");
+            throw new ExecutionFailed("System user not found: {$systemUser}");
         }
 
         $pipes = [];
         if (!socket_create_pair(AF_UNIX, SOCK_STREAM, 0, $pipes)) {
-            throw new ExecutionFailed('สร้างช่องสื่อสารกับโปรเซสลูกไม่สำเร็จ');
+            throw new ExecutionFailed('Failed to create a communication channel with the child process');
         }
 
         $pid = pcntl_fork();
         if ($pid === -1) {
-            throw new ExecutionFailed('แยกโปรเซสเพื่อลดสิทธิ์ไม่สำเร็จ');
+            throw new ExecutionFailed('Failed to fork a process to drop privileges');
         }
 
         if ($pid === 0) {
             socket_close($pipes[0]);
             $this->runAsChild($identity, $work, $pipes[1]);
-            exit(0); // ไม่มีทางถึงบรรทัดนี้ runAsChild จบด้วย exit เสมอ
+            exit(0); // Unreachable — runAsChild always ends with exit
         }
 
         socket_close($pipes[1]);
@@ -648,20 +657,20 @@ final class RealExecutor implements Executor
 
         $decoded = json_decode($payload, true);
         if (!is_array($decoded) || !isset($decoded['ok'])) {
-            throw new ExecutionFailed('งานไฟล์จบลงผิดปกติ ('.pcntl_wexitstatus($status).')');
+            throw new ExecutionFailed('The file job ended abnormally ('.pcntl_wexitstatus($status).')');
         }
 
         if ($decoded['ok'] !== true) {
-            throw new ExecutionFailed((string) ($decoded['error'] ?? 'งานไฟล์ล้มเหลว'));
+            throw new ExecutionFailed((string) ($decoded['error'] ?? 'File job failed'));
         }
 
         return is_array($decoded['data'] ?? null) ? $decoded['data'] : [];
     }
 
     /**
-     * ลูกที่ถูก fork แล้ว — ลดสิทธิ์ก่อนแตะไฟล์ ยกกลับไม่ได้อีก
+     * The forked child — drops privileges before touching any file; there's no going back after this
      *
-     * @param array<string,mixed> $identity ผลจาก posix_getpwnam
+     * @param array<string,mixed> $identity the result of posix_getpwnam
      * @param callable():array<string,mixed> $work
      * @param resource|\Socket $pipe
      */
@@ -673,17 +682,18 @@ final class RealExecutor implements Executor
             $uid = (int) $identity['uid'];
 
             if ($uid === 0 || $gid === 0) {
-                throw new ExecutionFailed('ปฏิเสธการทำงานไฟล์ด้วยสิทธิ์ root');
+                throw new ExecutionFailed('Refusing to do file work as root');
             }
 
-            // ลำดับสำคัญ: กลุ่มเสริมและ gid ต้องเปลี่ยนก่อน uid
-            // ถ้าตั้ง uid ก่อน จะไม่มีสิทธิ์เปลี่ยนกลุ่มอีกต่อไปและสิทธิ์กลุ่มเดิมจะค้างอยู่
+            // Order matters: supplementary groups and gid must change before uid.
+            // Setting uid first would leave no permission to change group
+            // membership at all, and the old group's privileges would stay behind.
             if (!posix_setgid($gid) || !posix_initgroups($user, $gid) || !posix_setuid($uid)) {
-                throw new ExecutionFailed('ลดสิทธิ์ไม่สำเร็จ');
+                throw new ExecutionFailed('Failed to drop privileges');
             }
 
             if (posix_geteuid() !== $uid || posix_getuid() !== $uid) {
-                throw new ExecutionFailed('ยืนยันการลดสิทธิ์ไม่ผ่าน');
+                throw new ExecutionFailed('Failed to verify the privilege drop');
             }
 
             umask(0o027);
@@ -694,7 +704,7 @@ final class RealExecutor implements Executor
         }
 
         $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
-        @socket_write($pipe, $json === false ? '{"ok":false,"error":"แปลงผลลัพธ์ไม่สำเร็จ"}' : $json);
+        @socket_write($pipe, $json === false ? '{"ok":false,"error":"Failed to encode the result"}' : $json);
         @socket_close($pipe);
 
         exit($payload['ok'] === true ? 0 : 1);
@@ -708,19 +718,19 @@ final class RealExecutor implements Executor
     private static function openArchive(string $path, int $flags): \ZipArchive
     {
         if (!class_exists(\ZipArchive::class)) {
-            throw new ExecutionFailed('เครื่องนี้ยังไม่ได้ติดตั้งส่วนขยาย php-zip');
+            throw new ExecutionFailed('The php-zip extension is not installed on this machine');
         }
 
         $zip = new \ZipArchive();
         if ($zip->open($path, $flags) !== true) {
-            throw new ExecutionFailed('เปิดไฟล์บีบอัดไม่ได้: '.basename($path));
+            throw new ExecutionFailed('Failed to open archive: '.basename($path));
         }
 
         return $zip;
     }
 
     /**
-     * ไล่ไฟล์ทั้งหมดใต้ต้นทาง (ไม่ตาม symlink)
+     * Walks every file under a source (never following symlinks)
      *
      * @return \Generator<string>
      */
@@ -743,25 +753,27 @@ final class RealExecutor implements Executor
     }
 
     /**
-     * แปลงชื่อรายการใน zip เป็นเส้นทางจริงที่ปลอดภัย — null = ต้องข้ามรายการนี้
+     * Turns a zip entry's name into a real, safe path — null = this entry must be skipped
      *
-     * กัน Zip Slip ด้วยการประกอบเส้นทางเองทีละส่วน ไม่พึ่ง realpath ของไฟล์ที่ยังไม่มี
+     * Guards against Zip Slip by assembling the path piece by piece itself, rather
+     * than relying on realpath of a file that doesn't exist yet.
      */
     /**
-     * เส้นทางนี้ยังอยู่ใต้ `$root` จริงหรือไม่ หลังคลาย symlink ทุกชั้นแล้ว
+     * Is this path still genuinely inside `$root` once every symlink has been resolved?
      *
-     * ปลายทางยังไม่มีอยู่ตอนที่ถาม จึงเดินขึ้นไปหา**ชั้นที่มีอยู่จริงชั้นแรก**แล้วคลาย
-     * จากตรงนั้น — ชั้นที่ยังไม่มี เราจะสร้างเองเป็นไดเรกทอรีจริง (`makeDirectory`)
-     * symlink ที่แทรกอยู่ในสายจึงต้องเป็นของที่มีอยู่ก่อนแล้วเสมอ และการเดินขึ้นไป
-     * ย่อมเจอมันแน่นอน
+     * The destination doesn't exist yet at the time this is asked, so it walks up
+     * to the **first level that actually exists** and resolves from there —
+     * anything not yet existing will be created by us as a real directory
+     * (`makeDirectory`), so any symlink sitting in the chain must already exist
+     * beforehand, and walking upward is guaranteed to run into it.
      *
-     * `$root` ถูก realpath มาแล้วโดยผู้เรียก จึงเทียบตรง ๆ ได้
+     * `$root` has already been through realpath by the caller, so it can be compared directly.
      */
     private static function insideRoot(string $root, string $path): bool
     {
         $probe = $path;
 
-        // is_link ด้วย เพราะ symlink ที่ชี้ไปที่ที่ไม่มีอยู่ ทำให้ file_exists ตอบ false
+        // is_link too, because a symlink pointing at something that doesn't exist makes file_exists return false
         while ($probe !== '' && $probe !== '/' && !file_exists($probe) && !is_link($probe)) {
             $parent = dirname($probe);
 
@@ -783,7 +795,7 @@ final class RealExecutor implements Executor
             return null;
         }
 
-        // ชื่อแบบ Windows drive หรือ backslash ถือว่าไม่ปลอดภัย
+        // A Windows drive letter or a backslash is treated as unsafe
         if (preg_match('/^[a-zA-Z]:/', $name) === 1 || str_contains($name, '\\')) {
             return null;
         }
@@ -808,7 +820,7 @@ final class RealExecutor implements Executor
     }
 
     /**
-     * ตรวจ argv ให้ครบทุกข้อก่อนปล่อยเข้า proc_open
+     * Validates every part of argv before it's allowed into proc_open
      *
      * @param list<string> $argv
      * @return list<string>
@@ -816,37 +828,37 @@ final class RealExecutor implements Executor
     private static function assertArgv(array $argv): array
     {
         if ($argv === []) {
-            throw new ValidationError('คำสั่งว่างเปล่า');
+            throw new ValidationError('Empty command');
         }
 
         foreach ($argv as $index => $part) {
             if (!is_string($part)) {
-                throw new ValidationError("argument ตำแหน่งที่ {$index} ไม่ใช่สตริง");
+                throw new ValidationError("Argument at position {$index} is not a string");
             }
             if (str_contains($part, "\0")) {
-                throw new ValidationError('argument มี null byte');
+                throw new ValidationError('An argument contains a null byte');
             }
         }
 
         $binary = $argv[0];
         if (!str_starts_with($binary, '/')) {
-            throw new ValidationError("binary ต้องเป็น absolute path: {$binary}");
+            throw new ValidationError("The binary must be an absolute path: {$binary}");
         }
 
         $real = realpath($binary);
         if ($real === false || !is_file($real) || !is_executable($real)) {
-            throw new ExecutionFailed("ไม่พบคำสั่งหรือรันไม่ได้: {$binary}");
+            throw new ExecutionFailed("Command not found or not executable: {$binary}");
         }
 
         $dir = dirname($real);
         if (!in_array($dir, self::BINARY_DIRS, true)) {
-            throw new ValidationError("ไม่อนุญาตให้รัน binary นอกไดเรกทอรีระบบ: {$real}");
+            throw new ValidationError("Running a binary outside a system directory is not allowed: {$real}");
         }
 
-        // binary ที่คนอื่นเขียนได้ = ผู้โจมตีแทนที่ไฟล์แล้วรอให้ agent เรียกได้
+        // A binary anyone else can write to = an attacker can replace the file and wait for the agent to call it
         $perms = @fileperms($real);
         if ($perms !== false && ($perms & 0o002) !== 0) {
-            throw new ValidationError("binary ถูกเขียนได้โดยผู้ใช้ทั่วไป ไม่ปลอดภัย: {$real}");
+            throw new ValidationError("The binary is writable by ordinary users, which is unsafe: {$real}");
         }
 
         $argv[0] = $real;
