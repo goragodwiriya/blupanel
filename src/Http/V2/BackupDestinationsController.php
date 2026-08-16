@@ -13,16 +13,19 @@ use Phpcp\Kernel\Response;
 use Phpcp\Security\Secret;
 
 /**
- * ปลายทางของไฟล์สำรอง — `/api/v2/backup-destinations` (PLAN-V2 เฟส E1)
+ * A backup file's destination — `/api/v2/backup-destinations` (PLAN-V2 phase E1)
  *
- * **ความลับเดินทางเข้าอย่างเดียว ไม่เคยเดินออก** · กุญแจ ssh ที่ส่งมาตอนสร้างหรือแก้ไข
- * ถูกเข้ารหัสเก็บทันที และไม่มี endpoint ไหนคืนมันกลับมาไม่ว่ารูปแบบใด · หน้าจอรู้แค่
- * `has_secret` ว่ามีเก็บไว้แล้วหรือยัง ซึ่งพอสำหรับการแสดงผลและไม่พอสำหรับการขโมย
+ * **A secret travels in only, never back out** · the ssh key sent when creating
+ * or editing is encrypted and stored immediately, and no endpoint ever returns
+ * it back in any shape · the screen only knows `has_secret` — whether one is
+ * already stored — which is enough for display and not enough to steal
  *
- * **ส่งฟิลด์กุญแจว่างมา = ไม่เปลี่ยน ไม่ใช่ล้างทิ้ง** — หน้าจอแก้ไขส่งฟอร์มทั้งชุด
- * กลับมาโดยที่ช่องนั้นว่างเสมอ ถ้าตีความว่าล้าง ผู้ดูแลจะทำปลายทางพังทุกครั้งที่แก้ชื่อ
+ * **Sending an empty secret field = don't change it, not clear it** — the edit
+ * screen sends the whole form back with that field always empty · interpreting
+ * that as "clear it" would break the destination every single time an admin
+ * edits its name
  *
- * ทั้งทรัพยากรนี้เป็นของชั้น SERVER — `backup.manage` ซึ่ง webadmin ไม่มี
+ * This whole resource belongs to the SERVER tier — `backup.manage`, which a webadmin doesn't have
  */
 final class BackupDestinationsController extends ApiController
 {
@@ -40,21 +43,25 @@ final class BackupDestinationsController extends ApiController
     }
 
     /**
-     * ปลายทาง — **เครื่องนี้มีได้ชุดเดียว** จึงเป็น "ตัวนั้น" เสมอ
+     * The destination — **this server can only have one**, so it's always "the one"
      *
-     * `id = 0` แปลว่า "เอาปลายทางของเครื่องนี้มา" ไม่ใช่ "ฟอร์มเปล่าของใหม่":
-     * มีอยู่แล้ว → ได้ค่าเดิมมาแก้ · ยังไม่มี → ได้โครงว่างไปสร้าง
+     * `id = 0` means "give me this server's destination," not "a blank form for
+     * a new one": one already exists → get its values to edit · none yet → get
+     * an empty shell to create one
      *
-     * **นี่คือเหตุผลที่ปุ่มบนหน้า Backups ชี้มาที่ `?id=0` ได้ตลอด** · ก่อนหน้านี้
-     * `id = 0` แปลว่า "ของใหม่" เสมอ ปุ่มเดียวนั้นจึงพาไปสร้างชุดที่สองทุกครั้ง
-     * แล้วชนกับกฎ "มีได้ชุดเดียว" ที่ `store()` บังคับไว้ — กดแล้วได้แต่ 409
+     * **This is why the button on the Backups page can always point at `?id=0`**
+     * · before this, `id = 0` always meant "a new one," so that one button led
+     * to creating a second set every time, colliding with the "only one allowed"
+     * rule `store()` enforces — clicking it just got a 409
      *
-     * ฟอร์มเพิ่มกับฟอร์มแก้ไขเป็นไฟล์เดียวกัน (`backup-destination.html`) ทั้งสองทาง
-     * จึงถามข้อมูลจากที่นี่เหมือนกัน ต่างกันแค่ได้โครงว่างหรือได้ค่าเดิม
+     * The add form and the edit form are the same file (`backup-destination.html`),
+     * so both paths ask for their data here the same way — the only difference
+     * is getting an empty shell versus the existing values
      *
-     * ที่นี่ไม่สั่งเปิด modal เหมือนฟอร์มอื่น เพราะช่องกรอกเยอะเกินกว่าจะอยู่ใน modal
-     * ได้อย่างสบายตา (สิบกว่าช่อง รวม textarea ของกุญแจลับ) — FRAMEWORK_GUIDE ให้
-     * ใช้หน้าเว็บของตัวเองในกรณีแบบนี้
+     * This doesn't command a modal to open like other forms do, because there
+     * are too many fields to fit comfortably in one (over a dozen, including the
+     * secret key's textarea) — FRAMEWORK_GUIDE says to use the page's own screen
+     * for a case like this
      */
     public function show(Request $request): Response
     {
@@ -78,7 +85,7 @@ final class BackupDestinationsController extends ApiController
     }
 
     /**
-     * โครงเปล่าที่มีคีย์ครบเท่ากับของจริง — ฟอร์มเดียวกันผูกค่าได้ทั้งสองกรณี
+     * An empty shell carrying the same keys as a real one — the same form can bind to either case
      *
      * @return array<string,mixed>
      */
@@ -106,9 +113,10 @@ final class BackupDestinationsController extends ApiController
     }
 
     /**
-     * เติมค่าที่คำนวณสำเร็จรูปให้ตาราง — string ประกอบที่มีเงื่อนไข (host:port:path
-     * ต่างรูปกันตาม driver, นโยบายเก็บย้อนหลังสองเงื่อนไขร่วมกัน) ทำในเทมเพลตของ
-     * Now.js ไม่ได้เพราะ `data-template` ทดแทนได้แค่ `${key}` ตรง ๆ ไม่รองรับเงื่อนไข
+     * Fill in ready-computed values for the table — conditional composed
+     * strings (host:port:path shaped differently per driver, a retention policy
+     * combining two conditions) can't be done in a Now.js template because
+     * `data-template` only substitutes `${key}` directly, with no conditional support
      *
      * @param array<string,mixed> $row
      * @return array<string,mixed>
@@ -145,8 +153,9 @@ final class BackupDestinationsController extends ApiController
         }
         $row['retention_label'] = $parts === [] ? $this->t('Unlimited') : implode(' · ', $parts);
 
-        // ปลายทางที่ล้มเงียบอันตรายพอ ๆ กับไม่มีปลายทางเลย — แยก "ยังไม่เคยตรวจ"
-        // ออกจาก "ตรวจแล้วล้ม" ให้ชัดเจน ไม่ใช่แค่ "ไม่มีเวลาล่าสุด"
+        // A destination that's silently failing is just as dangerous as having
+        // none at all — "never checked yet" is kept clearly distinct from
+        // "checked and failed," not just "no last-run time"
         $row['health_status'] = match (true) {
             !empty($row['last_error']) => 'failed',
             empty($row['last_ok_at']) => 'never',
@@ -166,8 +175,9 @@ final class BackupDestinationsController extends ApiController
     public function store(Request $request): Response
     {
         /*
-         * ฟอร์มเดียวทำทั้งเพิ่มและแก้ไข จึงยิงมาที่ปลายทางเดียวเสมอ แล้วให้ `id`
-         * ที่ซ่อนอยู่ในฟอร์มเป็นตัวตัดสิน — หน้าเว็บไม่ต้องสลับ method เองตามสถานะ
+         * One form does both add and edit, so it always fires at the same
+         * endpoint, letting the `id` hidden in the form decide — the screen
+         * never has to switch method itself based on state
          */
         $id = (int) $request->payload('id', 0);
 
@@ -178,14 +188,17 @@ final class BackupDestinationsController extends ApiController
         $repository = $this->repository();
 
         /*
-         * **ปลายทางมีได้ชุดเดียว** (PLAN-BACKUP-V2 §4.2)
+         * **Only one destination is allowed** (PLAN-BACKUP-V2 §4.2)
          *
-         * ปลายทางหลายชุดฟังดูยืดหยุ่น แต่มันสร้างคำถามที่ไม่มีใครตอบไว้: ไฟล์ของบัญชี
-         * ไหนไปที่ไหน · ใครเป็นคนเลือก · ไฟล์ที่ส่งไปที่หนึ่งแล้วนโยบายเก็บของอีกที่หนึ่ง
-         * ลบทิ้ง นับว่ามีสำเนาอยู่ไหม · รอบสำรองอัตโนมัติเป็นกระบวนการเดียวทั้งเครื่อง
-         * (ข้อ B6) จึงต้องมีคำตอบเดียวว่า "สำเนานอกเครื่องอยู่ที่ไหน"
+         * Multiple destinations sound flexible, but it creates questions nobody
+         * has answered: which account's files go where · who chooses · a file
+         * sent to one destination whose retention policy at another destination
+         * deletes it — does that still count as having a copy · the automatic
+         * backup round is one single machine-wide process (item B6), so it needs
+         * one single answer to "where is the offsite copy"
          *
-         * แก้ของเดิมได้เสมอ — ที่ปฏิเสธคือการ**เพิ่มชุดที่สอง** ไม่ใช่การเปลี่ยนปลายทาง
+         * Editing the existing one is always allowed — what's refused is
+         * **adding a second one**, not changing the destination
          */
         $existing = $repository->all();
 
@@ -217,12 +230,13 @@ final class BackupDestinationsController extends ApiController
             'Destination added',
             [
                 ['type' => 'notification', 'level' => 'success', 'message' => 'Destination added'],
-                // ฟอร์มอยู่คนละหน้ากับตารางแล้ว — พากลับไปหน้ารายการ ไม่ใช่รีโหลด
-                // ตารางที่ไม่ได้อยู่ในหน้าเดียวกัน
+                // The form lives on a different page from the table — send back to
+                // the list page, not reload a table that isn't on the same page
                 ['type' => 'redirect', 'url' => '/app/backups', 'delay' => 800],
-                // ตารางปลายทางเองรีโหลดจาก target ด้านบนแล้ว แต่ <select> ตัวเลือกปลายทาง
-                // ในฟอร์มตั้งเวลา/ฟอร์มส่งออก (backups.html) ผูกกับเหตุการณ์นี้ต่างหาก
-                // เพราะไม่ใช่ตารางที่มี id ให้ target อ้างถึง
+                // The destinations table itself already reloads from the target
+                // above, but the destination `<select>` in the schedule form /
+                // export form (backups.html) binds to this event separately,
+                // since it isn't a table with an id for target to refer to
             ],
             ['destination_id' => $id],
             201,
@@ -247,7 +261,7 @@ final class BackupDestinationsController extends ApiController
             }
         }
 
-        // ส่ง config มาบางส่วน = ผสมกับของเดิม · หน้าจอที่แก้แค่พอร์ตไม่ต้องส่งทุกฟิลด์
+        // Sending config partially = merge with the existing values · a screen editing only the port doesn't need to send every field
         if ($request->payload('config') !== null || $request->payload('host') !== null || $request->payload('path') !== null) {
             $changes['config'] = array_merge($row['config'], $this->configFrom($request));
         }
@@ -283,10 +297,11 @@ final class BackupDestinationsController extends ApiController
             return $this->problem(ApiProblem::NotFound, 'Destination not found');
         }
 
-        // ไฟล์ที่ส่งไปแล้วยังอยู่ที่ปลายทาง — เราแค่เลิกรู้จักมัน
+        // Files already sent stay at the destination — we just stop tracking it
         //
-        // ไม่ตามไปลบให้ เพราะการลบปลายทางออกจากรายการกับการทำลายไฟล์สำรองที่เก็บไว้
-        // เป็นคนละเจตนากันสิ้นเชิง และอย่างหลังย้อนคืนไม่ได้
+        // Never follows through and deletes them, because removing a
+        // destination from the list and destroying stored backup files are
+        // completely different intentions, and the latter can't be undone
         $orphans = (int) $this->app->db()->value(
             'SELECT count(*) FROM backups WHERE destination_id = :id AND offsite_status = :ok',
             ['id' => $id, 'ok' => 'ok'],
@@ -315,9 +330,9 @@ final class BackupDestinationsController extends ApiController
     }
 
     /**
-     * ทดสอบว่าปลายทางใช้งานได้จริง — เขียนไฟล์จริงแล้วอ่านกลับ
+     * Verify the destination genuinely works — writes a real file and reads it back
      *
-     * เป็น sub-resource ชื่อ `verification` ตาม §4.1 · สิ่งที่ถูกสร้างคือ "ผลการยืนยัน"
+     * A sub-resource named `verification` per §4.1 · what's being created is "the verification result"
      */
     public function verify(Request $request): Response
     {
@@ -335,15 +350,17 @@ final class BackupDestinationsController extends ApiController
     }
 
     /**
-     * อ่าน host key ของเครื่องปลายทางมาเติมให้ในฟอร์ม
+     * Read the destination machine's host key to fill into the form
      *
-     * รันจากเครื่องนี้ ซึ่งเป็นเครื่องที่จะส่งไฟล์สำรองจริง — กุญแจที่ได้จึงเป็นของ
-     * เครื่องที่มันจะคุยด้วยจริง ๆ ไม่ใช่ของเครื่องที่ผู้ดูแลบังเอิญนั่งอยู่ (ซึ่งอาจ
-     * มองเห็นคนละ IP เมื่อมี NAT หรือ DNS แยกวงใน/วงนอก)
+     * Runs from this machine, the one that will genuinely send backup files —
+     * so the key returned belongs to the machine it will actually talk to, not
+     * whichever machine the admin happens to be sitting at (which might see a
+     * different IP behind NAT, or with separate internal/external DNS)
      *
-     * **คืนข้อมูลล้วน ไม่มี `actions`** — ฝั่งหน้าจอใช้ `readHostKey` ใน `js/ui.js`
-     * ซึ่งเอาค่าไปเติมช่องเอง · ส่ง `actions` มาก็เปล่าประโยชน์เพราะเส้นทางนี้ไม่ได้
-     * ถูกเรียกผ่าน `ResponseHandler` (ดูคอมเมนต์ที่ `readHostKey`)
+     * **Returns plain data, no `actions`** — the screen uses `readHostKey` in
+     * `js/ui.js`, which fills the field in itself · sending `actions` would be
+     * useless since this route isn't called through `ResponseHandler` (see the
+     * comment at `readHostKey`)
      */
     public function hostKey(Request $request): Response
     {
@@ -356,10 +373,11 @@ final class BackupDestinationsController extends ApiController
     }
 
     /**
-     * ค่าตั้งที่ไม่ใช่ความลับของแต่ละ driver
+     * A driver's non-secret settings
      *
-     * รับเป็นฟิลด์แบน ๆ ระดับบนสุด ไม่ใช่ก้อน `config` ซ้อน — ฟอร์มฝั่งหน้าจอส่ง
-     * ฟิลด์แบนอยู่แล้ว และการบังคับให้ห่อเป็น object ทำให้ต้องเขียน JS เพิ่มโดยไม่ได้อะไร
+     * Accepted as flat top-level fields, not a nested `config` blob — the
+     * screen's form already sends flat fields, and forcing it to wrap them into
+     * an object would mean writing extra JS for no benefit
      *
      * @return array<string,mixed>
      */
@@ -367,8 +385,8 @@ final class BackupDestinationsController extends ApiController
     {
         $config = [];
 
-        // `known_hosts` เก็บ **เนื้อหา** ของ ssh-keyscan ไม่ใช่เส้นทางไฟล์ — เป็นข้อมูล
-        // สาธารณะ (กุญแจสาธารณะของโฮสต์) จึงอยู่ใน config ไม่ใช่ช่องความลับที่เข้ารหัส
+        // `known_hosts` stores the **content** of ssh-keyscan, not a file path —
+        // it's public data (the host's public key), so it belongs in config, not an encrypted secret field
         foreach (['host', 'user', 'path', 'known_hosts', 'bucket', 'region', 'endpoint', 'access_key'] as $key) {
             $value = trim($request->payloadString($key));
 
@@ -391,10 +409,11 @@ final class BackupDestinationsController extends ApiController
     }
 
     /**
-     * ตรวจว่าฟิลด์ที่ driver นั้นต้องการมาครบ
+     * Check that every field this driver requires is present
      *
-     * ตรวจที่นี่แทนที่จะปล่อยให้ constructor ของ driver โยน เพื่อให้ผู้ใช้ได้ 422 พร้อม
-     * **ชื่อฟิลด์ที่ขาด** ไม่ใช่ข้อความรวม ๆ ที่ต้องเดาเองว่าช่องไหน
+     * Checked here instead of leaving the driver's constructor to throw, so the
+     * user gets a 422 with **the exact missing field names**, not a bundled
+     * message they have to guess the field from
      *
      * @param array<string,mixed> $config
      */
@@ -411,7 +430,7 @@ final class BackupDestinationsController extends ApiController
         }
 
         if (DestinationFactory::needsSecret($driver) && $secret === '') {
-            $missing['secret'] = 'ต้องใส่กุญแจส่วนตัวสำหรับเข้าเครื่องปลายทาง';
+            $missing['secret'] = 'A private key to reach the destination machine is required';
         }
 
         return $missing === []

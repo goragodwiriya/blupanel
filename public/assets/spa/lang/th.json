@@ -29,6 +29,7 @@
     "A mailbox name must be specified": "ต้องระบุชื่อกล่องจดหมาย",
     "A port range must go from low to high": "ช่วงพอร์ตต้องเรียงจากน้อยไปมาก",
     "A private key is required to access the destination machine": "ต้องมีกุญแจส่วนตัวสำหรับเข้าเครื่องปลายทาง",
+    "A private key to reach the destination machine is required": "ต้องใส่กุญแจส่วนตัวสำหรับเข้าเครื่องปลายทาง",
     "A region must be specified": "ต้องระบุ region",
     "A schedule must be specified": "ต้องระบุตารางเวลา",
     "A schedule must have 5 fields, e.g. \"0 3 * * *\"": "ตารางเวลาต้องมี 5 ฟิลด์ เช่น \"0 3 * * *\"",
