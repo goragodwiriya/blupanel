@@ -106,7 +106,7 @@ function explainOf(Executor $executor, string $unit = 'nginx'): string
 test('พอร์ตชนกันต้องบอกหมายเลขพอร์ตและใครถืออยู่', static function (): void {
     $message = explainOf(new PortClashExecutor());
 
-    assertTrue(str_contains($message, 'พอร์ต 80'), 'ต้องบอกหมายเลขพอร์ตที่ชน: ' . $message);
+    assertTrue(str_contains($message, 'port 80'), 'ต้องบอกหมายเลขพอร์ตที่ชน: ' . $message);
     assertTrue(str_contains($message, 'apache2'), 'ต้องบอกว่าใครถืออยู่: ' . $message);
 });
 
@@ -119,8 +119,8 @@ test('ต้องบอกทางออกที่กดทำต่อไ�
 test('หา ss ไม่ได้ก็ยังต้องบอกพอร์ต — ไม่ใช่เงียบทั้งข้อความ', static function (): void {
     $message = explainOf(new PortClashExecutor(withSs: false));
 
-    assertTrue(str_contains($message, 'พอร์ต 80'), 'ยังต้องบอกพอร์ตแม้ไม่รู้ว่าใครถือ: ' . $message);
-    assertTrue(!str_contains($message, ' โดย '), 'ต้องไม่เดาชื่อโปรเซสเมื่อหาไม่ได้: ' . $message);
+    assertTrue(str_contains($message, 'port 80'), 'ยังต้องบอกพอร์ตแม้ไม่รู้ว่าใครถือ: ' . $message);
+    assertTrue(!str_contains($message, ' by '), 'ต้องไม่เดาชื่อโปรเซสเมื่อหาไม่ได้: ' . $message);
 });
 
 test('บรรทัดตกแต่งของ systemd ต้องไม่ปนเข้ามาในข้อความ', static function (): void {

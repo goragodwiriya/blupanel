@@ -15,23 +15,25 @@ use Phpcp\Support\BinaryPath;
 use Phpcp\Support\Validator;
 
 /**
- * ฐานของคำสั่งที่เปลี่ยนสถานะ service — start / stop / restart / reload
+ * The base for commands that change a service's state — start / stop / restart / reload
  *
- * เป็น capability กลุ่มแรกของระบบที่ "เปลี่ยนแปลง" อะไรจริง ๆ จึงผ่านเส้นทางเต็ม:
- *   ตรวจ permission → validate → เขียน audit ก่อนลงมือ → รัน → เขียนผล
+ * The first group of capabilities in the system that genuinely "changes"
+ * anything, so it goes through the full path: check permission → validate →
+ * write the audit entry before acting → run → write the result.
  *
- * ความปลอดภัย: ชื่อ unit มาจาก allowlist ตายตัวใน ServiceCatalog และผ่าน SelfProtection
- * ก่อนเสมอ ค่าที่ผู้ใช้ส่งมาไม่เคยถูกนำไปประกอบเป็นคำสั่งโดยตรง
+ * Security: unit names come from a fixed allowlist in ServiceCatalog and always
+ * pass through SelfProtection first — a value the user sends is never assembled
+ * directly into a command.
  */
 abstract class ServiceAction implements Capability
 {
-    /** @var list<string> systemd อยู่ /usr/bin บน Debian/Ubuntu · บางระบบมีที่ /bin ด้วย */
+    /** @var list<string> systemd lives at /usr/bin on Debian/Ubuntu · some systems also have it at /bin */
     private const JOURNALCTL_PATHS = ['/usr/bin/journalctl', '/bin/journalctl'];
 
-    /** @var list<string> iproute2 — ใช้หาว่าใครถือพอร์ตที่ชนกันอยู่ */
+    /** @var list<string> iproute2 — used to find who's holding a colliding port */
     private const SS_PATHS = ['/usr/bin/ss', '/bin/ss', '/usr/sbin/ss'];
 
-    /** คำกริยาที่จะส่งให้ systemctl — มาจากโค้ด ไม่ใช่จาก input */
+    /** The verb sent to systemctl — comes from code, never from input */
     abstract protected function verb(): string;
 
     public function permission(): string
@@ -51,11 +53,11 @@ abstract class ServiceAction implements Capability
     {
         $unit = strtolower(Validator::requireString($args, 'service', 64));
 
-        // ตรวจบริการของ panel ก่อนเรื่องอื่น เพื่อให้ข้อความผิดพลาดตรงกับสาเหตุจริง
+        // Checks the panel's own services before anything else, so the error message matches the real cause
         SelfProtection::assertUnit($unit);
 
         if (!ServiceCatalog::isAllowed($unit)) {
-            throw new ValidationError("ไม่รู้จักบริการ: {$unit}");
+            throw new ValidationError("Unknown service: {$unit}");
         }
 
         return ['service' => $unit];
@@ -72,7 +74,7 @@ abstract class ServiceAction implements Capability
         $before = ServiceProbe::read($executor, $unit);
 
         if (!$before['installed']) {
-            throw new ExecutionFailed("ไม่พบบริการ {$unit} บนเครื่องนี้");
+            throw new ExecutionFailed("Service {$unit} was not found on this machine");
         }
 
         $result = $executor->exec(
@@ -81,7 +83,7 @@ abstract class ServiceAction implements Capability
         );
 
         if (!$result->ok()) {
-            // Fallback สำหรับ Docker/sysvinit หาก systemctl ล้มเหลว
+            // A fallback for Docker/sysvinit if systemctl fails
             $serviceResult = $executor->exec(
                 [$executor->path('/usr/sbin/service'), $unit, $this->verb()],
                 timeout: 30,
@@ -91,7 +93,7 @@ abstract class ServiceAction implements Capability
                 $detail = trim($result->stderr) !== '' ? ' — '.trim($result->stderr) : '';
 
                 throw new ExecutionFailed(
-                    sprintf('%s บริการ %s ไม่สำเร็จ%s', $this->actionLabel(), $unit, $detail)
+                    sprintf('Failed to %s service %s%s', $this->verb(), $unit, $detail)
                     . $this->explainFailure($executor, $unit),
                     $result->exitCode,
                     $result->stderr,
@@ -99,7 +101,7 @@ abstract class ServiceAction implements Capability
             }
         }
 
-        // อ่านสถานะกลับทันทีเพื่อให้ UI อัปเดตการ์ดได้โดยไม่ต้องเรียกซ้ำ
+        // Reads the status back immediately, so the UI can update its card with no need to call again
         $after = ServiceProbe::read($executor, $unit);
 
         return [
@@ -108,19 +110,21 @@ abstract class ServiceAction implements Capability
             'before' => $before['status'],
             'after' => $after['status'],
             'state' => $after,
-            'message' => sprintf('%s บริการ %s เรียบร้อยแล้ว', $this->actionLabel(), ServiceCatalog::label($unit))
+            'message' => sprintf('%s service %s successfully', $this->actionLabel(), ServiceCatalog::label($unit))
         ];
     }
 
     /**
-     * หาสาเหตุจริงจาก journal แทนที่จะส่งประโยคของ systemd ต่อไปเฉย ๆ
+     * Finds the real cause from the journal, instead of just relaying systemd's own sentence
      *
-     * ข้อความที่ systemd คืนมาคือ *"Job for nginx.service failed because the control
-     * process exited with error code. See systemctl status..."* ซึ่งไม่ได้บอกอะไรเลย
-     * นอกจากให้ไปหาต่อเอง — ผู้ดูแลที่ทำงานผ่านหน้าเว็บมักไม่มีเทอร์มินัลอยู่ตรงหน้า
+     * The message systemd returns is *"Job for nginx.service failed because the
+     * control process exited with error code. See systemctl status..."*, which
+     * says nothing beyond "go look further yourself" — an admin working through
+     * the web page usually has no terminal in front of them.
      *
-     * กรณีที่พบบ่อยที่สุดคือพอร์ตชนกัน (เปิด nginx ทั้งที่ Apache ถือ 80/443 อยู่)
-     * ซึ่งบอกได้ครบว่าใครถืออะไรอยู่ และต้องทำอะไรต่อ
+     * The most common case by far is a port collision (starting nginx while
+     * Apache is already holding 80/443), which can be fully explained: who's
+     * holding what, and what to do about it.
      */
     private function explainFailure(Executor $executor, string $unit): string
     {
@@ -137,23 +141,25 @@ abstract class ServiceAction implements Capability
             $port = (int) $m[1];
 
             return sprintf(
-                "\n\nสาเหตุ: พอร์ต %d ถูกใช้งานอยู่แล้ว%s\n\n"
-                . 'เว็บเซิร์ฟเวอร์สองตัวถือพอร์ตเดียวกันไม่ได้ — หยุดตัวที่ถืออยู่ก่อน '
-                . 'หรือถ้าต้องการใช้ทั้งคู่ ให้ตั้ง `webserver` เป็น `nginx-proxy` '
-                . 'ซึ่งให้ nginx รับพอร์ต 80/443 แล้วส่งต่อให้ Apache ที่ 127.0.0.1:8080',
+                "\n\nCause: port %d is already in use%s\n\n"
+                . 'Two web servers can\'t hold the same port — stop whichever one '
+                . 'is holding it first, or if both are genuinely needed, set '
+                . '`webserver` to `nginx-proxy`, which has nginx take ports '
+                . '80/443 and forward to Apache at 127.0.0.1:8080',
                 $port,
                 $this->whoHoldsPort($executor, $port),
             );
         }
 
-        return "\n\nรายละเอียดจาก journal:\n" . $log;
+        return "\n\nDetail from the journal:\n" . $log;
     }
 
     /**
-     * บรรทัดที่เป็นความผิดพลาดจริงจาก journal ของ unit นั้น
+     * The lines that are genuinely errors from that unit's journal
      *
-     * ตัดเฉพาะบรรทัดที่มีเนื้อหา — journal ใส่บรรทัดคำอธิบายของ systemd เอง
-     * (ขึ้นต้นด้วย ░░) ปนมาด้วย ซึ่งยาวกว่าสาเหตุจริงหลายเท่า
+     * Only lines with real content are kept — the journal also includes
+     * systemd's own explanatory lines (starting with ░░), which run many times
+     * longer than the real cause.
      */
     private function recentLog(Executor $executor, string $unit): string
     {
@@ -179,11 +185,11 @@ abstract class ServiceAction implements Capability
             $lines[] = $line;
         }
 
-        // เอาเฉพาะท้าย ๆ ซึ่งเป็นรอบล่าสุด — เก่ากว่านั้นคือความพยายามครั้งก่อนที่แก้ไปแล้ว
+        // Keeps only the tail end, the most recent run — anything older is a past attempt that's already been dealt with
         return implode("\n", array_slice($lines, -6));
     }
 
-    /** ชื่อโปรเซสที่ถือพอร์ตอยู่ — ว่างเปล่าถ้าหาไม่ได้ ดีกว่าเดา */
+    /** The name of the process holding the port — empty if it can't be found, better than guessing */
     private function whoHoldsPort(Executor $executor, int $port): string
     {
         try {
@@ -197,13 +203,13 @@ abstract class ServiceAction implements Capability
         foreach (explode("\n", $result->stdout) as $line) {
             $fields = preg_split('/\s+/', trim($line)) ?: [];
 
-            // ช่องที่ 4 คือที่อยู่ฝั่งเรา — ช่อง peer เป็น 0.0.0.0:* เสมอจึงต้องไม่ดูช่องนั้น
+            // Field 4 is our own local address — the peer field is always 0.0.0.0:*, so it must never be checked instead
             if (!isset($fields[3]) || !str_ends_with($fields[3], ':' . $port)) {
                 continue;
             }
 
             if (preg_match('/users:\(\("([^"]+)"/', $line, $m) === 1) {
-                return sprintf(' โดย %s', $m[1]);
+                return sprintf(' by %s', $m[1]);
             }
         }
 
@@ -213,11 +219,11 @@ abstract class ServiceAction implements Capability
     protected function actionLabel(): string
     {
         return match ($this->verb()) {
-            'start' => 'เริ่ม',
-            'stop' => 'หยุด',
-            'restart' => 'รีสตาร์ต',
-            'reload' => 'โหลดค่าตั้งใหม่ของ',
-            default => $this->verb(),
+            'start' => 'Started',
+            'stop' => 'Stopped',
+            'restart' => 'Restarted',
+            'reload' => 'Reloaded',
+            default => ucfirst($this->verb()),
         };
     }
 }

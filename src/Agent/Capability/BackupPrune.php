@@ -16,28 +16,34 @@ use Phpcp\Security\Secret;
 use Phpcp\Support\Validator;
 
 /**
- * ลบไฟล์สำรองที่เก่าเกินนโยบาย ออกจากโฟลเดอร์ของแต่ละบัญชี
+ * Deletes backup files older than policy allows, from each account's folder
  *
- * **ถูกออกแบบให้ทำงานโดยไม่มีคนดู** (cron เรียกทุกวัน) กฎทุกข้อจึงเอียงไปทาง
- * "เก็บไว้ก่อน" เมื่อไม่แน่ใจ:
+ * **Designed to run with nobody watching** (cron calls it daily), so every rule
+ * leans toward "keep it" whenever unsure:
  *
- *   1. **เก็บ N ชุดล่าสุดเสมอ** แม้จะเกินจำนวนวันไปแล้ว — บัญชีที่ไม่ได้สำรองมานาน
- *      ต้องไม่ตื่นมาแล้วพบว่าไฟล์สำรองถูกลบเกลี้ยงเพราะทุกไฟล์ "เก่าเกิน 30 วัน"
- *   2. **นับแยกตามเว็บและชนิด** — "เก็บ 7 ชุดล่าสุด" ต้องหมายถึง 7 ชุดของสิ่งนั้น
- *      ไม่ใช่ 7 ชุดรวมทั้งบัญชี ซึ่งจะทำให้เว็บที่สำรองบ่อยกินโควตาของเว็บอื่นจนหมด
- *   3. **ไม่แตะไฟล์ที่จับคู่กับเว็บไม่ได้** — ไฟล์ที่ลูกค้าคัดลอกเข้ามาเองหรือเปลี่ยน
- *      ชื่อเอง ไม่ใช่ของที่ระบบสร้าง จึงไม่ใช่ของที่ระบบจะลบทิ้งตามนโยบายของตัวเอง
+ *   1. **Always keeps the N most recent copies**, even past the day limit — an
+ *      account that hasn't backed up in a while must never wake up to find
+ *      every backup file deleted because all of them were "older than 30 days"
+ *   2. **Counted separately per site and per type** — "keep the 7 most recent"
+ *      has to mean 7 copies of that specific thing, not 7 across the whole
+ *      account, which would let a frequently backed-up site eat another site's
+ *      allowance entirely
+ *   3. **Never touches a file that can't be matched to a site** — a file a
+ *      customer copied in themselves, or renamed, wasn't created by the
+ *      system, so it isn't something the system will delete under its own policy
  *
- * ## ทำไมไม่ตรวจ "มีสำเนานอกเครื่องหรือยัง" อีกแล้ว
+ * ## Why "does an offsite copy exist yet" is no longer checked
  *
- * กฎเดิมข้อนั้นอ่านจากคอลัมน์ `offsite_status` ในตาราง `backups` ซึ่งเลิกเป็นแหล่ง
- * ความจริงไปแล้ว (ข้อ B4) · ความจริงใหม่คือ **ไฟล์อยู่ในบ้านของลูกค้า** เขาลบเองได้
- * ทุกเมื่ออยู่แล้ว การให้ตัวเก็บกวาดยึดสถานะที่บันทึกไว้เมื่อวานจึงไม่ได้กันอะไรจริง
- * · สิ่งที่กันข้อมูลหายในระบบใหม่คือข้อ 1 กับข้อ 2 ซึ่งอ่านจากไฟล์ที่มีอยู่จริงเดี๋ยวนั้น
+ * That old rule read from the `offsite_status` column in the `backups` table,
+ * which stopped being a source of truth (item B4) · the new truth is that
+ * **the file lives in the customer's own home**, and they can already delete it
+ * themselves at any time — so having the cleanup job trust yesterday's recorded
+ * status guarded against nothing real · what actually guards against data loss
+ * in the new system is rules 1 and 2, which read from files that genuinely exist right now.
  */
 final class BackupPrune extends BackupCapability implements Capability
 {
-    /** ค่าปริยายเมื่อไม่ได้ระบุ */
+    /** Defaults when not specified */
     private const DEFAULT_DAYS = 30;
     private const DEFAULT_KEEP = 7;
 
@@ -47,11 +53,12 @@ final class BackupPrune extends BackupCapability implements Capability
     }
 
     /**
-     * สิทธิ์ของ**ทั้งเครื่อง** ไม่ใช่ของหมวด Hosting
+     * A **whole-machine** permission, not one from the Hosting category
      *
-     * ตัวนี้เดินโฟลเดอร์ของทุกบัญชีในรอบเดียวและลบไฟล์ของลูกค้าตามนโยบายที่ผู้ดูแล
-     * ตั้งไว้ · `backup.manage` เป็นสิทธิ์ที่ผู้ดูแลเว็บไซต์มีติดตัว การใช้สิทธิ์นั้น
-     * แปลว่าลูกค้ารายหนึ่งสั่งรอบเก็บกวาดของทั้งเครื่องได้
+     * This walks every account's folder in one pass and deletes customer files
+     * according to policy an admin has set · `backup.manage` is a permission a
+     * site owner holds themselves — using that permission here would mean a
+     * single customer could trigger a machine-wide cleanup cycle.
      */
     public function permission(): string
     {
@@ -65,7 +72,7 @@ final class BackupPrune extends BackupCapability implements Capability
 
     public function summary(): string
     {
-        return 'ลบไฟล์สำรองที่เก่าเกินนโยบายที่ตั้งไว้';
+        return 'Delete backup files older than the configured policy';
     }
 
     public function validate(array $args): array
@@ -73,7 +80,7 @@ final class BackupPrune extends BackupCapability implements Capability
         return [
             'days' => Validator::optionalInt($args, 'days', self::DEFAULT_DAYS, 0),
             'keep' => Validator::optionalInt($args, 'keep', self::DEFAULT_KEEP, 0),
-            // 0 = ทุกบัญชี
+            // 0 = every account
             'user_id' => Validator::optionalInt($args, 'user_id', 0, 0),
             'dry_run' => (bool) ($args['dry_run'] ?? false),
         ];
@@ -90,15 +97,17 @@ final class BackupPrune extends BackupCapability implements Capability
         $kept = 0;
 
         foreach ($accounts as $account) {
-            // นับลำดับความใหม่ **ต่อการเรียกหนึ่งครั้งและต่อหนึ่งบัญชี**
+            // Recency rank counted **per call and per account**
             //
-            // เคยเขียนเป็น static ในเมธอดตรวจ ซึ่งเป็นบั๊กที่ร้ายแรงเงียบ ๆ: agent
-            // เป็นโปรเซสที่รันค้างเป็นเดือน ตัวนับจึงสะสมข้ามการเรียก แล้วรอบที่สอง
-            // เป็นต้นไปจะเห็นว่าทุกกลุ่ม "มีของครบโควตาแล้ว" ตั้งแต่แถวแรก
+            // This used to be a static variable inside the check method, a
+            // silently severe bug: the agent is a process that runs for months
+            // at a stretch, so the counter would accumulate across calls, and
+            // from the second run onward, every group would look like it
+            // already had its full quota starting from the very first row
             $seen = [];
 
             foreach ($this->filesOf($executor, $context, $account) as $file) {
-                // ไฟล์ที่ไม่รู้ว่าเป็นของเว็บไหน = ไม่ใช่ของที่ระบบสร้าง จึงไม่ใช่ของที่ระบบลบ
+                // A file with no way to tell which site it belongs to = not created by the system, so not the system's to delete
                 if ($file['domain'] === '') {
                     $kept++;
                     continue;
@@ -135,7 +144,7 @@ final class BackupPrune extends BackupCapability implements Capability
             'freed_bytes' => $bytes,
             'dry_run' => $args['dry_run'],
             'message' => sprintf(
-                $args['dry_run'] ? 'จะลบ %d ไฟล์ คืนพื้นที่ %s ไบต์' : 'ลบ %d ไฟล์ คืนพื้นที่ %s ไบต์',
+                $args['dry_run'] ? 'Would delete %d file(s), freeing %s bytes' : 'Deleted %d file(s), freed %s bytes',
                 count($removed),
                 number_format($bytes),
             ),
@@ -143,14 +152,18 @@ final class BackupPrune extends BackupCapability implements Capability
     }
 
     /**
-     * ลบสำเนานอกเครื่องของไฟล์ที่เพิ่งลบไป — ชื่อที่ปลายทางคำนวณได้ ไม่ต้องจำ
+     * Deletes the offsite copy of a file that was just deleted — the
+     * destination name can be computed, never needs to be remembered
      *
-     * `backup.push` ตั้งชื่อไฟล์ปลายทางเป็น `<ชื่อบัญชี>-<ชื่อไฟล์>` เสมอ · นโยบายเก็บ
-     * ไฟล์จึงมีผลทั้งสองที่โดยไม่ต้องมีตารางคอยจำว่าไฟล์ไหนไปอยู่ที่ไหน — ซึ่งเป็นตาราง
-     * ที่จะเพี้ยนทันทีที่ลูกค้าลบไฟล์ของตัวเอง เหมือนที่ตาราง `backups` เพี้ยนมาแล้ว
+     * `backup.push` always names the destination file `<account name>-<filename>`
+     * · so the retention policy takes effect in both places with no table
+     * needed to remember which file went where — the kind of table that would
+     * drift out of sync the moment a customer deleted their own file, the same
+     * way the `backups` table already had before.
      *
-     * **ล้มแล้วไม่ทำให้ทั้งรอบล้ม** · ปลายทางที่ติดต่อไม่ได้คืนงานเก็บกวาดของบัญชีที่
-     * เหลือให้ทำต่อได้ · ไฟล์ที่ค้างอยู่ปลายทางกินพื้นที่ แต่ไม่ทำให้ข้อมูลใครหาย
+     * **A failure here never fails the whole cycle** · an unreachable
+     * destination lets the cleanup of the remaining accounts continue · a
+     * file left behind at the destination wastes space, but never loses anyone's data.
      */
     private function deleteOffsite(Executor $executor, Context $context, UserAccount $account, string $file): void
     {
@@ -171,7 +184,7 @@ final class BackupPrune extends BackupCapability implements Capability
     }
 
     /**
-     * ไฟล์ของบัญชีเดียว เรียงใหม่สุดก่อน — โฟลเดอร์ที่อ่านไม่ได้ต้องไม่ทำให้ทั้งรอบล้ม
+     * One account's files, newest first — a folder that can't be read must never fail the whole cycle
      *
      * @return list<array<string,mixed>>
      */
@@ -185,19 +198,19 @@ final class BackupPrune extends BackupCapability implements Capability
     }
 
     /**
-     * เหตุผลที่ต้องเก็บไฟล์นี้ไว้ — null แปลว่าลบได้
+     * The reason this file has to be kept — null means it can be deleted
      *
      * @param array<string,mixed> $file
-     * @param int $rank ลำดับความใหม่ในกลุ่มของตัวเอง — 1 คือใหม่ที่สุด
+     * @param int $rank this file's recency rank within its own group — 1 is the newest
      */
     private function keepReason(array $file, int $days, int $keep, int $rank): ?string
     {
         if ($keep > 0 && $rank <= $keep) {
-            return 'อยู่ใน ' . $keep . ' ชุดล่าสุด';
+            return 'within the ' . $keep . ' most recent';
         }
 
         if ($days > 0 && (time() - (int) $file['modified_at']) < $days * 86400) {
-            return 'ยังไม่เกิน ' . $days . ' วัน';
+            return 'not yet past ' . $days . ' days';
         }
 
         return null;

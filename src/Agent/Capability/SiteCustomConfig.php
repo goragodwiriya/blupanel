@@ -16,21 +16,27 @@ use Phpcp\Driver\WebServer\CustomConfig;
 use Phpcp\Support\Validator;
 
 /**
- * เขียนไฟล์ตั้งค่าเพิ่มเติมของเว็บไซต์ — สำหรับผู้ดูแลที่รู้ว่ากำลังทำอะไร
+ * Writes a website's supplementary config file — for an admin who knows exactly
+ * what they're doing
  *
- * ## สี่ชั้นที่กันไม่ให้พังทั้งเครื่อง
+ * ## Four layers that stop this from breaking the whole machine
  *
- *   1. **เขียนผ่าน `ConfigTransaction`** — ไฟล์เดิมถูกเก็บไว้ก่อนเขียนเสมอ
- *   2. **ตัวตรวจของเว็บเซิร์ฟเวอร์เอง** (`apachectl configtest` / `nginx -t`) เป็นคน
- *      ตัดสินว่าจะ commit หรือคืนค่า — ไม่ใช่ตัวตรวจไวยากรณ์ที่เราเขียนเอง ซึ่งไม่มีวัน
- *      ตรงกับของจริงและจะกลายเป็นตัวบล็อกค่าตั้งที่ถูกต้อง
- *   3. **`RollbackGuard`** — ค่าตั้งที่ผ่าน configtest แต่ทำให้เว็บใช้ไม่ได้จริง (เช่น
- *      redirect วนไม่รู้จบ, deny ทุกอย่าง) ยังถูกถอนคืนเองถ้าไม่มีใครกดยืนยันในเวลา
- *   4. **เส้นทางไฟล์ไม่เคยมาจากผู้ใช้** — ประกอบจากโดเมนของเว็บไซต์ที่ผ่าน Validator
- *      แล้วเท่านั้น · ผู้เรียกส่งได้แค่เนื้อไฟล์
+ *   1. **Written through `ConfigTransaction`** — the original file is always kept before writing
+ *   2. **The web server's own validator** (`apachectl configtest` / `nginx -t`)
+ *      is what decides whether to commit or revert — never a syntax checker
+ *      written by hand here, which could never match the real thing and would
+ *      end up blocking perfectly valid config
+ *   3. **`RollbackGuard`** — config that passes configtest but genuinely breaks
+ *      the site (an infinite redirect loop, denying everything) still gets
+ *      reverted automatically if nobody confirms in time
+ *   4. **The file path never comes from the user** — assembled only from the
+ *      website's own domain, already passed through Validator · a caller can
+ *      only ever send the file's content
  *
- * ชั้นที่ 3 คือชั้นที่คนมักลืม: `configtest` ตอบแค่ว่า "ไวยากรณ์ถูก" ไม่ได้ตอบว่า
- * "เว็บยังใช้งานได้" · กฎที่เขียนถูกทุกตัวอักษรแต่บล็อกทุกคำขอก็ผ่าน configtest สบาย ๆ
+ * Layer 3 is the one people tend to forget: `configtest` only answers "is the
+ * syntax correct", never "does the site still work" · a rule with every
+ * character spelled correctly that blocks every single request passes
+ * configtest without any trouble at all.
  */
 final class SiteCustomConfig extends SiteCapability
 {
@@ -40,11 +46,13 @@ final class SiteCustomConfig extends SiteCapability
     }
 
     /**
-     * **ผู้ดูแลเครื่องเท่านั้น ไม่ใช่เจ้าของเว็บ**
+     * **Machine admins only, never a site owner**
      *
-     * ไฟล์นี้ถูกอ่านโดยเว็บเซิร์ฟเวอร์ที่รันเป็นผู้ใช้ระบบร่วมกันทั้งเครื่อง · ค่าที่
-     * เขียนผิดทำให้ configtest ล้ม แล้วเว็บ**ทุกเว็บ**บนเครื่องหยุดโหลดค่าใหม่ตามไปด้วย
-     * ไม่ใช่แค่เว็บของคนเขียน · `site.edit` ที่เจ้าของเว็บมีจึงไม่พอสำหรับงานนี้
+     * This file is read by the web server, which runs as a single system user
+     * shared across the whole machine · a bad value fails configtest, and
+     * **every site** on the machine stops picking up new config along with it,
+     * not just the site whose owner wrote it · `site.edit`, which a site owner
+     * holds, is therefore never enough for this job.
      */
     public function permission(): string
     {
@@ -58,7 +66,7 @@ final class SiteCustomConfig extends SiteCapability
 
     public function summary(): string
     {
-        return 'เขียนไฟล์ตั้งค่าเพิ่มเติมของเว็บไซต์';
+        return 'Write website supplementary config file';
     }
 
     public function validate(array $args): array
@@ -66,7 +74,7 @@ final class SiteCustomConfig extends SiteCapability
         return [
             'site_id' => Validator::requireInt($args, 'site_id', 1),
             'content' => CustomConfig::assertContent((string) ($args['content'] ?? '')),
-            // คีย์จากหน้าจอ — ว่างได้ (ผู้เรียกที่เป็นเครื่อง) แต่ถ้าส่งมาต้องเป็นไฟล์ที่แก้ได้จริง
+            // The key from the screen — can be empty (a machine caller), but if sent, must be a genuinely editable file
             'key' => isset($args['key']) && $args['key'] !== ''
                 ? ConfigFileCatalog::assertKey((string) $args['key'])
                 : '',
@@ -82,14 +90,16 @@ final class SiteCustomConfig extends SiteCapability
         $templates = new Template($context->config->paths->templates());
         $driver = self::webServer($context, $templates);
 
-        // ชนิดของไฟล์ต้องตรงกับเซิร์ฟเวอร์ที่ใช้อยู่จริง ไม่ใช่ที่ผู้เรียกบอกมา
+        // The file's type must match the server actually in use, never what the caller claims
         $server = $driver->name() === 'nginx' ? 'nginx' : 'apache';
 
         /*
-         * **ตัดสินจากทะเบียนอีกรอบว่าไฟล์นี้แก้ได้จริง** ไม่ใช่เชื่อว่าหน้าจอส่งคีย์ที่ถูก
+         * **Decided from the registry again whether this file is genuinely
+         * editable**, never trusting that the screen sent the right key
          *
-         * ปุ่มที่ไม่ขึ้นบนหน้าจอไม่ใช่ด่านความปลอดภัย — คำขอที่ประกอบเองยังส่งคีย์ของ
-         * ไฟล์ที่ระบบสร้าง (`site.N.vhost.0`) มาได้เสมอ · ด่านต้องอยู่ที่ชั้นล่างสุด
+         * A button that doesn't appear on screen is not a security gate — a
+         * hand-crafted request can still send the key of a system-generated
+         * file (`site.N.vhost.0`) · the gate has to live at the lowest layer.
          */
         if ($args['key'] !== '') {
             $file = ConfigFileCatalog::find(
@@ -99,8 +109,9 @@ final class SiteCustomConfig extends SiteCapability
 
             if ($file === null || $file['kind'] !== ConfigFileCatalog::KIND_WRITABLE) {
                 throw new ValidationError(
-                    'ไฟล์นี้แก้จากหน้าเว็บไม่ได้ — ระบบเขียนทับทั้งไฟล์ทุกครั้งที่เว็บไซต์เปลี่ยน '
-                    . 'สิ่งที่แก้ลงไปจะหายไปเงียบ ๆ · เขียนค่าที่ต้องการลงไฟล์ส่วนเสริมแทน',
+                    'This file cannot be edited from the web page — the system overwrites the whole '
+                    . 'file every time the website changes, so anything edited here would silently '
+                    . 'vanish · write the value into the supplementary file instead',
                 );
             }
         }
@@ -114,14 +125,18 @@ final class SiteCustomConfig extends SiteCapability
         $transaction = new ConfigTransaction($executor);
 
         /*
-         * เนื้อว่าง = ผู้ดูแลลบค่าที่เคยใส่ไว้ · ยังเขียนไฟล์ (เหลือแต่หัวไฟล์) แทนที่จะ
-         * ลบทิ้ง เพราะไฟล์ที่มีอยู่แต่ว่างอ่านง่ายกว่าไฟล์ที่หายไป — และการลบไฟล์ทำให้
-         * ผู้ดูแลไม่รู้ว่าเคยมีที่ให้เขียนอยู่ตรงนี้
+         * Empty content = the admin deleted what they'd previously entered ·
+         * the file is still written (leaving just its header) rather than
+         * deleted, because a file that exists but is empty is easier to
+         * understand than a missing file — deleting it would leave the admin
+         * with no way to know there was ever a place to write here.
          */
         /*
-         * เขียนตามที่ส่งมาตรง ๆ **ไม่เติมหัวไฟล์เอง** — คำอธิบายมากับไฟล์ตั้งต้นอยู่แล้ว
-         * ถ้าเติมซ้ำที่นี่ ทุกครั้งที่บันทึกจะได้หัวไฟล์เพิ่มอีกชุดทับกันไปเรื่อย ๆ ·
-         * ผู้ดูแลลบคอมเมนต์ทิ้งได้ตามใจ ไฟล์นี้เป็นของเขา
+         * Written exactly as sent, **the header is never added automatically**
+         * — the explanation already ships with the starter file. Adding it
+         * again here would stack another copy of the header on top of the
+         * last one every single save · the admin is free to delete the
+         * comments — this file belongs to them.
          */
         $transaction->write($path, $args['content'], 0644);
 
@@ -130,25 +145,27 @@ final class SiteCustomConfig extends SiteCapability
         try {
             $driver->reload($executor);
         } catch (\Throwable $e) {
-            // ผ่าน configtest แล้วแต่ reload ไม่ขึ้น — คืนค่าเดิมทันที ไม่ต้องรอหมดเวลา
+            // Passed configtest, but reload didn't come up — revert immediately, no need to wait out the timer
             $transaction->rollback();
             $driver->reload($executor);
 
             throw new ExecutionFailed(
-                "ค่าตั้งผ่านการตรวจแล้วแต่สั่งให้เว็บเซิร์ฟเวอร์โหลดใหม่ไม่สำเร็จ จึงคืนค่าเดิมแล้ว\n\n"
+                "The configuration passed validation, but telling the web server to reload failed, so it was reverted\n\n"
                 . $e->getMessage(),
             );
         }
 
         /*
-         * ตั้งเวลาถอนคืนไว้ — `configtest` ผ่านไม่ได้แปลว่าเว็บยังใช้งานได้
+         * A timed rollback is armed — passing `configtest` doesn't mean the site still works
          *
-         * กฎที่เขียนถูกทุกตัวอักษรแต่ทำให้ทุกคำขอถูกปฏิเสธ หรือ redirect วนไม่รู้จบ
-         * ผ่าน configtest สบาย ๆ · ผู้ดูแลต้องเปิดเว็บดูจริงแล้วกดยืนยัน ไม่งั้นถอนคืนเอง
+         * A rule with every character spelled correctly that rejects every
+         * request, or loops in an infinite redirect, passes configtest without
+         * any trouble · the admin has to actually open the site and confirm
+         * it, or it reverts on its own.
          */
         $rollbackId = (new RollbackGuard($context->db))->arm(
             action: self::name(),
-            description: sprintf('แก้ค่าตั้งเพิ่มเติมของ %s', $site->domain),
+            description: sprintf('Edit supplementary configuration for %s', $site->domain),
             files: [$path => $previous],
             reloadUnits: [$driver->unit()],
             window: $args['window'],
@@ -163,8 +180,8 @@ final class SiteCustomConfig extends SiteCapability
             'rollback_id' => $rollbackId,
             'window' => $args['window'],
             'message' => sprintf(
-                'บันทึกค่าตั้งเพิ่มเติมของ %s แล้ว — เปิดเว็บดูว่าใช้งานได้จริง '
-                . 'แล้วกดยืนยันภายในเวลาที่กำหนด ไม่งั้นระบบจะคืนค่าเดิมให้เอง',
+                'Saved supplementary configuration for %s — open the site to confirm it genuinely works, '
+                . 'then confirm within the time given, or the system will revert it automatically',
                 $site->domain,
             ),
         ];

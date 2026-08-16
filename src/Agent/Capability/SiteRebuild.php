@@ -11,34 +11,37 @@ use Phpcp\Driver\WebServer\ApacheDriver;
 use Phpcp\Driver\WebServer\NginxDriver;
 
 /**
- * สร้างไฟล์ตั้งค่าของทุกเว็บไซต์ใหม่ตามค่า `webserver` ปัจจุบัน
+ * Regenerates every website's config files to match the current `webserver` setting
  *
- * **จำเป็นตอนเปลี่ยนเว็บเซิร์ฟเวอร์** — ไฟล์ vhost ที่มีอยู่เป็นรูปแบบของตัวเก่า
- * เปลี่ยนค่าใน config.php เฉย ๆ ไม่ทำให้อะไรเกิดขึ้นเลยจนกว่าจะเขียนไฟล์ใหม่
- * (`etc/config.example.php` บอกให้รัน `phpcp sites:rebuild` มาตั้งแต่ต้น
- * แต่ไม่เคยมีคำสั่งนี้อยู่จริง — เอกสารสัญญาไว้โดยไม่มีโค้ดรองรับ)
+ * **Necessary when switching web servers** — the existing vhost files are in the
+ * old server's format; changing the value in config.php alone does nothing at
+ * all until the files are rewritten (`etc/config.example.php` has said to run
+ * `phpcp sites:rebuild` from the very start, but this command never actually
+ * existed — the docs promised it with no code behind it).
  *
- * **สองอย่างที่ทำให้ไม่ใช่แค่ "เขียนไฟล์วนลูป":**
+ * **Two things that make this more than just "write files in a loop":**
  *
- *   1. ต้องเก็บกวาดไฟล์ของเซิร์ฟเวอร์ตัวเก่า — ย้ายจาก apache ไป nginx แล้วปล่อย
- *      `/etc/apache2/sites-enabled/phpcp-*.conf` ค้างไว้ = Apache ยังเสิร์ฟเว็บเดิม
- *      อยู่คู่ขนานด้วย config ที่ panel ไม่ดูแลแล้ว · ลบเฉพาะไฟล์ที่ขึ้นต้นด้วย
- *      `phpcp-` เท่านั้น ของที่ผู้ดูแลเขียนเองไม่แตะ
- *   2. ทั้งหมดอยู่ในทรานแซกชันเดียว — ครึ่ง ๆ กลาง ๆ แปลว่าบางเว็บชี้ไปเซิร์ฟเวอร์
- *      ที่ไม่ได้รับคำขอแล้ว ถ้า configtest ไม่ผ่านต้องกลับไปสภาพเดิมทั้งหมด
+ *   1. Files from the old server have to be cleaned up — moving from apache to
+ *      nginx and leaving `/etc/apache2/sites-enabled/phpcp-*.conf` behind would
+ *      mean Apache keeps serving the old sites in parallel, from config the
+ *      panel no longer manages · only files starting with `phpcp-` are ever
+ *      deleted, never anything an admin wrote themselves.
+ *   2. Everything runs inside a single transaction — a half-finished state
+ *      would mean some sites point at a server no longer receiving requests; if
+ *      configtest fails, everything has to revert entirely.
  */
 final class SiteRebuild extends SiteCapability
 {
-    /** ไฟล์ที่ panel เป็นเจ้าของในไดเรกทอรีของแต่ละเซิร์ฟเวอร์ */
+    /** Files the panel owns inside each server's directory */
     private const OWNED_PREFIX = 'phpcp-';
 
-    /** @var array<string,string> ไดเรกทอรี vhost ของทุกเซิร์ฟเวอร์ที่ระบบรองรับ */
+    /** @var array<string,string> the vhost directory for every server the system supports */
     private const VHOST_DIRS = [
         'apache' => '/etc/apache2/sites-enabled',
         'nginx' => '/etc/nginx/conf.d',
     ];
 
-    /** @var list<string> ไฟล์ของ http://localhost ทุกโหมด — ใช้ตอนปิดฟีเจอร์ */
+    /** @var list<string> http://localhost's files across every mode — used when disabling the feature */
     private const LOCALHOST_FILES = [
         ApacheDriver::LOCALHOST_FILE,
         NginxDriver::LOCALHOST_FILE,
@@ -50,12 +53,14 @@ final class SiteRebuild extends SiteCapability
     }
 
     /**
-     * ไม่ใช่ `site.edit` ทั้งที่ชื่อขึ้นต้นด้วย site — เหตุผลเดียวกับที่ `dns.reload`
-     * ไม่ใช้ `domain.manage`: คำสั่งนี้เขียนทับไฟล์ตั้งค่าของ **ลูกค้าทุกราย** พร้อมกัน
-     * และแตะไฟล์ที่ทั้งเครื่องใช้ร่วมกัน (`ports.conf` ในโหมด nginx-proxy)
+     * Not `site.edit`, even though the name starts with site — the same reason
+     * `dns.reload` doesn't use `domain.manage`: this command overwrites
+     * **every customer's** config files at once, and touches files shared
+     * across the whole machine (`ports.conf` in nginx-proxy mode).
      *
-     * ใช้ `settings.manage` เพราะเป็นงานที่ตามมาจากการแก้ค่า `webserver` ในไฟล์ตั้งค่า
-     * โดยตรง — และเป็นสิทธิ์ของ superadmin เท่านั้นอยู่แล้ว
+     * Uses `settings.manage`, because this job follows directly from editing
+     * the `webserver` value in the config file — and that's already a
+     * superadmin-only permission.
      */
     public function permission(): string
     {
@@ -69,7 +74,7 @@ final class SiteRebuild extends SiteCapability
 
     public function summary(): string
     {
-        return 'สร้างไฟล์ตั้งค่าของทุกเว็บไซต์ใหม่';
+        return 'Regenerate config files for every website';
     }
 
     public function validate(array $args): array
@@ -88,8 +93,9 @@ final class SiteRebuild extends SiteCapability
 
         $stale = $this->staleFiles($executor, $webserver->name());
 
-        // ปิด http://localhost แล้วไฟล์ต้องหายไปจริง ๆ ไม่ใช่ค้างอยู่จนกว่าจะมีคนสังเกต
-        // — ค่านี้อยู่ในไฟล์ตั้งค่า การลบบรรทัดออกคือวิธีเดียวที่ผู้ดูแลใช้ปิดมัน
+        // Disabling http://localhost has to genuinely remove the file, not
+        // leave it lying around until someone happens to notice — this value
+        // lives in the config file, and deleting the line is the only way an admin has to disable it
         if (self::localhostSite($context) === null) {
             foreach (self::LOCALHOST_FILES as $path) {
                 if ($executor->exists($executor->path($path))) {
@@ -123,14 +129,18 @@ final class SiteRebuild extends SiteCapability
             $last = $site;
         }
 
-        // ไฟล์กลางของโหมดต้องถูกเขียนเสมอ ไม่ว่าจะมีเว็บกี่เว็บหรือโหมดไหน
+        // The mode's global files must always be written, no matter how many
+        // sites there are or which mode is active.
         //
-        // คำสั่งนี้คือทางกลับของการเปลี่ยนโหมด — สิ่งที่โหมดก่อนหน้าเขียนทับไว้ต้องถูก
-        // เขียนคืนที่นี่ · ตอนที่เขียนเฉพาะ nginx-proxy การสลับกลับมา apache ทิ้ง
-        // `ports.conf` ไว้ที่ 127.0.0.1:8080 แล้วทั้งเครื่องไม่มีใครฟังพอร์ต 80 อีกเลย
-        // โมดูลต้องพร้อมก่อน configtest เสมอ — ไฟล์กลางบางไฟล์ (vhost ของ localhost)
-        // ใช้ directive ของโมดูลด้วย · เดิมเรียกเฉพาะตอน stage เว็บแต่ละเว็บ เครื่องที่
-        // ยังไม่มีเว็บสักเว็บจึงไม่เคยเปิดโมดูลเลย แล้ว configtest ล้มทั้งชุด
+        // This command is the reverse path of switching modes — whatever the
+        // previous mode overwrote has to be written back here · when this was
+        // only written for nginx-proxy, switching back to apache left
+        // `ports.conf` still pointing at 127.0.0.1:8080, and nothing on the
+        // whole machine listened on port 80 anymore. Modules must always be
+        // ready before configtest — some global files (localhost's vhost) also
+        // use module directives · this used to be called only while staging
+        // each individual site, so a machine with no sites at all never enabled
+        // the modules, and configtest failed entirely
         $webserver->ensureModules($executor);
 
         foreach ($webserver->globalFiles($executor) as $path => $contents) {
@@ -139,7 +149,7 @@ final class SiteRebuild extends SiteCapability
 
         $transaction->commit(static fn (): array => $webserver->testConfig($executor));
 
-        // reload ต้องมาหลัง commit เสมอ — ค่าที่ยังไม่ผ่าน configtest ต้องไม่มีวันถูกโหลด
+        // reload must always come after commit — a value that hasn't passed configtest must never be loaded
         if ($last !== null) {
             $provisioner->reload($executor, $last);
         } else {
@@ -151,22 +161,23 @@ final class SiteRebuild extends SiteCapability
             'rebuilt' => $rebuilt,
             'count' => count($rebuilt),
             'removed_stale' => array_values($stale),
-            // ผู้เรียกใช้เทียบกับไฟล์ตั้งค่าที่ตัวเองอ่านได้ — agent อ่าน config ตอนบูต
-            // ครั้งเดียว แก้ไฟล์แล้วไม่รีสตาร์ตจะได้ผลลัพธ์ของค่าเก่าโดยไม่มีอะไรบอก
+            // A caller compares this against the config file it can read itself
+            // — the agent reads config only once at boot, so editing the file
+            // without restarting produces the old value's result with nothing to say so
             'localhost' => self::localhostSite($context)?->docroot ?? '',
             'message' => sprintf(
-                'สร้างไฟล์ตั้งค่าใหม่ให้ %d เว็บไซต์ตามรูปแบบของ %s แล้ว%s',
+                'Regenerated config files for %d website(s) in %s\'s format%s',
                 count($rebuilt),
                 $webserver->name(),
-                $stale === [] ? '' : sprintf(' · เก็บกวาดไฟล์ของเซิร์ฟเวอร์ตัวเก่า %d ไฟล์', count($stale)),
+                $stale === [] ? '' : sprintf(' · cleaned up %d file(s) from the old server', count($stale)),
             ),
         ];
     }
 
     /**
-     * ไฟล์ของ panel ที่อยู่ในไดเรกทอรีของเซิร์ฟเวอร์ที่ **ไม่ได้ใช้แล้ว**
+     * The panel's own files sitting in a server's directory that is **no longer in use**
      *
-     * โหมด nginx-proxy ใช้ทั้งสองไดเรกทอรีจึงไม่มีอะไรค้าง — คืนรายการว่างเสมอ
+     * nginx-proxy mode uses both directories, so nothing is ever left behind — always returns an empty list.
      *
      * @return list<string>
      */
