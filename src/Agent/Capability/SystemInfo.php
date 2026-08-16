@@ -10,10 +10,11 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Domain\ServiceCatalog;
 
 /**
- * ข้อมูลพื้นฐานของเครื่องที่ไม่เปลี่ยนบ่อย — อ่านอย่างเดียว
+ * Basic machine information that rarely changes — read-only
  *
- * แยกจาก system.metrics โดยเจตนา: metrics ถูกเรียกทุก 2 วินาทีจึงต้องเบาที่สุด
- * ส่วนข้อมูลชุดนี้เรียกครั้งเดียวตอนเปิดหน้า และยอมให้ทำงานหนักกว่าได้
+ * Kept separate from system.metrics on purpose: metrics gets called every 2
+ * seconds so it has to be as light as possible, while this set of data is called
+ * once when the page opens and can afford to do more work.
  */
 final class SystemInfo implements Capability
 {
@@ -34,7 +35,7 @@ final class SystemInfo implements Capability
 
     public function summary(): string
     {
-        return 'อ่านข้อมูลพื้นฐานของเซิร์ฟเวอร์';
+        return 'Read basic server information';
     }
 
     public function validate(array $args): array
@@ -83,7 +84,7 @@ final class SystemInfo implements Capability
             }
         }
 
-        return 'ไม่ทราบ';
+        return 'Unknown';
     }
 
     private function cores(Executor $executor): int
@@ -99,8 +100,9 @@ final class SystemInfo implements Capability
     }
 
     /**
-     * ตรวจว่าเครื่องติดตั้ง PHP เวอร์ชันใดไว้บ้าง จากไดเรกทอรี config ของแต่ละเวอร์ชัน
-     * (การจัดการ PHP เต็มรูปแบบอยู่ในเฟส 2 ที่นี่แค่รายงานว่ามีอะไรอยู่)
+     * Checks which PHP versions the machine has installed, from each version's
+     * config directory (full PHP management lives in Phase 2 — this just reports
+     * what's there)
      *
      * @return list<string>
      */
@@ -118,7 +120,7 @@ final class SystemInfo implements Capability
     }
 
     /**
-     * พื้นที่ของแต่ละ mount point ที่สนใจ — ข้าม filesystem เสมือนทั้งหมด
+     * Space for each mount point of interest — skips every virtual filesystem
      *
      * @return list<array{mount:string,total:int,used:int,free:int,percent:float}>
      */

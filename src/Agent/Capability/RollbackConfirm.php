@@ -11,10 +11,10 @@ use Phpcp\Driver\RollbackGuard;
 use Phpcp\Support\Validator;
 
 /**
- * ยืนยันว่ายังเชื่อมต่อได้ — ยกเลิกการคืนค่าอัตโนมัติ
+ * Confirms the connection still works — cancels the automatic rollback
  *
- * ข้อเท็จจริงที่ทำให้กลไกนี้ทำงาน: การที่คำขอนี้ "เดินทางมาถึง" ได้
- * คือหลักฐานว่าการเชื่อมต่อยังใช้งานได้จริงหลังการเปลี่ยนแปลง
+ * The fact that makes this mechanism work: this request "arriving at all" is
+ * itself the proof that the connection still works after the change.
  */
 final class RollbackConfirm implements Capability
 {
@@ -35,7 +35,7 @@ final class RollbackConfirm implements Capability
 
     public function summary(): string
     {
-        return 'ยืนยันการเปลี่ยนแปลงที่รอการยืนยัน';
+        return 'Confirm a pending change';
     }
 
     public function validate(array $args): array
@@ -50,7 +50,7 @@ final class RollbackConfirm implements Capability
         return [
             'rollback_id' => $args['rollback_id'],
             'action' => $row['action'],
-            'message' => 'ยืนยันแล้ว — การเปลี่ยนแปลงถูกบันทึกถาวร ระบบจะไม่คืนค่าเดิม',
+            'message' => 'Confirmed — the change is now permanent, the system will not roll it back',
         ];
     }
 }

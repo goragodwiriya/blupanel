@@ -12,10 +12,11 @@ use Phpcp\Driver\Php\FpmManager;
 use Phpcp\Driver\Template;
 
 /**
- * เวอร์ชัน PHP ที่ติดตั้งบนเครื่อง พร้อมสถานะ FPM และจำนวนเว็บไซต์ที่ใช้ — PROMPT.md
+ * PHP versions installed on the machine, with FPM status and how many sites use each — PROMPT.md
  *
- * อยู่ในหมวด Hosting เพราะตอบคำถามว่า "เว็บไซต์ใช้เวอร์ชันไหนได้บ้าง"
- * ส่วนการ start/stop โปรเซส PHP-FPM เป็นเรื่องของหน้า Services ตาม Important UX Rule
+ * Lives in the Hosting category because it answers "which versions can a website
+ * use", while starting/stopping the PHP-FPM process belongs to the Services page,
+ * per the Important UX Rule.
  */
 final class PhpList implements \Phpcp\Agent\Capability
 {
@@ -36,7 +37,7 @@ final class PhpList implements \Phpcp\Agent\Capability
 
     public function summary(): string
     {
-        return 'อ่านรายการเวอร์ชัน PHP ที่ติดตั้งไว้';
+        return 'Read the list of installed PHP versions';
     }
 
     public function validate(array $args): array
@@ -78,10 +79,11 @@ final class PhpList implements \Phpcp\Agent\Capability
     }
 
     /**
-     * เวอร์ชันที่ยังได้รับการสนับสนุนด้านความปลอดภัยจากทีม PHP
+     * Versions still getting security support from the PHP team
      *
-     * ใช้ตัดสินใจว่าจะขึ้นคำเตือนในหน้า PHP และหักคะแนนใน Security Center หรือไม่
-     * รายการนี้ต้องอัปเดตตามรอบการสนับสนุนจริง — ตรวจได้ที่ php.net/supported-versions
+     * Used to decide whether to show a warning on the PHP page and dock points in
+     * the Security Center. This list must be kept in step with the real support
+     * cycle — check php.net/supported-versions.
      */
     private static function isSupported(string $version): bool
     {

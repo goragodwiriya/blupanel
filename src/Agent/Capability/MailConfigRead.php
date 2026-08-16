@@ -14,15 +14,16 @@ use Phpcp\Driver\Template;
 use Phpcp\Driver\WebServer\CustomConfig;
 
 /**
- * อ่านไฟล์ตั้งค่าของระบบเมล — คู่กับ `config.file_read` ของเว็บไซต์
+ * Reads the mail system's config files — a counterpart to a website's `config.file_read`
  *
- * แยกเป็นคนละ capability เพราะขอบเขตต่างกันจริง ๆ: ของเว็บไซต์ต้องรู้ว่าเป็นเว็บไหน
- * ของเมลเป็นของทั้งเครื่อง · แต่รูปร่างคำตอบเหมือนกันทุกฟิลด์ หน้าจอจึงใช้ตารางกับ
- * Modal ตัวเดียวกันได้โดยไม่ต้องรู้ว่ากำลังดูขอบเขตไหนอยู่
+ * Kept as a separate capability because the scope genuinely differs: a website's
+ * version needs to know which site, mail's version belongs to the whole machine ·
+ * but the response shape matches field for field, so the screen can reuse the same
+ * table and Modal without needing to know which scope it's looking at.
  */
 final class MailConfigRead implements Capability
 {
-    /** ไฟล์ที่ panel สร้างให้ระบบเมล — เปิดดูได้ แต่แก้ไม่ได้ */
+    /** Files the panel generates for the mail system — viewable, but not editable */
     private const GENERATED = [
         '/etc/postfix/main.cf',
         MailboxManager::DOVECOT_CONF,
@@ -45,7 +46,7 @@ final class MailConfigRead implements Capability
 
     public function summary(): string
     {
-        return 'อ่านไฟล์ตั้งค่าของระบบเมล';
+        return 'Read mail system config files';
     }
 
     public function validate(array $args): array
@@ -76,7 +77,7 @@ final class MailConfigRead implements Capability
         $file = ConfigFileCatalog::find($files, $args['key']);
 
         if ($file === null) {
-            throw new ValidationError('ไม่พบไฟล์ตั้งค่านี้ในทะเบียน');
+            throw new ValidationError('This config file is not in the registry');
         }
 
         $content = '';
@@ -90,7 +91,7 @@ final class MailConfigRead implements Capability
             }
         }
 
-        // ยังไม่เคยเขียน → เปิดมาพร้อมคำอธิบายและตัวอย่างที่คอมเมนต์ไว้ทั้งหมด
+        // Never written yet → opens with the full explanation and examples, all commented out
         if ($content === '' && $file['kind'] === ConfigFileCatalog::KIND_WRITABLE) {
             $content = (new CustomConfig())->seed(
                 new Template($context->config->paths->templates()),

@@ -10,11 +10,13 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Support\Validator;
 
 /**
- * ลบใบรับรอง
+ * Deletes a certificate
  *
- * ต้องปิด HTTPS ให้ก่อนเสมอ ไม่ใช่ลบไฟล์แล้วค่อยว่ากัน — vhost อ้างถึงไฟล์ใบรับรอง
- * โดยตรง ถ้าลบไฟล์ทิ้งขณะที่ config ยังชี้อยู่ Apache จะไม่ยอมโหลดค่าตั้งทั้งเครื่อง
- * ผลคือเว็บ "ทุกเว็บ" บนเซิร์ฟเวอร์ล่ม ไม่ใช่แค่เว็บที่ลบใบรับรอง
+ * HTTPS always has to be disabled first, never delete the file and sort it out
+ * after — the vhost references the certificate file directly, and deleting it
+ * while config still points there makes Apache refuse to load config for the
+ * whole machine. The result is "every" site on the server going down, not just
+ * the one whose certificate was deleted.
  */
 final class SslDelete extends SslCapability implements Capability
 {
@@ -35,7 +37,7 @@ final class SslDelete extends SslCapability implements Capability
 
     public function summary(): string
     {
-        return 'ลบใบรับรอง SSL ของเว็บไซต์';
+        return 'Delete website SSL certificate';
     }
 
     public function validate(array $args): array
@@ -55,12 +57,13 @@ final class SslDelete extends SslCapability implements Capability
 
         if ($args['confirm_domain'] !== $site->domain) {
             throw new \Phpcp\Agent\ValidationError(
-                'ชื่อโดเมนที่ยืนยันไม่ตรงกับเว็บไซต์ปลายทาง — ยกเลิกเพื่อความปลอดภัย',
+                'The confirmation domain name does not match the target website — cancelled for safety',
             );
         }
 
-        // ลำดับนี้ห้ามสลับ: ปิด HTTPS และเขียน vhost ใหม่ให้เลิกอ้างไฟล์ใบรับรองก่อน
-        // แล้วจึงลบไฟล์ ถ้าสลับกันคือ Apache ค้างอยู่กับ config ที่ชี้ไปยังไฟล์ที่ไม่มีแล้ว
+        // This order must never be reversed: disable HTTPS and rewrite the vhost
+        // to stop referencing the certificate file first, only then delete the
+        // file. Reversed, Apache is left holding config pointing at a file that no longer exists.
         if ($site->sslMode !== 'off') {
             $repository = $this->repository($context);
 
@@ -83,7 +86,7 @@ final class SslDelete extends SslCapability implements Capability
             'domain' => $site->domain,
             'source' => $certificate['source'],
             'message' => sprintf(
-                'ลบใบรับรองของ %s แล้ว และปิด HTTPS ให้อัตโนมัติเพื่อไม่ให้ค่าตั้งชี้ไปยังไฟล์ที่ไม่มีอยู่',
+                'Deleted the certificate for %s and automatically disabled HTTPS, so config never points at a file that no longer exists',
                 $site->domain,
             ),
         ];

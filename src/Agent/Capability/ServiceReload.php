@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Phpcp\Agent\Capability;
 
-/** service.reload — ดูกฎความปลอดภัยและเส้นทางการทำงานที่ ServiceAction */
+/** service.reload — see ServiceAction for the security rules and execution path */
 final class ServiceReload extends ServiceAction
 {
     public static function name(): string
@@ -14,7 +14,7 @@ final class ServiceReload extends ServiceAction
 
     public function summary(): string
     {
-        return 'สั่งให้บริการโหลดค่าตั้งใหม่โดยไม่หยุดทำงาน';
+        return 'Reload service configuration without stopping it';
     }
 
     protected function verb(): string

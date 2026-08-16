@@ -9,13 +9,15 @@ use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
 
 /**
- * ปิด firewall
+ * Disables the firewall
  *
- * ไม่ต้องยืนยันภายในเวลาเหมือนคำสั่งอื่นในหน้านี้ เพราะการปิด firewall
- * ไม่มีทางทำให้เข้าเครื่องไม่ได้ — มันเปิดกว้างขึ้น ไม่ใช่แคบลง
+ * Doesn't need a timed confirmation like other commands on this page, because
+ * disabling the firewall can never lock anyone out of the machine — it opens
+ * access up, it doesn't narrow it.
  *
- * แต่มันคือการลดความปลอดภัยของเครื่องทั้งเครื่อง หน้าจอจึงถามยืนยันแบบเดียวกับ
- * การลบข้อมูล และ audit log จะบันทึกไว้ว่าใครเป็นคนสั่งเมื่อไร
+ * But it does reduce the whole machine's security, so the screen asks for
+ * confirmation the same way a delete does, and the audit log records who gave the
+ * order and when.
  */
 final class FirewallDisable extends FirewallCapability implements Capability
 {
@@ -36,7 +38,7 @@ final class FirewallDisable extends FirewallCapability implements Capability
 
     public function summary(): string
     {
-        return 'ปิด firewall';
+        return 'Disable firewall';
     }
 
     public function validate(array $args): array
@@ -52,11 +54,11 @@ final class FirewallDisable extends FirewallCapability implements Capability
         $driver = $this->driver();
 
         if (!$driver->status($executor)['active']) {
-            return ['message' => 'firewall ปิดอยู่แล้ว'];
+            return ['message' => 'The firewall is already disabled'];
         }
 
         $driver->disable($executor);
 
-        return ['message' => 'ปิด firewall แล้ว — ตอนนี้เครื่องรับการเชื่อมต่อทุกพอร์ตที่มีบริการเปิดฟังอยู่'];
+        return ['message' => 'Firewall disabled — the machine now accepts connections on every port with a listening service'];
     }
 }

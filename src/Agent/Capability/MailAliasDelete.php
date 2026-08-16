@@ -8,7 +8,7 @@ use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\ValidationError;
 
-/** ลบที่อยู่ส่งต่อ — PLAN-MAIL เฟส M2 */
+/** Deletes a forwarding address — PLAN-MAIL Phase M2 */
 final class MailAliasDelete extends MailCapability
 {
     public static function name(): string
@@ -18,7 +18,7 @@ final class MailAliasDelete extends MailCapability
 
     public function summary(): string
     {
-        return 'ลบที่อยู่ส่งต่อ';
+        return 'Delete forwarding address';
     }
 
     public function validate(array $args): array
@@ -32,14 +32,14 @@ final class MailAliasDelete extends MailCapability
         $alias = $repository->findAlias($args['id']);
 
         if ($alias === null) {
-            throw new ValidationError('ไม่พบที่อยู่ส่งต่อที่ระบุ');
+            throw new ValidationError('The specified forwarding address was not found');
         }
 
         $repository->deleteAlias($args['id']);
 
         return $this->sync($executor, $context) + [
             'message' => sprintf(
-                'ลบที่อยู่ส่งต่อ %s แล้ว',
+                'Deleted forwarding address %s',
                 ((string) $alias['source'] === '' ? '@' : $alias['source'] . '@') . $alias['domain'],
             ),
         ];

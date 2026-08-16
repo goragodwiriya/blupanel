@@ -13,13 +13,14 @@ use Phpcp\Domain\ServiceCatalog;
 use Phpcp\Support\Validator;
 
 /**
- * อ่านสถานะ service จาก systemd — อ่านอย่างเดียว
+ * Reads service status from systemd — read-only
  *
- * รับเป็นรายการเพื่อให้หน้าที่ต้องแสดงหลายบริการใช้ round trip เดียว
+ * Accepts a list so a page that needs to show several services can do it in one round trip.
  *
- * ความปลอดภัย: ชื่อ unit มาจาก allowlist ใน ServiceCatalog เท่านั้น
- * ต่อให้ผู้โจมตีส่ง "apache2; rm -rf /" มา in_array() ก็ปฏิเสธก่อนถึง executor
- * และต่อให้หลุดไปได้ argv array ก็ไม่ผ่าน shell อยู่ดี — ป้องกันสองชั้นโดยโครงสร้าง
+ * Security: unit names come only from ServiceCatalog's allowlist. Even if an
+ * attacker sent "apache2; rm -rf /", in_array() rejects it before it ever reaches
+ * the executor — and even if it somehow got through, an argv array still never
+ * passes through a shell. Two structural layers of defense.
  */
 final class ServiceStatus implements Capability
 {
@@ -42,12 +43,12 @@ final class ServiceStatus implements Capability
 
     public function summary(): string
     {
-        return 'อ่านสถานะบริการของระบบ';
+        return 'Read system service status';
     }
 
     public function validate(array $args): array
     {
-        // ไม่ระบุมา = เอาทั้งหมดที่จัดการได้
+        // Not specified = get everything manageable
         $requested = isset($args['services'])
             ? Validator::requireStringList($args, 'services', maxItems: self::MAX_UNITS, maxLength: 64)
             : ServiceCatalog::units();
@@ -59,14 +60,14 @@ final class ServiceStatus implements Capability
             SelfProtection::assertUnit($unit);
 
             if (!ServiceCatalog::isAllowed($unit)) {
-                throw new ValidationError("ไม่รู้จักบริการ: {$unit}");
+                throw new ValidationError("Unknown service: {$unit}");
             }
 
             $clean[] = $unit;
         }
 
         if ($clean === []) {
-            throw new ValidationError('ต้องระบุบริการอย่างน้อยหนึ่งรายการ');
+            throw new ValidationError('At least one service must be specified');
         }
 
         return ['services' => $clean];

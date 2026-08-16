@@ -10,15 +10,16 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Driver\Dns\BindZoneManager;
 
 /**
- * เขียน zone ของทุกโดเมนใหม่ทั้งหมดแล้วสั่ง BIND9 โหลดครั้งเดียว — PLAN-V2 เฟส E3
+ * Rewrites every domain's zone from scratch and tells BIND9 to reload once — PLAN-V2 Phase E3
  *
- * ใช้เมื่อ: เพิ่งเปิด `dns.enabled` เป็นครั้งแรก (มีเรกคอร์ดที่เพิ่มไว้ก่อนหน้าค้างอยู่ที่ยัง
- * ไม่เคยถูกส่งออกเลย) หรือมีใครแก้ไฟล์ของ BIND9 ตรง ๆ แล้วต้องการให้ panel เขียนทับคืนสภาพ
- * ที่ควรจะเป็นทั้งหมด
+ * Used when: `dns.enabled` was just turned on for the first time (records added
+ * earlier are sitting there, never yet exported), or someone edited BIND9's files
+ * directly and the panel needs to overwrite them back to the state they should be in.
  *
- * **สิทธิ์ระดับเครื่อง ไม่ใช่ระดับโดเมน** — ต่างจาก `dns.zone_write` (ใช้ `domain.manage`
- * ซึ่งผู้ดูแลเว็บไซต์มีสำหรับโดเมนของตัวเอง) ตัวนี้เขียนทับ `named.conf.local` ทั้งไฟล์และ
- * กระทบ zone ของลูกค้าทุกรายพร้อมกันในคำสั่งเดียว จึงต้องเป็นสิทธิ์ของทั้งเครื่องเท่านั้น
+ * **A machine-level permission, not a domain-level one** — unlike `dns.zone_write`
+ * (which uses `domain.manage`, held by a site owner for their own domain), this
+ * one overwrites the whole `named.conf.local` file and touches every customer's
+ * zone at once in a single command, so it can only ever be a whole-machine permission.
  */
 final class DnsReload implements Capability
 {
@@ -39,7 +40,7 @@ final class DnsReload implements Capability
 
     public function summary(): string
     {
-        return 'ซิงก์ zone ของทุกโดเมนกับ BIND9 ใหม่ทั้งหมด';
+        return 'Resync every domain zone with BIND9';
     }
 
     public function validate(array $args): array

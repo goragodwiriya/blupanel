@@ -14,11 +14,12 @@ use Phpcp\Driver\Template;
 use Phpcp\Driver\WebServer\CustomConfig;
 
 /**
- * อ่านไฟล์ตั้งค่าของ BIND9 — คู่กับ `config.file_read` และ `mail.config_read`
+ * Reads BIND9's config files — a counterpart to `config.file_read` and `mail.config_read`
  *
- * **อ่านได้แม้ `dns.enabled` จะปิดอยู่** ต่างจากการเขียนซึ่งต้องเปิดก่อน — ตอนที่ผู้ดูแล
- * อยากดูไฟล์มากที่สุดคือตอนที่ DNS ไม่ทำงาน และการซ่อนไฟล์ตอนนั้นคือการซ่อนคำตอบ
- * ในนาทีที่ต้องการมันที่สุด · การอ่านไม่เปลี่ยนอะไรบนเครื่องอยู่แล้ว
+ * **Readable even while `dns.enabled` is off**, unlike writing, which requires it
+ * to be on first — the moment an admin most wants to see the file is exactly when
+ * DNS isn't working, and hiding the file then would hide the answer in the one
+ * minute it's needed most · reading changes nothing on the machine anyway.
  */
 final class DnsConfigRead implements Capability
 {
@@ -39,7 +40,7 @@ final class DnsConfigRead implements Capability
 
     public function summary(): string
     {
-        return 'อ่านไฟล์ตั้งค่าของ BIND9';
+        return 'Read BIND9 config files';
     }
 
     public function validate(array $args): array
@@ -73,7 +74,7 @@ final class DnsConfigRead implements Capability
         $file = ConfigFileCatalog::find($files, $args['key']);
 
         if ($file === null) {
-            throw new ValidationError('ไม่พบไฟล์ตั้งค่านี้ในทะเบียน');
+            throw new ValidationError('This config file is not in the registry');
         }
 
         $content = '';
@@ -87,7 +88,7 @@ final class DnsConfigRead implements Capability
             }
         }
 
-        // ยังไม่เคยเขียน → เปิดมาพร้อมคำอธิบายและตัวอย่างที่คอมเมนต์ไว้ทั้งหมด
+        // Never written yet → opens with the full explanation and examples, all commented out
         if ($content === '' && $file['kind'] === ConfigFileCatalog::KIND_WRITABLE) {
             $content = (new CustomConfig())->seed(
                 new Template($context->config->paths->templates()),

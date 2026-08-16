@@ -11,17 +11,21 @@ use Phpcp\Agent\ValidationError;
 use Phpcp\Security\Permissions;
 
 /**
- * ฐานของ capability ที่ทำงานกับโดเมนเดียว — รวมกฎ "ใครแตะโดเมนไหนได้" ไว้ที่เดียว
+ * The base for capabilities that work on a single domain — gathers the "who can
+ * touch which domain" rule into one place
  *
- * **agent ต้องไม่เชื่อผู้เรียก** ถึง web tier จะตรวจสิทธิ์ไปแล้วก็ตาม — รูปแบบเดียวกับ
- * `SiteCapability::assertSiteAccess()` · เดิมกฎนี้ถูกคัดลอกอยู่ใน `DnsZoneWrite`
- * ตัวเดียว ซึ่งพอมี capability ตัวที่สองที่ทำงานกับโดเมน การคัดลอกก็กลายเป็นความเสี่ยง
- * ที่แท้จริง: วันหนึ่งมีคนแก้กฎที่หนึ่งแล้วลืมอีกที่ แล้วช่องโหว่นั้นจะไม่มีอะไรฟ้อง
+ * **The agent must never trust the caller**, even though the web tier has already
+ * checked permission — the same pattern as `SiteCapability::assertSiteAccess()` ·
+ * this rule used to be copied inside `DnsZoneWrite` alone, and once a second
+ * capability that works on domains appeared, that copy became a real risk:
+ * someday someone edits the rule in one place, forgets the other, and that hole
+ * has nothing to say about it.
  */
 abstract class DomainCapability implements Capability
 {
     /**
-     * โหลดโดเมนพร้อมตรวจสิทธิ์ — โยนออกทันทีเมื่อไม่มีสิทธิ์หรือไม่พบ
+     * Loads a domain with a permission check — throws immediately if not
+     * permitted or not found
      *
      * @return array<string,mixed>
      */
@@ -33,7 +37,7 @@ abstract class DomainCapability implements Capability
         );
 
         if ($domain === null) {
-            throw new ValidationError('ไม่พบโดเมนที่ระบุ');
+            throw new ValidationError('The specified domain was not found');
         }
 
         $actor = $context->actor;
@@ -45,7 +49,7 @@ abstract class DomainCapability implements Capability
         }
 
         if ($ownerUserId !== $actor->userId) {
-            throw new PermissionDenied('คุณไม่มีสิทธิ์กับโดเมนที่ระบุ');
+            throw new PermissionDenied('You do not have permission over the specified domain');
         }
 
         return $domain;

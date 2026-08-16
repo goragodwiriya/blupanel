@@ -10,10 +10,12 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Driver\RollbackGuard;
 
 /**
- * คืนค่ารายการที่หมดเวลายืนยัน
+ * Rolls back items that ran out of confirmation time
  *
- * ถูกเรียกสองทาง: จาก cron ของ panel ทุกนาที และเมื่อหน้าเว็บโหลดแล้วพบว่ามีรายการค้าง
- * ทางแรกจำเป็นเพราะกรณีที่ต้องกู้คือกรณีที่ผู้ใช้หลุดไปแล้ว — จะไม่มีคำขอเข้ามาให้กระตุ้น
+ * Called from two paths: the panel's own cron every minute, and whenever the web
+ * page loads and finds a pending item. The first path is necessary because the
+ * case that needs recovering is exactly the case where the user has been cut off
+ * — there's no request left to trigger it.
  */
 final class RollbackRun implements Capability
 {
@@ -34,7 +36,7 @@ final class RollbackRun implements Capability
 
     public function summary(): string
     {
-        return 'คืนค่าการเปลี่ยนแปลงที่หมดเวลายืนยัน';
+        return 'Roll back changes that ran out of confirmation time';
     }
 
     public function validate(array $args): array
@@ -50,8 +52,8 @@ final class RollbackRun implements Capability
             'rolled_back' => $done,
             'count' => count($done),
             'message' => $done === []
-                ? 'ไม่มีรายการที่ต้องคืนค่า'
-                : sprintf('คืนค่าการเปลี่ยนแปลงที่หมดเวลา %d รายการแล้ว', count($done)),
+                ? 'Nothing to roll back'
+                : sprintf('Rolled back %d expired change(s)', count($done)),
         ];
     }
 }

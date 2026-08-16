@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Phpcp\Agent\Capability;
 
-/** site.resume — ดูรายละเอียดที่ SiteSetStatus */
+/** site.resume — see SiteSetStatus for details */
 final class SiteResume extends SiteSetStatus
 {
     public static function name(): string
@@ -14,7 +14,7 @@ final class SiteResume extends SiteSetStatus
 
     public function summary(): string
     {
-        return 'เปิดใช้งานเว็บไซต์ที่ถูกระงับ';
+        return 'Resume a suspended website';
     }
 
     protected function targetStatus(): string

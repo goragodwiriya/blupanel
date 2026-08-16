@@ -11,11 +11,11 @@ use Phpcp\Support\PathGuard;
 use Phpcp\Support\Validator;
 
 /**
- * สร้างโฟลเดอร์ใหม่ในโฟลเดอร์ที่กำลังเปิดอยู่
+ * Creates a new folder inside the folder currently open
  *
- * รับ "โฟลเดอร์แม่" กับ "ชื่อ" แยกกัน ไม่ใช่เส้นทางเต็มก้อนเดียว —
- * ชื่อจึงถูกตรวจว่าเป็นชิ้นเดียวห้ามมี / อยู่ข้างใน ผู้ใช้จึงสร้างโฟลเดอร์
- * ข้ามชั้นหรือย้อนขึ้นด้วยการพิมพ์ชื่อไม่ได้
+ * Accepts a "parent folder" and a "name" separately, not one full path — so the
+ * name gets validated as a single segment with no `/` inside it, meaning a user
+ * can never create a folder several levels deep or walk back up just by typing a name.
  */
 final class FileMkdir extends FileCapability
 {
@@ -31,7 +31,7 @@ final class FileMkdir extends FileCapability
 
     public function summary(): string
     {
-        return 'สร้างโฟลเดอร์ใหม่';
+        return 'Create new folder';
     }
 
     /**
@@ -60,10 +60,10 @@ final class FileMkdir extends FileCapability
             $relative,
             static function (string $root, string $target) use ($executor): array {
                 if ($executor->stat($target) !== null) {
-                    throw new ValidationError('มีไฟล์หรือโฟลเดอร์ชื่อนี้อยู่แล้ว');
+                    throw new ValidationError('A file or folder with this name already exists');
                 }
 
-                // 0750 ไม่ใช่ 0755: กลุ่มของเว็บเซิร์ฟเวอร์เข้าถึงได้ แต่ผู้ใช้อื่นบนเครื่องไม่ได้
+                // 0750, not 0755: the web server's group can access it, but no other user on the machine can
                 $executor->makeDirectory($target, 0o750);
 
                 return [];
@@ -76,7 +76,7 @@ final class FileMkdir extends FileCapability
             'site_id' => $scope->siteId,
             'path' => $relative,
             'name' => $args['name'],
-            'message' => 'สร้างโฟลเดอร์ '.$args['name'].' แล้ว'
+            'message' => 'Created folder '.$args['name']
         ];
     }
 }

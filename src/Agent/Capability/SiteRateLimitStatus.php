@@ -10,13 +10,15 @@ use Phpcp\Driver\Security\Fail2banManager;
 use Phpcp\Support\Validator;
 
 /**
- * อ่านสถานะจริงของการจำกัดอัตราจาก fail2ban — PLAN-V2 เฟส E5
+ * Reads rate limiting's real status from fail2ban — PLAN-V2 Phase E5
  *
- * **อ่านจากตัว fail2ban ไม่ใช่จากฐานข้อมูลของ panel** เพราะสองอย่างนี้ไม่ตรงกันได้:
- * ผู้ดูแลอาจสั่ง `fail2ban-client` เองจากบรรทัดคำสั่ง · fail2ban อาจไม่ได้โหลด jail
- * เพราะไฟล์ผิด · หรือบริการถูกหยุดไปเลย — ทั้งสามกรณีฐานข้อมูลยังบอกว่า "เปิดอยู่"
+ * **Reads from fail2ban itself, not the panel's database**, because the two can
+ * drift out of sync: an admin might run `fail2ban-client` themselves from the
+ * command line · fail2ban might have failed to load the jail because of a bad file
+ * · or the service could simply be stopped — in all three cases the database would
+ * still say "enabled".
  *
- * อ่านอย่างเดียวเหมือน `service.status` จึงไม่เติม audit log ทุกครั้งที่มีคนเปิดหน้าเว็บ
+ * Read-only like `service.status`, so it doesn't add an audit log entry every time someone opens the page.
  */
 final class SiteRateLimitStatus extends SiteCapability
 {
@@ -37,7 +39,7 @@ final class SiteRateLimitStatus extends SiteCapability
 
     public function summary(): string
     {
-        return 'อ่านสถานะการจำกัดอัตราคำขอ';
+        return 'Read rate limit status';
     }
 
     public function validate(array $args): array
@@ -57,8 +59,9 @@ final class SiteRateLimitStatus extends SiteCapability
             'site_id' => $args['site_id'],
             'jail' => $manager->jailName($site),
             'status' => $status,
-            // ดึงรายการ IP เฉพาะเมื่อมีคนถูกแบนอยู่จริง — เรียก fail2ban-client เพิ่มอีกครั้ง
-            // ทุกรอบทั้งที่รายการว่างเป็นการเสียเวลาเปล่าในกรณีที่พบบ่อยที่สุด
+            // Fetches the IP list only when someone is actually banned — calling
+            // fail2ban-client again every time for an empty list would waste time
+            // on the most common case
             'banned_ips' => $status['banned'] > 0 ? $manager->bannedIps($site) : [],
         ];
     }

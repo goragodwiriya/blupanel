@@ -11,16 +11,18 @@ use Phpcp\Driver\Mail\MailQueue;
 use Phpcp\Support\Validator;
 
 /**
- * เปิดดูเมลหนึ่งฉบับ **ที่ยังอยู่ในคิว** — PLAN-MAIL §5
+ * Opens one message **still sitting in the queue** — PLAN-MAIL §5
  *
- * ## ทำไมถึงไม่ใช่การอ่านเมลของลูกค้า
+ * ## Why this isn't reading a customer's mail
  *
- * เมลในคิวคือเมลที่ยังส่งไม่ออก ยังไม่ได้ถูกส่งเข้ากล่องของใครทั้งสิ้น · การเปิดดูจึง
- * ไม่แตะ Maildir ของใคร ไม่มีแฟล็ก "อ่านแล้ว" ให้เปลี่ยน และไม่มีใครรู้สึกว่าเมลของตัวเอง
- * ถูกเปิด เพราะยังไม่มีเจ้าของกล่องคนไหนเห็นมันเลย
+ * A queued message hasn't been delivered yet — it has never landed in anyone's
+ * mailbox at all · opening it never touches anyone's Maildir, changes no "read"
+ * flag, and no mailbox owner ever feels like their mail was opened, because no
+ * mailbox owner has seen it yet.
  *
- * นี่คือขอบเขตที่ตั้งใจ: ตอบคำถาม "ทำไมเมลฉบับนี้ส่งไม่ออก" ได้เต็มที่ โดยไม่กลายเป็น
- * เครื่องมืออ่านกล่องจดหมายของลูกค้า ซึ่งเป็นคนละเรื่องและต้องตัดสินใจกันต่างหาก
+ * This is the deliberate boundary: it fully answers "why didn't this message go
+ * out", without becoming a tool for reading a customer's mailbox, which is a
+ * separate matter requiring its own separate decision.
  */
 final class MailMessage implements Capability
 {
@@ -29,7 +31,7 @@ final class MailMessage implements Capability
         return 'mail.message';
     }
 
-    /** เมลในคิวเป็นของลูกค้ารายไหนก็ได้ — ผู้ดูแลเครื่องเท่านั้น */
+    /** A queued message could belong to any customer — machine admins only */
     public function permission(): string
     {
         return 'settings.manage';
@@ -42,7 +44,7 @@ final class MailMessage implements Capability
 
     public function summary(): string
     {
-        return 'อ่านเมลหนึ่งฉบับที่ค้างอยู่ในคิว';
+        return 'Read one queued message';
     }
 
     public function validate(array $args): array

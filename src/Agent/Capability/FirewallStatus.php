@@ -10,10 +10,10 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Driver\Firewall\UfwDriver;
 
 /**
- * สถานะและกฎ firewall — อ่านอย่างเดียว
+ * Firewall status and rules — read-only
  *
- * ทำเครื่องหมายกฎที่อนุญาตพอร์ตของ panel ไว้ด้วย เพราะกฎนั้นลบไม่ได้
- * และหน้าจอต้องบอกเหตุผลให้ชัด ไม่ใช่แค่ปิดปุ่มเฉย ๆ
+ * Also flags the rule that allows the panel's own port, since that rule can't be
+ * deleted, and the screen has to explain why clearly, not just gray out the button.
  */
 final class FirewallStatus implements Capability
 {
@@ -34,7 +34,7 @@ final class FirewallStatus implements Capability
 
     public function summary(): string
     {
-        return 'อ่านสถานะและกฎของ firewall';
+        return 'Read firewall status and rules';
     }
 
     public function validate(array $args): array
@@ -49,7 +49,7 @@ final class FirewallStatus implements Capability
         $panelPort = (string) $context->config->int('panel.port', 8443);
 
         foreach ($status['rules'] as $index => $rule) {
-            // กฎที่เปิดพอร์ตของ panel เอง — ลบแล้วจะเข้าหน้าเว็บไม่ได้อีก
+            // The rule that opens the panel's own port — delete it and the web page becomes unreachable
             $status['rules'][$index]['is_panel_port'] = $rule['port'] === $panelPort;
         }
 

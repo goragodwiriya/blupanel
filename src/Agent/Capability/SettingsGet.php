@@ -13,10 +13,12 @@ use Phpcp\Driver\Mail\MailManager;
 use Phpcp\Driver\Template;
 
 /**
- * อ่านค่าตั้งที่แก้ได้จากหน้าเว็บ พร้อมสถานะจริงของเมลบนเครื่อง
+ * Reads settings that can be edited from the web page, along with mail's real
+ * status on the machine
  *
- * ค่าที่เป็นความลับถูกปิดบังก่อนส่งออกเสมอ — token ของบอทที่หลุดไปทาง HTML
- * แปลว่าใครก็ส่งข้อความในนามระบบได้ และจะติดอยู่ในแคชของเบราว์เซอร์ไปอีกนาน
+ * Secret values are always masked before being sent out — a bot token that
+ * leaked into the HTML would let anyone send messages as the system, and it would
+ * sit in the browser's cache for a long time afterward.
  */
 final class SettingsGet implements Capability
 {
@@ -37,7 +39,7 @@ final class SettingsGet implements Capability
 
     public function summary(): string
     {
-        return 'อ่านค่าตั้งของระบบ';
+        return 'Read system settings';
     }
 
     public function validate(array $args): array
@@ -51,9 +53,9 @@ final class SettingsGet implements Capability
         $mail = new MailManager(new Template($context->config->paths->templates()));
 
         /*
-         * สถานะใบรับรองของหน้าจัดการอ่านจาก**ไฟล์จริง** ไม่ใช่จากค่าที่บันทึกไว้ —
-         * สองอย่างนี้ต่างกันได้ถ้ามีคนสลับไฟล์ด้วยมือ และเวลาที่ต่างกันคือเวลาที่ผู้ดูแล
-         * ต้องการคำตอบมากที่สุด
+         * The management certificate's status is read from the **real file**, not
+         * from a saved value — the two can diverge if someone swaps the file by
+         * hand, and that's exactly the moment an admin needs the answer most.
          */
         $panelCert = (new PanelCertificate())->status(
             $executor,

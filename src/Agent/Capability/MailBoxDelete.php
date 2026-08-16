@@ -12,11 +12,13 @@ use Phpcp\Driver\Mail\MailboxManager;
 use Phpcp\Support\Validator;
 
 /**
- * ลบกล่องจดหมายพร้อมเมลทั้งหมดในนั้น — PLAN-MAIL เฟส M1
+ * Deletes a mailbox along with every message in it — PLAN-MAIL Phase M1
  *
- * **ลำดับสำคัญ:** ลบแถว → เขียนตารางใหม่ (กล่องหายจาก Postfix แล้ว) → ค่อยลบไฟล์
- * ถ้าลบไฟล์ก่อน จะมีช่วงที่ Postfix ยังรับเมลของกล่องนั้นแต่ไม่มีที่เก็บ ซึ่งทำให้
- * เมลที่กำลังส่งมาถึงพอดีตีกลับพร้อมข้อความที่ชวนงงว่า "กล่องมีอยู่แต่เขียนไม่ได้"
+ * **Order matters:** delete the row → rewrite the table (the mailbox is now gone
+ * from Postfix) → only then delete the files. Deleting files first would leave a
+ * window where Postfix still accepts mail for that mailbox with nowhere to store
+ * it, bouncing a message that arrives at exactly the wrong moment with a
+ * confusing "mailbox exists but is not writable" error.
  */
 final class MailBoxDelete extends MailCapability
 {
@@ -27,7 +29,7 @@ final class MailBoxDelete extends MailCapability
 
     public function summary(): string
     {
-        return 'ลบกล่องจดหมายพร้อมเมลทั้งหมด';
+        return 'Delete mailbox and all its mail';
     }
 
     public function validate(array $args): array
@@ -44,7 +46,7 @@ final class MailBoxDelete extends MailCapability
         $mailbox = $repository->findMailbox((int) $domain['id'], $args['local_part']);
 
         if ($mailbox === null) {
-            throw new ValidationError('ไม่พบกล่อง ' . $args['local_part'] . '@' . $args['domain']);
+            throw new ValidationError('Mailbox not found: ' . $args['local_part'] . '@' . $args['domain']);
         }
 
         $address = new MailAddress($args['local_part'], $args['domain']);
@@ -60,7 +62,7 @@ final class MailBoxDelete extends MailCapability
 
         return $result + [
             'address' => $address->full(),
-            'message' => sprintf('ลบกล่อง %s พร้อมเมลทั้งหมดแล้ว', $address->full()),
+            'message' => sprintf('Deleted mailbox %s and all its mail', $address->full()),
         ];
     }
 }

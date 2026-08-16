@@ -14,9 +14,9 @@ use Phpcp\Driver\ConfigTransaction;
 use Phpcp\Support\Validator;
 
 /**
- * ลบโดเมนย่อยหรือ alias ทีละรายการ แล้วเขียน vhost ใหม่
+ * Removes one subdomain or alias at a time, then rewrites the vhost
  *
- * โดเมนหลักลบไม่ได้ — ต้องลบทั้งเว็บไซต์
+ * The primary domain can't be removed this way — the whole website must be deleted instead.
  */
 final class SiteRemoveDomain extends SiteCapability
 {
@@ -37,7 +37,7 @@ final class SiteRemoveDomain extends SiteCapability
 
     public function summary(): string
     {
-        return 'ลบโดเมนย่อยหรือ alias ออกจากเว็บไซต์';
+        return 'Remove a subdomain or alias from a website';
     }
 
     public function validate(array $args): array
@@ -56,7 +56,7 @@ final class SiteRemoveDomain extends SiteCapability
         $domain = $args['domain'];
 
         if ($domain === $site->domain) {
-            throw new ValidationError('ลบโดเมนหลักไม่ได้ — ต้องลบทั้งเว็บไซต์');
+            throw new ValidationError('The primary domain cannot be removed — the whole website must be deleted');
         }
 
         $row = $context->db->first(
@@ -66,7 +66,7 @@ final class SiteRemoveDomain extends SiteCapability
         );
 
         if ($row === null) {
-            throw new ValidationError("ไม่พบโดเมน {$domain} ในเว็บไซต์นี้");
+            throw new ValidationError("Domain {$domain} not found on this website");
         }
 
         $aliases = array_values(array_filter(
@@ -94,10 +94,12 @@ final class SiteRemoveDomain extends SiteCapability
         $transaction->commit(static fn (): array => $provisioner->webserver()->testConfig($executor));
         $provisioner->webserver()->reload($executor);
 
-        // ลบ DNS records ของโดเมนนี้ด้วย — ไม่มีโดเมนแล้วเรกคอร์ดค้างไม่มีประโยชน์
+        // Deletes this domain's DNS records too — a leftover record is useless once the domain is gone
         $context->db->run('DELETE FROM dns_records WHERE domain_id = :id', ['id' => $row['id']]);
-        // ไฟล์เมลของโดเมนนี้ต้องหายไปพร้อมกัน — แถวหายเองตาม CASCADE แต่ไฟล์ไม่หาย
-        // ตาม ทิ้งเมลของลูกค้าไว้บนดิสก์ตลอดไปโดยไม่มีอะไรอ้างถึง (PLAN-MAIL M3)
+        // This domain's mail files must disappear along with it — the row goes
+        // away on its own via CASCADE, but the files don't follow, leaving a
+        // customer's mail sitting on disk forever with nothing referencing it
+        // anymore (PLAN-MAIL M3)
         if ((int) ($row['mail_enabled'] ?? 0) === 1) {
             (new MailboxManager(new Template($context->config->paths->templates())))
                 ->removeDomainDir($executor, (string) $row['domain']);
@@ -114,7 +116,7 @@ final class SiteRemoveDomain extends SiteCapability
         return [
             'site_id' => $site->id,
             'domain' => $domain,
-            'message' => "ลบโดเมน {$domain} ออกจาก {$site->domain} แล้ว",
+            'message' => "Removed domain {$domain} from {$site->domain}",
         ];
     }
 }

@@ -11,11 +11,12 @@ use Phpcp\Driver\Ssl\CertbotManager;
 use Phpcp\Security\Permissions;
 
 /**
- * ใบรับรองของทุกเว็บไซต์ที่ผู้เรียกมีสิทธิ์เห็น — อ่านอย่างเดียว
+ * Certificates for every website the caller has permission to see — read-only
  *
- * อ่านจากไฟล์ใบรับรองจริงทีละเว็บ ไม่แคชไว้ในฐานข้อมูลของ panel
- * เพราะใบรับรองถูกต่ออายุโดย timer ของ certbot ซึ่งไม่ผ่าน panel เลย
- * ถ้าเก็บสำเนาไว้ หน้าจอจะแสดงวันหมดอายุเก่าค้างหลังการต่ออายุอัตโนมัติทุกครั้ง
+ * Reads each site's real certificate file directly, never caches it in the
+ * panel's database, because certificates get renewed by certbot's own timer,
+ * which never goes through the panel at all. A cached copy would show a stale
+ * expiry date after every automatic renewal.
  */
 final class SslList extends SslCapability implements Capability
 {
@@ -36,7 +37,7 @@ final class SslList extends SslCapability implements Capability
 
     public function summary(): string
     {
-        return 'ดูใบรับรอง SSL ของเว็บไซต์';
+        return 'View website SSL certificates';
     }
 
     public function validate(array $args): array

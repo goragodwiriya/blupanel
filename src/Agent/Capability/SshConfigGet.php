@@ -9,7 +9,7 @@ use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Driver\SshManager;
 
-/** อ่านค่าตั้ง SSH ปัจจุบัน — อ่านอย่างเดียว */
+/** Reads the current SSH configuration — read-only */
 final class SshConfigGet implements Capability
 {
     public static function name(): string
@@ -29,7 +29,7 @@ final class SshConfigGet implements Capability
 
     public function summary(): string
     {
-        return 'อ่านค่าตั้ง SSH';
+        return 'Read SSH configuration';
     }
 
     public function validate(array $args): array
@@ -42,23 +42,23 @@ final class SshConfigGet implements Capability
         $manager = new SshManager();
         $values = $manager->read($executor);
 
-        // ประเมินความเสี่ยงจากค่าที่อ่านได้ เพื่อให้หน้าจอเตือนได้ตรงจุด
+        // Assesses risk from the values just read, so the screen can warn about the right thing
         $warnings = [];
 
         if (in_array($values['PermitRootLogin']['value'], ['yes'], true)) {
-            $warnings[] = 'อนุญาตให้ root เข้าสู่ระบบด้วยรหัสผ่าน — ควรปิด';
+            $warnings[] = 'root can log in with a password — this should be disabled';
         }
 
         if ($values['PasswordAuthentication']['value'] === 'yes') {
-            $warnings[] = 'เปิดให้เข้าสู่ระบบด้วยรหัสผ่าน — ควรใช้กุญแจแทนเพื่อกันการเดารหัส';
+            $warnings[] = 'Password login is enabled — a key should be used instead to prevent password guessing';
         }
 
         if ($values['PermitEmptyPasswords']['value'] === 'yes') {
-            $warnings[] = 'อนุญาตรหัสผ่านว่าง — อันตรายมาก ควรปิดทันที';
+            $warnings[] = 'Empty passwords are allowed — very dangerous, should be disabled immediately';
         }
 
         if ($values['PubkeyAuthentication']['value'] === 'no') {
-            $warnings[] = 'ปิดการเข้าสู่ระบบด้วยกุญแจ — ทำให้เหลือแค่รหัสผ่านเป็นทางเข้าเดียว';
+            $warnings[] = 'Key-based login is disabled — leaving password as the only way in';
         }
 
         return [

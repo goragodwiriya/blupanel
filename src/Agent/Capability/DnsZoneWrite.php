@@ -10,14 +10,19 @@ use Phpcp\Driver\Dns\BindZoneManager;
 use Phpcp\Support\Validator;
 
 /**
- * เขียน zone file ของโดเมนเดียวจาก `dns_records` ปัจจุบัน แล้วสั่ง BIND9 โหลดใหม่ — PLAN-V2 เฟส E3
+ * Writes one domain's zone file from its current `dns_records`, then tells BIND9
+ * to reload — PLAN-V2 Phase E3
  *
- * เรียกต่อจากทุกจุดที่แก้ `dns_records` ของโดเมนนั้น (เพิ่ม/ลบเรกคอร์ด) — zone ถูกสร้างใหม่
- * ทั้งไฟล์จากฐานข้อมูลทุกครั้ง ไม่ใช่ patch ทีละเรกคอร์ด จึงชนกันไม่ได้แม้เรียกถี่ ๆ
+ * Called after every place that edits that domain's `dns_records` (adding or
+ * removing a record) — the whole zone file is rebuilt from the database every
+ * time, never patched record by record, so it can never conflict even under rapid
+ * repeated calls.
  *
- * ใช้สิทธิ์เดียวกับ `domain.manage` โดยตั้งใจ — ผู้ดูแลเว็บไซต์แก้ DNS ของโดเมนตัวเองได้
- * อยู่แล้ว การส่งค่านั้นไปให้ BIND9 จริงเป็นผลต่อเนื่องของสิทธิ์เดิม ไม่ใช่สิทธิ์ใหม่
- * (ต่างจาก `dns.reload` ที่กระทบทุกโดเมนพร้อมกัน — ดูเหตุผลที่ `Permissions::all()`)
+ * Uses the same permission as `domain.manage` on purpose — a site owner can
+ * already edit their own domain's DNS; pushing that value out to the real BIND9
+ * is a natural consequence of the permission they already have, not a new one
+ * (unlike `dns.reload`, which touches every domain at once — see the reasoning at
+ * `Permissions::all()`).
  */
 final class DnsZoneWrite extends DomainCapability
 {
@@ -38,7 +43,7 @@ final class DnsZoneWrite extends DomainCapability
 
     public function summary(): string
     {
-        return 'เขียน zone file ของโดเมนแล้วสั่ง BIND9 โหลดใหม่';
+        return 'Write domain zone file and reload BIND9';
     }
 
     public function validate(array $args): array

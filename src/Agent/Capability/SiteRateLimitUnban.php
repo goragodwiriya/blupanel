@@ -10,12 +10,14 @@ use Phpcp\Driver\Security\Fail2banManager;
 use Phpcp\Support\Validator;
 
 /**
- * ปลดแบน IP ที่ถูกจำกัดอัตราของเว็บไซต์หนึ่ง — PLAN-V2 เฟส E5
+ * Unbans an IP rate-limited on one website — PLAN-V2 Phase E5
  *
- * **ต้องมี ไม่ใช่ของแถม** — การแบนของ fail2ban สั่งที่ firewall ซึ่งไม่รู้จัก vhost
- * IP ที่ถูกแบนจึงเข้า**ทุกเว็บบนเครื่อง**ไม่ได้ รวมถึงหน้า panel เอง · ผู้ดูแลที่
- * ทดสอบเว็บตัวเองแรงไปหน่อยแล้วโดนแบน จะเข้ามาแก้จากหน้าเว็บไม่ได้เลยถ้าไม่มีปุ่มนี้
- * (ต้องหาทางเข้าเครื่องทางอื่นซึ่งอาจไม่มี)
+ * **A necessity, not a nice-to-have** — fail2ban's ban acts on the firewall, which
+ * knows nothing about a vhost, so a banned IP can't reach **any site on the
+ * machine**, including the panel itself · an admin who tested their own site a
+ * bit too hard and got banned would have no way back into the web page at all
+ * without this button (they'd have to find some other way onto the machine, which
+ * might not exist).
  */
 final class SiteRateLimitUnban extends SiteCapability
 {
@@ -36,14 +38,14 @@ final class SiteRateLimitUnban extends SiteCapability
 
     public function summary(): string
     {
-        return 'ปลดแบน IP ที่ถูกจำกัดอัตรา';
+        return 'Unban a rate-limited IP';
     }
 
     public function validate(array $args): array
     {
         return [
             'site_id' => Validator::requireInt($args, 'site_id', 1),
-            // ตรวจรูปแบบตั้งแต่ที่นี่ ไม่ปล่อยให้ไปถึงอาร์กิวเมนต์ของ fail2ban-client
+            // Format checked right here — never let it reach fail2ban-client's own arguments
             'ip' => Validator::ipAddress(Validator::requireString($args, 'ip', 45)),
         ];
     }
@@ -61,7 +63,7 @@ final class SiteRateLimitUnban extends SiteCapability
             'site_id' => $args['site_id'],
             'ip' => $args['ip'],
             'status' => $manager->status($site),
-            'message' => sprintf('ปลดแบน %s แล้ว', $args['ip']),
+            'message' => sprintf('Unbanned %s', $args['ip']),
         ];
     }
 }

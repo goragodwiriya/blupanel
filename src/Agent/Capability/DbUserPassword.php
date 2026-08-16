@@ -11,10 +11,11 @@ use Phpcp\Driver\Db\MariaDbManager;
 use Phpcp\Support\Validator;
 
 /**
- * ตั้งรหัสผ่านใหม่ให้ผู้ใช้ฐานข้อมูล
+ * Sets a new password for a database user
  *
- * ใช้เมื่อรหัสผ่านหลุดหรือหาย — ระบบสุ่มให้ใหม่และแสดงครั้งเดียวเหมือนตอนสร้าง
- * เพราะ panel ไม่เก็บรหัสผ่านฐานข้อมูลไว้เลย
+ * Used when a password leaks or is lost — the system generates a new random one
+ * and shows it exactly once, same as at creation time, because the panel never
+ * stores database passwords at all.
  */
 final class DbUserPassword extends DbCapability
 {
@@ -35,7 +36,7 @@ final class DbUserPassword extends DbCapability
 
     public function summary(): string
     {
-        return 'ตั้งรหัสผ่านใหม่ให้ผู้ใช้ฐานข้อมูล';
+        return 'Set a new password for a database user';
     }
 
     public function validate(array $args): array
@@ -55,10 +56,10 @@ final class DbUserPassword extends DbCapability
         $manager = $this->manager();
 
         if (!$manager->isInstalled($executor)) {
-            throw new ValidationError('เครื่องนี้ยังไม่ได้ติดตั้ง MariaDB หรือ MySQL');
+            throw new ValidationError('MariaDB or MySQL is not installed on this machine');
         }
 
-        // ผู้ใช้ต้องผูกกับฐานข้อมูลที่ผู้สั่งงานมีสิทธิ์อย่างน้อยหนึ่งรายการ
+        // The user must be bound to at least one database the caller has permission over
         $databases = $context->db->all(
             'SELECT d.db_name FROM db_grants g
              JOIN db_users u ON u.id = g.db_user_id
@@ -68,7 +69,7 @@ final class DbUserPassword extends DbCapability
         );
 
         if ($databases === []) {
-            throw new ValidationError('ไม่พบผู้ใช้ฐานข้อมูลนี้ในระบบ');
+            throw new ValidationError('This database user was not found');
         }
 
         foreach ($databases as $row) {
@@ -83,7 +84,7 @@ final class DbUserPassword extends DbCapability
             'host' => $args['host'],
             'password' => $password,
             'databases' => array_column($databases, 'db_name'),
-            'message' => "ตั้งรหัสผ่านใหม่ให้ {$args['username']}@{$args['host']} แล้ว",
+            'message' => "Set a new password for {$args['username']}@{$args['host']}",
         ];
     }
 }

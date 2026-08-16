@@ -10,12 +10,15 @@ use Phpcp\Driver\ConfigTransaction;
 use Phpcp\Support\Validator;
 
 /**
- * ระงับหรือเปิดใช้งานเว็บไซต์
+ * Suspends or resumes a website
  *
- * การระงับไม่ลบอะไรเลย — เขียน vhost ใหม่ให้ตอบ 503 ทุกเส้นทาง ไฟล์และฐานข้อมูลยังอยู่ครบ
- * เลือกตอบ 503 ไม่ใช่ 403 เพราะสื่อว่าเป็นการหยุดชั่วคราว เครื่องมือค้นหาจะไม่ถอดหน้าออกจากดัชนี
+ * Suspending deletes nothing at all — it rewrites the vhost to answer 503 on
+ * every path, with files and database left fully intact. 503 was chosen over 403
+ * because it signals a temporary stop, so search engines won't drop the page from
+ * their index.
  *
- * pool ของ FPM ถูกลบด้วยเพื่อคืนหน่วยความจำ — เว็บที่ถูกระงับไม่ควรกินทรัพยากรต่อ
+ * The FPM pool is deleted too, to free the memory — a suspended site shouldn't
+ * keep consuming resources.
  */
 abstract class SiteSetStatus extends SiteCapability
 {
@@ -51,8 +54,8 @@ abstract class SiteSetStatus extends SiteCapability
                 'status' => $target,
                 'changed' => false,
                 'message' => $target === 'active'
-                    ? "เว็บไซต์ {$site->domain} ใช้งานได้อยู่แล้ว"
-                    : "เว็บไซต์ {$site->domain} ถูกระงับอยู่แล้ว",
+                    ? "Website {$site->domain} is already active"
+                    : "Website {$site->domain} is already suspended",
             ];
         }
 
@@ -67,7 +70,7 @@ abstract class SiteSetStatus extends SiteCapability
                 $repository->pointerDocrootsOwnedBy($updated->owner->userId, $updated->phpVersion),
             );
         } else {
-            // ระงับ: vhost ตอบ 503 และไม่มี pool ให้เว็บทำงานได้อีก
+            // Suspend: the vhost answers 503, and there's no pool left for the site to run on
             $transaction->delete($updated->fpmPoolFile());
             $provisioner->stageVhost($transaction, $updated, $executor);
         }
@@ -83,8 +86,8 @@ abstract class SiteSetStatus extends SiteCapability
             'status' => $target,
             'changed' => true,
             'message' => $target === 'active'
-                ? "เปิดใช้งานเว็บไซต์ {$site->domain} แล้ว"
-                : "ระงับเว็บไซต์ {$site->domain} แล้ว — ไฟล์และฐานข้อมูลยังอยู่ครบ",
+                ? "Activated website {$site->domain}"
+                : "Suspended website {$site->domain} — files and database remain intact",
         ];
     }
 }

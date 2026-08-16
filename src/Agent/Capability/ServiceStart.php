@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Phpcp\Agent\Capability;
 
-/** service.start — ดูกฎความปลอดภัยและเส้นทางการทำงานที่ ServiceAction */
+/** service.start — see ServiceAction for the security rules and execution path */
 final class ServiceStart extends ServiceAction
 {
     public static function name(): string
@@ -14,7 +14,7 @@ final class ServiceStart extends ServiceAction
 
     public function summary(): string
     {
-        return 'เริ่มบริการของระบบ';
+        return 'Start system service';
     }
 
     protected function verb(): string

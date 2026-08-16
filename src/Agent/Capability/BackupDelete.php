@@ -12,14 +12,17 @@ use Phpcp\Driver\BackupManager;
 use Phpcp\Support\Validator;
 
 /**
- * ลบไฟล์สำรองหนึ่งไฟล์ในโฟลเดอร์ของบัญชี
+ * Deletes one backup file from an account's own folder
  *
- * รับ**ชื่อไฟล์** ไม่ใช่รหัสแถวในตาราง เพราะตัวไฟล์คือแหล่งความจริงแล้ว · ลูกค้าลบ
- * ไฟล์เดียวกันนี้เองผ่าน SFTP ได้อยู่แล้ว ปุ่มนี้จึงเป็นแค่ทางที่สะดวกกว่า ไม่ใช่
- * ทางเดียว — และด้วยเหตุนั้น "ไฟล์ไม่อยู่แล้ว" จึงเป็นสภาพปกติ ไม่ใช่ข้อผิดพลาดของระบบ
+ * Accepts a **filename**, not a table row id, because the file itself is the
+ * source of truth now · a customer can already delete this same file themselves
+ * over SFTP, so this button is only a more convenient path, not the only one —
+ * and because of that, "the file is already gone" is a normal state, not a
+ * system error.
  *
- * ขอบเขตการลบถูกจำกัดสองชั้น: ชื่อต้องเป็นชื่อล้วน (`BackupFiles::assertName()`) และ
- * เส้นทางที่คลาย symlink แล้วต้องยังอยู่ใต้โฟลเดอร์ของบัญชีนั้น (`BackupManager::delete()`)
+ * Deletion is bounded by two layers: the name must be a bare filename
+ * (`BackupFiles::assertName()`), and the path, once symlinks are resolved, must
+ * still fall under that account's own folder (`BackupManager::delete()`).
  */
 final class BackupDelete extends BackupCapability implements Capability
 {
@@ -40,7 +43,7 @@ final class BackupDelete extends BackupCapability implements Capability
 
     public function summary(): string
     {
-        return 'ลบไฟล์สำรองในโฟลเดอร์ของบัญชี';
+        return 'Delete a backup file from an account folder';
     }
 
     public function validate(array $args): array
@@ -63,7 +66,7 @@ final class BackupDelete extends BackupCapability implements Capability
         return [
             'user_id' => $owner->userId,
             'file' => $args['file'],
-            'message' => 'ลบไฟล์สำรอง "' . $args['file'] . '" แล้ว',
+            'message' => 'Deleted backup file "' . $args['file'] . '"',
         ];
     }
 }

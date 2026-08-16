@@ -8,13 +8,15 @@ use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
 
 /**
- * หมุนรหัสผ่านบัญชี MariaDB ของตัวเอง
+ * Rotates the password of one's own MariaDB account
  *
- * รหัสนี้ไม่เคยผ่านตาผู้ใช้ การหมุนจึงไม่กระทบการใช้งานเลย — ต่างจากการเปลี่ยนรหัส
- * ฐานข้อมูลแบบเดิมที่ทำให้ต้องไปแก้ไฟล์ config ของเว็บทุกเว็บตามหลัง
+ * This password never passes in front of a user, so rotating it never disrupts
+ * anything — unlike changing a regular database password, which means going and
+ * editing every affected site's config file afterward.
  *
- * ใช้เมื่อสงสัยว่าไฟล์ `panel.db` หรือคีย์ใน `config.php` รั่ว: หมุนแล้วรหัสเดิม
- * ที่อาจหลุดไปพร้อมไฟล์จะใช้ไม่ได้อีก
+ * Used when `panel.db` or a key inside `config.php` is suspected to have leaked:
+ * after rotating, whatever old password might have leaked along with that file
+ * stops working.
  */
 final class DbAccountRotate extends DbAccountCapability
 {
@@ -35,7 +37,7 @@ final class DbAccountRotate extends DbAccountCapability
 
     public function summary(): string
     {
-        return 'หมุนรหัสผ่านบัญชีฐานข้อมูลของตัวเอง';
+        return 'Rotate own database account password';
     }
 
     public function validate(array $args): array
@@ -52,12 +54,13 @@ final class DbAccountRotate extends DbAccountCapability
         $accounts->rotate($executor, $account);
         $accounts->syncPrivileges($executor, $account, $this->isAdmin($user));
 
-        // ไม่คืนรหัสใหม่ออกไป — ผู้ใช้ไม่ต้องรู้และไม่ต้องเอาไปทำอะไรต่อ
-        // ใครต้องใช้จริงให้ขอผ่าน db.account_credentials ซึ่งเป็นเส้นทางเดียวที่คืนความลับ
+        // Never returns the new password — the user doesn't need to know it and
+        // has nothing to do with it. Anyone who genuinely needs it should ask
+        // through db.account_credentials, the one path that returns the secret.
         return [
             'user' => $account->username,
             'rotated' => true,
-            'message' => "หมุนรหัสผ่านบัญชีฐานข้อมูลของ {$account->username} แล้ว",
+            'message' => "Rotated the database account password for {$account->username}",
         ];
     }
 }
