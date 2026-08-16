@@ -14,17 +14,17 @@ use Phpcp\Kernel\Db;
 use Phpcp\Security\Permissions;
 
 /**
- * ฐานร่วมของ capability ที่จัดการฐานข้อมูล MariaDB
+ * The shared base for capabilities that manage MariaDB databases
  *
- * แยกความจริงสองชุดออกจากกันให้ชัด:
- *   - ตาราง databases_ ใน panel.db คือ "ฐานข้อมูลที่ panel รู้จักและดูแล"
- *   - SHOW DATABASES ของ MariaDB คือ "ฐานข้อมูลที่มีอยู่จริงบนเครื่อง"
- * สองอย่างนี้อาจไม่ตรงกันได้ (มีคนสร้างเองผ่าน CLI) หน้าจอจึงต้องแสดงทั้งคู่
- * ไม่ใช่เชื่อฝั่งใดฝั่งหนึ่งแล้วซ่อนความจริงอีกด้าน
+ * Keeps two separate facts clearly apart:
+ *   - the databases_ table in panel.db is "databases the panel knows about and manages"
+ *   - MariaDB's SHOW DATABASES is "databases that genuinely exist on the machine"
+ * These two can diverge (someone created one by hand through the CLI), so the
+ * screen has to show both, rather than trusting one side and hiding the other's truth.
  */
 abstract class DbCapability implements Capability
 {
-    /** อายุ cache ขนาดฐานข้อมูล — information_schema แพง ไม่ต้องสดทุกคลิก */
+    /** How long the database-size cache lives — information_schema is expensive, doesn't need to be fresh on every click */
     private const SIZES_CACHE_TTL = 60;
 
     protected function manager(): MariaDbManager
@@ -32,14 +32,14 @@ abstract class DbCapability implements Capability
         return new MariaDbManager();
     }
 
-    /** ไฟล์ cache ผล sizes() ใต้ data ของ panel */
+    /** The cache file for sizes() results, under the panel's data directory */
     protected function sizesCachePath(Context $context): string
     {
         return $context->config->paths->data.'/cache/db-sizes.json';
     }
 
     /**
-     * ขนาดฐานข้อมูลพร้อม cache สั้น ๆ — ลดการสแกน information_schema ซ้ำ
+     * Database sizes with a short-lived cache — cuts down repeated information_schema scans
      *
      * @return array<string,int>
      */
@@ -63,7 +63,7 @@ abstract class DbCapability implements Capability
                     return $sizes;
                 }
             } catch (\Throwable) {
-                // อ่าน cache ไม่ได้ — ดึงใหม่จาก MariaDB
+                // The cache couldn't be read — fetch fresh from MariaDB
             }
         }
 
@@ -73,14 +73,14 @@ abstract class DbCapability implements Capability
             try {
                 $executor->writeFile($path, $json, 0640);
             } catch (\Throwable) {
-                // เขียน cache ไม่ได้ไม่ทำให้รายการล้ม
+                // Failing to write the cache never fails the listing
             }
         }
 
         return $sizes;
     }
 
-    /** ล้าง cache ขนาดหลังสร้าง/ลบฐานข้อมูลให้ตัวเลขหน้าจอตรงกับเครื่อง */
+    /** Clears the size cache after creating/dropping a database, so the screen's numbers match the machine */
     protected function invalidateSizesCache(Executor $executor, Context $context): void
     {
         $path = $executor->path($this->sizesCachePath($context));
@@ -88,16 +88,17 @@ abstract class DbCapability implements Capability
             try {
                 $executor->removePath($path);
             } catch (\Throwable) {
-                // ลบไม่ได้ก็ปล่อยให้หมดอายุตาม TTL
+                // Couldn't delete it — let it expire on its own via the TTL
             }
         }
     }
 
     /**
-     * ตรวจว่าผู้สั่งงานมีสิทธิ์กับฐานข้อมูลนี้จริง
+     * Checks that the caller genuinely has permission over this database
      *
-     * ผู้ดูแลเว็บไซต์แตะได้เฉพาะฐานข้อมูลที่ผูกกับเว็บไซต์ของตัวเอง — กัน IDOR
-     * ตรวจที่ agent ด้วยเสมอ ไม่พึ่งการตรวจของชั้นเว็บอย่างเดียว
+     * A site owner can only touch databases bound to their own website — guards
+     * against IDOR. Always checked in the agent too, never relying on the web
+     * tier's check alone.
      */
     protected function assertOwnership(Context $context, string $database): void
     {
@@ -117,11 +118,11 @@ abstract class DbCapability implements Capability
         );
 
         if ($owned === 0) {
-            throw new PermissionDenied('คุณไม่มีสิทธิ์จัดการฐานข้อมูลนี้');
+            throw new PermissionDenied('You do not have permission to manage this database');
         }
     }
 
-    /** เว็บไซต์ที่ผูกกับฐานข้อมูลได้ — ผู้ดูแลเว็บไซต์ผูกได้เฉพาะเว็บของตัวเอง */
+    /** A website a database can be bound to — a site owner can only bind their own site */
     protected function assertSiteAccess(Context $context, int $siteId): void
     {
         if ($siteId === 0) {
@@ -142,7 +143,7 @@ abstract class DbCapability implements Capability
         );
 
         if ($owned === 0) {
-            throw new PermissionDenied('คุณไม่มีสิทธิ์กับเว็บไซต์ที่ระบุ');
+            throw new PermissionDenied('You do not have permission over the specified website');
         }
     }
 
@@ -152,13 +153,13 @@ abstract class DbCapability implements Capability
         $row = $db->first('SELECT * FROM databases_ WHERE db_name = :n', ['n' => $name]);
 
         if ($row === null) {
-            throw new ValidationError("ไม่พบฐานข้อมูล {$name} ในระบบ");
+            throw new ValidationError("Database {$name} not found in the system");
         }
 
         return $row;
     }
 
-    /** สุ่มรหัสผ่านฐานข้อมูล — ไม่ใช้อักขระที่ต้อง escape ใน SQL หรือใน connection string */
+    /** Generates a random database password — never uses characters that need escaping in SQL or a connection string */
     protected static function randomPassword(int $length = 24): string
     {
         $alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';

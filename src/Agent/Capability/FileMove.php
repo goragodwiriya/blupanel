@@ -11,15 +11,16 @@ use Phpcp\Support\PathGuard;
 use Phpcp\Support\Validator;
 
 /**
- * ย้าย เปลี่ยนชื่อ หรือคัดลอกไฟล์และโฟลเดอร์
+ * Moves, renames, or copies files and folders
  *
- * สามงานนี้รวมเป็น capability เดียวเพราะมีกติกาความปลอดภัยชุดเดียวกันทุกข้อ:
- * ทั้งต้นทางและปลายทางต้องอยู่ในบ้านของเว็บไซต์เดียวกัน แยกเป็นสามตัวจะทำให้
- * กติกาถูกคัดลอกไปสามที่แล้วแก้ไม่ครบในภายหลัง
+ * These three jobs are combined into one capability because they share the exact
+ * same set of security rules: both the source and destination must fall inside
+ * the same website's home — splitting this into three would mean the rules get
+ * copied three times and later edited incompletely.
  */
 final class FileMove extends FileCapability
 {
-    /** จำนวนรายการสูงสุดต่อหนึ่งคำสั่ง — กันคำขอที่ทำให้ agent ทำงานยาวเกินไป */
+    /** The most items allowed per command — guards against a request that makes the agent run too long */
     private const MAX_ITEMS = 100;
 
     public static function name(): string
@@ -34,7 +35,7 @@ final class FileMove extends FileCapability
 
     public function summary(): string
     {
-        return 'ย้าย เปลี่ยนชื่อ หรือคัดลอกไฟล์';
+        return 'Move, rename, or copy files';
     }
 
     /**
@@ -48,25 +49,25 @@ final class FileMove extends FileCapability
         foreach ($sources as $source) {
             $relative = PathGuard::clean($source, 'เส้นทางต้นทาง');
             if ($relative === '') {
-                throw new ValidationError('ย้ายหรือคัดลอกรากของขอบเขตไม่ได้');
+                throw new ValidationError('Cannot move or copy the scope root');
             }
 
             $clean[] = $relative;
         }
 
         if ($clean === []) {
-            throw new ValidationError('ต้องเลือกอย่างน้อยหนึ่งรายการก่อน');
+            throw new ValidationError('At least one item must be selected first');
         }
 
         return [
             'root' => Validator::pattern(
                 Validator::requireString($args, 'root', 64),
                 '/^[a-z][a-z0-9-]{0,63}$/',
-                'คีย์ขอบเขตไฟล์ไม่ถูกต้อง',
+                'Invalid file scope key',
             ),
             'items' => $clean,
             'destination' => PathGuard::clean(Validator::optionalString($args, 'destination', max: 4096), 'โฟลเดอร์ปลายทาง'),
-            // เปลี่ยนชื่อ = ย้ายหนึ่งรายการพร้อมตั้งชื่อใหม่ ใช้ได้กับรายการเดียวเท่านั้น
+            // Rename = move one item while giving it a new name, only ever usable for a single item
             'rename' => isset($args['rename']) && $args['rename'] !== ''
                 ? PathGuard::name((string) $args['rename'], 'ชื่อใหม่')
                 : '',
@@ -91,7 +92,7 @@ final class FileMove extends FileCapability
         $overwrite = $args['overwrite'];
 
         if ($rename !== '' && count($items) !== 1) {
-            throw new ValidationError('เปลี่ยนชื่อได้ครั้งละหนึ่งรายการเท่านั้น');
+            throw new ValidationError('Only one item can be renamed at a time');
         }
 
         return $this->withSite($executor, $scope, static function (callable $resolve) use (
@@ -105,7 +106,7 @@ final class FileMove extends FileCapability
         ): array {
             $realDestination = $resolve($destination);
             if (($executor->stat($realDestination)['type'] ?? '') !== 'dir') {
-                throw new ValidationError('ปลายทางต้องเป็นโฟลเดอร์');
+                throw new ValidationError('The destination must be a folder');
             }
 
             $done = [];
@@ -116,18 +117,19 @@ final class FileMove extends FileCapability
                 $to = $realDestination.'/'.$name;
 
                 if ($from === $to) {
-                    continue; // ปลายทางเดียวกับต้นทาง = ไม่ต้องทำอะไร ไม่ใช่ข้อผิดพลาด
+                    continue; // Destination same as source = nothing to do, not an error
                 }
 
-                // ย้ายโฟลเดอร์เข้าไปในตัวเองทำให้ต้นไม้ขาดจากระบบไฟล์และกู้คืนยาก
-                // rename() ของเคอร์เนลกันเคสนี้ให้ แต่ copy จะวนไม่รู้จบจนดิสก์เต็ม
+                // Moving a folder into itself disconnects the tree from the
+                // filesystem and is hard to recover from. The kernel's rename()
+                // guards against this case, but copy would loop forever until the disk fills up
                 if (str_starts_with($realDestination.'/', $from.'/')) {
-                    throw new ValidationError('ย้ายโฟลเดอร์เข้าไปในตัวเองไม่ได้: '.basename($relative));
+                    throw new ValidationError('Cannot move a folder into itself: '.basename($relative));
                 }
 
                 if ($executor->stat($to) !== null) {
                     if (!$overwrite) {
-                        throw new ValidationError('มี '.$name.' อยู่ที่ปลายทางแล้ว');
+                        throw new ValidationError($name.' already exists at the destination');
                     }
 
                     $executor->removePath($to);
@@ -148,7 +150,7 @@ final class FileMove extends FileCapability
                 'moved' => $done,
                 'count' => count($done),
                 'destination' => $destination,
-                'message' => sprintf('%s %d รายการแล้ว', $copy ? 'คัดลอก' : 'ย้าย', count($done))
+                'message' => sprintf('%s %d item(s)', $copy ? 'Copied' : 'Moved', count($done))
             ];
         });
     }

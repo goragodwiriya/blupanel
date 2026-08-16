@@ -11,23 +11,26 @@ use Phpcp\Driver\Dns\BindZoneManager;
 use Phpcp\Support\Validator;
 
 /**
- * อ่าน zone file **ตัวจริงบนดิสก์** ของโดเมนหนึ่ง พร้อมบอกว่ามันตรงกับระบบหรือยัง
+ * Reads a domain's **real zone file on disk**, and reports whether it still matches the system
  *
- * ## ทำไมต้องอ่านไฟล์จริง ทั้งที่ประกอบใหม่จากฐานข้อมูลก็ได้
+ * ## Why read the real file when it could just be rebuilt from the database
  *
- * สองอย่างนี้ต่างกันได้ และ **เวลาที่มันต่างกันคือเวลาที่ผู้ดูแลต้องการคำตอบมากที่สุด** —
- * "ทำไมค่าที่เห็นในหน้าจอไม่ตรงกับที่ DNS ตอบจริง" · การแสดงค่าที่ประกอบใหม่ในนาทีนั้น
- * คือการยืนยันความเข้าใจผิดของเขาด้วยหน้าจอที่ดูน่าเชื่อถือ
+ * These two can diverge, and **the moment they diverge is exactly the moment an
+ * admin needs the answer most** — "why doesn't what I see on screen match what
+ * DNS actually answers". Showing a freshly rebuilt value at that exact moment
+ * would confirm their misunderstanding with a screen that looks trustworthy.
  *
- * สาเหตุที่ทำให้ต่างกันมีจริงหลายทาง: `dns.enabled` ปิดอยู่ (ไฟล์ไม่เคยถูกเขียนเลย) ·
- * การเขียนรอบที่แล้วล้มกลางคัน · มีคนแก้ไฟล์ด้วยมือผ่าน SSH · หรือ zone ถูกเขียนไว้
- * ก่อนที่จะมีการแก้เรกคอร์ดครั้งล่าสุดแล้ว sync ล้มเงียบ
+ * There are genuinely several ways for them to diverge: `dns.enabled` is off (the
+ * file was never written at all) · the last write failed partway through ·
+ * someone edited the file by hand over SSH · or the zone was written before the
+ * most recent record edit and the sync failed silently.
  *
- * ## วิธีวัดว่า "ต่างกัน"
+ * ## How "different" is measured
  *
- * เทียบ**ความหมาย** ไม่ใช่ตัวอักษร — แปลงไฟล์บนดิสก์กลับเป็นเรกคอร์ดแล้วเทียบกับ
- * ฐานข้อมูล · การเทียบข้อความตรง ๆ จะรายงานว่าต่างกันทุกครั้งเพราะ serial ของ SOA
- * เปลี่ยนทุกการเขียน ซึ่งเป็นสัญญาณเตือนที่ดังตลอดเวลาจนไม่มีใครฟัง
+ * Compares **meaning**, not text — the file on disk is parsed back into records
+ * and compared against the database · a literal text comparison would report a
+ * difference every single time, because the SOA serial changes on every write,
+ * which would be an alarm ringing constantly until nobody listens to it anymore.
  */
 final class DnsZoneRead extends DomainCapability
 {
@@ -48,7 +51,7 @@ final class DnsZoneRead extends DomainCapability
 
     public function summary(): string
     {
-        return 'อ่าน zone file ตัวจริงบนดิสก์';
+        return 'Read real zone file on disk';
     }
 
     public function validate(array $args): array
@@ -83,7 +86,7 @@ final class DnsZoneRead extends DomainCapability
                 'exists' => true,
                 'content' => '',
                 'drift' => true,
-                'drift_reason' => 'อ่านไฟล์ไม่ได้: ' . $e->getMessage(),
+                'drift_reason' => 'Failed to read file: ' . $e->getMessage(),
             ];
         }
 
@@ -100,11 +103,12 @@ final class DnsZoneRead extends DomainCapability
     }
 
     /**
-     * ไฟล์บนดิสก์ตรงกับเรกคอร์ดในระบบไหม
+     * Does the file on disk match the records in the system?
      *
-     * ไฟล์ที่แปลงกลับไม่ได้ (มีเรกคอร์ดชนิดที่ระบบยังไม่รองรับ หรือมีคนแก้ด้วยมือจนผิด
-     * รูปแบบ) **นับเป็นต่างกัน พร้อมบอกเหตุผลตามจริง** — ไม่ใช่กลืนข้อผิดพลาดแล้วรายงาน
-     * ว่าตรงกัน ซึ่งจะกลายเป็นการบอกว่า "ทุกอย่างปกติ" ในไฟล์ที่ระบบอ่านไม่ออกด้วยซ้ำ
+     * A file that fails to parse back (a record type the system doesn't support
+     * yet, or someone's hand edit broke the format) **counts as different, with
+     * the real reason stated** — never swallowed into a false "matches", which
+     * would say "everything's fine" about a file the system can't even read.
      *
      * @return array{0:bool,1:string}
      */
@@ -118,7 +122,7 @@ final class DnsZoneRead extends DomainCapability
         try {
             $onDisk = DnsRecord::parseZoneFile($name, $content);
         } catch (\Throwable $e) {
-            return [true, 'ไฟล์บนดิสก์มีสิ่งที่ระบบแปลงกลับไม่ได้ — ' . $e->getMessage()];
+            return [true, 'The file on disk has something the system cannot parse — ' . $e->getMessage()];
         }
 
         $expected = self::fingerprint(array_map(
@@ -139,14 +143,14 @@ final class DnsZoneRead extends DomainCapability
         }
 
         return [true, sprintf(
-            'ไฟล์บนดิสก์มี %d รายการ ระบบมี %d รายการ — กดซิงก์เพื่อเขียนไฟล์ใหม่จากค่าในระบบ',
+            'The file on disk has %d record(s), the system has %d — click sync to rewrite the file from the system\'s values',
             count($onDisk),
             count($rows),
         )];
     }
 
     /**
-     * ลายนิ้วมือของชุดเรกคอร์ดที่ไม่ขึ้นกับลำดับ
+     * An order-independent fingerprint of a set of records
      *
      * @param list<array<string,mixed>> $records
      * @return list<string>

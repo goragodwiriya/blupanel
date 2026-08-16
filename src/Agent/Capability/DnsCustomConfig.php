@@ -14,22 +14,26 @@ use Phpcp\Driver\RollbackGuard;
 use Phpcp\Driver\WebServer\CustomConfig;
 
 /**
- * เขียนไฟล์ตั้งค่าเพิ่มเติมของ BIND9
+ * Writes BIND9's supplementary config file
  *
- * **สิทธิ์ระดับเครื่อง (`settings.manage`) ไม่ใช่ `domain.manage`** — เนื้อไฟล์นี้ถูกอ่าน
- * ตอน named สตาร์ต และมีผลกับ zone ของลูกค้าทุกรายพร้อมกัน · ผู้ดูแลเว็บไซต์ที่มีสิทธิ์
- * แก้เรกคอร์ดของโดเมนตัวเองต้องแตะไฟล์นี้ไม่ได้ ด้วยเหตุผลเดียวกับ `dns.reload`
+ * **A machine-level permission (`settings.manage`), not `domain.manage`** — this
+ * file's content gets read when named starts, and affects every customer's zone
+ * at once · a site owner with permission to edit their own domain's records must
+ * never be able to touch this file, for the same reason as `dns.reload`.
  *
- * ## การคืนค่าต้องคืนสองไฟล์ ไม่ใช่ไฟล์เดียว
+ * ## Rollback has to restore two files, not one
  *
- * RollbackGuard **ลบ**ไฟล์ทิ้งเมื่อสภาพเดิมคือ "ยังไม่มีไฟล์นี้" แล้วสั่ง
- * `systemctl reload-or-restart` ต่อทันที · การบันทึกครั้งแรกของเครื่องหนึ่งจึงเป็นกรณีที่
- * อันตรายที่สุด: ถ้าจับคู่คืนแค่ไฟล์ส่วนเสริม บรรทัด `include` ใน `named.conf.local`
- * จะยังอยู่และชี้ไปไฟล์ที่เพิ่งถูกลบ — **กลไกคืนค่าที่มีไว้กันเครื่องพังจะกลายเป็นตัวที่
- * ทำ DNS ทั้งเครื่องล่มเสียเอง** และล่มแบบที่ผู้ดูแลไม่ได้ทำอะไรผิดเลยด้วย
+ * RollbackGuard **deletes** a file when its original state was "this file didn't
+ * exist yet", then immediately runs `systemctl reload-or-restart` · so the very
+ * first save on a machine is the most dangerous case: if only the supplementary
+ * file were paired for rollback, the `include` line in `named.conf.local` would
+ * remain, pointing at a file that had just been deleted — **the rollback
+ * mechanism that exists to prevent breakage would become the very thing that
+ * takes down DNS for the whole machine**, and it would go down without the admin
+ * having done anything wrong at all.
  *
- * {@see BindZoneManager::writeCustomConfig()} จึงคืนสภาพเดิมของทั้งสองไฟล์กลับมาให้
- * ผูกไว้ด้วยกันในการคืนค่าครั้งเดียว
+ * {@see BindZoneManager::writeCustomConfig()} therefore returns the original
+ * state of both files, bound together into a single rollback.
  */
 final class DnsCustomConfig implements Capability
 {
@@ -50,7 +54,7 @@ final class DnsCustomConfig implements Capability
 
     public function summary(): string
     {
-        return 'เขียนไฟล์ตั้งค่าเพิ่มเติมของ BIND9';
+        return 'Write BIND9 supplementary config file';
     }
 
     public function validate(array $args): array
@@ -67,8 +71,10 @@ final class DnsCustomConfig implements Capability
     public function run(array $args, Executor $executor, Context $context): array
     {
         /*
-         * ตัดสินจากทะเบียนอีกรอบว่าไฟล์นี้แก้ได้จริง — ปุ่มที่ไม่ขึ้นบนหน้าจอไม่ใช่ด่าน
-         * ความปลอดภัย คำขอที่ประกอบเองยังส่งคีย์ของไฟล์ที่ระบบสร้างมาได้เสมอ
+         * Decided from the registry again whether this file can actually be
+         * edited — a button that doesn't appear on screen is not a security
+         * gate, since a hand-crafted request can still send the key of a
+         * system-generated file
          */
         if ($args['key'] !== '') {
             $file = ConfigFileCatalog::find(
@@ -78,8 +84,9 @@ final class DnsCustomConfig implements Capability
 
             if ($file === null || $file['kind'] !== ConfigFileCatalog::KIND_WRITABLE) {
                 throw new ValidationError(
-                    'ไฟล์นี้แก้จากหน้าเว็บไม่ได้ — panel เขียนทับทั้งไฟล์ทุกครั้งที่มีการเพิ่มหรือลบ zone '
-                    . 'สิ่งที่แก้ลงไปจะหายไปเงียบ ๆ · เขียนค่าที่ต้องการลงไฟล์ส่วนเสริมแทน',
+                    'This file cannot be edited from the web page — the panel overwrites the whole '
+                    . 'file every time a zone is added or removed, so anything edited here would '
+                    . 'silently vanish · write the value into the supplementary file instead',
                 );
             }
         }
@@ -89,8 +96,8 @@ final class DnsCustomConfig implements Capability
 
         $rollbackId = (new RollbackGuard($context->db))->arm(
             action: self::name(),
-            description: 'แก้ค่าตั้งเพิ่มเติมของ BIND9',
-            // ทั้งสองไฟล์ในการคืนค่าครั้งเดียว — ดูเหตุผลที่หัวคลาส
+            description: 'Edit BIND9 supplementary configuration',
+            // Both files in a single rollback — see the reasoning at the top of this class
             files: $written['files'],
             reloadUnits: ['named'],
             window: $args['window'],
@@ -102,8 +109,8 @@ final class DnsCustomConfig implements Capability
             'path' => $written['path'],
             'rollback_id' => $rollbackId,
             'window' => $args['window'],
-            'message' => 'บันทึกค่าตั้งเพิ่มเติมของ BIND9 แล้ว — ทดสอบว่าโดเมนยังตอบคำถามได้จริง '
-                . 'แล้วกดยืนยันภายในเวลาที่กำหนด ไม่งั้นระบบจะคืนค่าเดิมให้เอง',
+            'message' => 'Saved BIND9\'s supplementary configuration — test that domains still resolve '
+                . 'correctly, then confirm within the time given, or the system will revert it automatically',
         ];
     }
 }

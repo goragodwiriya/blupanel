@@ -287,7 +287,7 @@ test('ตัวเขียนต้องปฏิเสธคีย์ขอ�
     }
 
     assertTrue($rejected !== '', 'ต้องปฏิเสธคีย์ของไฟล์ที่ระบบสร้าง');
-    assertTrue(str_contains($rejected, 'หายไปเงียบ'), 'ต้องบอกเหตุผลที่แก้ไม่ได้ ไม่ใช่แค่ปฏิเสธ: ' . $rejected);
+    assertTrue(str_contains($rejected, 'silently vanish'), 'ต้องบอกเหตุผลที่แก้ไม่ได้ ไม่ใช่แค่ปฏิเสธ: ' . $rejected);
 });
 
 test('สิทธิ์ต้องเป็นระดับเครื่อง ไม่ใช่สิทธิ์ของเจ้าของโดเมน', static function (): void {
