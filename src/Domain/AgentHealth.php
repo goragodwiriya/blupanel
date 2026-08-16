@@ -8,36 +8,46 @@ use Phpcp\Agent\Client;
 use Phpcp\Kernel\Db;
 
 /**
- * เฝ้าดูว่า agent ยังตอบสนองอยู่ไหม — PLAN-V2 เฟส E6 (เพิ่มหลังทดสอบบนเครื่องจริง)
+ * Watches whether the agent is still responding — PLAN-V2 Phase E6 (added after
+ * testing on a real machine)
  *
- * **ทำไมต้องแยกออกมาจาก `alert.check`:** `alert.check` เป็น capability ที่รัน**ผ่าน agent**
- * พอ agent ตาย งานตรวจก็เรียกไม่ได้ — ระบบเฝ้าระวังตายพร้อมกับสิ่งที่มันเฝ้า และไม่มี
- * ข้อความใดออกไปเลย · ซ้ำร้าย `ServiceCatalog` ตัด unit ของ panel ออกด้วย `SelfProtection`
- * ทำให้ `alert.check` ไม่มีทางเห็น `phpcp-agentd` ตั้งแต่แรกอยู่แล้ว
+ * **Why this has to be separate from `alert.check`:** `alert.check` is a capability
+ * that runs **through the agent** — once the agent is dead, the check itself can't
+ * even be called, so the monitoring system dies right along with the thing it's
+ * supposed to watch, with no message going out at all · worse, `ServiceCatalog`
+ * strips the panel's own unit out via `SelfProtection`, so `alert.check` could never
+ * see `phpcp-agentd` in the first place regardless.
  *
- * คลาสนี้จึงถูกเรียกจาก **scheduler** ซึ่งเป็นคนละโปรเซสและยังทำงานอยู่ตอน agent ล่ม
+ * This class is therefore called from the **scheduler**, a separate process that's
+ * still running when the agent goes down.
  *
- * **บันทึกสถานะอย่างเดียว ไม่ส่งข้อความ** — `phpcp-scheduler.service` ถูก hardening ไว้ด้วย
- * `RestrictAddressFamilies=AF_UNIX` (เปิด TCP ไม่ได้เลย จึงยิง Telegram/webhook ไม่ได้) และ
- * `NoNewPrivileges=yes` (ปิด setgid ของ `postdrop` จึงเข้าคิวเมลไม่ได้ — ยืนยันจาก log จริง:
- * `mail_queue_enter: Permission denied`) · ทั้งสองอย่างเป็นชั้นป้องกันที่ถูกต้องและห้ามผ่อน
- * เพียงเพื่อความสะดวกของการแจ้งเตือน (§7.1 ข้อ 2)
+ * **Records state only, never sends a message** — `phpcp-scheduler.service` is
+ * hardened with `RestrictAddressFamilies=AF_UNIX` (TCP can't be opened at all, so
+ * it can't fire Telegram/webhook) and `NoNewPrivileges=yes` (blocks `postdrop`'s
+ * setgid, so it can't enter the mail queue — confirmed from a real log:
+ * `mail_queue_enter: Permission denied`) · both are correct hardening layers that
+ * must never be relaxed just for the convenience of sending a notification (§7.1
+ * item 2).
  *
- * หน้าที่ส่งข้อความจึงอยู่ที่ `bin/phpcp-alert` ซึ่ง systemd เรียกผ่าน `OnFailure=` ของ
- * `phpcp-agentd.service` แทน — รันเป็น root จึงส่งได้ทุกช่องทาง และรู้ทันทีที่ agent ตาย
- * โดยไม่ต้องรอรอบของ scheduler
+ * The job of actually sending a message therefore belongs to `bin/phpcp-alert`
+ * instead, which systemd invokes via `phpcp-agentd.service`'s own `OnFailure=` —
+ * running as root, it can send through every channel, and knows the instant the
+ * agent dies without waiting for the scheduler's next pass.
  *
- * ที่ยังต้องมีคลาสนี้: `OnFailure=` ไม่ทำงานตอน `systemctl stop` (systemd ถือว่าเป็นการหยุด
- * ตั้งใจ) · สถานะที่บันทึกไว้ที่นี่คือสิ่งเดียวที่ทำให้หน้า `/api/v2/alerts` บอกได้ว่า
- * ตอนนี้ agent ไม่ทำงานอยู่ ไม่ว่าจะด้วยเหตุใด
+ * Why this class still needs to exist: `OnFailure=` never fires on `systemctl
+ * stop` (systemd treats that as an intentional stop) · the state recorded here is
+ * the only thing that lets the `/api/v2/alerts` page report that the agent isn't
+ * running right now, regardless of the reason.
  *
- * ผลที่ตามมาที่ต้องรู้: agent ที่ตายแปลว่า **ทุกอย่างหยุดหมด** ไม่ใช่แค่หน้าเว็บใช้ไม่ได้
- * — กลไกคืนค่าอัตโนมัติของ firewall/SSH ไม่มีใครกระตุ้น ผู้ดูแลที่กำลังแก้ firewall ค้างอยู่
- * จะถูกล็อกออกจากเครื่องถาวร · จึงจัดเป็น critical ตั้งแต่ครั้งแรกที่ตรวจพบ
+ * The consequence worth knowing: a dead agent means **everything stops**, not just
+ * the web page becoming unusable — the firewall/SSH auto-rollback mechanism has
+ * nobody left to trigger it, and an admin in the middle of editing the firewall
+ * would be permanently locked out of the machine · this is why it's classified
+ * critical from the very first time it's detected.
  */
 final class AgentHealth
 {
-    /** คีย์ของเกณฑ์นี้ใน `alert_state` — ใช้กลไกกันสแปมตัวเดียวกับเกณฑ์อื่น */
+    /** This threshold's key in `alert_state` — uses the same anti-spam mechanism as every other threshold */
     public const ALERT_KEY = 'agent';
 
     public function __construct(
@@ -47,11 +57,13 @@ final class AgentHealth
     }
 
     /**
-     * ตรวจหนึ่งครั้งแล้วบันทึกสถานะ
+     * Check once and record the state
      *
-     * **ไม่ส่งข้อความ** — ดูเหตุผลเต็มที่หัวคลาส (scheduler ส่งไม่ได้ทั้ง TCP และเมล)
-     * · `AlertRules` ยังถูกเรียกเพื่อบันทึกสถานะและกันการนับซ้ำ ผลที่คืนบอกได้ว่า
-     * รอบนี้ **ควร** แจ้งไหม เผื่อผู้เรียกที่มีสิทธิ์พอจะส่งเองได้ในอนาคต
+     * **Never sends a message** — see the class docblock for the full reasoning
+     * (the scheduler can't send over TCP or mail) · `AlertRules` is still called to
+     * record state and deduplicate, and the returned result says whether this
+     * round **should** notify, in case a future caller with enough privilege can
+     * actually send it themselves.
      *
      * @return array{available:bool,changed:bool,reason:string}
      */
