@@ -11,33 +11,37 @@ use Phpcp\Driver\SafeBlock;
 use Phpcp\Driver\Template;
 
 /**
- * nginx ชั้นหน้า + Apache ชั้นหลัง — โหมดเดียวที่ `.htaccess` ใช้งานได้จริงบน nginx
+ * nginx as the front layer + Apache as the backend — the only mode where `.htaccess` genuinely works on nginx
  *
- * **ทำไมถึงมีโหมดนี้:** nginx ไม่รองรับ `.htaccess` และจะไม่รองรับ — มันอ่าน config
- * ครั้งเดียวตอน start ไม่มีกลไก config รายไดเรกทอรี · เว็บที่ย้ายมาจากโฮสต์อื่นเกือบ
- * ทั้งหมดพึ่ง `.htaccess` (WordPress, Laravel, กฎกันโฟลเดอร์, redirect ที่ลูกค้าตั้งเอง)
- * การแปลงกฎเหล่านั้นเป็น config ของ nginx อัตโนมัติแปลว่าต้องเอาข้อความที่ลูกค้าเขียน
- * ไปประกอบเป็นไฟล์ที่ root โหลด ซึ่งเป็นทางยกระดับสิทธิ์ที่กว้างเกินกว่าจะยอมรับได้
+ * **Why this mode exists:** nginx doesn't support `.htaccess` and never
+ * will — it reads config exactly once at start, with no per-directory
+ * config mechanism at all · nearly every site migrated from another host
+ * relies on `.htaccess` (WordPress, Laravel, folder-blocking rules,
+ * redirects a customer set up themselves) — automatically translating
+ * those rules into nginx config would mean taking text a customer wrote
+ * and assembling it into a file root loads, a privilege-escalation path far too broad to accept.
  *
- * โหมดนี้แก้ด้วยการไม่แปลงอะไรเลย: ให้ Apache ที่อ่าน `.htaccess` เป็นของมันอยู่แล้ว
- * เป็นคนตอบทุกคำขอ ส่วน nginx ทำหน้าที่ที่มันเก่งกว่า — จบ TLS, รับผู้ใช้ที่เน็ตช้า
- * แทน Apache, จำกัดขนาด body, เป็นจุดเดียวที่คุม rate limit
+ * This mode solves it by translating nothing at all: Apache, which already
+ * reads `.htaccess` as its own native feature, answers every request, while
+ * nginx does what it's better at — terminating TLS, absorbing slow-network
+ * clients instead of Apache, limiting body size, and being the single place rate limiting is enforced.
  *
  * ```
- *   ผู้ใช้ ──► nginx :80/:443 ──► Apache 127.0.0.1:8080 ──► PHP-FPM (uid ของลูกค้า)
- *             จบ TLS ที่นี่        อ่าน .htaccess ที่นี่
+ *   visitor ──► nginx :80/:443 ──► Apache 127.0.0.1:8080 ──► PHP-FPM (customer's own uid)
+ *              TLS ends here          .htaccess is read here
  * ```
  *
- * **สิ่งที่ต่างจากโหมด apache ล้วน และต้องระวัง:**
+ * **What's different from pure Apache mode, and what to watch for:**
  *
- *   1. Apache ไม่ฟัง 80/443 อีกต่อไป — `backend-ports.conf.tpl` เขียนทับ
- *      `/etc/apache2/ports.conf` ให้ฟังเฉพาะ loopback · ไฟล์เดิมถูกสำรองโดย
- *      ConfigTransaction เหมือนไฟล์อื่นทุกไฟล์
- *   2. ที่อยู่ผู้ใช้จริงมาถึง Apache ผ่าน `X-Forwarded-For` + `mod_remoteip` เท่านั้น
- *      ถ้าโมดูลนี้หายไป log จะเป็น 127.0.0.1 ทั้งหมดแล้ว fail2ban จะแบนไม่ได้เลย
- *      จึงอยู่ใน REQUIRED_MODULES ไม่ใช่ห่อด้วย IfModule
- *   3. การบังคับ HTTPS ทำที่ **ชั้นหน้าเท่านั้น** — ถ้าชั้นหลัง redirect ด้วยจะวนไม่จบ
- *      เพราะคำขอที่ nginx ส่งมาเป็น http เสมอ
+ *   1. Apache no longer listens on 80/443 at all — `backend-ports.conf.tpl`
+ *      overwrites `/etc/apache2/ports.conf` to listen on loopback only ·
+ *      the original file is backed up by ConfigTransaction like every other file.
+ *   2. A visitor's genuine address only ever reaches Apache through
+ *      `X-Forwarded-For` + `mod_remoteip` — if this module is ever missing,
+ *      logs show 127.0.0.1 for everything and fail2ban can never ban
+ *      anyone, so it lives in REQUIRED_MODULES rather than wrapped in an IfModule.
+ *   3. HTTPS is forced **at the front layer only** — if the backend also
+ *      redirected, it would loop forever, since the request nginx sends it is always http.
  */
 final class NginxProxyDriver implements WebServerDriver
 {
@@ -45,10 +49,10 @@ final class NginxProxyDriver implements WebServerDriver
     private const NGINX_SITES_DIR = self::NGINX_ROOT . '/conf.d';
     private const NGINX_MAP_FILE = self::NGINX_SITES_DIR . '/00-phpcp-proxy.conf';
 
-    /** ชั้นหน้าของ http://localhost — ชั้นหลังใช้ไฟล์เดียวกับโหมด apache */
+    /** The front layer's http://localhost — the backend shares the same file apache mode uses */
     private const NGINX_LOCALHOST_FILE = NginxDriver::LOCALHOST_FILE;
 
-    /** เท่ากับค่าเริ่มต้นของเว็บทั่วไป — โฟลเดอร์พัฒนาไม่ได้ตั้งโควตาอัปโหลดไว้ */
+    /** Matches an ordinary site's default — the dev folder has no upload quota configured */
     private const LOCALHOST_UPLOAD_LIMIT_MB = 64;
 
     private const APACHE_ROOT = '/etc/apache2';
@@ -58,27 +62,28 @@ final class NginxProxyDriver implements WebServerDriver
     private const HTTP_PORT = 80;
     private const HTTPS_PORT = 443;
 
-    /** พอร์ตของชั้นหลัง — ผูกกับ loopback เท่านั้น ไม่เปิดออกนอกเครื่อง */
+    /** The backend's port — bound to loopback only, never exposed outside the machine */
     public const BACKEND_PORT = 8080;
     public const BACKEND = '127.0.0.1:' . self::BACKEND_PORT;
 
     /**
-     * `remoteip` ไม่ใช่ของแถม — ดูเหตุผลข้อ 2 ในคำอธิบายคลาส
+     * `remoteip` isn't optional extra — see point 2 in the class description
      *
-     * ไม่ต้องมี proxy/proxy_http เพราะฝั่ง Apache เป็นผู้ถูก proxy ไม่ใช่ผู้ proxy
-     * แต่ proxy_fcgi ยังต้องมีเพราะ PHP ยังส่งผ่าน FPM socket เหมือนเดิม
+     * proxy/proxy_http aren't needed, since Apache is the one being proxied
+     * here, never the one doing the proxying · but proxy_fcgi is still
+     * required, since PHP still goes through the FPM socket exactly the same way.
      */
     private const REQUIRED_MODULES = ['headers', 'rewrite', 'proxy', 'proxy_fcgi', 'remoteip'];
 
     private readonly ApacheDriver $apache;
 
     /**
-     * @param bool $staticByNginx ให้ nginx ตอบไฟล์ static เอง — ค่าจาก `webserver.static_by_nginx`
+     * @param bool $staticByNginx let nginx serve static files itself — the value comes from `webserver.static_by_nginx`
      */
     public function __construct(
         private readonly Template $templates,
         private readonly bool $staticByNginx = true,
-        /** null = ไม่เปิด http://localhost (ค่าเริ่มต้นของเครื่องที่ให้บริการจริง) */
+        /** null = don't enable http://localhost (the default for a real production machine) */
         private readonly ?LocalhostSite $localhost = null,
     ) {
         $this->apache = new ApacheDriver($templates, $localhost);
@@ -90,7 +95,7 @@ final class NginxProxyDriver implements WebServerDriver
     }
 
     /**
-     * unit ที่รับคำขอจากอินเทอร์เน็ต — ผู้เรียกที่ต้องการชั้นหลังใช้ backendUnit()
+     * The unit that receives requests from the internet — a caller wanting the backend uses backendUnit() instead
      */
     public function unit(): string
     {
@@ -103,10 +108,11 @@ final class NginxProxyDriver implements WebServerDriver
     }
 
     /**
-     * ไฟล์ของเว็บไซต์ต้องเป็นของกลุ่มที่ **Apache** อ่านได้ ไม่ใช่ nginx
+     * A website's files must belong to the group **Apache** can read, never nginx
      *
-     * nginx ไม่แตะไฟล์ของเว็บเลยในโหมดนี้ (ส่งต่อทุกคำขอ) ถ้าตั้งเป็น nginx
-     * Apache จะอ่านไฟล์ของลูกค้าไม่ได้แล้วทุกเว็บตอบ 403
+     * nginx never touches a site's files at all in this mode (it forwards
+     * every request) — setting it to nginx would leave Apache unable to
+     * read a customer's files, and every site would answer 403.
      */
     public function runAsUser(): string
     {
@@ -123,7 +129,7 @@ final class NginxProxyDriver implements WebServerDriver
         $enabledDir = $executor->path(self::APACHE_ROOT . '/mods-enabled');
         $enabled = [];
 
-        // ชั้นหลังไม่ต้องมี mod_ssl แล้ว — TLS จบที่ nginx · ส่ง false เสมอโดยตั้งใจ
+        // The backend no longer needs mod_ssl at all — TLS terminates at nginx · false is always passed, deliberately
         foreach (self::REQUIRED_MODULES as $module) {
             if ($executor->exists($enabledDir . '/' . $module . '.load')) {
                 continue;
@@ -140,10 +146,11 @@ final class NginxProxyDriver implements WebServerDriver
     }
 
     /**
-     * ไฟล์ที่ทั้งเครื่องใช้ร่วมกัน ไม่ใช่ของเว็บใดเว็บหนึ่ง
+     * A file the whole machine shares, not belonging to any one website
      *
-     * คืนเป็น "เส้นทาง => เนื้อหา" ให้ผู้เรียกเอาไปใส่ ConfigTransaction เดียวกับ vhost
-     * เพื่อให้ configtest ที่ตามมาตรวจทั้งชุดพร้อมกัน และ rollback พร้อมกันเมื่อไม่ผ่าน
+     * Returned as "path => content" for the caller to add into the same
+     * ConfigTransaction as the vhost, so the configtest that follows checks
+     * everything together, and rolls everything back together if it fails.
      *
      * @return array<string,string>
      */
@@ -153,12 +160,14 @@ final class NginxProxyDriver implements WebServerDriver
             self::NGINX_MAP_FILE => $this->templates->render('nginx/proxy-map.conf.tpl', []),
             self::APACHE_PORTS_FILE => $this->templates->render('apache/backend-ports.conf.tpl', [
                 'BACKEND_PORT' => self::BACKEND_PORT,
+                // NOTE: kept Thai — apache/backend-ports.conf.tpl's surrounding comment is still fully Thai (out of this src/ sweep's scope)
                 'BACKUP_NOTE' => 'ถังพักของ ConfigTransaction ตอนเปลี่ยนโหมด',
             ]),
         ];
 
-        // http://localhost ต้องมีสองไฟล์เหมือนเว็บอื่นในโหมดนี้ — ชั้นหน้าที่ nginx
-        // กับชั้นหลังที่ Apache · ขาดไฟล์ชั้นหลังคือได้ 502 ขาดไฟล์ชั้นหน้าคือไม่มีใครรับ
+        // http://localhost needs the same two files as any other site in
+        // this mode — the front layer at nginx and the backend at Apache ·
+        // missing the backend file gets a 502, missing the front layer file means nobody answers at all
         if ($this->localhost !== null) {
             $files[self::NGINX_LOCALHOST_FILE] = $this->templates->render('nginx/localhost.conf.tpl', [
                 'HTTP_PORT' => self::HTTP_PORT,
@@ -178,7 +187,7 @@ final class NginxProxyDriver implements WebServerDriver
         return self::NGINX_SITES_DIR . '/phpcp-' . $this->prefix($site) . $site->domain . '.conf';
     }
 
-    /** เส้นทาง vhost ของชั้นหลัง — คนละไดเรกทอรีและคนละรูปแบบกับชั้นหน้า */
+    /** The backend's own vhost path — a different directory and a different shape than the front layer */
     public function backendVhostPath(Site $site): string
     {
         return self::APACHE_SITES_DIR . '/phpcp-' . $this->prefix($site) . $site->domain . '.conf';
@@ -191,14 +200,16 @@ final class NginxProxyDriver implements WebServerDriver
     }
 
     /**
-     * ไฟล์ของเว็บนี้ **บวกไฟล์กลางของโหมด**
+     * This site's files, **plus this mode's shared files**
      *
-     * ไฟล์กลางถูกเขียนซ้ำทุกครั้งที่มีการเปลี่ยนแปลงเว็บใดก็ตาม โดยตั้งใจ — เนื้อหาคงที่
-     * การเขียนทับจึงไม่มีผลข้างเคียง แต่ทำให้เครื่องที่ไฟล์กลางหายไป (ผู้ดูแลลบเอง
-     * หรืออัปเกรดแพ็กเกจ apache2 แล้ว ports.conf ถูกแทนที่) กลับมาถูกต้องเองในครั้งถัดไป
-     * แทนที่จะพังค้างจนกว่าจะมีคนสังเกต · และทั้งชุดผ่าน configtest เดียวกันก่อน reload
+     * The shared files are deliberately rewritten every time any site
+     * changes at all — the content is fixed, so overwriting it has no side
+     * effect, but it means a machine whose shared file went missing (an
+     * admin deleted it, or an apache2 package upgrade replaced
+     * ports.conf) self-corrects on the very next change, instead of
+     * staying broken until someone notices · and the whole set passes the same configtest before reloading.
      *
-     * ไม่รวมอยู่ใน vhostPaths() เพราะการลบเว็บหนึ่งเว็บต้องไม่ลบไฟล์ที่ทั้งเครื่องใช้ร่วมกัน
+     * Not included in vhostPaths(), because deleting one website must never delete a file the whole machine shares.
      *
      * @return array<string,string>
      */
@@ -211,11 +222,12 @@ final class NginxProxyDriver implements WebServerDriver
     }
 
     /**
-     * vhost ของ wildcard ต้องถูกอ่านท้ายสุดทั้งสองชั้น (PLAN-V2 เฟส E7)
+     * A wildcard's vhost must be read last on both layers (PLAN-V2 phase E7)
      *
-     * nginx เลือก server block จาก server_name ตามลำดับความเฉพาะเจาะจงจึงไม่ขึ้นกับชื่อไฟล์
-     * แต่ Apache อ่านตามลำดับตัวอักษรและ vhost แรกที่ตรงชนะ — ใช้คำนำหน้าเดียวกันทั้งคู่
-     * เพื่อไม่ให้ต้องจำว่าชั้นไหนต้องการอะไร
+     * nginx picks a server block from server_name by specificity, so it
+     * doesn't depend on filename at all, but Apache reads in alphabetical
+     * order and the first match wins — the same prefix is used for both,
+     * so nobody has to remember which layer needs what.
      */
     private function prefix(Site $site): string
     {
@@ -224,7 +236,7 @@ final class NginxProxyDriver implements WebServerDriver
 
     public function renderVhost(Site $site, Executor $executor): string
     {
-        // nginx ใส่ทุกโดเมนไว้ใน server_name บรรทัดเดียว ต่างจาก ServerAlias ของ Apache
+        // nginx puts every domain on a single server_name line, unlike Apache's ServerAlias
         $aliases = new SafeBlock(
             $site->aliases === [] ? '' : ' ' . implode(' ', array_map(
                 static fn (string $d): string => Template::assertValue('server_name', $d),
@@ -257,7 +269,7 @@ final class NginxProxyDriver implements WebServerDriver
             'HTTPS_PORT' => self::HTTPS_PORT,
             'SSL_CERT' => $executor->path($certificate . '/fullchain.pem'),
             'SSL_KEY' => $executor->path($certificate . '/privkey.pem'),
-            'SSL_MODE_LABEL' => $site->sslMode === 'forced' ? 'บังคับ HTTPS' : 'เปิดใช้งาน',
+            'SSL_MODE_LABEL' => $site->sslMode === 'forced' ? 'Forced HTTPS' : 'Enabled',
             'PROXY_BODY' => $this->proxyBody('https', $site, $executor),
             'HTTP_SECTION' => $this->httpSection($site, $executor),
             'HSTS_HEADER' => $this->hstsHeader($site),
@@ -265,11 +277,13 @@ final class NginxProxyDriver implements WebServerDriver
     }
 
     /**
-     * บล็อกส่งต่อคำขอ พร้อมส่วนที่ให้ nginx ตอบไฟล์ static เองเมื่อทำได้อย่างปลอดภัย
+     * The request-forwarding block, plus the section that lets nginx serve
+     * static files itself when it's genuinely safe to
      *
-     * ลำดับของ location สำคัญ: โฟลเดอร์ที่ต้องบังคับผ่าน Apache ใช้ `^~` ซึ่งชนะ
-     * location แบบ regex ของไฟล์ static เสมอ จึงต้องประกาศก่อน — ถ้าสลับลำดับ
-     * ไฟล์ static ในโฟลเดอร์ที่ป้องกันไว้จะถูก nginx ตอบไปโดยไม่ผ่านกฎของลูกค้า
+     * The order of `location` blocks matters: a folder forced through
+     * Apache uses `^~`, which always wins over a static file's regex
+     * location, so it has to be declared first — swap the order, and a
+     * static file inside a protected folder gets answered by nginx without ever passing through the customer's own rule.
      */
     private function proxyBody(string $scheme, Site $site, Executor $executor): SafeBlock
     {
@@ -285,15 +299,15 @@ final class NginxProxyDriver implements WebServerDriver
                     'DOCROOT' => $executor->path($site->docroot()),
                 ]))
                 : new SafeBlock(
-                    "\n    # เว็บนี้ให้ Apache ตอบทุกอย่างรวมทั้งไฟล์ static เพราะ .htaccess ที่รากเว็บ\n"
-                    . "    # มีกฎที่ nginx ทำแทนไม่ได้ (ควบคุมการเข้าถึงหรือแก้ response header)\n"
-                    . '    # — ดู Phpcp\\Driver\\WebServer\\HtaccessScan',
+                    "\n    # This site lets Apache answer everything, static files included, because .htaccess at the site root\n"
+                    . "    # has a rule nginx can't stand in for (access control or a response header change)\n"
+                    . '    # — see Phpcp\\Driver\\WebServer\\HtaccessScan',
                 ),
         ]));
     }
 
     /**
-     * ให้ nginx ตอบ static เองไหม และโฟลเดอร์ไหนต้องบังคับผ่าน Apache
+     * Should nginx serve static files itself, and which folders must be forced through Apache?
      *
      * @return array{static_ok:bool,proxy_dirs:list<string>}
      */
@@ -307,10 +321,11 @@ final class NginxProxyDriver implements WebServerDriver
     }
 
     /**
-     * location ของโฟลเดอร์ที่มี .htaccess ชนิดที่ nginx ทำแทนไม่ได้
+     * A `location` for a folder whose `.htaccess` has something nginx can't stand in for
      *
-     * `^~` บอก nginx ว่า "เจอคำนำหน้านี้แล้วหยุด ไม่ต้องลอง regex ต่อ" ซึ่งเป็นสิ่ง
-     * เดียวที่กันไม่ให้ location ของไฟล์ static ไปคว้าคำขอในโฟลเดอร์นี้ไปตอบเอง
+     * `^~` tells nginx "stop once this prefix matches, don't try a regex
+     * location after this" — the one thing that stops a static file's
+     * `location` from grabbing a request in this folder and answering it directly.
      *
      * @param list<string> $dirs
      */
@@ -320,12 +335,13 @@ final class NginxProxyDriver implements WebServerDriver
             return new SafeBlock('');
         }
 
-        $out = "\n    # โฟลเดอร์ที่มีกฎ .htaccess ซึ่ง nginx ทำแทนไม่ได้ — ต้องผ่าน Apache ทุกคำขอ\n";
+        $out = "\n    # Folders with an .htaccess rule nginx can't stand in for — every request must go through Apache\n";
 
         foreach ($dirs as $dir) {
             $out .= sprintf(
-                // ตัวแปรของ nginx ต้องอยู่ในสตริงเดี่ยว ไม่งั้น PHP แทนค่าเป็นค่าว่าง
-                // แล้วได้ config ที่ส่ง Host เปล่าไปให้ Apache — ทุกคำขอตกไป vhost แรก
+                // nginx's own variables must stay inside a single-quoted
+                // string, or PHP substitutes them as empty, producing a
+                // config that sends an empty Host to Apache — every request would fall through to the first vhost
                 "    location ^~ %s {\n"
                 . "        proxy_pass http://%s;\n"
                 . '        proxy_set_header Host            $host;' . "\n"
@@ -341,10 +357,10 @@ final class NginxProxyDriver implements WebServerDriver
     }
 
     /**
-     * บล็อก :80 ตอนบังคับ HTTPS — ยกเว้นเส้นทาง acme ที่ประกาศไว้ก่อนหน้าแล้ว
+     * The :80 block when HTTPS is forced — except for the acme path already declared above
      *
-     * `location /` ที่นี่ทับ location เดียวกันไม่ได้ จึงต้องเลือกอย่างใดอย่างหนึ่ง:
-     * โหมดบังคับ = redirect · โหมดเปิดใช้งานเฉย ๆ = ส่งต่อไป backend ตามปกติ
+     * A `location /` here can't overlap with the same location twice, so
+     * one or the other has to be chosen: forced mode = redirect · enabled-only mode = forward to the backend normally.
      */
     private function httpSection(Site $site, Executor $executor): SafeBlock
     {
@@ -353,7 +369,7 @@ final class NginxProxyDriver implements WebServerDriver
         }
 
         return new SafeBlock(
-            "\n    # บังคับ HTTPS — ยกเว้นเส้นทางตรวจสอบของ Let's Encrypt ด้านบน\n"
+            "\n    # Forced HTTPS — except Let's Encrypt's validation path above\n"
             . "    location / {\n"
             . "        return 301 https://\$host\$request_uri;\n"
             . '    }',
@@ -366,18 +382,20 @@ final class NginxProxyDriver implements WebServerDriver
             return new SafeBlock('');
         }
 
-        // เหตุผลของ 6 เดือนและการไม่ใส่ preload เหมือน ApacheDriver ทุกประการ
+        // The reasoning for 6 months and never including preload is exactly the same as ApacheDriver
         return new SafeBlock(
             "\n    add_header Strict-Transport-Security \"max-age=15768000\" always;",
         );
     }
 
     /**
-     * vhost ของชั้นหลัง — ใช้ body เดียวกับโหมด apache ล้วน
+     * The backend's own vhost — uses the exact same body as pure apache mode
      *
-     * ใช้ซ้ำโดยตั้งใจ: กฎกันไฟล์ `.env`/`.git`, `AllowOverride All`, การส่ง PHP เข้า
-     * FPM pool ของลูกค้า ต้องเหมือนกันทุกโหมด ถ้าคัดลอกไปอีกไฟล์วันหนึ่งจะแก้ที่เดียว
-     * แล้วลืมอีกที่ กลายเป็นช่องโหว่ที่เปิดเฉพาะบางโหมด
+     * Deliberately reused: the rule blocking `.env`/`.git` files,
+     * `AllowOverride All`, and sending PHP into a customer's FPM pool all
+     * have to be identical across every mode — if it were copied into a
+     * separate file, one day it gets edited in one place and forgotten in
+     * the other, becoming a vulnerability that only exists in some modes.
      */
     public function renderBackendVhost(Site $site, Executor $executor): string
     {
@@ -396,7 +414,7 @@ final class NginxProxyDriver implements WebServerDriver
         }
 
         $body = new SafeBlock($this->templates->render('apache/vhost-body.conf.tpl', [
-            // ไดเรกทอรีของผู้ดูแล — vhost อ่านเป็นอันสุดท้าย ค่าที่นั่นจึงชนะค่าเริ่มต้น
+            // The admin's own directory — read last by the vhost, so its values win over the defaults
             'PROBE_DENY' => new SafeBlock(ProbeBlocklist::apache()),
             'CUSTOM_DIR' => $executor->path(CustomConfig::siteDirectory('apache', $site->domain)),
             'DOCROOT' => $executor->path($site->docroot()),
@@ -418,10 +436,11 @@ final class NginxProxyDriver implements WebServerDriver
     }
 
     /**
-     * ต้องผ่าน **ทั้งสองชั้น** ถึงจะนับว่าผ่าน
+     * Must pass on **both layers** before this counts as passing at all
      *
-     * ตรวจ Apache ก่อนเพราะเป็นชั้นที่เสิร์ฟจริง · ถ้าปล่อยให้ nginx ผ่านแล้ว reload
-     * ทั้งที่ชั้นหลังพัง ผลคือทุกเว็บตอบ 502 ซึ่งดูเหมือนปัญหาของ nginx
+     * Apache is validated first, since it's the layer genuinely serving
+     * content · letting nginx pass and reload while the backend is broken
+     * would leave every site answering 502, which looks like nginx's own problem.
      *
      * @return array{0:bool,1:string}
      */
@@ -430,32 +449,37 @@ final class NginxProxyDriver implements WebServerDriver
         [$apacheOk, $apacheOut] = $this->apache->testConfig($executor);
 
         if (!$apacheOk) {
-            return [false, "ชั้นหลัง (Apache) ไม่ผ่าน:\n" . $apacheOut];
+            return [false, "The backend (Apache) failed validation:\n" . $apacheOut];
         }
 
         $result = $executor->exec([$executor->path('/usr/sbin/nginx'), '-t'], timeout: 20);
         $output = trim($result->stderr) !== '' ? $result->stderr : $result->stdout;
 
         if (!$result->ok() && !self::isOnlyBindFailure($output)) {
-            return [false, "ชั้นหน้า (nginx) ไม่ผ่าน:\n" . $output];
+            return [false, "The front layer (nginx) failed validation:\n" . $output];
         }
 
         return [true, trim($apacheOut . "\n" . $output)];
     }
 
     /**
-     * `nginx -t` ล้มเพราะจองพอร์ตไม่ได้เท่านั้นหรือไม่ — ไม่ใช่เพราะไฟล์ผิด
+     * Did `nginx -t` fail only because it couldn't bind a port, not because a file is wrong?
      *
-     * **การตรวจ config ของ nginx เปิด listening socket จริง** ไม่ได้อ่านแค่ไวยากรณ์
-     * ระหว่างสลับโหมด Apache ยังถือพอร์ต 80/443 อยู่จนกว่าจะรีสตาร์ต การตรวจจึงล้ม
-     * ด้วย EADDRINUSE ทั้งที่ nginx เพิ่งบอกเองว่า "syntax is ok" — ถ้าถือว่าไม่ผ่าน
-     * ทรานแซกชันจะ rollback ทิ้งทุกครั้งแล้วสลับโหมดไม่ได้เลยสักครั้ง
+     * **nginx's own config validation genuinely opens a listening socket**
+     * — it doesn't just read syntax · while switching modes, Apache still
+     * holds ports 80/443 until it's restarted, so validation fails with
+     * EADDRINUSE even though nginx just said "syntax is ok" itself — if
+     * that were treated as a failure, the transaction would roll back
+     * every single time, and switching modes could never succeed even once.
      *
-     * ปลอดภัยที่จะผ่านต่อ เพราะการ bind จริงเกิดตอนสตาร์ตอยู่แล้ว และถ้าตอนนั้นยังจอง
-     * ไม่ได้ `ServiceAction` จะบอกว่าใครถือพอร์ตอยู่พร้อมวิธีแก้ (ไม่ใช่ข้อความของ systemd)
+     * It's safe to let this pass through, since the genuine bind happens
+     * at start time anyway, and if the port still can't be claimed at that
+     * point, `ServiceAction` reports who's holding the port along with how
+     * to fix it (not systemd's own raw message).
      *
-     * เงื่อนไขเข้มโดยตั้งใจ: ต้องเห็น "syntax is ok" และทุกบรรทัด emerg ต้องเป็นเรื่อง
-     * bind เท่านั้น — ผิดพลาดอย่างอื่นแม้บรรทัดเดียวก็ถือว่าไม่ผ่านตามปกติ
+     * The condition is deliberately strict: "syntax is ok" must be present,
+     * and every emerg line must be about binding only — even a single
+     * unrelated error still counts as a failure normally.
      */
     public static function isOnlyBindFailure(string $output): bool
     {
@@ -481,10 +505,11 @@ final class NginxProxyDriver implements WebServerDriver
     }
 
     /**
-     * reload ชั้นหลังก่อนชั้นหน้าเสมอ
+     * Always reloads the backend before the front layer
      *
-     * ระหว่างที่ Apache กำลังโหลดค่าใหม่ nginx ที่ยังถือค่าเดิมอยู่จะ retry ให้เอง
-     * แต่ถ้าสลับลำดับ nginx จะส่งคำขอไป vhost ที่ยังไม่มีอยู่จริงแล้วตอบ 502 ให้ผู้ใช้
+     * While Apache is loading its new config, nginx, still holding the old
+     * config, retries on its own · but reversing the order would have
+     * nginx forward a request to a vhost that doesn't genuinely exist yet, answering 502 to a visitor.
      */
     public function reload(Executor $executor): void
     {
@@ -498,14 +523,14 @@ final class NginxProxyDriver implements WebServerDriver
 
         if (!$result->ok()) {
             throw new ExecutionFailed(sprintf(
-                "เขียนค่าตั้งเรียบร้อยแล้วแต่สั่ง reload %s ไม่สำเร็จ — ค่าตั้งใหม่จะยังไม่มีผลจนกว่าจะ reload สำเร็จ\n\n%s",
+                "The configuration was written successfully, but reloading %s failed — the new configuration will have no effect until the reload succeeds\n\n%s",
                 $unit,
                 trim($result->stderr ?: $result->stdout),
             ));
         }
     }
 
-    /** ต้องมีครบทั้งสองตัว — ขาดตัวใดตัวหนึ่งโหมดนี้ทำงานไม่ได้เลย */
+    /** Both must be present — this mode cannot function at all if either one is missing */
     public function isInstalled(Executor $executor): bool
     {
         return $this->apache->isInstalled($executor)
