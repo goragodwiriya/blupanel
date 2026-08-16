@@ -12,19 +12,21 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * บริการของระบบ — `/api/v2/services`
+ * System services — `/api/v2/services`
  *
- * รายการ unit ที่จัดการได้เป็น **allowlist ตายตัว** ใน `ServiceCatalog` และบริการของ
- * panel เองถูกกรองออกไปแล้วตั้งแต่ชั้นนั้น (SelfProtection) — ไม่ใช่แค่ซ่อนปุ่มบนหน้าจอ
- * ผู้ใช้จึงยิง API ตรงเพื่อสั่งหยุด phpcp-agentd ไม่ได้ไม่ว่าจะพยายามอย่างไร
+ * The list of manageable units is a **fixed allowlist** in `ServiceCatalog`,
+ * and the panel's own service is already filtered out at that layer
+ * (SelfProtection) — not just a hidden button on screen, so a user can never
+ * hit the API directly to stop phpcp-agentd, no matter how hard they try
  *
- * `POST /services/{unit}/actions` เป็นคำนาม (`actions`) ตาม §4.1 ไม่ใช่ `/restart`
- * — คำสั่งอยู่ใน body ทำให้เพิ่มคำสั่งใหม่ได้โดยไม่ต้องเพิ่มเส้นทาง และ audit log
- * บันทึกทุกคำสั่งด้วยรูปแบบเดียวกัน
+ * `POST /services/{unit}/actions` is a noun (`actions`) per §4.1, not
+ * `/restart` — the command lives in the body, so a new command can be added
+ * without adding a new route, and the audit log records every command in the
+ * same shape
  */
 final class ServicesController extends ApiController
 {
-    /** คำสั่งที่ยอมรับ — ตรงกับ capability service.<action> ที่มีอยู่จริงเท่านั้น */
+    /** Accepted commands — matches only the service.<action> capabilities that genuinely exist */
     private const ACTIONS = ['start', 'stop', 'restart', 'reload'];
 
     public function index(Request $request): Response
@@ -33,8 +35,8 @@ final class ServicesController extends ApiController
         $data = $this->agent()->data('service.status', ['services' => $units], $this->ctx->actor($request));
         $services = $data['services'] ?? [];
 
-        // ความสัมพันธ์กับเว็บไซต์ — ผู้ดูแลต้องเห็นว่า "หยุดตัวนี้แล้วเว็บไหนดับบ้าง"
-        // ก่อนกด ไม่ใช่รู้ตอนที่ลูกค้าโทรมาแจ้ง
+        // Relationships with websites — an admin must see "which websites go
+        // down if this stops" before clicking, not find out when a customer calls to report it
         $relations = (new ServiceRelations($this->app->db()))->forUnits($units);
 
         $canControl = $this->ctx->can('service.control');
@@ -64,17 +66,19 @@ final class ServicesController extends ApiController
             $rows[] = $service + [
                 'unit' => $unit,
                 'kind' => ServiceCatalog::kind($unit),
-                'label' => ServiceCatalog::label($unit),
+                'label' => $this->t(ServiceCatalog::label($unit)),
                 'critical' => ServiceCatalog::isCritical($unit),
                 'affects' => $affects,
-                // ข้อความรวมสำเร็จรูป — data-template ของ Now.js ต่อรายการเป็นข้อความ
-                // อ่านง่ายให้เองไม่ได้ ทำได้แค่แทน ${key} ตรง ๆ
+                // A ready-composed summary string — Now.js's data-template can't
+                // join a list into readable text on its own, only substitute
+                // ${key} directly
                 //
-                // ก่อนหน้านี้คอลัมน์นี้แสดง "—" เสมอไม่ว่าจะมีเว็บไซต์ได้รับผลกระทบจริง
-                // กี่แห่ง เพราะ formatList (js/formatters.js เดิม) เช็ค Array.isArray()
-                // แต่ affects เป็น object {kind,label,items,total} มาตั้งแต่แรก ไม่ใช่ array
+                // This column used to always show "—" no matter how many
+                // websites were genuinely affected, because formatList (the old
+                // js/formatters.js) checked Array.isArray(), but affects has
+                // always been an object {kind,label,items,total}, never an array
                 'affects_label' => $affectedNames === [] ? '—' : implode(', ', $affectedNames),
-                // สีของป้ายมาจากฝั่งเซิร์ฟเวอร์ เทมเพลตจึงเขียน `pill-${status_tone}` ได้ตรง ๆ
+                // The pill's color comes from the server, so the template can write `pill-${status_tone}` directly
                 'status_tone' => match ($status) {
                     'running' => 'ok',
                     'failed' => 'danger',
@@ -91,13 +95,14 @@ final class ServicesController extends ApiController
         ]);
     }
 
-    /** สั่งงานบริการหนึ่งตัว */
+    /** Issue a command to one service */
     public function action(Request $request): Response
     {
         $action = $request->payloadString('action');
 
-        // ตรวจที่นี่ด้วยแม้ agent จะตรวจอีกรอบ — คำสั่งที่ไม่รู้จักต้องไม่ถูกส่งออกไปเลย
-        // (ถ้าปล่อยไป ชื่อ capability จะถูกประกอบจากค่าที่ผู้ใช้ส่งมา ซึ่งเป็นรูปแบบที่ไม่ควรมี)
+        // Checked here too, even though the agent checks again — an unknown
+        // command must never be sent out at all (letting it through would mean
+        // the capability name gets assembled from a user-submitted value, a shape that should never exist)
         if (!in_array($action, self::ACTIONS, true)) {
             return $this->problem(
                 ApiProblem::ValidationError,
