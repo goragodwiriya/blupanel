@@ -11,11 +11,12 @@ use Phpcp\Agent\ValidationError;
 use Phpcp\Support\Validator;
 
 /**
- * ต่ออายุใบรับรองทันที
+ * Renews a certificate right now
  *
- * ปกติไม่ต้องกดเอง — timer ของ certbot ต่อให้อัตโนมัติเมื่อเหลือ 30 วัน
- * ปุ่มนี้มีไว้สำหรับตอนที่เพิ่งเพิ่มโดเมนใหม่เข้าเว็บไซต์ หรือตอนที่การต่ออัตโนมัติ
- * เคยล้มแล้วแก้สาเหตุเสร็จ อยากรู้ผลเดี๋ยวนี้โดยไม่ต้องรอรอบถัดไป
+ * Not normally something to click — certbot's own timer renews it automatically
+ * with 30 days left. This button exists for right after adding a new domain to a
+ * website, or after an automatic renewal failed and the cause has just been
+ * fixed, wanting to know the result now instead of waiting for the next cycle.
  */
 final class SslRenew extends SslCapability implements Capability
 {
@@ -36,7 +37,7 @@ final class SslRenew extends SslCapability implements Capability
 
     public function summary(): string
     {
-        return 'ต่ออายุใบรับรอง SSL';
+        return 'Renew SSL certificate';
     }
 
     public function validate(array $args): array
@@ -57,15 +58,16 @@ final class SslRenew extends SslCapability implements Capability
 
         if ($before['source'] !== 'letsencrypt') {
             throw new ValidationError(
-                'ใบรับรองที่เซ็นเองต่ออายุไม่ได้ — สร้างใบใหม่แทนด้วยปุ่มติดตั้ง SSL',
+                'A self-signed certificate cannot be renewed — issue a new one instead with the Install SSL button',
             );
         }
 
         $certbot->renew($executor, $site->domain, $args['force']);
         $after = $certbot->inspect($executor, $site);
 
-        // vhost ชี้ไปที่ path เดิมอยู่แล้ว แต่ Apache แคชใบรับรองไว้ในหน่วยความจำ
-        // ถ้าไม่ reload ผู้เข้าเว็บจะยังได้ใบเก่าจนกว่าจะมีการรีสตาร์ตด้วยเหตุอื่น
+        // The vhost already points at the same path, but Apache keeps the
+        // certificate cached in memory — without a reload, visitors would keep
+        // getting the old certificate until something else triggers a restart
         if ($site->sslMode !== 'off') {
             $this->rewriteVhost($context, $executor, $site);
         }
@@ -78,10 +80,10 @@ final class SslRenew extends SslCapability implements Capability
             'changed' => $changed,
             'certificate' => $after,
             'message' => $changed
-                ? sprintf('ต่ออายุใบรับรองของ %s แล้ว — หมดอายุอีกครั้งใน %d วัน', $site->domain, $after['days_left'])
+                ? sprintf('Renewed the certificate for %s — expires again in %d days', $site->domain, $after['days_left'])
                 : sprintf(
-                    'ใบรับรองของ %s ยังไม่ถึงกำหนดต่ออายุ (เหลือ %d วัน) จึงยังเป็นใบเดิม '
-                    . 'ถ้าต้องการเปลี่ยนใบเดี๋ยวนี้จริง ๆ ให้เลือกบังคับต่ออายุ',
+                    'The certificate for %s is not due for renewal yet (%d days left), so it\'s '
+                    . 'still the same one — to genuinely replace it right now, choose force renewal',
                     $site->domain,
                     $after['days_left'],
                 ),

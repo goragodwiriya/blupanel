@@ -9,14 +9,15 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Security\Permissions;
 
 /**
- * รายการฐานข้อมูลพร้อมผู้ใช้และขนาดจริง — อ่านอย่างเดียว
+ * The database list, with real users and sizes — read-only
  *
- * รวมสองแหล่งเข้าด้วยกันแล้วบอกให้ชัดว่าอะไรมาจากไหน:
- *   panel  — แถวใน databases_ ที่ panel เป็นคนสร้างและผูกกับเว็บไซต์ไว้
- *   server — ฐานข้อมูลที่มีอยู่จริงบน MariaDB
+ * Merges two sources and states clearly which is which:
+ *   panel  — rows in databases_ that the panel itself created and bound to a website
+ *   server — databases that genuinely exist on MariaDB
  *
- * ฐานข้อมูลที่มีบนเครื่องแต่ไม่มีใน panel จะถูกทำเครื่องหมาย "ไม่ได้จัดการโดย panel"
- * แทนที่จะถูกซ่อน — ผู้ดูแลควรเห็นความจริงทั้งหมดของเครื่อง
+ * A database that exists on the machine but is unknown to the panel gets flagged
+ * "not managed by the panel" instead of hidden — an admin should see the whole
+ * truth of the machine.
  */
 final class DbList extends DbCapability
 {
@@ -37,7 +38,7 @@ final class DbList extends DbCapability
 
     public function summary(): string
     {
-        return 'อ่านรายการฐานข้อมูลและผู้ใช้';
+        return 'Read the list of databases and users';
     }
 
     public function validate(array $args): array
@@ -59,7 +60,7 @@ final class DbList extends DbCapability
                 $sizes = $this->cachedSizes($executor, $context);
                 $onServer = $manager->databases($executor);
             } catch (\Throwable $e) {
-                // ติดต่อ MariaDB ไม่ได้ — ยังแสดงข้อมูลจาก panel ได้ แต่ต้องบอกให้รู้
+                // Couldn't reach MariaDB — the panel's own data can still be shown, but this must be reported
                 $error = $e->getMessage();
             }
         }
@@ -76,7 +77,7 @@ final class DbList extends DbCapability
             $params,
         );
 
-        // ดึงผู้ใช้ทั้งหมดครั้งเดียว แล้วจัดกลุ่มตาม db_id — กัน N+1 ตอนมีฐานข้อมูลเยอะ
+        // Fetches every user once, then groups by db_id — avoids N+1 when there are many databases
         $usersByDb = $this->usersByDatabase($context);
 
         $databases = [];
@@ -100,7 +101,7 @@ final class DbList extends DbCapability
             ];
         }
 
-        // ฐานข้อมูลที่มีบนเครื่องแต่ panel ไม่รู้จัก — แสดงให้ผู้ดูแลเห็นด้วย
+        // Databases that exist on the machine but the panel doesn't know about — shown to the admin too
         if ($isAdmin) {
             foreach ($onServer as $name) {
                 if (in_array($name, $known, true)) {
@@ -133,7 +134,7 @@ final class DbList extends DbCapability
     }
 
     /**
-     * ผู้ใช้ของทุกฐานข้อมูลในคำสั่งเดียว
+     * Every database's users, in one query
      *
      * @return array<int, list<array<string,mixed>>>
      */

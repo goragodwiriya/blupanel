@@ -9,14 +9,17 @@ use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
 
 /**
- * เทียบตาราง certificates กับไฟล์ใบรับรองจริงบนดิสก์
+ * Compares the certificates table against the real certificate files on disk
  *
- * ทำไมต้องมีทั้งที่ `ssl.list` อ่านจากไฟล์ตรง ๆ อยู่แล้ว: หน้าจอ SSL อ่านของจริงเสมอก็จริง
- * แต่ส่วนที่ต้อง "รู้ล่วงหน้า" โดยไม่มีคนเปิดหน้าจอ — การแจ้งเตือนใบรับรองใกล้หมดอายุ
- * และแดชบอร์ด — อ่านจากตารางนี้ ถ้าไม่มีใคร sync ตารางจะค้างอยู่ที่ค่าตอนขอใบครั้งแรก
- * ตลอดไป แล้วใบที่ certbot ต่ออายุให้เอง (ซึ่งไม่ผ่าน panel เลย) จะไม่มีวันถูกบันทึก
+ * Why this needs to exist when `ssl.list` already reads straight from the files:
+ * the SSL page always reads the real thing, true, but the parts that need to
+ * "know in advance" without anyone opening the page — expiry warnings and the
+ * dashboard — read from this table instead. Without something syncing it, the
+ * table would sit at the value from when the certificate was first issued
+ * forever, and a certificate certbot renewed on its own (which never goes
+ * through the panel at all) would never get recorded.
  *
- * อ่านอย่างเดียวในความหมายของ agent: ไม่แตะเครื่อง เขียนแค่ตารางแคชของ panel เอง
+ * Read-only in the agent's sense: touches nothing on the machine, only writes to the panel's own cache table.
  */
 final class CertSync extends SslCapability implements Capability
 {
@@ -37,7 +40,7 @@ final class CertSync extends SslCapability implements Capability
 
     public function summary(): string
     {
-        return 'ปรับสถานะใบรับรองในฐานข้อมูลให้ตรงกับไฟล์จริง';
+        return 'Sync certificate status in the database with the real files';
     }
 
     public function validate(array $args): array
@@ -65,7 +68,7 @@ final class CertSync extends SslCapability implements Capability
             $certificate = $certbot->inspect($executor, $site);
 
             if ($certificate['status'] === 'none') {
-                // ไม่มีใบก็ไม่ควรมีแถวค้างอยู่ ไม่งั้นหน้าจอจะเตือนเรื่องใบที่ถูกลบไปแล้ว
+                // No certificate means no row should be left behind — otherwise the screen would warn about a certificate that's already gone
                 $missing += $this->forget($context, $site->domain);
 
                 continue;
@@ -87,15 +90,16 @@ final class CertSync extends SslCapability implements Capability
             'expiring' => $expiring,
             'removed' => $missing,
             'domains' => $seen,
-            'message' => sprintf('ปรับสถานะใบรับรอง %d ใบ (ใกล้หมดอายุ %d)', $synced, $expiring),
+            'message' => sprintf('Synced %d certificate(s) (%d expiring)', $synced, $expiring),
         ];
     }
 
     /**
-     * แปลงสถานะจากตัวอ่านไฟล์ให้อยู่ในค่าที่คอลัมน์ยอมรับ
+     * Normalizes the status from the file reader into a value the column accepts
      *
-     * ต้องแปลงตรงนี้ ไม่ใช่ผ่อน CHECK constraint ของตาราง — constraint คือสิ่งที่กัน
-     * ไม่ให้สถานะแปลก ๆ หลุดเข้าไปจนหน้าจอแสดงคำที่ไม่มีใครรู้ความหมาย
+     * Has to be normalized right here, not by loosening the table's CHECK
+     * constraint — the constraint is what stops a strange status from slipping in
+     * and the screen ending up showing a word nobody recognizes.
      */
     private static function normalizeStatus(string $status): string
     {

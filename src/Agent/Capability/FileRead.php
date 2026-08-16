@@ -10,11 +10,12 @@ use Phpcp\Agent\ValidationError;
 use Phpcp\Domain\FileCatalog;
 
 /**
- * อ่านเนื้อไฟล์ข้อความเพื่อเปิดในตัวแก้ไข
+ * Reads a text file's content to open in the editor
  *
- * เปิดได้เฉพาะนามสกุลใน allowlist ของ FileCatalog และไม่เกิน 5 MB —
- * ไม่ใช่เพื่อกันการอ่านไฟล์ (ผู้ใช้เป็นเจ้าของไฟล์อยู่แล้ว) แต่เพื่อกันไม่ให้
- * ไฟล์ไบนารีขนาดใหญ่ถูกดึงเข้าหน่วยความจำแล้วส่งข้ามโปรโตคอลจนล้น frame
+ * Only opens extensions on FileCatalog's allowlist, and no larger than 5 MB — not
+ * to prevent reading the file (the user already owns it), but to keep a large
+ * binary file from being pulled into memory and sent across the protocol until it
+ * overflows the frame.
  */
 final class FileRead extends FileCapability
 {
@@ -30,7 +31,7 @@ final class FileRead extends FileCapability
 
     public function summary(): string
     {
-        return 'อ่านเนื้อหาไฟล์ข้อความ';
+        return 'Read text file content';
     }
 
     /**
@@ -42,7 +43,7 @@ final class FileRead extends FileCapability
         $base = self::baseArgs($args);
 
         if ($base['path'] === '') {
-            throw new ValidationError('ต้องระบุไฟล์ที่จะอ่าน');
+            throw new ValidationError('A file to read must be specified');
         }
 
         return $base;
@@ -62,23 +63,24 @@ final class FileRead extends FileCapability
         $result = $this->withPath($executor, $scope, $relative, static function (string $root, string $target) use ($executor, $name): array {
             $info = $executor->stat($target);
             if ($info === null || $info['type'] !== 'file') {
-                throw new ValidationError('อ่านได้เฉพาะไฟล์ธรรมดาเท่านั้น');
+                throw new ValidationError('Only regular files can be read');
             }
 
             if (!FileCatalog::isEditable($name, $info['size'])) {
                 throw new ValidationError(
                     $info['size'] > FileCatalog::MAX_EDIT_BYTES
-                        ? 'ไฟล์ใหญ่เกินกว่าจะเปิดในตัวแก้ไข (เกิน 5 MB)'
-                        : 'ไฟล์ชนิดนี้เปิดในตัวแก้ไขข้อความไม่ได้',
+                        ? 'File is too large to open in the editor (over 5 MB)'
+                        : 'This file type cannot be opened in the text editor',
                 );
             }
 
             $content = $executor->readFile($target);
 
-            // ไฟล์ที่นามสกุลบอกว่าเป็นข้อความแต่เนื้อในเป็นไบนารี (เช่นถูกเขียนทับ)
-            // ต้องถูกปฏิเสธ ไม่อย่างนั้นเบราว์เซอร์จะได้ JSON ที่ encode ไม่ผ่าน
+            // A file whose extension claims it's text but whose content is
+            // actually binary (overwritten by something else, say) must be
+            // rejected — otherwise the browser would get JSON that fails to encode
             if (!mb_check_encoding($content, 'UTF-8')) {
-                throw new ValidationError('ไฟล์นี้ไม่ใช่ข้อความ UTF-8 จึงแก้ไขไม่ได้');
+                throw new ValidationError('This file is not UTF-8 text, so it cannot be edited');
             }
 
             return [

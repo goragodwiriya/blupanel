@@ -10,15 +10,19 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Domain\MetricsHistoryRepository;
 
 /**
- * เก็บตัวอย่าง metrics หนึ่งจุดลงประวัติ แล้วยุบชั้นให้เอง — PLAN-V2 เฟส E6
+ * Records one metrics sample to history, and rolls up older buckets itself — PLAN-V2 Phase E6
  *
- * **ทำไมต้องมี capability แยก ไม่ให้ scheduler เรียก `system.metrics` แล้วเขียนเอง:**
- * scheduler เรียก capability ได้ทีละตัวต่อหนึ่งงาน (ข้อจำกัดเดียวกับที่ทำให้ `backup.create`
- * ต้องรับ `destination_id` ในเฟส E1) · การอ่านค่าและบันทึกจึงต้องอยู่ในคำสั่งเดียวกัน
+ * **Why this needs a separate capability, instead of the scheduler calling
+ * `system.metrics` and writing the result itself:** the scheduler can only call
+ * one capability per job (the same limitation that made `backup.create` need to
+ * accept `destination_id` back in Phase E1) · so reading the values and recording
+ * them has to live inside the same command.
  *
- * ทำเครื่องหมายว่า **อ่านอย่างเดียว** ด้วยเหตุผลเดียวกับ `disk.usage`: ไม่เปลี่ยนอะไรบนเครื่อง
- * เลย สิ่งที่เขียนคือค่าที่วัดได้ลงตารางของ panel เอง · ผลพลอยได้ที่สำคัญคือมันไม่เติม
- * audit log ทุกนาทีตลอดไป และได้ `Executor` จริงในโหมด dryrun จึงยังวัดค่าได้ถูกต้อง
+ * Marked **read-only** for the same reason as `disk.usage`: it changes nothing on
+ * the machine at all — what it writes is the measured value into the panel's own
+ * table · the useful side effect is that it never adds an audit log entry every
+ * single minute forever, and it gets a real `Executor` even in dryrun mode, so it
+ * still measures correctly.
  */
 final class MetricsRecord implements Capability
 {
@@ -39,7 +43,7 @@ final class MetricsRecord implements Capability
 
     public function summary(): string
     {
-        return 'บันทึกค่าทรัพยากรลงประวัติย้อนหลัง';
+        return 'Record resource usage into history';
     }
 
     public function validate(array $args): array
@@ -49,8 +53,9 @@ final class MetricsRecord implements Capability
 
     public function run(array $args, Executor $executor, Context $context): array
     {
-        // เรียกตัวเก็บค่าตัวเดียวกับที่ `GET /metrics` และ SSE ใช้ — ตัวเลขในกราฟย้อนหลัง
-        // จึงมาจากแหล่งเดียวกับที่หน้าจอแสดงสด ไม่มีทางเพี้ยนจากกัน
+        // Calls the exact same collector `GET /metrics` and the SSE stream use —
+        // so the numbers in the history graph come from the same source as the
+        // live display, and can never drift apart
         $metrics = (new SystemMetrics())->run([], $executor, $context);
 
         $repository = new MetricsHistoryRepository($context->db);
@@ -63,7 +68,7 @@ final class MetricsRecord implements Capability
             'memory_percent' => $metrics['memory']['percent'] ?? 0,
             'disk_percent' => $metrics['disk']['percent'] ?? 0,
             'message' => sprintf(
-                'บันทึกค่าทรัพยากรแล้ว (CPU %.1f%% · RAM %.1f%% · ดิสก์ %.1f%%)',
+                'Recorded resource usage (CPU %.1f%% · RAM %.1f%% · disk %.1f%%)',
                 $metrics['cpu']['percent'] ?? 0,
                 $metrics['memory']['percent'] ?? 0,
                 $metrics['disk']['percent'] ?? 0,

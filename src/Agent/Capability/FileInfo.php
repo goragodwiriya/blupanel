@@ -11,15 +11,18 @@ use Phpcp\Domain\FileCatalog;
 use Phpcp\Support\PathGuard;
 
 /**
- * ข้อมูลของไฟล์หรือโฟลเดอร์เดียว — กล่อง "คุณสมบัติ" ของตัวจัดการไฟล์
+ * Information about a single file or folder — the file manager's "Properties" box
  *
- * ข้อมูลส่วนใหญ่ซ้ำกับที่ `file.list` ส่งมาในแถวอยู่แล้ว แต่ยังต้องมี endpoint นี้
- * เพราะสองกรณีที่แถวตอบไม่ได้: เปิดคุณสมบัติจาก**ผลการค้นหา**ซึ่งข้ามโฟลเดอร์มา
- * และดูของสิ่งที่เพิ่งถูกแก้โดยคนอื่นหลังจากตารางโหลดไปแล้ว
+ * Most of this duplicates what `file.list` already sends per row, but this
+ * endpoint still has to exist for two cases a row can't answer: opening
+ * properties from **search results**, which skip past the folder listing, and
+ * looking at something someone else just edited after the table already loaded.
  *
- * **ไม่คำนวณขนาดรวมของโฟลเดอร์** — ต้องไล่ทั้งต้นไม้ซึ่งบนขอบเขต `server` แปลว่า
- * ไล่ทั้งดิสก์ต่อการกดหนึ่งครั้ง · บอกจำนวนรายการชั้นบนสุดแทน ซึ่งได้จากการอ่าน
- * ไดเรกทอรีครั้งเดียวและเป็นสิ่งที่ผู้ใช้อยากรู้จริง ๆ ตอนจะลบหรือย้าย
+ * **Never computes a folder's total size** — that means walking the whole tree,
+ * which on the `server` scope means walking the entire disk for one click ·
+ * reports the top-level entry count instead, which comes from reading the
+ * directory once and is what a user actually wants to know before deleting or
+ * moving it.
  */
 final class FileInfo extends FileCapability
 {
@@ -35,7 +38,7 @@ final class FileInfo extends FileCapability
 
     public function summary(): string
     {
-        return 'อ่านข้อมูลไฟล์';
+        return 'Read file information';
     }
 
     /**
@@ -46,7 +49,7 @@ final class FileInfo extends FileCapability
         $base = self::baseArgs($args);
 
         if ($base['path'] === '') {
-            throw new ValidationError('ต้องระบุไฟล์หรือโฟลเดอร์');
+            throw new ValidationError('A file or folder must be specified');
         }
 
         return $base;
@@ -66,7 +69,7 @@ final class FileInfo extends FileCapability
         $result = $this->withPath($executor, $scope, $relative, static function (string $root, string $target) use ($executor, $relative, $name): array {
             $info = $executor->stat($target);
             if ($info === null) {
-                throw new ValidationError('ไม่พบไฟล์หรือโฟลเดอร์ที่ระบุ');
+                throw new ValidationError('The specified file or folder was not found');
             }
 
             $described = self::describe($name, $relative, $info);
@@ -76,8 +79,9 @@ final class FileInfo extends FileCapability
             $described['parent'] = PathGuard::parent($relative);
 
             if ($info['type'] === 'dir') {
-                // อ่านครั้งเดียวพอ · `listDirectory` มีเพดานของมันเองอยู่แล้ว
-                // จำนวนที่ได้จึงเป็น "อย่างน้อยเท่านี้" เมื่อโฟลเดอร์ใหญ่กว่าเพดาน
+                // One read is enough · `listDirectory` already has its own
+                // ceiling, so the count becomes "at least this many" once a
+                // folder exceeds it
                 try {
                     $described['entries'] = count($executor->listDirectory($target));
                 } catch (\Throwable) {

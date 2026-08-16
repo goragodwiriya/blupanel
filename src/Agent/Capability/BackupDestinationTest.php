@@ -16,14 +16,16 @@ use Phpcp\Security\Secret;
 use Phpcp\Support\Validator;
 
 /**
- * ทดสอบว่าปลายทางสำรองใช้งานได้จริง — PLAN-V2 เฟส E1
+ * Tests whether a backup destination genuinely works — PLAN-V2 Phase E1
  *
- * **ทดสอบด้วยการเขียนไฟล์จริงแล้วอ่านกลับ ไม่ใช่แค่เชื่อมต่อผ่าน** · กรณีที่พบบ่อยที่สุด
- * ตอนตั้งค่าครั้งแรกคือ ssh ผ่านแต่ไม่มีสิทธิ์เขียนในไดเรกทอรีนั้น ซึ่งการทดสอบแบบ
- * "ต่อได้ไหม" จะรายงานว่าผ่าน แล้วไปพังจริงตอนตี 3 ที่ไม่มีใครดู
+ * **Tests by writing a real file and reading it back, not just connecting** · the
+ * most common problem at first setup is ssh succeeding but having no write
+ * permission in that directory, which a "can it connect" test would report as
+ * passing, only to actually break at 3am with nobody watching.
  *
- * ผลถูกบันทึกลง `last_ok_at` / `last_error` เสมอ เพื่อให้หน้าจอบอกได้ว่าปลายทางไหน
- * ใช้ได้ล่าสุดเมื่อไร — ปลายทางที่เสียเงียบคือรากของปัญหาทั้งหมดในเรื่องนี้
+ * The result is always recorded to `last_ok_at` / `last_error`, so the screen can
+ * say when each destination last worked — a destination silently broken is the
+ * root of every problem in this area.
  */
 final class BackupDestinationTest implements Capability
 {
@@ -39,14 +41,14 @@ final class BackupDestinationTest implements Capability
 
     public function isMutating(): bool
     {
-        // เขียนไฟล์ทดสอบที่ปลายทางจริง จึงนับว่าเปลี่ยนแปลงระบบ — ต้องเข้า audit
-        // และต้องไม่ทำงานจริงในโหมด dryrun
+        // Writes a real test file to the real destination, so this counts as
+        // changing the system — must go through audit and never run for real in dryrun mode
         return true;
     }
 
     public function summary(): string
     {
-        return 'ทดสอบว่าปลายทางสำรองเขียนและอ่านกลับได้จริง';
+        return 'Test that a backup destination genuinely writes and reads back';
     }
 
     public function validate(array $args): array
@@ -57,14 +59,14 @@ final class BackupDestinationTest implements Capability
     public function run(array $args, Executor $executor, Context $context): array
     {
         if (!in_array($context->actor->role, [Permissions::SUPERADMIN, Permissions::SYSADMIN], true)) {
-            throw new PermissionDenied('การตั้งค่าปลายทางสำรองต้องใช้สิทธิ์ผู้ดูแลเซิร์ฟเวอร์');
+            throw new PermissionDenied('Configuring backup destinations requires server admin permission');
         }
 
         $destinations = new BackupDestinationRepository($context->db, new Secret($context->config->secretKey()));
         $row = $destinations->find($args['destination_id']);
 
         if ($row === null) {
-            throw new ValidationError('ไม่พบปลายทางที่ระบุ');
+            throw new ValidationError('The specified destination was not found');
         }
 
         $destination = (new DestinationFactory($destinations, $context->config->paths->backups()))->make($row);
@@ -84,7 +86,7 @@ final class BackupDestinationTest implements Capability
             'name' => $row['name'],
             'driver' => $row['driver'],
             'details' => $details,
-            'message' => sprintf('ปลายทาง "%s" เขียนและอ่านกลับได้ปกติ', $row['name']),
+            'message' => sprintf('Destination "%s" writes and reads back normally', $row['name']),
         ];
     }
 }

@@ -10,17 +10,20 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Driver\Mail\MailQueue;
 
 /**
- * คิวเมลขาออก — PLAN-MAIL §5
+ * The outbound mail queue — PLAN-MAIL §5
  *
- * **สิทธิ์เป็น `settings.manage` ไม่ใช่ `mail.view` อย่างที่แผนเขียนไว้ตอนแรก**
+ * **Permission is `settings.manage`, not `mail.view` as the plan originally wrote it**
  *
- * คิวเป็นของทั้งเครื่อง แต่ละแถวมีที่อยู่ผู้ส่งและผู้รับของ**ลูกค้าทุกราย**ปนกันอยู่ ·
- * `mail.view` เป็นสิทธิ์ที่เจ้าของเว็บมีติดตัว การให้ดูคิวทั้งเครื่องจึงเท่ากับเปิดให้
- * ลูกค้ารายหนึ่งเห็นว่าลูกค้ารายอื่นติดต่อกับใครอยู่ · แผนตอนเขียนยังไม่ได้คิดเรื่อง
- * หลายผู้เช่าในข้อนี้
+ * The queue belongs to the whole machine, with every row mixing **every
+ * customer's** sender and recipient addresses together · `mail.view` is a
+ * permission site owners hold themselves, so letting them view the whole
+ * machine's queue would mean one customer sees who another customer is in
+ * contact with · the plan hadn't thought through multi-tenancy on this point when
+ * it was written.
  *
- * การกรองคิวรายเจ้าของทำได้ (เทียบโดเมนของผู้ส่ง/ผู้รับ) แต่ยังไม่ทำในรอบนี้ —
- * ครึ่ง ๆ กลาง ๆ กับข้อมูลของลูกค้าแย่กว่าไม่เปิดให้เห็นเลย
+ * Filtering the queue per owner is possible (comparing the sender/recipient
+ * domain), but hasn't been done in this pass — half-showing a customer's data is
+ * worse than not showing it at all.
  */
 final class MailQueueList implements Capability
 {
@@ -41,7 +44,7 @@ final class MailQueueList implements Capability
 
     public function summary(): string
     {
-        return 'อ่านคิวเมลขาออก';
+        return 'Read outbound mail queue';
     }
 
     public function validate(array $args): array
@@ -55,8 +58,8 @@ final class MailQueueList implements Capability
 
         return $queue + [
             'message' => $queue['available']
-                ? sprintf('มีเมลในคิว %d ฉบับ (ค้างส่ง %d)', $queue['total'], $queue['deferred'])
-                : 'อ่านคิวไม่ได้ — Postfix บนเครื่องนี้เก่ากว่า 3.1 จึงไม่รองรับ postqueue -j',
+                ? sprintf('%d message(s) in the queue (%d deferred)', $queue['total'], $queue['deferred'])
+                : 'Could not read the queue — Postfix on this machine is older than 3.1 and does not support postqueue -j',
         ];
     }
 }
