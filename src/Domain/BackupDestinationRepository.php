@@ -9,12 +9,15 @@ use Phpcp\Kernel\Db;
 use Phpcp\Security\Secret;
 
 /**
- * ปลายทางของไฟล์สำรอง — ตาราง `backup_destinations` (PLAN-V2 เฟส E1)
+ * A backup file's destination — the `backup_destinations` table (PLAN-V2 Phase E1)
  *
- * **ความลับไม่เคยออกจากคลาสนี้ในรูปที่อ่านได้** ยกเว้นทาง `secretFor()` ซึ่งมีไว้ให้
- * ตัวสร้าง driver เรียกจุดเดียว · `all()` และ `find()` คืนแถวที่ตัดคอลัมน์ `secret_enc`
- * ออกแล้วเสมอ เพื่อให้การเผลอส่งทั้งแถวออก API กลายเป็นเรื่องที่ทำไม่ได้ ไม่ใช่เรื่องที่
- * ต้องระวังทุกครั้ง — รูปแบบเดียวกับที่ `DbAccountRepository` ใช้กับรหัสผ่าน MariaDB
+ * **A secret never leaves this class in readable form**, except through
+ * `secretFor()`, which exists for the driver factory to call from exactly one
+ * place · `all()` and `find()` always return a row with the `secret_enc` column
+ * already stripped, so accidentally sending the whole row out through the API
+ * becomes something that simply can't happen, not something that must be
+ * remembered every single time — the same pattern `DbAccountRepository` uses for
+ * MariaDB passwords.
  */
 final class BackupDestinationRepository
 {
@@ -53,10 +56,11 @@ final class BackupDestinationRepository
     }
 
     /**
-     * ความลับที่ถอดรหัสแล้ว — เรียกได้จากตัวสร้าง driver เท่านั้น
+     * The decrypted secret — callable only from the driver factory
      *
-     * แยกเป็นเมธอดของตัวเองแทนที่จะให้มากับแถว เพราะทำให้ **ค้น repo ได้ว่าใครแตะ
-     * ความลับบ้าง** ด้วยการค้นชื่อเมธอดเดียว ซึ่งเป็นสิ่งที่ต้องตรวจได้ตอนรีวิว
+     * Kept as its own method instead of coming attached to the row, because it
+     * makes **searching the repo for who touches the secret** a single method-name
+     * search, which is something that must be checkable during review.
      */
     public function secretFor(int $id): string
     {
@@ -80,11 +84,11 @@ final class BackupDestinationRepository
         $this->assertDriver($driver);
 
         if (trim($name) === '') {
-            throw new ValidationError('ต้องตั้งชื่อปลายทาง');
+            throw new ValidationError('A destination name must be set');
         }
 
         if ($this->db->value('SELECT id FROM backup_destinations WHERE name = :n', ['n' => $name]) !== null) {
-            throw new ValidationError('มีปลายทางชื่อนี้อยู่แล้ว');
+            throw new ValidationError('A destination with this name already exists');
         }
 
         $now = time();
@@ -103,7 +107,7 @@ final class BackupDestinationRepository
     }
 
     /**
-     * @param array<string,mixed> $changes  ยอมเฉพาะคีย์ที่รู้จัก
+     * @param array<string,mixed> $changes  only recognized keys are accepted
      */
     public function update(int $id, array $changes): void
     {
@@ -119,9 +123,11 @@ final class BackupDestinationRepository
             $fields['config_json'] = json_encode($changes['config'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         }
 
-        // ส่งความลับว่างมา = ไม่เปลี่ยน ไม่ใช่ล้างทิ้ง · หน้าจอแก้ไขจะส่งฟอร์มทั้งชุด
-        // กลับมาโดยที่ช่องความลับว่างเสมอ (เพราะเราไม่เคยส่งค่าเดิมออกไป) ถ้าตีความว่า
-        // "ล้าง" ผู้ดูแลจะทำปลายทางพังทุกครั้งที่แก้แค่ชื่อ
+        // Sending an empty secret means "unchanged," not "clear it" · the edit
+        // form sends back the entire form with the secret field always empty
+        // (since the real value is never sent out to begin with) — interpreting
+        // that as "clear it" would break the destination every single time the
+        // admin edited nothing but the name.
         if (isset($changes['secret']) && is_string($changes['secret']) && $changes['secret'] !== '') {
             $fields['secret_enc'] = $this->secret->encrypt($changes['secret']);
         }
@@ -134,7 +140,7 @@ final class BackupDestinationRepository
         $this->db->run('DELETE FROM backup_destinations WHERE id = :id', ['id' => $id]);
     }
 
-    /** บันทึกผลการติดต่อครั้งล่าสุด — ปลายทางที่ล้มเงียบอันตรายพอ ๆ กับไม่มีปลายทาง */
+    /** Record the most recent connection attempt's result — a destination failing silently is nearly as dangerous as having no destination at all */
     public function recordResult(int $id, bool $ok, string $error = ''): void
     {
         $this->db->update('backup_destinations', [
@@ -147,22 +153,23 @@ final class BackupDestinationRepository
     public function assertDriver(string $driver): string
     {
         if (!in_array($driver, self::DRIVERS, true)) {
-            throw new ValidationError('ชนิดปลายทางไม่ถูกต้อง — ใช้ได้: ' . implode(', ', self::DRIVERS));
+            throw new ValidationError('Invalid destination type — valid values: ' . implode(', ', self::DRIVERS));
         }
 
         return $driver;
     }
 
     /**
-     * แถวที่ปลอดภัยต่อการส่งออก — ไม่มีความลับติดไปด้วยไม่ว่าจะเผลอแค่ไหน
+     * A row safe to export — carries no secret with it no matter how careless the caller is
      *
      * @param array<string,mixed> $row
      * @return array<string,mixed>
      */
     private function present(array $row): array
     {
-        // บอกว่ามีความลับเก็บไว้หรือยัง โดยไม่บอกว่าคืออะไร — หน้าจอต้องแยก
-        // "ยังไม่ได้ใส่กุญแจ" ออกจาก "ใส่แล้วแต่ไม่แสดง" ให้ผู้ดูแลเห็น
+        // Reports whether a secret is stored, without saying what it is — the
+        // screen needs to tell "no key entered yet" apart from "entered, but not
+        // shown" for the admin.
         $row['has_secret'] = ($row['secret_enc'] ?? null) !== null && $row['secret_enc'] !== '';
         unset($row['secret_enc']);
 
