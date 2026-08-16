@@ -69,11 +69,11 @@ test('คะแนนต้องปัดลงเสมอ — 100 ต้อ�
 });
 
 test('ระดับและสีต้องสอดคล้องกับคะแนน', static function (): void {
-    assertSame('ดี', SecurityScore::grade(90), '90 ต้องเป็นดี');
-    assertSame('ดี', SecurityScore::grade(100), '100 ต้องเป็นดี');
-    assertSame('พอใช้', SecurityScore::grade(70), '70 ต้องเป็นพอใช้');
-    assertSame('ต้องปรับปรุง', SecurityScore::grade(50), '50 ต้องเป็นต้องปรับปรุง');
-    assertSame('เสี่ยง', SecurityScore::grade(0), '0 ต้องเป็นเสี่ยง');
+    assertSame('Good', SecurityScore::grade(90), '90 ต้องเป็นดี');
+    assertSame('Good', SecurityScore::grade(100), '100 ต้องเป็นดี');
+    assertSame('Fair', SecurityScore::grade(70), '70 ต้องเป็นพอใช้');
+    assertSame('Needs improvement', SecurityScore::grade(50), '50 ต้องเป็นต้องปรับปรุง');
+    assertSame('At risk', SecurityScore::grade(0), '0 ต้องเป็นเสี่ยง');
 
     assertSame('ok', SecurityScore::tone(95), 'คะแนนสูงต้องเป็นสีเขียว');
     assertSame('danger', SecurityScore::tone(30), 'คะแนนต่ำต้องเป็นสีแดง');

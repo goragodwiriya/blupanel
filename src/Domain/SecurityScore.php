@@ -5,35 +5,39 @@ declare(strict_types=1);
 namespace Phpcp\Domain;
 
 /**
- * คะแนนความปลอดภัยและรายการที่ต้องแก้ — PROMPT.md หัวข้อ Security
+ * The security score and its list of things to fix — PROMPT.md's Security section
  *
- * แยกการ "คิดคะแนน" ออกจากการ "เก็บข้อมูล" เพราะสองอย่างนี้เปลี่ยนคนละจังหวะ
- * และการคิดคะแนนต้องทดสอบได้โดยไม่ต้องมีเซิร์ฟเวอร์จริง
+ * "Computing the score" is kept separate from "collecting the data," since the two
+ * change on different timelines, and score computation must be testable without a
+ * real server.
  *
- * หลักที่ยึดไว้ตลอดไฟล์นี้: **คะแนนต้องโกงไม่ได้ด้วยการซ่อนปัญหา**
- * ถ้าตรวจข้อไหนไม่ได้ (เช่นอ่านสถานะ firewall ไม่ได้) ข้อนั้นนับเป็น "ไม่ทราบ"
- * และคิดคะแนนเท่ากับยังไม่ผ่าน ไม่ใช่ข้ามไปเฉย ๆ — เพราะถ้าข้ามได้
- * เครื่องที่พังจนตรวจอะไรไม่ได้เลยจะได้ 100 คะแนน ซึ่งตรงข้ามกับความจริง
+ * The principle held throughout this whole file: **the score must not be gameable
+ * by hiding a problem**. If a check can't be performed at all (e.g. the firewall's
+ * status can't be read), that check counts as "unknown" and scores the same as not
+ * passing, not skipped outright — because if it could be skipped, a machine so
+ * broken that nothing can be checked at all would score 100, the exact opposite of
+ * the truth.
  */
 final class SecurityScore
 {
-    /** ผ่าน — ไม่ต้องทำอะไร */
+    /** Passed — nothing to do */
     public const PASS = 'pass';
 
-    /** ควรปรับปรุง แต่ยังไม่ถึงขั้นอันตราย */
+    /** Should be improved, but not yet dangerous */
     public const WARN = 'warn';
 
-    /** ต้องแก้ */
+    /** Must be fixed */
     public const FAIL = 'fail';
 
-    /** ตรวจไม่ได้ — คิดคะแนนเหมือนยังไม่ผ่าน แต่บอกผู้ใช้ตามตรงว่าไม่รู้ */
+    /** Couldn't be checked — scores the same as not passing, but tells the user honestly that it's unknown */
     public const UNKNOWN = 'unknown';
 
     /**
-     * สัดส่วนคะแนนที่แต่ละสถานะได้รับ
+     * The share of credit each status earns
      *
-     * WARN ได้ครึ่งหนึ่งเพราะเป็นเรื่องที่ "ควรทำ" ไม่ใช่ "ต้องทำ" —
-     * ถ้าให้ 0 ผู้ดูแลที่จัดการเรื่องสำคัญครบแล้วจะเห็นคะแนนต่ำจนเลิกสนใจคะแนนไปเลย
+     * WARN earns half, since it's something that "should" be done, not something
+     * that "must" be done — giving it 0 would mean an admin who's already handled
+     * everything important sees a low score and stops paying attention to it at all.
      */
     private const CREDIT = [
         self::PASS => 1.0,
@@ -43,7 +47,7 @@ final class SecurityScore
     ];
 
     /**
-     * คิดคะแนนรวมแบบถ่วงน้ำหนัก
+     * Compute the overall weighted score
      *
      * @param list<array{status:string,weight:int}> $checks
      */
@@ -62,18 +66,18 @@ final class SecurityScore
             return 0;
         }
 
-        // ปัดลงเสมอ — 99.6 ต้องไม่กลายเป็น 100 เพราะ 100 สื่อว่า "ไม่เหลืออะไรให้ทำแล้ว"
+        // Always round down — 99.6 must never become 100, since 100 implies "nothing left to do"
         return (int) floor($earned / $total * 100);
     }
 
-    /** ระดับที่ใช้เลือกสีและถ้อยคำบนหน้าจอ */
+    /** The grade used to pick a color and wording on screen */
     public static function grade(int $score): string
     {
         return match (true) {
-            $score >= 90 => 'ดี',
-            $score >= 70 => 'พอใช้',
-            $score >= 50 => 'ต้องปรับปรุง',
-            default => 'เสี่ยง',
+            $score >= 90 => 'Good',
+            $score >= 70 => 'Fair',
+            $score >= 50 => 'Needs improvement',
+            default => 'At risk',
         };
     }
 
@@ -89,10 +93,10 @@ final class SecurityScore
     public static function statusLabel(string $status): string
     {
         return match ($status) {
-            self::PASS => 'ผ่าน',
-            self::WARN => 'ควรปรับปรุง',
-            self::FAIL => 'ต้องแก้',
-            default => 'ตรวจไม่ได้',
+            self::PASS => 'Passed',
+            self::WARN => 'Should be improved',
+            self::FAIL => 'Must be fixed',
+            default => 'Could not be checked',
         };
     }
 
@@ -107,10 +111,11 @@ final class SecurityScore
     }
 
     /**
-     * เรียงรายการที่ต้องแก้ตามความเร่งด่วนจริง
+     * Sort the list of things to fix by actual urgency
      *
-     * เรียงตาม "ผลกระทบ" ก่อน ไม่ใช่ตามลำดับที่ตรวจ — คนที่มีเวลาแก้แค่เรื่องเดียว
-     * ต้องได้แก้เรื่องที่สำคัญที่สุด ไม่ใช่เรื่องที่บังเอิญถูกตรวจก่อน
+     * Sorted by "impact" first, not by the order checks ran in — someone with time
+     * to fix only one thing should fix the most important one, not whichever
+     * happened to be checked first.
      *
      * @param list<array<string,mixed>> $checks
      * @return list<array<string,mixed>>
@@ -129,7 +134,7 @@ final class SecurityScore
                 default => 2,
             };
 
-            // สถานะแย่กว่ามาก่อน ถ้าเท่ากันให้ข้อที่น้ำหนักมากกว่ามาก่อน
+            // A worse status comes first; if equal, the one with more weight comes first
             return [$rank($a), -$a['weight']] <=> [$rank($b), -$b['weight']];
         });
 

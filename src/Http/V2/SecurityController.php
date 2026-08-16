@@ -45,6 +45,10 @@ final class SecurityController extends ApiController
             return $check;
         }, $checks);
 
+        if (isset($data['grade'])) {
+            $data['grade'] = $this->t((string) $data['grade']);
+        }
+
         return $this->ok($checks, $data);
     }
 
