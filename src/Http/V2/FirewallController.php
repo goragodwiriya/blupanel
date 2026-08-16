@@ -13,13 +13,17 @@ use Phpcp\Kernel\Response;
 /**
  * Firewall — `/api/v2/firewall`
  *
- * **ทุกคำสั่งที่ทำให้เข้าถึงเครื่องได้แคบลงต้องยืนยันภายในเวลา** ไม่งั้นระบบคืนค่าเดิมให้เอง
- * (ARCHITECTURE §5.4) · คำตอบจึงแนบ `pending_rollback` กลับไปเสมอ — ถ้าไม่แนบ
- * ฝั่ง SPA จะไม่รู้ว่าต้องขึ้นตัวนับถอยหลังให้ผู้ใช้กดยืนยัน แล้วผู้ใช้จะเสียกฎที่เพิ่งตั้ง
- * ไปเงียบ ๆ เมื่อครบเวลาโดยไม่เข้าใจว่าทำไม
+ * **Every command that narrows access to the machine must be confirmed within
+ * a time window**, or the system reverts it automatically (ARCHITECTURE §5.4)
+ * · so a response always attaches `pending_rollback` — without it, the SPA
+ * has no way to know it needs to show a countdown for the user to confirm,
+ * and the user would silently lose the rule they just set the moment time
+ * runs out, with no idea why
  *
- * `signature` ของแต่ละกฎถูกส่งไปพร้อมรายการและต้องส่งกลับมาตอนลบ — กันกรณีหมายเลขกฎ
- * เลื่อนเพราะมีคนแก้จากอีกหน้าต่างหนึ่งระหว่างที่หน้านี้เปิดค้างอยู่ แล้วลบผิดกฎ
+ * Each rule's `signature` is sent along with the list and must be sent back
+ * when deleting — this guards against the rule number shifting because
+ * someone edited it from another window while this page sat open, which
+ * would otherwise delete the wrong rule
  */
 final class FirewallController extends ApiController
 {
@@ -30,7 +34,7 @@ final class FirewallController extends ApiController
 
         foreach ($status['rules'] ?? [] as $index => $rule) {
             $status['rules'][$index]['signature'] = FirewallRuleDelete::signature($rule);
-            // เงื่อนไขปุ่มลบในตารางอ่านได้แค่ค่าในแถวเดียวกัน — สิทธิ์จึงต้องมากับแถว
+            // The delete button's condition in the table can only read values in the same row — so permission must travel with the row
             $status['rules'][$index]['can_manage'] = $canManage;
         }
 
@@ -38,11 +42,13 @@ final class FirewallController extends ApiController
     }
 
     /**
-     * โครงเปล่าของฟอร์มเพิ่มกฎ พร้อมคำสั่งเปิด modal
+     * The empty shell of the add-rule form, with the command to open its modal
      *
-     * กฎของ ufw แก้ไม่ได้ (เพิ่มกับลบเท่านั้น — หมายเลขกฎเลื่อนเมื่อลบตัวก่อนหน้า)
-     * จึงมีแต่ฟอร์มของใหม่ · เส้นทางยังเป็นรูปเดียวกับหน้าอื่นเพื่อให้หน้าเว็บทำ
-     * สิ่งเดียวกันทุกหน้า: ยิงคำขอแล้วส่งคำตอบต่อให้ ResponseHandler
+     * A ufw rule can't be edited (only added or deleted — a rule's number
+     * shifts when an earlier one is deleted), so there's only a form for a
+     * new one · the route still follows the same shape as other pages, so
+     * every page does the same thing: fire the request and hand the response
+     * to ResponseHandler
      */
     public function form(Request $request): Response
     {
@@ -59,7 +65,7 @@ final class FirewallController extends ApiController
         );
     }
 
-    /** เพิ่มกฎ — ต้องยืนยันภายใน `window` วินาที ไม่งั้นถูกถอนคืนอัตโนมัติ */
+    /** Add a rule — must be confirmed within `window` seconds, or it's automatically rolled back */
     public function addRule(Request $request): Response
     {
         $result = $this->agent()->data('firewall.rule_add', [
@@ -74,9 +80,11 @@ final class FirewallController extends ApiController
         $message = (string) ($result['message'] ?? 'Rule added — confirm it before the automatic rollback runs out');
 
         /*
-         * ปิดฟอร์มก่อน แล้วโหลดหน้าใหม่ทั้งหน้า (target ว่าง) — ตารางกฎผูกกับข้อมูล
-         * ของหน้า ไม่ได้ดึงเอง จึงสั่งโหลดเฉพาะตารางไม่ได้ · และหน้านี้ยังมีแถบ
-         * "รอการยืนยัน" ที่ต้องอัปเดตตามด้วย ซึ่งอยู่นอกตารางอยู่แล้ว
+         * Closes the form first, then reloads the whole page (empty target) —
+         * the rules table is bound to the page's own data, not fetched on its
+         * own, so it can't be told to reload just the table · and this page
+         * also has a "pending confirmation" bar that needs updating too,
+         * which already lives outside the table
          */
         return $this->done($message, [
             ['type' => 'modal', 'action' => 'close'],
@@ -87,10 +95,11 @@ final class FirewallController extends ApiController
     }
 
     /**
-     * ลบกฎตามหมายเลข
+     * Delete a rule by its number
      *
-     * `expect` คือลายเซ็นของกฎที่ผู้ใช้เห็นตอนกดปุ่ม — agent เทียบก่อนลบเสมอ
-     * เพื่อไม่ให้ลบผิดกฎเมื่อหมายเลขเลื่อน
+     * `expect` is the rule's signature as the user saw it when clicking the
+     * button — the agent always compares it before deleting, so a shifted
+     * number never deletes the wrong rule
      */
     public function deleteRule(Request $request): Response
     {
@@ -107,11 +116,13 @@ final class FirewallController extends ApiController
     }
 
     /**
-     * เปิดหรือปิด firewall ทั้งตัว
+     * Turn the whole firewall on or off
      *
-     * เปิดครั้งแรกคือคำสั่งที่อันตรายที่สุดในหน้านี้ — ถ้ากฎยังไม่ครอบพอร์ต SSH
-     * ผู้ดูแลจะหลุดจากเครื่องทันที · จึงต้องยืนยันภายในเวลาเช่นกัน
-     * ส่วนการ**ปิด** ไม่ต้องยืนยันเพราะมันทำให้เข้าถึงได้กว้างขึ้น ไม่ใช่แคบลง
+     * Turning it on for the first time is the most dangerous command on this
+     * page — if the rules don't already cover the SSH port, an admin gets
+     * locked out of the machine instantly · so it must also be confirmed
+     * within a time window · **turning it off** needs no confirmation, since
+     * that widens access rather than narrowing it
      */
     public function setEnabled(Request $request): Response
     {
@@ -131,7 +142,7 @@ final class FirewallController extends ApiController
     }
 
     /**
-     * รายการที่รอยืนยันอยู่ตอนนี้ พร้อมเวลาที่เหลือ
+     * The change currently pending confirmation, with the time remaining
      *
      * @return array<string,mixed>|null
      */
