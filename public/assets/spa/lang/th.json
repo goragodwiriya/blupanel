@@ -163,6 +163,7 @@
     "Command sent": "ส่งคำสั่งแล้ว",
     "Compare the fingerprint with ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub on the destination machine": "เทียบลายนิ้วมือกับผลของ ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub บนเครื่องปลายทาง",
     "Compress": "บีบอัด",
+    "Config file contains a null byte": "ไฟล์ตั้งค่ามีไบต์ศูนย์ปนอยู่",
     "Configuration files": "ไฟล์ตั้งค่า",
     "Configuration saved": "บันทึกค่าตั้งแล้ว",
     "Configure a website's request rate limit": "ตั้งค่าการจำกัดอัตราคำขอของเว็บไซต์",

@@ -12,11 +12,11 @@ use Phpcp\Driver\Ssl\CertbotManager;
 use Phpcp\Driver\Template;
 
 /**
- * Apache 2.4 — ตรงกับเว็บเซิร์ฟเวอร์บนเครื่องเป้าหมาย
+ * Apache 2.4 — matches the web server on the target machine
  *
- * ไฟล์ vhost ถูกเขียนลง /etc/apache2/sites-enabled/ ชื่อขึ้นต้นด้วย phpcp- ทุกไฟล์
- * เพื่อให้แยกออกชัดเจนว่าไฟล์ไหน panel เป็นคนสร้าง และไม่ไปทับ vhost ที่ผู้ดูแล
- * เขียนเองไว้ก่อนหน้า
+ * vhost files are written to /etc/apache2/sites-enabled/, every filename
+ * starting with phpcp-, so it's clearly visible which files the panel
+ * created, and so it never overwrites a vhost an admin wrote by hand beforehand.
  */
 final class ApacheDriver implements WebServerDriver
 {
@@ -25,9 +25,10 @@ final class ApacheDriver implements WebServerDriver
     private const PORTS_FILE = self::CONFIG_ROOT . '/ports.conf';
 
     /**
-     * ชื่อขึ้นต้นด้วย `phpcp-000-` เพื่อให้ถูกอ่านก่อน vhost ของเว็บจริง — ไม่ได้มีผล
-     * ต่อการเลือก vhost (Apache เลือกจาก ServerName) แต่ทำให้ไฟล์ระดับเครื่อง
-     * อยู่รวมกลุ่มกันด้านบนเวลาไล่ดูไดเรกทอรี
+     * Named with a `phpcp-000-` prefix so it's read before any real
+     * website's vhost — has no effect on which vhost is chosen (Apache
+     * chooses from ServerName), but keeps machine-level files grouped at
+     * the top when browsing the directory.
      */
     public const LOCALHOST_FILE = self::SITES_DIR . '/phpcp-000-localhost.conf';
 
@@ -36,7 +37,7 @@ final class ApacheDriver implements WebServerDriver
 
     public function __construct(
         private readonly Template $templates,
-        /** null = ไม่เปิด http://localhost (ค่าเริ่มต้นของเครื่องที่ให้บริการจริง) */
+        /** null = don't enable http://localhost (the default for a real production machine) */
         private readonly ?LocalhostSite $localhost = null,
     ) {
     }
@@ -62,25 +63,27 @@ final class ApacheDriver implements WebServerDriver
     }
 
     /**
-     * โมดูลที่ไฟล์ vhost ซึ่งระบบสร้างขึ้น "ต้อง" มี ไม่อย่างนั้น config ไม่ผ่านเลย
+     * The modules the system's generated vhost files "must" have, or the config fails to pass at all
      *
-     * ตั้งใจไม่ห่อ directive เหล่านี้ด้วย <IfModule> ทั้งที่ทำได้ง่ายกว่า —
-     * เพราะ <IfModule> จะข้าม directive ที่หายไปแบบเงียบ ๆ ซึ่งกับ HSTS
-     * แปลว่าเว็บที่ตั้งค่า "บังคับ HTTPS" ไว้จะไม่ได้ HSTS จริงโดยไม่มีใครรู้
-     * ปล่อยให้ configtest ล้มแล้ว ConfigTransaction คืนค่าเดิม เป็นความล้มเหลวที่ปลอดภัยกว่า
+     * Deliberately not wrapped in <IfModule>, even though that would be
+     * easier — because <IfModule> silently skips a missing directive,
+     * which for HSTS means a site configured for "force HTTPS" would
+     * never actually get HSTS with nobody knowing · letting configtest
+     * fail and having ConfigTransaction restore the previous state is the safer failure.
      */
     private const REQUIRED_MODULES = ['headers', 'rewrite', 'proxy', 'proxy_fcgi'];
 
-    /** เพิ่มเมื่อเว็บไซต์ใดเว็บไซต์หนึ่งเปิด HTTPS */
+    /** Added when any website turns on HTTPS */
     private const SSL_MODULES = ['ssl'];
 
     /**
-     * เปิดโมดูลที่จำเป็นถ้ายังไม่ได้เปิด
+     * Turns on the required modules if they aren't on yet
      *
-     * panel เป็นเจ้าของ Apache stack นี้อยู่แล้ว การเปิดโมดูลที่ config ของตัวเองต้องใช้
-     * จึงไม่ใช่การไปยุ่งกับของผู้ดูแล แต่คือการทำให้สิ่งที่ตัวเองเขียนออกไปใช้งานได้จริง
+     * The panel already owns this Apache stack — turning on a module its
+     * own config needs isn't interfering with an admin's setup, it's making
+     * what it just wrote actually work.
      *
-     * @return list<string> โมดูลที่เพิ่งถูกเปิดในรอบนี้
+     * @return list<string> the modules just turned on in this pass
      */
     public function ensureModules(Executor $executor, bool $withSsl = false): array
     {
@@ -93,7 +96,7 @@ final class ApacheDriver implements WebServerDriver
                 continue;
             }
 
-            // a2enmod มีเฉพาะบน Debian/Ubuntu ซึ่งเป็นระบบที่ v1 รองรับ
+            // a2enmod only exists on Debian/Ubuntu, which is what v1 supports
             $result = $executor->exec([$executor->path('/usr/sbin/a2enmod'), '-q', $module], timeout: 30);
 
             if ($result->ok()) {
@@ -106,15 +109,18 @@ final class ApacheDriver implements WebServerDriver
 
     public function vhostPath(Site $site): string
     {
-        // ชื่อไฟล์มาจากโดเมนที่ผ่าน Validator::domain() แล้ว จึงมีแต่ [a-z0-9.-]
+        // The filename comes from a domain that already passed
+        // Validator::domain(), so it only ever contains [a-z0-9.-]
         //
-        // **vhost ของเว็บที่รับ wildcard ต้องถูกอ่านท้ายสุด** (PLAN-V2 เฟส E7) — Apache
-        // อ่านไฟล์ตามลำดับตัวอักษร ถ้า `*.example.com` ถูกอ่านก่อน vhost ที่ระบุ
-        // `blog.example.com` ไว้เต็ม ๆ คำขอของ blog จะตกไปที่เว็บ wildcard แทน
-        // ซึ่งเป็นการรั่วข้ามเว็บไซต์ระหว่างลูกค้าคนละราย
+        // **A wildcard-accepting site's vhost must always be read last**
+        // (PLAN-V2 phase E7) — Apache reads files in alphabetical order,
+        // and if `*.example.com` gets read before a vhost that fully
+        // specifies `blog.example.com`, a request for blog falls through
+        // to the wildcard site instead — a cross-site leak between two different customers.
         //
-        // คำนำหน้า `zz-` ทำให้มันไปอยู่ท้ายเสมอโดยไม่ต้องพึ่งความบังเอิญของชื่อโดเมน
-        // · `$site->domain` ยังเป็นชื่อจริงที่ผ่านการตรวจแล้ว ไม่มี `*` ปนมา
+        // The `zz-` prefix always pushes it to the end without relying on
+        // any coincidence of domain naming · `$site->domain` is still the
+        // genuine, already-validated name, with no `*` mixed in.
         return self::SITES_DIR . '/phpcp-' . ($site->hasWildcard() ? 'zz-wildcard-' : '') . $site->domain . '.conf';
     }
 
@@ -125,15 +131,18 @@ final class ApacheDriver implements WebServerDriver
     }
 
     /**
-     * ไฟล์ที่ทั้งเครื่องใช้ร่วมกัน — พอร์ตที่ Apache ฟัง
+     * A file the whole machine shares — the ports Apache listens on
      *
-     * **ต้องเขียนคืนเสมอ ไม่ใช่เขียนตอนเปลี่ยนโหมดเท่านั้น** เพราะโหมด nginx-proxy
-     * เขียนทับไฟล์นี้ให้ Apache ถอยไปฟัง 127.0.0.1:8080 · เครื่องที่เคยผ่านโหมดนั้น
-     * แล้วสลับกลับมา จะเหลือ vhost ที่ประกาศ *:80 ทั้งเครื่องแต่ไม่มีใครฟังพอร์ต 80
+     * **Must always be rewritten, never only when switching modes**,
+     * because nginx-proxy mode overwrites this same file to make Apache
+     * fall back to listening on 127.0.0.1:8080 · a machine that once went
+     * through that mode and switches back would be left with every vhost
+     * declaring *:80 while nobody is actually listening on port 80.
      *
-     * เจอจริงบนเครื่องพัฒนา (2026-08-12): http://localhost หายไปทั้งเครื่อง ทั้งที่
-     * apache2 กับ nginx ขึ้นครบทั้งคู่ ไม่มี error ที่ไหนเลย — nginx ไม่มี vhost
-     * (ถูกเก็บกวาดตอนสลับโหมดแล้ว) ส่วน Apache ยังติดอยู่ที่ 8080
+     * Genuinely found on a dev machine (2026-08-12): http://localhost
+     * vanished for the whole machine, even though both apache2 and nginx
+     * were up with no error anywhere — nginx had no vhost (already cleaned
+     * up during the mode switch), while Apache was still stuck on 8080.
      *
      * @return array<string,string>
      */
@@ -154,9 +163,9 @@ final class ApacheDriver implements WebServerDriver
     }
 
     /**
-     * vhost ของ http://localhost — โหมด nginx-proxy ยืมไปใช้เป็นชั้นหลังด้วย
+     * The http://localhost vhost — also borrowed by nginx-proxy mode to serve as its backend layer
      *
-     * @param string $listen ที่อยู่ที่ vhost นี้ผูก (`*:80` หรือ `127.0.0.1:8080`)
+     * @param string $listen the address this vhost binds (`*:80` or `127.0.0.1:8080`)
      */
     public function renderLocalhost(Executor $executor, string $listen): string
     {
@@ -195,12 +204,14 @@ final class ApacheDriver implements WebServerDriver
             ]);
         }
 
-        // ส่วนกลางของ vhost ถูกสร้างครั้งเดียวแล้วใช้ทั้งบล็อก :80 และ :443
-        // ถ้าปล่อยให้เทมเพลต SSL คัดลอกกฎเหล่านี้ไปเอง วันหนึ่งกฎกันไฟล์ .env หรือ .git
-        // จะถูกแก้ที่เดียวแล้วลืมอีกที่ กลายเป็นช่องโหว่ที่เปิดเฉพาะบน HTTPS
+        // The vhost's shared section is built once and used by both the :80
+        // and :443 blocks. Letting the SSL template copy these rules on its
+        // own would mean one day the rule blocking .env or .git files gets
+        // edited in one place and forgotten in the other, turning into a
+        // vulnerability that only exists over HTTPS
         $body = new SafeBlock($this->templates->render('apache/vhost-body.conf.tpl', [
             'PROBE_DENY' => new SafeBlock(ProbeBlocklist::apache()),
-            // ไดเรกทอรีของผู้ดูแล — vhost อ่านเป็นอันสุดท้าย ค่าที่นั่นจึงชนะค่าเริ่มต้น
+            // The admin's own directory — read last by the vhost, so its values win over the defaults
             'CUSTOM_DIR' => $executor->path(CustomConfig::siteDirectory('apache', $site->domain)),
             'DOCROOT' => $executor->path($site->docroot()),
             'FPM_SOCKET' => $executor->path($site->fpmSocket()),
@@ -229,14 +240,14 @@ final class ApacheDriver implements WebServerDriver
             'DOCROOT' => $executor->path($site->docroot()),
             'SSL_CERT' => $executor->path($certificate . '/fullchain.pem'),
             'SSL_KEY' => $executor->path($certificate . '/privkey.pem'),
-            'SSL_MODE_LABEL' => $site->sslMode === 'forced' ? 'บังคับ HTTPS' : 'เปิดใช้งาน',
+            'SSL_MODE_LABEL' => $site->sslMode === 'forced' ? 'Forced HTTPS' : 'Enabled',
             'HTTP_SECTION' => $this->httpSection($site, $body),
             'HSTS_HEADER' => $this->hstsHeader($site),
         ]);
     }
 
     /**
-     * บล็อก :80 ต่างกันตามโหมด — บังคับ HTTPS แล้วต้อง redirect ทุกอย่างที่ไม่ใช่ acme
+     * The :80 block differs by mode — forced HTTPS has to redirect everything that isn't acme
      */
     private function httpSection(Site $site, SafeBlock $body): SafeBlock
     {
@@ -245,7 +256,7 @@ final class ApacheDriver implements WebServerDriver
         }
 
         return new SafeBlock(
-            "\n    # บังคับ HTTPS — ยกเว้นเส้นทางตรวจสอบของ Let's Encrypt ด้านบน\n"
+            "\n    # Forced HTTPS — except Let's Encrypt's validation path above\n"
             . "    RewriteEngine On\n"
             . "    RewriteCond %{REQUEST_URI} !^/\\.well-known/acme-challenge/\n"
             . '    RewriteRule ^(.*)$ https://%{HTTP_HOST}$1 [R=301,L]',
@@ -253,11 +264,12 @@ final class ApacheDriver implements WebServerDriver
     }
 
     /**
-     * HSTS ใส่เฉพาะตอนบังคับ HTTPS เท่านั้น
+     * HSTS is only ever added when HTTPS is forced
      *
-     * เบราว์เซอร์จำ header นี้ไว้แล้วปฏิเสธ HTTP ของโดเมนนั้นไปเลยตามระยะที่กำหนด
-     * ถ้าใส่ตอนที่ยังเปิดทั้งสองทาง แล้วผู้ดูแลเปลี่ยนใจปิด SSL ทีหลัง
-     * ผู้เข้าเว็บที่เคยเข้ามาแล้วจะเข้าเว็บไม่ได้เลยจนกว่าจะหมดอายุ — แก้ที่เซิร์ฟเวอร์ไม่ได้
+     * A browser remembers this header and refuses that domain's HTTP for
+     * the given duration · adding it while both are still allowed, then
+     * having an admin later change their mind and turn SSL off, would leave
+     * a returning visitor unable to reach the site at all until it expires — something a server can't fix on its own.
      */
     private function hstsHeader(Site $site): SafeBlock
     {
@@ -265,18 +277,19 @@ final class ApacheDriver implements WebServerDriver
             return new SafeBlock('');
         }
 
-        // 6 เดือน ไม่ใส่ preload เพราะ preload ถอนออกยากและต้องสมัครกับรายชื่อกลาง
+        // 6 months, no preload — preload is hard to withdraw and requires submitting to a central list
         return new SafeBlock(
             "\n    Header always set Strict-Transport-Security \"max-age=15768000\"",
         );
     }
 
     /**
-     * ที่อยู่ของใบรับรองที่ใช้จริง — ใบของ Let's Encrypt มาก่อนใบที่เซ็นเอง
+     * The genuinely-used certificate's location — a Let's Encrypt certificate wins over a self-signed one
      *
-     * ถ้าไม่มีทั้งคู่ยังคืนเส้นทางของ Let's Encrypt ไป แล้วปล่อยให้ `apache2 -t`
-     * เป็นคนบอกว่าไฟล์ไม่มีอยู่ — ดีกว่าเขียน config ที่ชี้ไปที่อื่นแบบเงียบ ๆ
-     * เพราะ ConfigTransaction จะ rollback ให้เองเมื่อ configtest ไม่ผ่าน
+     * If neither exists, this still returns Let's Encrypt's path, and lets
+     * `apache2 -t` be the one to say the file doesn't exist — better than
+     * silently writing a config that points elsewhere, since
+     * ConfigTransaction rolls back on its own when configtest fails.
      */
     public function certificatePath(Site $site, Executor $executor): string
     {
@@ -291,16 +304,18 @@ final class ApacheDriver implements WebServerDriver
     }
 
     /**
-     * ตรวจ config ทั้งหมด — จุดที่กันไม่ให้ vhost พังทำให้เว็บทั้งเครื่องดับ
+     * Validates the whole config — the point that stops a bad vhost from taking down every site on the machine
      *
-     * เลือกคำสั่งตาม "config tree ที่กำลังตรวจ" ไม่ใช่ตามโหมดการทำงาน:
-     *   - tree ของระบบ  → apache2ctl -t ซึ่ง source /etc/apache2/envvars ให้ก่อน
-     *     (จำเป็นบน Debian/Ubuntu เพราะ apache2.conf อ้าง ${APACHE_LOG_DIR})
-     *   - tree อื่น (sandbox) → apache2 -d <root> -f <root>/apache2.conf -t
-     *     ซึ่งใช้ config ที่เขียนครบในตัวเองอยู่แล้ว ไม่ต้องมี envvars
+     * Picks its command based on "which config tree is being validated",
+     * not which mode is running:
+     *   - the system's own tree → apache2ctl -t, which sources
+     *     /etc/apache2/envvars first (necessary on Debian/Ubuntu, since
+     *     apache2.conf references ${APACHE_LOG_DIR})
+     *   - any other tree (sandbox) → apache2 -d <root> -f
+     *     <root>/apache2.conf -t, which already uses a fully self-contained config, needing no envvars
      *
-     * ทั้งสองทางเป็นการรัน apache ตัวจริง — ส่วนที่บั๊กบ่อยที่สุดจึงถูกตรวจด้วยของจริง
-     * แม้อยู่ในโหมดทดสอบ (ARCHITECTURE §6.3)
+     * Both paths run the real apache binary — the part that breaks most
+     * often is therefore validated with the genuine article, even in test mode (ARCHITECTURE §6.3).
      */
     public function testConfig(Executor $executor): array
     {
@@ -312,20 +327,20 @@ final class ApacheDriver implements WebServerDriver
 
         $result = $executor->exec($argv, timeout: 20);
 
-        // apache2 -t เขียนผลลัพธ์ลง stderr แม้ตอนผ่าน ("Syntax OK")
+        // apache2 -t writes its result to stderr even when it passes ("Syntax OK")
         $output = trim($result->stderr) !== '' ? $result->stderr : $result->stdout;
 
         return [$result->ok(), $output];
     }
 
-    /** ดูรหัสออกด้วยเสมอ — reload ที่ล้มเงียบ ๆ ทำให้ค่าตั้งใหม่ไม่มีผลโดยไม่มีใครรู้ */
+    /** The exit code is always checked — a reload that fails silently leaves new config with no effect, with nobody knowing */
     public function reload(Executor $executor): void
     {
         $result = $executor->exec([$executor->path('/usr/bin/systemctl'), 'reload', $this->unit()], timeout: 30);
 
         if (!$result->ok()) {
             throw new ExecutionFailed(sprintf(
-                "เขียนค่าตั้งเรียบร้อยแล้วแต่สั่ง reload %s ไม่สำเร็จ — ค่าตั้งใหม่จะยังไม่มีผลจนกว่าจะ reload สำเร็จ\n\n%s",
+                "The configuration was written successfully, but reloading %s failed — the new configuration will have no effect until the reload succeeds\n\n%s",
                 $this->unit(),
                 trim($result->stderr ?: $result->stdout),
             ));
@@ -337,7 +352,7 @@ final class ApacheDriver implements WebServerDriver
         return $executor->exists($executor->path(self::CONFIG_ROOT));
     }
 
-    /** ไดเรกทอรีที่เก็บ vhost — ใช้ตอนสร้างโครงสร้างครั้งแรก */
+    /** The directory holding vhosts — used when scaffolding for the first time */
     public static function sitesDir(): string
     {
         return self::SITES_DIR;
