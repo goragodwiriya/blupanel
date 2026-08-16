@@ -13,39 +13,45 @@ use Phpcp\Driver\ConfigTransaction;
 use Phpcp\Support\BinaryPath;
 
 /**
- * เปิด/ปิดการเข้าถึงไฟล์ผ่าน SFTP ให้บัญชีโฮสติ้ง — PLAN-V2 เฟส E4
+ * Enable/disable SFTP file access for hosting accounts — PLAN-V2 Phase E4
  *
- * **หนึ่งบัญชีโฮสติ้ง = หนึ่ง SFTP login** (ดูเหตุผลเต็มใน `db/migrations/0013_sftp_access.sql`)
- * ไม่มีบัญชีย่อยต่อเว็บ เพราะทุกเว็บของผู้ใช้คนเดียวกันใช้ uid เดียวกันอยู่แล้วตั้งแต่ 0006
+ * **One hosting account = one SFTP login** (see full reasoning in `db/migrations/0013_sftp_access.sql`)
+ * No per-site sub-accounts, because every site belonging to the same user already shares one uid
+ * since 0006
  *
- * **SFTP ไม่ใช่ FTP โดยเจตนา** — วิ่งบน OpenSSH ที่ติดตั้งและแข็งแรงอยู่แล้ว ไม่ต้องเปิด
- * daemon เพิ่ม ไม่ต้องเปิดพอร์ตเพิ่ม เข้ารหัสตลอดสาย และไม่มีปัญหา passive port range
- * ของ FTP ที่ทำให้ต้องเปิดพอร์ตเป็นช่วงกว้างบน firewall
+ * **SFTP, not FTP — deliberately** — runs on OpenSSH, which is already installed and hardened.
+ * No extra daemon to run, no extra port to open, encrypted end-to-end, and none of FTP's
+ * passive port range problem that forces opening a wide port range on the firewall
  *
- * **สามด่านที่กันไม่ให้กลายเป็น shell access:**
- *   1. `ForceCommand internal-sftp` — บังคับให้ทำได้แค่ SFTP ต่อให้ผู้ใช้ขอ shell ก็ตาม
- *   2. shell ของบัญชียังเป็น `/usr/sbin/nologin` ตามเดิม (ไม่แตะ) — ด่านสำรองถ้า
- *      `Match` block หายไปด้วยเหตุใดก็ตาม
- *   3. `ChrootDirectory` ขังไว้ในบ้านตัวเอง มองไม่เห็นแม้แต่ `/etc/passwd` ของเครื่อง
+ * **Three layers that prevent this from becoming shell access:**
+ *   1. `ForceCommand internal-sftp` — forces SFTP-only, even if the client requests a shell
+ *   2. the account's shell stays `/usr/sbin/nologin` as-is (untouched) — a fallback layer
+ *      in case the `Match` block ever disappears for any reason
+ *   3. `ChrootDirectory` cages the account inside its own home, invisible even to the
+ *      machine's own `/etc/passwd`
  *
- * **ทำไมเขียนไฟล์แยกใน `sshd_config.d/` ไม่แตะ `sshd_config` หลัก:** ไฟล์หลักคือสิ่งที่
- * ถ้าพังแล้วเข้าเครื่องไม่ได้อีกเลย ({@see \Phpcp\Driver\SshManager} จึงยอมให้แก้แค่ 5 คีย์)
- * · ไฟล์แยกลบทิ้งก็คืนสภาพเดิมทันที และ `Match` block ที่ผิดพลาดกระทบแค่กลุ่มของตัวเอง
+ * **Why write a separate file under `sshd_config.d/` instead of touching the main
+ * `sshd_config`:** the main file is the one thing that, if broken, locks everyone out of the
+ * machine entirely ({@see \Phpcp\Driver\SshManager} therefore only permits editing 5 keys)
+ * · a separate file can be deleted to instantly restore the previous state, and a broken
+ * `Match` block only affects its own group
  *
- * **กับดักที่ต้องรู้: `Match` มี scope ไหลข้ามไฟล์** — ทุก directive ที่ตามหลัง `Match`
- * จะอยู่ใน scope นั้นไปเรื่อย ๆ รวมถึงบรรทัดใน**ไฟล์อื่นที่ include ทีหลัง**และในไฟล์หลัก
- * ถ้าไม่ปิด scope · ไฟล์ที่คลาสนี้เขียนจึงจบด้วย `Match all` เสมอเพื่อคืน scope กลับเป็น
- * global ไม่งั้นค่าตั้งที่เหลือของทั้งเครื่องจะกลายเป็นของกลุ่ม SFTP โดยไม่มีใครรู้
+ * **Trap to know about: `Match` scope leaks across files** — every directive following
+ * `Match` stays in that scope indefinitely, including lines in **other files included
+ * afterward** and in the main file, unless the scope is closed · the file this class writes
+ * therefore always ends with `Match all` to return the scope to global — otherwise the rest
+ * of the machine's settings would silently fall under the SFTP group's scope with nobody
+ * noticing
  */
 final class SftpAccessManager
 {
-    /** ไฟล์ที่คลาสนี้เป็นเจ้าของทั้งไฟล์ — ไม่มีอะไรอื่นเขียนที่นี่ */
+    /** The file this class owns entirely — nothing else writes here */
     public const CONFIG_FILE = '/etc/ssh/sshd_config.d/phpcp-sftp.conf';
 
-    /** กลุ่มที่ `Match Group` จับ — บัญชีที่อยู่ในกลุ่มนี้เท่านั้นที่เข้า SFTP ได้ */
+    /** The group `Match Group` matches — only accounts in this group can access SFTP */
     public const GROUP = 'phpcp-sftp';
 
-    /** @var list<string> systemctl อยู่ /usr/bin บน Debian/Ubuntu · /usr/sbin บางระบบ */
+    /** @var list<string> systemctl lives at /usr/bin on Debian/Ubuntu · /usr/sbin on some systems */
     public const SYSTEMCTL_PATHS = ['/usr/bin/systemctl', '/usr/sbin/systemctl'];
 
     private const GROUPADD = '/usr/sbin/groupadd';
@@ -60,7 +66,7 @@ final class SftpAccessManager
     }
 
     /**
-     * เปิด SFTP ให้บัญชีนี้ พร้อมตั้งรหัสผ่าน — เรียกซ้ำได้ (ใช้เปลี่ยนรหัสผ่านด้วย)
+     * Enable SFTP for this account and set its password — idempotent (also used to change the password)
      *
      * @return array{username:string,chroot:string,group:string,config_written:bool}
      */
@@ -72,13 +78,16 @@ final class SftpAccessManager
         $this->ensureGroup();
         $this->ensureConfig();
 
-        // reload อยู่นอก ensureConfig() โดยเจตนา — ที่นั่นมี early return เมื่อไฟล์ตรงอยู่แล้ว
-        // ถ้าเอา reload ไปไว้ข้างใน กรณี "เขียนไฟล์สำเร็จแต่ reload ล้มรอบก่อน" จะแก้ไม่ได้เลย
-        // เพราะการกดซ้ำจะข้ามทั้งบล็อกไป · reload เร็วและไม่มีผลข้างเคียง เรียกทุกครั้งคุ้มกว่า
+        // reload sits outside ensureConfig() deliberately — that method has an early return
+        // when the file already matches. If reload were moved inside, the case "file write
+        // succeeded but reload failed on a previous attempt" could never be fixed, because
+        // retrying would skip the whole block · reload is cheap and side-effect-free, so
+        // it's worth calling every time
         $this->reloadSshd($activation);
 
-        // ใส่เข้ากลุ่มก่อนตั้งรหัสผ่าน — ถ้าล้มกลางทาง บัญชีที่มีรหัสผ่านแต่ไม่อยู่ในกลุ่ม
-        // ยังเข้าอะไรไม่ได้ (shell เป็น nologin) ปลอดภัยกว่าลำดับกลับกัน
+        // Add to the group before setting the password — if it fails partway through, an
+        // account with a password but not in the group still can't access anything (shell
+        // is nologin), which is safer than the reverse order
         $this->addToGroup($account);
         $this->setPassword($account, $password);
 
@@ -91,10 +100,11 @@ final class SftpAccessManager
     }
 
     /**
-     * ปิด SFTP — เอาออกจากกลุ่มแล้วล็อกรหัสผ่าน
+     * Disable SFTP — remove from the group and lock the password
      *
-     * ไม่ลบไฟล์ config เพราะบัญชีอื่นอาจยังใช้อยู่ · ไม่ลบบัญชีระบบเพราะเว็บของผู้ใช้
-     * ยังต้องรันด้วย uid นั้นต่อไป
+     * Doesn't delete the config file because other accounts may still use it · doesn't
+     * delete the system account because the user's site still needs to keep running under
+     * that uid
      */
     public function disable(UserAccount $account): array
     {
@@ -105,75 +115,81 @@ final class SftpAccessManager
     }
 
     /**
-     * sshd ต้องทำงานอยู่ก่อน ถึงจะเปิด SFTP ได้ — SFTP วิ่งบน sshd ไม่ใช่ daemon ของตัวเอง
+     * sshd must already be running before SFTP can be enabled — SFTP runs on sshd, not its
+     * own daemon
      *
-     * **เจอจากการทดสอบบนเซิร์ฟเวอร์จริง (2026-08-10):** เครื่องที่ไม่ได้เปิด sshd ไว้ทำให้
-     * `sshd -t` ล้มด้วย *"Missing privilege separation directory: /run/sshd"* เพราะ
-     * `/run/sshd` ถูกสร้างโดย systemd ตอน start service (`RuntimeDirectory=sshd`) เท่านั้น
-     * · ผลคือผู้ดูแลเห็นข้อความ "การตั้งค่าที่สร้างขึ้นไม่ผ่านการตรวจสอบ" ซึ่งชี้ไปผิดทาง
-     * ทั้งที่ config ที่ phpcp เขียนถูกต้องทุกบรรทัด — ต้องบอกสาเหตุจริงตั้งแต่ก่อนแตะไฟล์
+     * **Found through testing on a real server (2026-08-10):** on a machine where sshd
+     * wasn't running, `sshd -t` failed with *"Missing privilege separation directory:
+     * /run/sshd"*, because `/run/sshd` is only created by systemd when the service starts
+     * (`RuntimeDirectory=sshd`) · the result was that the admin saw "the generated
+     * configuration failed validation," which pointed in the wrong direction, even though
+     * the config phpcp wrote was correct on every line — the real cause must be reported
+     * before ever touching the file
      *
-     * @return array{unit:string,socket:bool} unit ที่พบว่าทำงานอยู่ และมาจาก socket หรือไม่
+     * @return array{unit:string,socket:bool} the unit found running, and whether it came from a socket
      */
     private function assertSshdRunning(): array
     {
-        // ชื่อ unit ต่างกันตาม distro: Debian/Ubuntu ใช้ `ssh`, RHEL ใช้ `sshd`
+        // Unit name differs by distro: Debian/Ubuntu use `ssh`, RHEL uses `sshd`
         foreach (['ssh', 'sshd'] as $unit) {
             $status = ServiceProbe::read($this->executor, $unit);
 
             if ($status['running'] ?? false) {
-                // socket activation คือค่าเริ่มต้นของ Ubuntu 22.10+ — ตัว `.service`
-                // inactive ตลอดเวลาโดยไม่ผิดปกติ · ดู ServiceProbe::withSocketActivation()
+                // Socket activation is the default on Ubuntu 22.10+ — the `.service` unit
+                // staying inactive the whole time is normal · see ServiceProbe::withSocketActivation()
                 return ['unit' => $unit, 'socket' => ($status['activation'] ?? '') === 'socket'];
             }
         }
 
         throw new ExecutionFailed(
-            "เปิด SFTP ไม่ได้เพราะบริการ SSH ไม่ได้ทำงานอยู่ — SFTP วิ่งบน sshd ไม่ใช่บริการแยก\n\n"
-            . "เปิดใช้งานก่อนด้วย:\n"
+            "Can't enable SFTP because the SSH service isn't running — SFTP runs on sshd, not a separate service\n\n"
+            . "Enable it first with:\n"
             . "    sudo systemctl enable --now ssh\n\n"
-            . 'แล้วลองเปิด SFTP อีกครั้ง',
+            . 'then try enabling SFTP again',
         );
     }
 
     /**
-     * `/run/sshd` ต้องมีอยู่ก่อน `sshd -t` ถึงจะผ่าน
+     * `/run/sshd` must exist before `sshd -t` will pass
      *
-     * เป็น privilege separation directory ที่ปกติ systemd สร้างให้ผ่าน `RuntimeDirectory=sshd`
-     * ตอน start `ssh.service` · **บนเครื่องที่ใช้ socket activation ตัว service นั้นไม่เคยรัน
-     * เป็นตัวยาว ๆ เลย** ไดเรกทอรีจึงหายไปได้ทุกเมื่อ แล้ว `sshd -t` ล้มด้วย
-     * *"Missing privilege separation directory"* ทั้งที่ไฟล์ตั้งค่าถูกต้องทุกบรรทัด
+     * It's the privilege separation directory that systemd normally creates via
+     * `RuntimeDirectory=sshd` when `ssh.service` starts · **on machines using socket
+     * activation, that service never runs as a long-lived process**, so the directory can
+     * disappear at any time, and `sshd -t` fails with *"Missing privilege separation
+     * directory"* even though the config file is correct on every line
      *
-     * สร้างเองแบบ idempotent ก่อนตรวจ — systemd จะดูแลต่อเองเมื่อ service ทำงานจริง
-     * (0755 root:root คือสิทธิ์เดียวกับที่ systemd ตั้งให้ ไม่ได้ผ่อนอะไรลง)
+     * Create it ourselves, idempotently, before testing — systemd takes over once the
+     * service is actually running (0755 root:root is the same permission systemd itself
+     * sets, nothing relaxed here)
      */
     private function ensureRuntimeDir(): void
     {
         $this->executor->exec([self::MKDIR, '-m', '0755', '-p', '/run/sshd'], timeout: 10);
     }
 
-    /** กลุ่มต้องมีอยู่ก่อน `Match Group` ถึงจะมีความหมาย — สร้างแบบ lazy ครั้งแรกที่ใช้ */
+    /** The group must exist before `Match Group` means anything — created lazily on first use */
     private function ensureGroup(): void
     {
         $result = $this->executor->exec([self::GROUPADD, '--system', '-f', self::GROUP], timeout: 15);
 
-        // -f = มีอยู่แล้วถือว่าสำเร็จ · exit 9 คือ "มีอยู่แล้ว" ของ groupadd รุ่นเก่า
+        // -f = already existing counts as success · exit 9 is older groupadd's own "already exists"
         if (!$result->ok() && $result->exitCode !== 9) {
-            throw new ExecutionFailed('สร้างกลุ่ม ' . self::GROUP . ' ไม่สำเร็จ: ' . trim($result->stderr));
+            throw new ExecutionFailed('Failed to create group ' . self::GROUP . ': ' . trim($result->stderr));
         }
     }
 
     /**
-     * เขียนไฟล์ config แล้วตรวจด้วย `sshd -t` ก่อนยอมให้อยู่จริง
+     * Write the config file and verify it with `sshd -t` before it's allowed to stick around
      *
-     * ผ่าน {@see ConfigTransaction} เพื่อให้คืนไฟล์เดิมอัตโนมัติเมื่อ `sshd -t` ไม่ผ่าน —
-     * ไฟล์ sshd ที่ผิดค้างอยู่แปลว่า sshd รีสตาร์ตไม่ขึ้นครั้งถัดไป แล้วไม่มีใครเข้าเครื่องได้
+     * Goes through {@see ConfigTransaction} so the previous file is restored automatically
+     * if `sshd -t` fails — a broken sshd file left in place means sshd can't restart next
+     * time, and then nobody can get into the machine at all
      */
     private function ensureConfig(): void
     {
         if ($this->executor->exists($this->executor->path(self::CONFIG_FILE))
             && $this->executor->readFile($this->executor->path(self::CONFIG_FILE)) === $this->configContent()) {
-            return;   // ตรงกับที่ต้องการอยู่แล้ว ไม่ต้องแตะ sshd เลย
+            return;   // Already matches what's wanted — no need to touch sshd at all
         }
 
         $this->assertIncludeSupported();
@@ -192,30 +208,34 @@ final class SftpAccessManager
     }
 
     /**
-     * sshd ต้องอ่าน config ใหม่ ไม่งั้นไฟล์ที่เพิ่งเขียนไม่มีผลอะไรเลย
+     * sshd must re-read the config, otherwise the file just written has no effect at all
      *
-     * **เจอจากการทดสอบบนเซิร์ฟเวอร์จริง (2026-08-10):** เดิมเขียนคอมเมนต์ไว้ว่า "การเชื่อมต่อ
-     * ใหม่อ่าน config ใหม่เองอยู่แล้ว" ซึ่ง**ผิด** — sshd อ่าน `sshd_config` ตอน start เท่านั้น
-     * แล้ว fork ตัวลูกจากภาพในหน่วยความจำนั้นมารับแต่ละการเชื่อมต่อ · ผลคือ `Match Group`
-     * ที่เพิ่งเขียนถูกมองข้ามทั้งหมด: ผู้ใช้ได้ shell `nologin` แทน `internal-sftp` แล้ว
-     * sftp client เห็นข้อความ "This account is currently not available" เป็น protocol
-     * ที่พังจึงรายงาน *"Received message too long"* ซึ่งชี้ไปคนละทางกับต้นตอโดยสิ้นเชิง
+     * **Found through testing on a real server (2026-08-10):** a comment here used to claim
+     * "new connections read the new config on their own" — which is **wrong**. sshd reads
+     * `sshd_config` only at start, then forks child processes from that in-memory image to
+     * handle each connection · the result was that a freshly written `Match Group` block was
+     * completely ignored: the user got the `nologin` shell instead of `internal-sftp`, the
+     * sftp client saw the "This account is currently not available" text as a broken
+     * protocol response and reported *"Received message too long"* — pointing entirely in
+     * the wrong direction from the real cause
      *
-     * ใช้ `reload` (SIGHUP) ไม่ใช่ `restart` — อ่าน config ใหม่โดยไม่ตัดการเชื่อมต่อที่ทำงานอยู่
-     * ซึ่งสำคัญมากเพราะผู้ดูแลอาจกำลัง ssh อยู่ผ่านเซสชันเดียวกันนั้น
+     * Uses `reload` (SIGHUP), not `restart` — re-reads the config without dropping active
+     * connections, which matters a lot since the admin may be ssh'd in through that very
+     * same session
      *
-     * **ยกเว้นเครื่องที่ใช้ socket activation** (ค่าเริ่มต้นของ Ubuntu 22.10+) ที่นั่นไม่มี
-     * sshd ตัวยาว ๆ ให้ reload เลย — `systemd` ปลุก `ssh@<n>.service` ใหม่ต่อการเชื่อมต่อ
-     * หนึ่งครั้ง แต่ละตัวจึงอ่าน `sshd_config` สด ๆ อยู่แล้วโดยธรรมชาติ · การสั่ง
-     * `systemctl reload ssh.service` บนเครื่องแบบนั้นล้มเสมอ ("Job type reload is not
-     * applicable") ซึ่งจะกลายเป็นข้อความผิดพลาดที่ผู้ดูแลแก้ตามแล้วไม่มีอะไรดีขึ้น
+     * **Except on machines using socket activation** (the default on Ubuntu 22.10+), where
+     * there's no long-lived sshd process to reload at all — `systemd` spins up a fresh
+     * `ssh@<n>.service` per connection, so each one naturally reads `sshd_config` fresh
+     * already · running `systemctl reload ssh.service` on such a machine always fails
+     * ("Job type reload is not applicable"), which would turn into an error message the
+     * admin chases without anything actually improving
      *
-     * @param array{unit:string,socket:bool} $activation ผลจาก assertSshdRunning()
+     * @param array{unit:string,socket:bool} $activation result from assertSshdRunning()
      */
     private function reloadSshd(array $activation): void
     {
         if ($activation['socket']) {
-            return;   // การเชื่อมต่อถัดไปได้ config ใหม่อยู่แล้ว ไม่มีอะไรต้องปลุก
+            return;   // The next connection already gets the new config — nothing to wake up
         }
 
         $systemctl = BinaryPath::resolve($this->executor, self::SYSTEMCTL_PATHS, 'systemd');
@@ -229,105 +249,117 @@ final class SftpAccessManager
         }
 
         throw new ExecutionFailed(
-            "เขียนไฟล์ตั้งค่าแล้วแต่สั่ง sshd ให้อ่านค่าใหม่ไม่สำเร็จ\n\n"
-            . "ไฟล์บนดิสก์ถูกต้องแล้ว — สั่งเองด้วย `sudo systemctl reload ssh` "
-            . 'แล้ว SFTP จะใช้งานได้ทันทีโดยไม่ต้องตั้งค่าใหม่',
+            "Config file written, but telling sshd to reload it failed\n\n"
+            . "The file on disk is already correct — run `sudo systemctl reload ssh` yourself "
+            . 'and SFTP will work immediately without needing to be reconfigured',
         );
     }
 
     /**
-     * แปลผลของ `sshd -t` ให้บอกทางแก้ ไม่ใช่แค่ส่งข้อความดิบต่อ
+     * Translate the `sshd -t` result into something actionable, instead of just passing the
+     * raw message along
      *
-     * ข้อความ "Missing privilege separation directory" ชี้ไปที่สภาพแวดล้อม (sshd ไม่ได้รัน)
-     * ไม่ใช่ที่ไฟล์ config ที่เพิ่งเขียน — ถ้าไม่แปล ผู้ดูแลจะไล่หาที่ผิดในไฟล์ที่ถูกต้องอยู่แล้ว
+     * The "Missing privilege separation directory" message points at the environment (sshd
+     * isn't running), not at the config file that was just written — without translating it,
+     * the admin would go chasing a bug in a file that's already correct
      */
     private function explainSshdTest(string $raw): string
     {
         if (str_contains($raw, 'Missing privilege separation directory')) {
-            return $raw . "\n\nข้อความนี้แปลว่า /run/sshd ไม่มีอยู่ ซึ่งเกิดเมื่อบริการ SSH "
-                . "ไม่ได้ทำงาน (systemd สร้างไดเรกทอรีนี้ตอน start เท่านั้น)\n"
-                . 'ไม่ใช่ปัญหาของไฟล์ตั้งค่าที่ระบบเพิ่งเขียน — เปิดบริการด้วย `sudo systemctl enable --now ssh` แล้วลองใหม่';
+            return $raw . "\n\nThis message means /run/sshd doesn't exist, which happens when the "
+                . "SSH service isn't running (systemd only creates this directory at start)\n"
+                . 'It is not a problem with the config file the system just wrote — enable the service with `sudo systemctl enable --now ssh` and try again';
         }
 
         return 'sshd -t: ' . $raw;
     }
 
     /**
-     * `sshd_config` หลักต้องมีบรรทัด `Include` ถึงจะอ่านไฟล์ที่เราเขียน
+     * The main `sshd_config` needs an `Include` line before it will read the file we write
      *
-     * Ubuntu 22.04+ / Debian 12+ มีให้เป็นค่าเริ่มต้น แต่เครื่องที่ตั้งค่าเองอาจไม่มี —
-     * ถ้าเขียนไฟล์ทิ้งไว้เฉย ๆ โดยไม่มีใครอ่าน ผู้ดูแลจะเห็นว่า "เปิด SFTP สำเร็จ" แต่
-     * ล็อกอินไม่ได้จริงและหาสาเหตุไม่เจอ — ต้องบอกให้ชัดตั้งแต่ตอนนี้แทนที่จะล้มเงียบ
+     * Ubuntu 22.04+ / Debian 12+ ship it by default, but a hand-configured machine might not
+     * have it — if the file were written and just left there with nobody reading it, the
+     * admin would see "SFTP enabled successfully" but be unable to actually log in, with no
+     * way to find out why — this must be reported clearly now instead of failing silently
      */
     private function assertIncludeSupported(): void
     {
         $main = $this->executor->path(\Phpcp\Driver\SshManager::CONFIG);
 
         if (!$this->executor->exists($main)) {
-            throw new ExecutionFailed('ไม่พบ ' . \Phpcp\Driver\SshManager::CONFIG . ' — เครื่องนี้อาจไม่ได้ติดตั้ง OpenSSH server');
+            throw new ExecutionFailed('Cannot find ' . \Phpcp\Driver\SshManager::CONFIG . ' — this machine may not have OpenSSH server installed');
         }
 
         $content = $this->executor->readFile($main);
 
-        // จับ `Include /etc/ssh/sshd_config.d/*.conf` โดยไม่สนช่องว่างและตัวพิมพ์
+        // Matches `Include /etc/ssh/sshd_config.d/*.conf` regardless of whitespace or case
         if (preg_match('/^\s*Include\s+.*sshd_config\.d/mi', $content) !== 1) {
             throw new ExecutionFailed(
-                "sshd_config ของเครื่องนี้ไม่มีบรรทัด Include ของ /etc/ssh/sshd_config.d/\n\n"
-                . "เพิ่มบรรทัดนี้ไว้**บนสุด**ของ /etc/ssh/sshd_config แล้วลองใหม่:\n"
+                "This machine's sshd_config has no Include line for /etc/ssh/sshd_config.d/\n\n"
+                . "Add this line at the **top** of /etc/ssh/sshd_config and try again:\n"
                 . "    Include /etc/ssh/sshd_config.d/*.conf\n\n"
-                . 'ต้องอยู่บนสุดเพราะ OpenSSH ใช้ค่าแรกที่เจอสำหรับแต่ละคีย์',
+                . 'It must be at the top because OpenSSH uses the first value it finds for each key',
             );
         }
     }
 
     /**
-     * เนื้อไฟล์ config — คงที่เสมอ ไม่ขึ้นกับผู้ใช้คนใดคนหนึ่ง
+     * Config file content — always constant, doesn't depend on any specific user
      *
-     * ใช้ `%u` ให้ OpenSSH แทนชื่อผู้ใช้เอง จึงไม่ต้องเขียนไฟล์ใหม่ทุกครั้งที่เพิ่มบัญชี
-     * (และไม่มีชื่อผู้ใช้ของลูกค้าโผล่ในไฟล์ config ของระบบ)
+     * Uses `%u` so OpenSSH substitutes the username itself, so the file never needs to be
+     * rewritten when an account is added (and no customer username ever appears in the
+     * system's config file)
      */
     private function configContent(): string
     {
         $usersDir = rtrim(\Phpcp\Kernel\Paths::usersDir(), '/');
 
         return <<<CONF
-            # จัดการโดย phpcp โดยอัตโนมัติ — ห้ามแก้ไขด้วยมือ (PLAN-V2 เฟส E4)
-            # เปิด/ปิด SFTP ต่อบัญชีทำผ่านหน้าผู้ใช้ของ panel
+            # Managed automatically by phpcp — do not edit by hand (PLAN-V2 Phase E4)
+            # Enable/disable SFTP per account is done through the panel's user interface
 
             Match Group {$this->groupName()}
-                # chroot ที่ไดเรกทอรี**แม่** ไม่ใช่บ้านของผู้ใช้ — เจตนา ไม่ใช่ความมักง่าย
+                # Chroot at the **parent** directory, not the user's home — deliberate, not sloppy
                 #
-                # OpenSSH บังคับว่า ChrootDirectory ต้องเป็นของ root และ group/other เขียนไม่ได้
-                # แต่บ้านของผู้ใช้ต้องเป็นของผู้ใช้ (เขียนได้) และกลุ่มต้องเป็น www-data
-                # เพื่อให้เว็บเซิร์ฟเวอร์เดินผ่านไปถึง docroot ได้ — สองข้อนี้ขัดกันโดยตรง
+                # OpenSSH requires ChrootDirectory to be owned by root and not writable by
+                # group/other, but the user's home must be owned by the user (writable) and
+                # its group must be www-data so the web server can traverse down to the
+                # docroot — these two requirements directly conflict
                 #
-                # การฝืนเปลี่ยนเจ้าของบ้านเป็น root ทำให้ต้องเลือกอย่างใดอย่างหนึ่ง:
-                # เว็บตอบ 403 ทั้งเว็บ (www-data เดินผ่านไม่ได้) หรือเปิด other เป็น r-x
-                # (ลูกค้ารายอื่นเห็นโครงสร้างบ้านกันได้ = ลดชั้นความปลอดภัยที่ §7.1 ข้อ 2 ห้าม)
+                # Forcing the home directory's owner to root would force a choice: the whole
+                # site returns 403 (www-data can't traverse it), or other gets opened to r-x
+                # (other customers can see each other's home directory layout — a drop in
+                # the security tier forbidden by §7.1 item 2)
                 #
-                # ไดเรกทอรีแม่เป็น root:root 0711 อยู่แล้วตั้งแต่ AccountProvisioner::createHome()
-                # จึงตรงเงื่อนไขของ OpenSSH พอดีโดยไม่ต้องแก้อะไรเลย · 0711 ยังแปลว่าผู้ใช้
-                # `ls /` แล้วเห็นว่างเปล่า — มองไม่เห็นด้วยซ้ำว่ามีลูกค้ารายอื่นอยู่บนเครื่อง
+                # The parent directory has been root:root 0711 since AccountProvisioner::createHome()
+                # already, so it meets OpenSSH's requirement exactly with nothing to change
+                # · 0711 also means a user running `ls /` sees nothing — they can't even
+                # tell other customers exist on the machine
                 ChrootDirectory {$usersDir}
-                # บังคับ SFTP เท่านั้น ต่อให้ขอ shell ก็ไม่ได้ · internal-sftp จำเป็นสำหรับ chroot
-                # เพราะ sftp-server แบบไฟล์ภายนอกอยู่นอก chroot จึงเรียกไม่ถึง
+                # Force SFTP only, even if a shell is requested · internal-sftp is required
+                # for chroot, because an external sftp-server binary would sit outside the
+                # chroot and be unreachable
                 #
-                # -d /%u พาเข้าบ้านตัวเองทันทีหลังล็อกอิน (เส้นทางสัมพัทธ์กับ chroot)
-                # ผู้ใช้จึงไม่ต้องรู้ว่าตัวเองอยู่ใต้ไดเรกทอรีรวม และ cd ออกไปไหนไม่ได้อยู่ดี
+                # -d /%u drops the user straight into their own home right after login (path
+                # relative to the chroot), so the user never needs to know they're under a
+                # shared parent directory, and can't cd their way out anyway
                 ForceCommand internal-sftp -d /%u
-                # ตัดทุกอย่างที่ไม่ใช่การรับส่งไฟล์ — กัน SFTP กลายเป็นทางออกสู่เครือข่ายภายใน
+                # Cut off everything that isn't file transfer — prevents SFTP from becoming
+                # a route into the internal network
                 AllowTcpForwarding no
                 AllowAgentForwarding no
                 AllowStreamLocalForwarding no
                 PermitTunnel no
                 X11Forwarding no
-                # ลูกค้าส่วนใหญ่ใช้รหัสผ่านกับโปรแกรม FTP client — เปิดเฉพาะกลุ่มนี้
-                # ไม่กระทบค่า PasswordAuthentication ระดับเครื่องที่ผู้ดูแลตั้งไว้
+                # Most customers use a password with their FTP client program — enabled
+                # only for this group, doesn't affect the machine-wide PasswordAuthentication
+                # setting the admin has configured
                 PasswordAuthentication yes
 
-            # คืน scope กลับเป็น global — **ห้ามลบบรรทัดนี้**
-            # ทุก directive ที่ตามหลัง Match จะอยู่ใน scope นั้นไปเรื่อย ๆ ข้ามไฟล์ด้วย
-            # ถ้าไม่ปิด ค่าตั้งที่เหลือของทั้งเครื่องจะกลายเป็นของกลุ่ม SFTP โดยไม่มีใครรู้
+            # Return scope to global — **do not delete this line**
+            # Every directive following Match stays in that scope indefinitely, across
+            # files too, unless closed — if left unclosed, the rest of the machine's
+            # settings would silently fall under the SFTP group's scope with nobody noticing
             Match all
 
             CONF;
@@ -346,21 +378,22 @@ final class SftpAccessManager
         );
 
         if (!$result->ok()) {
-            throw new ExecutionFailed('เพิ่มบัญชีเข้ากลุ่ม SFTP ไม่สำเร็จ: ' . trim($result->stderr));
+            throw new ExecutionFailed('Failed to add account to the SFTP group: ' . trim($result->stderr));
         }
     }
 
     private function removeFromGroup(UserAccount $account): void
     {
-        // ล้มได้ถ้าไม่ได้อยู่ในกลุ่มอยู่แล้ว — ถือว่าเป็นผลลัพธ์ที่ต้องการ (ปิดอยู่แล้ว)
+        // Can fail if the account isn't in the group already — treated as the desired outcome (already disabled)
         $this->executor->exec([self::GPASSWD, '-d', $account->username, self::GROUP], timeout: 15);
     }
 
     /**
-     * ตั้งรหัสผ่านผ่าน stdin ของ `chpasswd` ไม่ใช่อาร์กิวเมนต์
+     * Set the password via `chpasswd`'s stdin, not an argument
      *
-     * รหัสผ่านที่ส่งทางอาร์กิวเมนต์อ่านได้จาก `/proc/<pid>/cmdline` โดยผู้ใช้อื่นบนเครื่อง
-     * เดียวกัน — เหตุผลเดียวกับที่ `SshDestination` ไม่รองรับ password auth
+     * A password passed as an argument can be read from `/proc/<pid>/cmdline` by other
+     * users on the same machine — the same reason `SshDestination` doesn't support
+     * password auth
      */
     private function setPassword(UserAccount $account, string $password): void
     {
@@ -371,30 +404,30 @@ final class SftpAccessManager
         );
 
         if (!$result->ok()) {
-            throw new ExecutionFailed('ตั้งรหัสผ่าน SFTP ไม่สำเร็จ: ' . trim($result->stderr));
+            throw new ExecutionFailed('Failed to set the SFTP password: ' . trim($result->stderr));
         }
     }
 
-    /** `!` นำหน้าแฮชทำให้รหัสผ่านใช้ไม่ได้ โดยไม่ลบแฮชทิ้ง (เปิดกลับได้ด้วยรหัสใหม่) */
+    /** A `!` prefix on the hash makes the password unusable without deleting the hash (can be re-enabled with a new password) */
     private function lockPassword(UserAccount $account): void
     {
         $this->executor->exec([self::USERMOD, '--lock', $account->username], timeout: 15);
     }
 
     /**
-     * กฎรหัสผ่านของ SFTP — เข้มกว่าค่าปริยายเพราะเป็นบัญชีที่เข้าถึงไฟล์ได้โดยตรง
-     * และเปิดให้ล็อกอินด้วยรหัสผ่านจากอินเทอร์เน็ต (ต่างจากบัญชี panel ที่มี rate limit
-     * และ 2FA ของตัวเอง — sshd ไม่มีทั้งสองอย่างนั้นให้)
+     * SFTP password rules — stricter than the default because this is an account with
+     * direct file access, exposed to password login from the internet (unlike panel
+     * accounts, which have their own rate limiting and 2FA — sshd offers neither of those)
      */
     private function assertPassword(string $password): void
     {
         if (mb_strlen($password) < 12) {
-            throw new ValidationError('รหัสผ่าน SFTP ต้องยาวอย่างน้อย 12 ตัวอักษร');
+            throw new ValidationError('SFTP password must be at least 12 characters long');
         }
 
-        // อักขระควบคุมและ : ทำลายรูปแบบ `user:password` ที่ chpasswd อ่านจาก stdin
+        // Control characters and : break the `user:password` format that chpasswd reads from stdin
         if (preg_match('/[\x00-\x1F\x7F:]/', $password) === 1) {
-            throw new ValidationError('รหัสผ่าน SFTP ต้องไม่มีเครื่องหมาย : หรืออักขระควบคุม');
+            throw new ValidationError('SFTP password must not contain a : character or control characters');
         }
     }
 }

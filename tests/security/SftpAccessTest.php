@@ -316,7 +316,7 @@ test('sshd ที่ไม่ได้ทำงานอยู่ต้องถ
     } catch (Phpcp\Agent\ExecutionFailed $e) {
         $message = $e->getMessage();
 
-        assertTrue(str_contains($message, 'SSH ไม่ได้ทำงาน'), 'ต้องบอกสาเหตุจริงว่า sshd ไม่ทำงาน: ' . $message);
+        assertTrue(str_contains($message, "SSH service isn't running"), 'ต้องบอกสาเหตุจริงว่า sshd ไม่ทำงาน: ' . $message);
         assertTrue(str_contains($message, 'systemctl enable --now ssh'), 'ต้องบอกคำสั่งที่ต้องรันให้ด้วย: ' . $message);
     }
 });
@@ -326,7 +326,7 @@ test('ข้อความ Missing privilege separation directory ถูกแ�
     $explain = (new ReflectionMethod($manager, 'explainSshdTest'));
 
     $translated = (string) $explain->invoke($manager, 'Missing privilege separation directory: /run/sshd');
-    assertTrue(str_contains($translated, 'ไม่ใช่ปัญหาของไฟล์ตั้งค่า'), 'ต้องบอกว่าไม่ใช่ความผิดของไฟล์ที่เพิ่งเขียน: ' . $translated);
+    assertTrue(str_contains($translated, 'not a problem with the config file'), 'ต้องบอกว่าไม่ใช่ความผิดของไฟล์ที่เพิ่งเขียน: ' . $translated);
 
     // ข้อความอื่นต้องไม่ถูกแต่งเติมจนหาต้นฉบับไม่เจอ
     $plain = (string) $explain->invoke($manager, 'line 42: Bad configuration option');
