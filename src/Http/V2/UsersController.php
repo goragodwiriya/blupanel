@@ -873,6 +873,7 @@ final class UsersController extends ApiController
         $presented = ($row['role'] ?? '') !== Permissions::WEBADMIN
             ? UserResource::one($row)
             : UserResource::withHosting($row, $quota->summary($id) ?? [], count($users->siteIds($id)));
+        $presented['role_label'] = $this->t($presented['role_label']);
 
         /*
          * An account's sites are always in the same shape — this used to be

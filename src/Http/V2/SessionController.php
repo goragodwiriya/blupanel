@@ -279,8 +279,11 @@ final class SessionController extends ApiController
             return $state;
         }
 
+        $presented = UserResource::one($user);
+        $presented['role_label'] = $this->t($presented['role_label']);
+
         return $state + [
-            'user' => UserResource::one($user),
+            'user' => $presented,
             'permissions' => $this->permissionMap(),
             'must_change_password' => $this->ctx->mustChangePassword(),
         ];

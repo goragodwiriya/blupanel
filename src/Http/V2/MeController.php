@@ -33,7 +33,10 @@ final class MeController extends ApiController
             return $this->problem(ApiProblem::Unauthenticated, 'Your account was not found');
         }
 
-        return $this->ok(UserResource::withPermissions($user));
+        $presented = UserResource::withPermissions($user);
+        $presented['role_label'] = $this->t($presented['role_label']);
+
+        return $this->ok($presented);
     }
 
     /**

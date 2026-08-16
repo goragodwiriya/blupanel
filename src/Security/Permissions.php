@@ -4,16 +4,19 @@ declare (strict_types = 1);
 namespace Phpcp\Security;
 
 /**
- * แผนที่ role → permission ตาม ARCHITECTURE §8
+ * The role → permission map, per ARCHITECTURE §8
  *
- * ไฟล์นี้เป็นแหล่งความจริงเดียว ใช้ทั้งที่ middleware (ชั้น 1) และที่ agent (ชั้น 2)
-
- * ตรวจสองที่โดยเจตนา — ชั้น 1 กันไม่ให้เรนเดอร์ปุ่มและกันเปิด URL ตรง ๆ
- * ส่วนชั้น 2 กันกรณีที่ชั้น 1 มีบั๊กจนหลุดมาได้
+ * This file is the single source of truth, used both at the middleware
+ * (layer 1) and the agent (layer 2)
  *
- * ข้อสังเกตที่บันทึกไว้ให้ตรงกับความจริง: agent คำนวณ permission จาก role ที่ web tier ส่งมา
- * ถ้า web tier ถูกยึดทั้งตัว ผู้โจมตีปลอม role ได้ ขอบเขตที่แท้จริงจึงคือรายการ capability
- * กับ validator ของมัน (SECURITY §2.4) ซึ่งยังกันอยู่แม้ในกรณีนั้น
+ * Checking in two places is deliberate — layer 1 prevents rendering buttons
+ * and blocks opening the URL directly, while layer 2 covers the case where
+ * layer 1 has a bug that let something through
+ *
+ * A note kept honest with reality: the agent computes permissions from the
+ * role the web tier sends it. If the web tier were fully compromised, an
+ * attacker could forge the role — the genuine boundary is therefore the
+ * capability list and its validator (SECURITY §2.4), which still holds even in that case
  */
 final class Permissions
 {
@@ -21,13 +24,13 @@ final class Permissions
     public const SYSADMIN = 'sysadmin';
     public const WEBADMIN = 'webadmin';
 
-    /** @return array<string,string> role => ชื่อที่แสดงใน UI */
+    /** @return array<string,string> role => the name shown in the UI */
     public static function roleLabels(): array
     {
         return [
-            self::SUPERADMIN => 'ผู้ดูแลระบบ',
-            self::SYSADMIN => 'ผู้ดูแลเซิร์ฟเวอร์',
-            self::WEBADMIN => 'ผู้ดูแลเว็บไซต์'
+            self::SUPERADMIN => 'Administrator',
+            self::SYSADMIN => 'Server admin',
+            self::WEBADMIN => 'Website admin'
         ];
     }
 
@@ -39,74 +42,78 @@ final class Permissions
         return self::roleLabels()[$role] ?? $role;
     }
 
-    /** permission ทั้งหมดที่มีในระบบ พร้อมคำอธิบายไทย */
+    /** Every permission that exists in the system, with its description */
     public static function all(): array
     {
         return [
-            'dashboard.view' => 'ดูแดชบอร์ด',
+            'dashboard.view' => 'View the dashboard',
 
             // Hosting
-            'site.view' => 'ดูเว็บไซต์',
-            'site.create' => 'สร้างเว็บไซต์',
-            'site.edit' => 'แก้ไขเว็บไซต์',
-            'site.suspend' => 'ระงับเว็บไซต์',
-            'site.delete' => 'ลบเว็บไซต์',
-            'domain.view' => 'ดูโดเมน',
-            'domain.manage' => 'จัดการโดเมนและ DNS',
-            'ssl.view' => 'ดู SSL Certificates',
-            'ssl.manage' => 'ติดตั้งและต่ออายุ SSL',
-            'php.view' => 'ดูข้อมูล PHP',
-            'php.manage' => 'ติดตั้ง/ถอน PHP extension และตั้งค่า PHP',
-            'db.view' => 'ดูฐานข้อมูล',
-            'db.manage' => 'จัดการฐานข้อมูลและผู้ใช้ฐานข้อมูล',
-            'file.view' => 'ดูไฟล์',
-            'file.manage' => 'แก้ไขไฟล์',
-            'cron.view' => 'ดูงานอัตโนมัติ',
-            'cron.manage' => 'จัดการงานอัตโนมัติ',
-            'mail.view' => 'ดูกล่องจดหมาย',
-            'mail.manage' => 'จัดการกล่องจดหมายและที่อยู่ส่งต่อ',
-            'backup.view' => 'ดูข้อมูลสำรอง',
-            'backup.manage' => 'สร้างและลบข้อมูลสำรอง',
-            'backup.restore' => 'กู้คืนข้อมูล',
+            'site.view' => 'View websites',
+            'site.create' => 'Create websites',
+            'site.edit' => 'Edit websites',
+            'site.suspend' => 'Suspend websites',
+            'site.delete' => 'Delete websites',
+            'domain.view' => 'View domains',
+            'domain.manage' => 'Manage domains and DNS',
+            'ssl.view' => 'View SSL certificates',
+            'ssl.manage' => 'Install and renew SSL',
+            'php.view' => 'View PHP information',
+            'php.manage' => 'Install/remove PHP extensions and configure PHP',
+            'db.view' => 'View databases',
+            'db.manage' => 'Manage databases and database users',
+            'file.view' => 'View files',
+            'file.manage' => 'Edit files',
+            'cron.view' => 'View scheduled jobs',
+            'cron.manage' => 'Manage scheduled jobs',
+            'mail.view' => 'View mailboxes',
+            'mail.manage' => 'Manage mailboxes and forwarders',
+            'backup.view' => 'View backups',
+            'backup.manage' => 'Create and delete backups',
+            'backup.restore' => 'Restore data',
 
-            // แยกจาก backup.manage โดยเจตนา — `backup.manage` เป็นสิทธิ์ของ **หมวด
-            // Hosting** ที่ผู้ดูแลเว็บไซต์มี (สร้าง/ลบไฟล์สำรองของเว็บตัวเอง) ส่วนปลายทาง
-            // นอกเครื่องกับตารางเวลาเป็นของ **ทั้งเครื่อง**: ปลายทางหนึ่งที่รับไฟล์สำรอง
-            // ของลูกค้าทุกราย และตารางเวลารันในนามของ "ระบบ" · ใช้สิทธิ์เดียวกันไม่ได้
-            'backup.offsite' => 'จัดการปลายทางสำรองและตารางเวลาสำรองอัตโนมัติ',
+            // Deliberately separate from backup.manage — `backup.manage` is a
+            // **Hosting** permission a website admin holds (create/delete
+            // their own website's backup files), while offsite destinations
+            // and the schedule belong to the **whole machine**: one
+            // destination receives every customer's backup files, and the
+            // schedule runs on behalf of "the system" · they can't share a permission
+            'backup.offsite' => 'Manage offsite backup destinations and the automatic backup schedule',
 
             // Customer
-            'customer.view' => 'ดูลูกค้า',
-            'customer.manage' => 'จัดการลูกค้า (สร้าง/แก้ไข/ลบ)',
+            'customer.view' => 'View customers',
+            'customer.manage' => 'Manage customers (create/edit/delete)',
 
             // Server
-            'server.view' => 'ดูภาพรวมเซิร์ฟเวอร์',
-            'service.view' => 'ดูสถานะบริการ',
-            'service.control' => 'สั่งงานบริการ (start/stop/restart/reload)',
-            'security.view' => 'ดูศูนย์ความปลอดภัย',
-            'security.manage' => 'แก้ไขการตั้งค่าความปลอดภัย',
-            'firewall.view' => 'ดู Firewall',
-            'firewall.manage' => 'จัดการกฎ Firewall',
-            'ssh.view' => 'ดูการตั้งค่า SSH',
-            'ssh.manage' => 'แก้ไขการตั้งค่า SSH',
-            'log.view' => 'ดู Logs',
+            'server.view' => 'View the server overview',
+            'service.view' => 'View service status',
+            'service.control' => 'Control services (start/stop/restart/reload)',
+            'security.view' => 'View the security center',
+            'security.manage' => 'Edit security settings',
+            'firewall.view' => 'View the firewall',
+            'firewall.manage' => 'Manage firewall rules',
+            'ssh.view' => 'View SSH settings',
+            'ssh.manage' => 'Edit SSH settings',
+            'log.view' => 'View logs',
 
-            // แยกจาก domain.manage โดยเจตนา — domain.manage เป็นสิทธิ์ของ**หมวด Hosting**
-            // ที่ผู้ดูแลเว็บไซต์มี (แก้ DNS record ของโดเมนตัวเอง ซึ่งไปสั่งเขียน zone
-            // ของโดเมนนั้นทีละโดเมนอัตโนมัติอยู่แล้ว) ส่วนการ "สั่งซิงก์ทุกโดเมนใหม่ทั้งหมด"
-            // (`dns.reload`) กระทบ zone ของลูกค้าทุกรายพร้อมกันและแก้ named.conf.local ทั้งไฟล์
-            // จึงเป็นสิทธิ์ของทั้งเครื่องแบบเดียวกับ backup.offsite — ใช้สิทธิ์เดียวกันไม่ได้
-            'dns.manage' => 'สั่งซิงก์ DNS zone ทั้งหมดกับ BIND9',
-            'user.view' => 'ดูผู้ใช้งานระบบ',
-            'user.manage' => 'จัดการผู้ใช้งานระบบ',
-            'settings.view' => 'ดูการตั้งค่าเซิร์ฟเวอร์',
-            'settings.manage' => 'แก้ไขการตั้งค่าเซิร์ฟเวอร์',
-            'audit.view' => 'ดู Audit Log'
+            // Deliberately separate from domain.manage — domain.manage is a
+            // **Hosting** permission a website admin holds (edits their own
+            // domain's DNS records, which already automatically writes that
+            // one domain's zone), while "resync every domain at once"
+            // (`dns.reload`) touches every customer's zone simultaneously and
+            // rewrites the whole named.conf.local file — a whole-machine
+            // permission just like backup.offsite — they can't share a permission
+            'dns.manage' => 'Resync every DNS zone with BIND9',
+            'user.view' => 'View panel users',
+            'user.manage' => 'Manage panel users',
+            'settings.view' => 'View server settings',
+            'settings.manage' => 'Edit server settings',
+            'audit.view' => 'View the audit log'
         ];
     }
 
     /**
-     * permission ของแต่ละ role
+     * Each role's permissions
      *
      * @return list<string>
      */
@@ -115,7 +122,7 @@ final class Permissions
         return match ($role) {
             self::SUPERADMIN => array_keys(self::all()),
 
-            // Server ทั้งหมด + Hosting แบบดูอย่างเดียว + Customer
+            // All of Server + view-only Hosting + Customer
             self::SYSADMIN => [
                 'dashboard.view',
                 'site.view', 'domain.view', 'ssl.view', 'php.view', 'php.manage',
@@ -135,22 +142,28 @@ final class Permissions
             ],
 
             /*
-             * เฉพาะเว็บไซต์ของตัวเอง — ไม่มี permission ของหมวด SERVER แม้แต่ตัวเดียว
+             * Only their own websites — not a single SERVER-category permission
              *
-             * **ไม่มี `cron.*`** — งานอัตโนมัติของลูกค้าไปจบที่ crontab ของ**ระบบ** ซึ่งเป็น
-             * ทรัพยากรของทั้งเครื่อง ไม่ใช่ของเว็บใดเว็บหนึ่ง · คำสั่งที่รันตามเวลาโดยไม่มี
-             * ใครดูอยู่คือทางที่ตรงที่สุดจากบัญชีโฮสติ้งไปสู่การรันโค้ดบนเครื่องซ้ำ ๆ
-             * จึงเป็นเรื่องที่ผู้ดูแลตั้งให้ ไม่ใช่ลูกค้าตั้งเอง
+             * **No `cron.*`** — a customer's scheduled jobs end up in the
+             * **system's** crontab, a whole-machine resource, not something
+             * that belongs to any one website · a command that runs on a
+             * schedule with nobody watching is the most direct path from a
+             * hosting account to running code on the machine repeatedly, so
+             * it's something an admin sets up, not something a customer sets up themselves
              *
-             * **ไม่มี `backup.*`** — หน้าไฟล์สำรองเป็นเครื่องมือของผู้ดูแล · ที่สำคัญคือ
-             * **ลูกค้าไม่ได้เสียการเข้าถึงสำเนาของตัวเองไปเลยแม้แต่น้อย** เพราะไฟล์อยู่ที่
-             * `<บ้าน>/backup` ของเขาเอง (PLAN-BACKUP-V2 ข้อ B1) — เปิด ดาวน์โหลด และลบทิ้ง
-             * ได้ผ่านตัวจัดการไฟล์กับ SFTP ซึ่งเป็นข้อตกลงหลักของแผนนั้นตั้งแต่แรก
-             * (ข้อ B4: "ตัวไฟล์คือความจริง เพราะลูกค้าลบมันเองได้") · `file.view`/`file.manage`
-             * ข้างล่างจึงเป็นสิทธิ์ที่ทำให้ข้อตกลงนั้นยังเป็นจริง
+             * **No `backup.*`** — the backup files page is an admin tool ·
+             * importantly, **the customer loses none of their own access to
+             * their own copies**, since the files live at their own
+             * `<home>/backup` (PLAN-BACKUP-V2 item B1) — opening, downloading,
+             * and deleting them works through the file manager and SFTP,
+             * which has been that plan's core agreement from the start (item
+             * B4: "the file itself is the truth, because the customer can
+             * delete it themselves") · the `file.view`/`file.manage`
+             * permissions below are what keeps that agreement true
              *
-             * การสร้างไฟล์สำรองเป็น `backup.offsite` (ของผู้ดูแล) มาตั้งแต่ต้นอยู่แล้ว —
-             * ลูกค้าไม่เคยกดสร้างเองได้ ดู {@see \Phpcp\Agent\Capability\BackupCreate}
+             * Creating a backup file has always been `backup.offsite` (the
+             * admin's) from the start — a customer has never been able to
+             * click to create one themselves, see {@see \Phpcp\Agent\Capability\BackupCreate}
              */
             self::WEBADMIN => [
                 'dashboard.view',
@@ -185,8 +198,8 @@ final class Permissions
     }
 
     /**
-     * role ที่เห็นเมนูหมวด SERVER — ใช้ตัดสินใจตอนเรนเดอร์ sidebar
-     * ให้ผลตรงกับ permission เสมอเพราะคำนวณจากแหล่งเดียวกัน
+     * The roles that see the SERVER category's menu — used when deciding
+     * how to render the sidebar, always matches the permission since it's computed from the same source
      */
     public static function seesServerSection(string $role): bool
     {

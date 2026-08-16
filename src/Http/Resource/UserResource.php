@@ -24,12 +24,14 @@ final class UserResource extends Resource
             'id' => (int) ($row['id'] ?? 0),
             'username' => self::string($row['username'] ?? ''),
             'role' => $role,
-            // The role's display name is also sent, so the SPA doesn't need to
-            // know the PHP-side lookup table · once phase C's i18n work is done,
-            // the frontend will translate from `role` itself and this field
-            // gets dropped — for now this still returns Thai text directly,
-            // since src/Security's Permissions::roleLabel() hasn't been
-            // converted to English source yet
+            // The role's display name is also sent, so the SPA doesn't need
+            // to know the PHP-side lookup table · once phase C's i18n work is
+            // done, the frontend will translate from `role` itself and this
+            // field gets dropped — for now this is English source text,
+            // untranslated, since this is a static Resource class with no
+            // `$this->t()` access · every caller that puts this on an HTTP
+            // response (MeController::show(), SessionController::state(),
+            // UsersController::present()) wraps it in `$this->t()` itself before sending
             'role_label' => Permissions::roleLabel($role),
             // Two axes deliberately kept separate: status controls login
             // privileges · service_status controls the hosting service · before
