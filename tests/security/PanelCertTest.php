@@ -135,7 +135,7 @@ test('คู่กุญแจที่ไม่ตรงกันต้อง�
 
     assertTrue($message !== '', 'คู่กุญแจที่ไม่ตรงกันต้องถูกปฏิเสธ');
     assertTrue(
-        str_contains($message, 'ไม่ใช่คู่กัน'),
+        str_contains($message, 'not a matching pair'),
         'ต้องบอกให้ชัดว่าปัญหาคืออะไร ไม่ใช่แค่ "ผิดพลาด": ' . $message,
     );
 });
@@ -159,7 +159,7 @@ test('ใบที่หมดอายุแล้วต้องถูกป�
     }
 
     assertTrue($message !== '', 'ใบที่หมดอายุต้องถูกปฏิเสธ');
-    assertTrue(str_contains($message, 'หมดอายุ'), 'ต้องบอกว่าหมดอายุ: ' . $message);
+    assertTrue(str_contains($message, 'expired'), 'ต้องบอกว่าหมดอายุ: ' . $message);
 });
 
 test('ไฟล์ที่ไม่มีอยู่ต้องบอกว่าให้ไปขอใบก่อน ไม่ใช่ล้มแบบไม่มีคำอธิบาย', static function (): void {
@@ -177,7 +177,7 @@ test('ไฟล์ที่ไม่มีอยู่ต้องบอกว�
 
     assertTrue($message !== '', 'ไฟล์ที่ไม่มีต้องถูกปฏิเสธ');
     assertTrue(
-        str_contains($message, 'ขอใบรับรองให้โดเมนนี้ก่อน'),
+        str_contains($message, 'request a certificate for this domain first'),
         'ต้องบอกทางแก้ ไม่ใช่แค่บอกว่าไม่พบไฟล์: ' . $message,
     );
 });

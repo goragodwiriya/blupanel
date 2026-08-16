@@ -11,53 +11,64 @@ use Phpcp\Support\BinaryPath;
 use Phpcp\Support\Validator;
 
 /**
- * ใบรับรองของ **หน้าจัดการเอง** — คนละเรื่องกับใบรับรองของเว็บไซต์ที่ลูกค้าใช้
+ * The certificate for **the panel's own login page** — an entirely
+ * different thing from the certificate a customer's website uses
  *
- * ## ทำไมต้องมีตัวนี้แยกออกมา
+ * ## Why this needs to be kept separate
  *
- * Apache ของ panel อ่านไฟล์ที่ `/etc/phpcp/tls/panel.crt` ตายตัวจาก `httpd.conf` ที่ตัวติดตั้ง
- * สร้างไว้ · เดิมจึงเปลี่ยนเป็นใบจริงได้ด้วยการแก้ไฟล์ด้วยมือเท่านั้น แล้วผู้ดูแลก็คลิกผ่าน
- * คำเตือนใบรับรองทุกวันไปเรื่อย ๆ — ซึ่งเป็นการฝึกให้คนเพิกเฉยต่อคำเตือนที่วันหนึ่งจะเป็นของจริง
+ * The panel's own Apache reads a fixed file at `/etc/phpcp/tls/panel.crt`,
+ * from an `httpd.conf` the installer generated · this used to only be
+ * changeable to a real certificate by editing the file by hand, and admins
+ * just clicked through the certificate warning every single day instead —
+ * training people to ignore a warning that will one day be real.
  *
- * ## คัดลอกไฟล์ ไม่ใช่ symlink
+ * ## Copies the file, never a symlink
  *
- * ทางที่ดูสั้นกว่าคือ symlink ไปที่ `/etc/letsencrypt/live/...` แต่มีปัญหาสองข้อที่ทำให้ใช้ไม่ได้:
+ * The shorter-looking path would be a symlink to
+ * `/etc/letsencrypt/live/...`, but two problems rule that out:
  *
- *   1. **`RollbackGuard` คืนค่าด้วยการ *เขียนเนื้อไฟล์*** — ถ้าปลายทางเป็น symlink การคืนค่า
- *      จะเขียนทะลุไปทับใบรับรองตัวจริงของ Let's Encrypt ซึ่งเว็บไซต์ของลูกค้าใช้อยู่ด้วย
- *   2. Apache อ่านไฟล์ตอนสตาร์ตในฐานะ root ก็จริง แต่การพึ่งสิทธิ์ของไดเรกทอรีอื่นทำให้
- *      ความถูกต้องขึ้นกับสิ่งที่อยู่นอกความควบคุมของ panel
+ *   1. **`RollbackGuard` restores by *writing file content*** — if the
+ *      destination were a symlink, a restore would write straight through
+ *      it and overwrite the genuine Let's Encrypt certificate a customer's
+ *      website is also using.
+ *   2. Apache does read the file as root at start time, but relying on
+ *      another directory's permissions makes correctness depend on
+ *      something outside the panel's own control.
  *
- * คัดลอกแล้วให้ **deploy hook ของ certbot** คัดลอกใหม่ทุกครั้งที่ต่ออายุ ({@see hookScript()})
- * — ขาด hook นี้คือใบจะหมดอายุใน 90 วันแล้วกลับไปเจอคำเตือนอีก ทั้งที่ไฟล์บนดิสก์ถูกต้อง
+ * So the file is copied, and **certbot's own deploy hook** re-copies it on
+ * every renewal ({@see hookScript()}) — missing this hook means the
+ * certificate expires in 90 days and the warning is right back, even though
+ * the file on disk is correct.
  *
- * ## ลำดับการตรวจก่อนสลับ
+ * ## The order of checks before switching
  *
- * ตรวจที่นี่ก่อนสามข้อ (มีไฟล์ · กุญแจกับใบเป็นคู่กันจริง · ยังไม่หมดอายุ) แล้วให้
- * **ตัวตรวจของ Apache เอง** ตัดสินอีกชั้นผ่าน {@see ConfigTransaction} · คู่กุญแจที่ไม่ตรงกัน
- * ทำให้ Apache สตาร์ตไม่ขึ้นในการรีบูตครั้งถัดไป ซึ่งเป็นการล็อกตัวเองออกจากเครื่องแบบที่
- * ไม่มีใครรู้จนกว่าจะรีบูต
+ * Three things are checked here first (the file exists · the key and
+ * certificate genuinely form a pair · not yet expired), and then **Apache's
+ * own validator** decides at another layer through {@see ConfigTransaction}
+ * · a mismatched key pair stops Apache from starting on the next reboot —
+ * locking yourself out of the machine in a way nobody notices until the
+ * reboot happens.
  */
 final class PanelCertificate
 {
-    /** ไฟล์ที่ httpd.conf ของ panel ชี้ถึงตายตัว */
+    /** The fixed file panel.crt httpd.conf points to */
     public const CERT = '/etc/phpcp/tls/panel.crt';
     public const KEY = '/etc/phpcp/tls/panel.key';
 
-    /** ใบที่ตัวติดตั้งสร้างไว้ให้ — เก็บไว้เป็นทางกลับเสมอ */
+    /** The certificate the installer generated — always kept as a way back */
     public const SELF_SIGNED_CERT = '/etc/phpcp/tls/panel.selfsigned.crt';
     public const SELF_SIGNED_KEY = '/etc/phpcp/tls/panel.selfsigned.key';
 
-    /** hook ที่ certbot เรียกหลังต่ออายุใบสำเร็จ */
+    /** The hook certbot calls after a successful renewal */
     public const HOOK = '/etc/letsencrypt/renewal-hooks/deploy/phpcp-panel-cert.sh';
 
-    /** unit ของเว็บเซิร์ฟเวอร์ที่ให้บริการหน้าจัดการ */
+    /** The systemd unit of the web server serving the panel */
     public const UNIT = 'phpcp-web';
 
     /** @var list<string> */
     public const OPENSSL_PATHS = ['/usr/bin/openssl', '/bin/openssl'];
 
-    /** ที่อยู่ของใบรับรองที่ certbot ออกให้โดเมนหนึ่ง */
+    /** The location of the certificate certbot issued for a domain */
     public static function sourcePaths(string $domain): array
     {
         $domain = Validator::domain($domain);
@@ -69,7 +80,7 @@ final class PanelCertificate
     }
 
     /**
-     * อ่านสภาพปัจจุบันของใบที่หน้าจัดการใช้อยู่
+     * Reads the current state of the certificate the panel is using
      *
      * @return array{domain:string,self_signed:bool,subject:string,issuer:string,not_after:int,days_left:int,hook:bool}
      */
@@ -79,7 +90,7 @@ final class PanelCertificate
 
         return [
             'domain' => $configuredDomain,
-            // ใบที่ผู้ออกกับผู้ถือเป็นคนเดียวกัน = เซ็นเอง · ไม่ต้องเดาจากชื่อไฟล์
+            // The issuer and the subject being the same entity = self-signed · never guessed from the filename
             'self_signed' => $configuredDomain === '' || $info['issuer'] === $info['subject'],
             'subject' => $info['subject'],
             'issuer' => $info['issuer'],
@@ -90,7 +101,7 @@ final class PanelCertificate
     }
 
     /**
-     * เนื้อไฟล์ที่จะเอาไปวางเป็นใบของหน้าจัดการ พร้อมตรวจว่าใช้ได้จริง
+     * The file content about to be installed as the panel's certificate, after confirming it genuinely works
      *
      * @return array{cert:string,key:string}
      */
@@ -99,7 +110,7 @@ final class PanelCertificate
         foreach ([$certPath, $keyPath] as $path) {
             if (!$executor->exists($executor->path($path))) {
                 throw new ValidationError(
-                    'ไม่พบไฟล์ใบรับรองที่ ' . $path . ' — ขอใบรับรองให้โดเมนนี้ก่อน',
+                    'Certificate file not found at ' . $path . ' — request a certificate for this domain first',
                 );
             }
         }
@@ -113,11 +124,12 @@ final class PanelCertificate
     }
 
     /**
-     * ใบกับกุญแจต้องเป็นคู่กันจริงและยังไม่หมดอายุ
+     * The certificate and key must genuinely form a pair, and must not have expired
      *
-     * **คู่ที่ไม่ตรงกันคือการล็อกตัวเองออกจากเครื่อง** — Apache สตาร์ตไม่ขึ้นในการรีบูต
-     * ครั้งถัดไป และไม่มีอะไรบอกจนกว่าจะรีบูต · เทียบด้วยลายนิ้วมือของกุญแจสาธารณะซึ่ง
-     * เป็นวิธีเดียวที่ตอบได้แน่นอน (ชื่อโดเมนที่ตรงกันไม่ได้แปลว่าเป็นคู่กัน)
+     * **A mismatched pair locks you out of the machine** — Apache fails to
+     * start on the next reboot, with nothing indicating why until that
+     * reboot happens · compared by the public key's fingerprint, the only
+     * way to answer this with certainty (a matching domain name doesn't mean they're actually a pair).
      */
     private function assertUsable(Executor $executor, string $certPath, string $keyPath): void
     {
@@ -134,15 +146,15 @@ final class PanelCertificate
 
         if (!$certPub->ok() || !$keyPub->ok()) {
             throw new ValidationError(
-                "อ่านใบรับรองหรือกุญแจไม่ได้ — ไฟล์อาจเสียหาย\n"
+                "Failed to read the certificate or key — the file may be corrupt\n"
                 . trim($certPub->stderr . ' ' . $keyPub->stderr),
             );
         }
 
         if (trim($certPub->output()) !== trim($keyPub->output())) {
             throw new ValidationError(
-                'ใบรับรองกับกุญแจไม่ใช่คู่กัน — ใช้แล้วเว็บเซิร์ฟเวอร์ของหน้าจัดการ'
-                . 'จะสตาร์ตไม่ขึ้นในการรีบูตครั้งถัดไป',
+                'The certificate and key are not a matching pair — using them would stop the '
+                . "panel's own web server from starting on the next reboot",
             );
         }
 
@@ -150,17 +162,18 @@ final class PanelCertificate
 
         if ($info['not_after'] > 0 && $info['not_after'] < time()) {
             throw new ValidationError(sprintf(
-                'ใบรับรองนี้หมดอายุไปแล้วเมื่อ %s — ต่ออายุก่อนแล้วลองใหม่',
+                'This certificate already expired on %s — renew it first, then try again',
                 date('Y-m-d', $info['not_after']),
             ));
         }
     }
 
     /**
-     * ข้อมูลในใบรับรอง — คืนค่าว่างเมื่ออ่านไม่ได้ ไม่โยนออก
+     * A certificate's own data — returns an empty result when it can't be read, never throws
      *
-     * ใช้ตอนแสดงสถานะด้วย ซึ่งต้องทำงานได้แม้ไฟล์จะเสีย · หน้าจอที่พังเพราะใบรับรองเสีย
-     * คือการปิดทางเดียวที่ผู้ดูแลจะเข้ามาแก้ได้
+     * Also used when displaying status, which has to keep working even when
+     * the file is broken · a screen that breaks because a certificate is
+     * broken would be closing off the one way an admin could get in to fix it.
      *
      * @return array{subject:string,issuer:string,not_after:int}
      */
@@ -211,24 +224,27 @@ final class PanelCertificate
     }
 
     /**
-     * สคริปต์ที่ certbot เรียกหลังต่ออายุสำเร็จ
+     * The script certbot calls after a successful renewal
      *
-     * เรียก `phpcp panel:cert-sync` แทนที่จะคัดลอกไฟล์เอง เพราะคำสั่งนั้นรู้ว่าตอนนี้
-     * หน้าจัดการผูกกับโดเมนไหนอยู่ (อ่านจากค่าตั้ง) · เขียน hook เป็นตรรกะคัดลอกตรง ๆ
-     * จะกลายเป็นข้อมูลชุดที่สองที่ต้องคอยแก้ให้ตรงกัน แล้ววันหนึ่งมันจะไม่ตรง
+     * Calls `phpcp panel:cert-sync` rather than copying the file itself,
+     * because that command knows which domain the panel is currently bound
+     * to (reads it from settings) · writing the hook with direct copy logic
+     * would create a second piece of data that has to be kept in sync by hand, and one day it wouldn't be.
      *
-     * `|| true` ท้ายบรรทัดโดยตั้งใจ — hook ที่คืนค่าไม่เป็นศูนย์ทำให้ certbot รายงานว่า
-     * การต่ออายุล้มเหลวทั้งที่ใบใหม่ออกมาแล้วเรียบร้อย ซึ่งทำให้คนไล่หาปัญหาผิดที่
+     * The trailing `|| true` is deliberate — a hook that returns non-zero
+     * makes certbot report the renewal as failed even though the new
+     * certificate was already issued successfully, sending anyone
+     * troubleshooting it looking in the wrong place.
      */
     public static function hookScript(string $phpBinary, string $cliPath): string
     {
         return "#!/bin/sh\n"
-            . "# สร้างโดย phpcp — ห้ามแก้ไขด้วยมือ\n"
-            . "# คัดลอกใบรับรองที่เพิ่งต่ออายุไปให้หน้าจัดการ แล้วสั่งโหลดใหม่แบบไม่ตัดการเชื่อมต่อ\n"
+            . "# Generated by phpcp — do not edit by hand\n"
+            . "# Copies the just-renewed certificate to the panel, then triggers a reload without cutting connections\n"
             . sprintf("%s %s panel:cert-sync >/dev/null 2>&1 || true\n", $phpBinary, $cliPath);
     }
 
-    /** โหลดค่าใหม่แบบ graceful — คำขอที่กำลังตอบอยู่ (รวมถึงของผู้ที่กดปุ่ม) ต้องไม่ถูกตัด */
+    /** Reloads gracefully — a request currently being answered (including the one from whoever clicked the button) must not be cut off */
     public function reload(Executor $executor): void
     {
         $executor->exec(
@@ -237,13 +253,13 @@ final class PanelCertificate
         );
     }
 
-    /** ตัวตรวจของ Apache เอง — ตัดสินว่าไฟล์ที่เพิ่งวางใช้งานได้จริงไหม */
+    /** Apache's own validator — decides whether the file just installed genuinely works */
     public function checkConfig(Executor $executor, Config $config): array
     {
         $httpd = $this->httpdBinary($executor);
 
         if ($httpd === null) {
-            // ไม่มีไบนารีให้ตรวจ (โหมดพัฒนา) — การตรวจคู่กุญแจก่อนหน้ายังทำงานอยู่
+            // No binary to validate with (dev mode) — the key-pair check earlier already ran
             return [true, ''];
         }
 

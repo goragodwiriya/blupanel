@@ -769,6 +769,7 @@
     "The SSH config file was not found on this machine": "ไม่พบไฟล์ตั้งค่า SSH บนเครื่องนี้",
     "The action failed": "ดำเนินการไม่สำเร็จ",
     "The bot token's format is invalid (must look like 123456789:AA...)": "รูปแบบ token ของบอทไม่ถูกต้อง (ต้องเป็น 123456789:AA...)",
+    "The certificate and key are not a matching pair — using them would stop the panel's own web server from starting on the next reboot": "ใบรับรองกับกุญแจไม่ใช่คู่กัน — ใช้แล้วเว็บเซิร์ฟเวอร์ของหน้าจัดการจะสตาร์ตไม่ขึ้นในการรีบูตครั้งถัดไป",
     "The certificate the management page itself uses — not the ones for hosted websites. Pick a domain that already has a certificate and the panel keeps it up to date when it renews.": "ใบรับรองที่หน้าจัดการใช้เอง — คนละใบกับของเว็บไซต์ที่โฮสต์อยู่ · เลือกโดเมนที่มีใบรับรองอยู่แล้ว ระบบจะคอยคัดลอกใบใหม่ให้ทุกครั้งที่ต่ออายุ",
     "The chat id must be a number or a channel @username": "chat id ต้องเป็นตัวเลข หรือ @username ของช่อง",
     "The command contains a disallowed character (a newline or control character)": "คำสั่งมีอักขระที่ไม่อนุญาต (ขึ้นบรรทัดใหม่หรืออักขระควบคุม)",

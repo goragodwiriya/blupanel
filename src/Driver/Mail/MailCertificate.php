@@ -8,41 +8,50 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Driver\Ssl\CertbotManager;
 
 /**
- * ใบรับรองของ mail hostname — PLAN-MAIL เฟส M3
+ * The mail hostname's certificate — PLAN-MAIL phase M3
  *
- * ## ทำไมถึงไม่ขอใบเองที่นี่
+ * ## Why this doesn't request its own certificate
  *
- * ใบของ `mail.example.com` เป็นใบธรรมดาใบหนึ่ง ไม่มีอะไรพิเศษเลย · การขอใบต้องพิสูจน์
- * ว่าคุมชื่อนั้นได้ ซึ่งวิธีเดียวที่ใช้ได้จริงบนเครื่องที่มีเว็บเซิร์ฟเวอร์ถือพอร์ต 80
- * อยู่แล้วคือ webroot ของเว็บไซต์ที่รับชื่อนั้น — คือเส้นทางเดียวกับปุ่มขอใบรับรอง
- * ในหน้า SSL ที่มีอยู่แล้วทุกประการ
+ * `mail.example.com`'s certificate is just an ordinary certificate, nothing
+ * special about it at all · requesting one has to prove control of that
+ * name, and the only method that genuinely works on a machine whose web
+ * server already holds port 80 is the webroot of whichever website accepts
+ * that name — the exact same path the existing "request certificate" button on the SSL page already uses.
  *
- * ถ้าเขียนตัวขอใบใบที่สองขึ้นมาที่นี่ จะได้สองเส้นทางที่ทำเรื่องเดียวกันแต่ต่อ ACME
- * คนละที่ ต่ออายุคนละแบบ และพังคนละอาการ · แทนที่จะทำแบบนั้น ที่นี่ทำสิ่งที่ยังไม่มี
- * ใครทำ: **หาใบที่ครอบคลุมชื่อนี้อยู่แล้วบนเครื่อง แล้วบอก Postfix กับ Dovecot**
+ * Writing a second certificate-requester here would produce two paths doing
+ * the same thing but talking to ACME in different places, renewing
+ * differently, and breaking with different symptoms · instead, this does
+ * what nobody was doing yet: **find a certificate that already covers this
+ * name on the machine, and tell Postfix and Dovecot about it**.
  *
- * ผู้ดูแลจึงเพิ่ม `mail.example.com` เป็นโดเมนของเว็บไซต์ กดปุ่มขอใบรับรองที่มีอยู่
- * แล้วเมลได้ใบจริงตามไปเอง — ไม่มีขั้นตอนใหม่ให้ต้องเรียนรู้
+ * So an admin adds `mail.example.com` as a website domain, clicks the
+ * existing "request certificate" button, and mail picks up the real
+ * certificate automatically — no new step to learn.
  *
- * ## สิ่งที่พลาดง่ายที่สุดคือการต่ออายุ
+ * ## The easiest thing to get wrong is renewal
  *
- * ใบของ Let's Encrypt อายุ 90 วันและ certbot ต่อให้เองโดยไม่ผ่าน panel เลย · Postfix
- * อ่านไฟล์ใบใหม่ทุกครั้งที่มีการเชื่อมต่อ (smtpd เกิดใหม่ตลอด) แต่ **Dovecot อ่าน
- * ตอนสตาร์ตแล้วถือไว้** — ไม่มีใครสั่ง reload หลังต่ออายุ โปรแกรมเมลของลูกค้าจะเจอ
- * ใบที่หมดอายุไปเรื่อย ๆ ทั้งที่ไฟล์บนดิสก์ถูกต้อง · ดู `changedSince()`
+ * A Let's Encrypt certificate lasts 90 days, and certbot renews it on its
+ * own without ever going through the panel · Postfix re-reads the
+ * certificate file on every new connection (a fresh smtpd process is always
+ * spawned), but **Dovecot reads it once at start time and holds onto it** —
+ * with nobody triggering a reload after a renewal, a customer's mail client
+ * would keep running into an expired certificate forever, even though the
+ * file on disk is already correct · see `changedSince()`.
  */
 final class MailCertificate
 {
     /**
-     * ใบที่ดิสโทรสร้างให้ตอนติดตั้ง — ใช้ไปก่อนเมื่อยังไม่มีใบจริง
+     * The certificate the distro generates at install time — used as a fallback until a real one exists
      *
-     * ไม่มีใครเชื่อถือใบนี้ โปรแกรมเมลจะเตือนทุกครั้ง · แต่ทางเลือกอีกทางคือไม่มี TLS
-     * เลย ซึ่งแปลว่ารหัสผ่านของทุกกล่องวิ่งเป็นข้อความเปล่า — แย่กว่ากันมาก ·
-     * หน้าความพร้อมของเมลเป็นคนบอกว่าตอนนี้ยังใช้ใบนี้อยู่
+     * Nobody trusts this certificate — mail clients warn about it every
+     * time · but the alternative is no TLS at all, meaning every mailbox's
+     * password travels as plain text — far worse · the mail readiness page
+     * is what tells an admin this certificate is still in use.
      *
-     * **มีอยู่จริงเสมอบนเครื่องที่ลง Dovecot** — `dovecot-core` มี `ssl-cert` เป็น
-     * Depends (ไม่ใช่ Recommends) · เขียนเส้นทางนี้ลงไฟล์ตั้งค่าจึงไม่มีทางได้เดมอน
-     * ที่สตาร์ตไม่ขึ้นเพราะชี้ไปไฟล์ที่ไม่มี — ตรวจแล้วก่อนเลือกใช้เป็นค่าถอย
+     * **Always genuinely present on any machine with Dovecot installed** —
+     * `dovecot-core` has `ssl-cert` as a Depends (not a Recommends) ·
+     * writing this path into a config file can therefore never produce a
+     * daemon that fails to start because it points at a missing file — verified before choosing it as the fallback.
      */
     public const DEFAULT_CERT = '/etc/ssl/certs/ssl-cert-snakeoil.pem';
     public const DEFAULT_KEY = '/etc/ssl/private/ssl-cert-snakeoil.key';
@@ -52,24 +61,26 @@ final class MailCertificate
     }
 
     /**
-     * เส้นทางใบที่จะเขียนลงไฟล์ตั้งค่า — ว่างเมื่อไหร่ก็ถอยไปใช้ใบของดิสโทร
+     * The certificate paths to write into the config file — falls back to the distro's certificate whenever empty
      *
      * @return array{cert:string,key:string}
      */
     public static function pathsOrDefault(string $cert, string $key): array
     {
-        // ต้องมีครบทั้งคู่ · ใบที่ไม่มีกุญแจคู่กันทำให้เดมอนสตาร์ตไม่ขึ้นทั้งตัว
+        // Both must be present · a certificate with no matching key stops the whole daemon from starting
         return $cert !== '' && $key !== ''
             ? ['cert' => $cert, 'key' => $key]
             : ['cert' => self::DEFAULT_CERT, 'key' => self::DEFAULT_KEY];
     }
 
     /**
-     * หาใบที่ครอบคลุมชื่อนี้ดีที่สุดบนเครื่อง
+     * Finds the best certificate on the machine that covers this name
      *
-     * ค้นทั้งใบของ Let's Encrypt และใบที่ panel เซ็นเอง — ใบที่เซ็นเองไม่ได้ทำให้
-     * โปรแกรมเมลเลิกเตือน แต่ยังดีกว่าใบ snakeoil ของดิสโทรตรงที่อย่างน้อยชื่อในใบ
-     * ตรงกับชื่อที่เซิร์ฟเวอร์ประกาศ · ใบจริงชนะใบที่เซ็นเองเสมอ
+     * Searches both Let's Encrypt certificates and the panel's own
+     * self-signed ones — a self-signed certificate doesn't stop mail
+     * clients from warning, but it's still better than the distro's own
+     * snakeoil certificate, in that the name in it at least matches the
+     * name the server announces · a real certificate always wins over a self-signed one.
      *
      * @return array{cert:string,key:string,source:string,name:string,expires_at:int,days_left:int,status:string}|null
      */
@@ -118,7 +129,7 @@ final class MailCertificate
     }
 
     /**
-     * ชื่อใบทั้งหมดในไดเรกทอรีหนึ่ง — ไม่มีไดเรกทอรีก็คือยังไม่มีใบสักใบ ไม่ใช่ข้อผิดพลาด
+     * Every certificate name in one directory — a missing directory just means no certificate exists yet, not an error
      *
      * @return list<string>
      */
@@ -142,10 +153,11 @@ final class MailCertificate
     }
 
     /**
-     * ใบนี้ครอบคลุมชื่อนี้ไหม
+     * Does this certificate cover this name?
      *
-     * รองรับ wildcard เพราะใบ `*.example.com` ที่ผู้ดูแลขอไว้สำหรับเว็บครอบคลุม
-     * `mail.example.com` อยู่แล้ว — การไม่รู้จักมันแปลว่าบังคับให้ไปขอใบซ้ำโดยไม่จำเป็น
+     * Supports wildcards, because a `*.example.com` certificate an admin
+     * already requested for a website already covers `mail.example.com` —
+     * failing to recognize that would force an unnecessary duplicate request.
      *
      * @param array<int,mixed> $domains
      */
@@ -160,8 +172,8 @@ final class MailCertificate
                 return true;
             }
 
-            // `*.example.com` ครอบคลุมได้ชั้นเดียว — `a.b.example.com` ไม่นับ
-            // ตามกฎของ RFC 6125 ซึ่งเป็นสิ่งที่โปรแกรมเมลบังคับใช้จริง
+            // `*.example.com` only covers a single level — `a.b.example.com` doesn't count
+            // per RFC 6125's rule, which mail clients genuinely enforce
             if (str_starts_with($domain, '*.')
                 && str_ends_with($hostname, substr($domain, 1))
                 && substr_count($hostname, '.') === substr_count($domain, '.')
@@ -174,7 +186,7 @@ final class MailCertificate
     }
 
     /**
-     * ใบไหนดีกว่ากัน — ใบจริงชนะใบที่เซ็นเอง แล้วค่อยดูว่าใบไหนอยู่ได้นานกว่า
+     * Which certificate is better — a real one wins over a self-signed one, then whichever lasts longer
      *
      * @param array{source:string,expires_at:int} $candidate
      * @param array{source:string,expires_at:int} $current
@@ -189,14 +201,16 @@ final class MailCertificate
     }
 
     /**
-     * ใบเปลี่ยนไปหลังจากที่เราบอกเดมอนครั้งล่าสุดหรือยัง
+     * Has the certificate changed since the last time the daemon was told about it?
      *
-     * เทียบเวลาแก้ไขของไฟล์ใบกับไฟล์ตั้งค่าที่ panel เขียนเอง — คำถามที่ถูกต้องคือ
-     * "ใบเปลี่ยนหลังจากที่เราบอกไปแล้วหรือเปล่า" ซึ่งไฟล์ทั้งสองตอบได้โดยไม่ต้องเก็บ
-     * สถานะเพิ่มที่ไหนอีก · ไม่มีไฟล์ตั้งค่า = ยังไม่เคยบอกใคร ถือว่าเปลี่ยน
+     * Compares the certificate file's modification time against the config
+     * file the panel itself wrote — the right question to ask is "has the
+     * certificate changed since we last told it", which both files can
+     * answer without needing any extra state stored anywhere · no config
+     * file yet = nobody was ever told, so it's treated as changed.
      *
-     * ใบของ Let's Encrypt เป็น symlink ที่ถูกสร้างใหม่ทุกครั้งที่ต่ออายุ จึงตาม
-     * เส้นทางจริงไปดูเวลาของไฟล์ในคลัง ไม่ใช่ของลิงก์
+     * A Let's Encrypt certificate is a symlink recreated on every renewal,
+     * so this follows the real path to check the archived file's time, not the link's own.
      */
     public function changedSince(Executor $executor, string $certPath, string $configPath): bool
     {
