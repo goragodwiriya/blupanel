@@ -12,18 +12,20 @@ use Phpcp\Kernel\Response;
 use Phpcp\Security\Permissions;
 
 /**
- * กล่องจดหมายและที่อยู่ส่งต่อ — `/api/v2/mailboxes` (PLAN-MAIL เฟส M2)
+ * Mailboxes and forwarding addresses — `/api/v2/mailboxes` (PLAN-MAIL phase M2)
  *
- * ทุกคำสั่งที่เปลี่ยนแปลงอะไรเดินผ่าน agent ทั้งหมด · ที่นี่มีหน้าที่แค่แปลงคำขอ HTTP
- * เป็น argument ของ capability และแปลงผลลัพธ์กลับเป็น JSON
+ * Every command that changes anything goes through the agent · this layer's
+ * only job is turning HTTP requests into capability arguments and turning
+ * results back into JSON
  *
- * **การมองเห็นถูกจำกัดที่ query ไม่ใช่กรองทีหลัง** — เจ้าของเว็บเห็นเฉพาะกล่องของโดเมน
- * ตัวเอง โดยที่กล่องของลูกค้ารายอื่นไม่ถูกอ่านขึ้นมาในหน่วยความจำเลยตั้งแต่แรก
+ * **Visibility is constrained at the query, not filtered afterward** — a
+ * website owner sees only their own domains' mailboxes, with another
+ * customer's mailboxes never even read into memory in the first place
  */
 final class MailboxesController extends ApiController
 {
     /**
-     * รายการกล่องจดหมาย พร้อมที่อยู่ส่งต่อและโดเมนที่เลือกได้ใน meta
+     * The mailbox list, with forwarding addresses and selectable domains in meta
      */
     public function index(Request $request): Response
     {
@@ -47,21 +49,24 @@ final class MailboxesController extends ApiController
         );
 
         /*
-         * **คืนเป็นรายการล้วน เพราะตารางดึงข้อมูลเอง (`data-source`)**
+         * **Returns a plain list, because the table fetches its own data (`data-source`)**
          *
-         * ตารางที่ดึงข้อมูลเองเท่านั้นที่สั่ง "โหลดใหม่" ได้จริงหลังลบสำเร็จ · ตอนที่
-         * ผูกกับข้อมูลของหน้า การลบทำงานถูกต้องบนเซิร์ฟเวอร์แต่ตารางยังโชว์แถวเดิมค้างอยู่
-         * — ที่อยู่ส่งต่อย้ายไปมี endpoint ของตัวเองด้วยเหตุผลเดียวกัน
+         * Only a table that fetches its own data can genuinely be told to
+         * "reload" after a successful delete · when bound to the page's own
+         * data instead, the delete worked correctly on the server but the table
+         * still showed the old row stuck in place — forwarding addresses got
+         * their own endpoint for the same reason
          */
         return $this->ok($rows);
     }
 
     /**
-     * โครงเปล่าของฟอร์มสร้างกล่อง พร้อมคำสั่งเปิด modal
+     * The empty shell of the create-mailbox form, with the command to open its modal
      *
-     * กล่องแก้ไขได้ (รหัสผ่านกับโควตา) แต่ที่อยู่เปลี่ยนไม่ได้ — การเปลี่ยนที่อยู่คือ
-     * การย้ายเมลทั้งกล่องไปที่ใหม่ ซึ่งเป็นคนละเรื่องกับการแก้ค่า · ฟอร์มแก้ไขจึงมี
-     * ช่องที่อยู่เป็นข้อความอ่านอย่างเดียว
+     * A mailbox can be edited (password and quota), but its address can't be
+     * changed — changing the address means moving the whole mailbox's mail to a
+     * new one, a completely different operation from editing a value · the edit
+     * form's address field is therefore read-only text
      */
     public function form(Request $request): Response
     {
@@ -78,7 +83,7 @@ final class MailboxesController extends ApiController
         );
     }
 
-    /** ฟอร์มแก้ไขกล่องที่มีอยู่ — ที่อยู่แก้ไม่ได้ เปลี่ยนได้แค่รหัสผ่านกับโควตา */
+    /** The edit form for an existing mailbox — the address can't be changed, only the password and quota */
     public function show(Request $request): Response
     {
         $row = $this->mailboxOrNull($request->paramInt('id'));
@@ -103,7 +108,7 @@ final class MailboxesController extends ApiController
 
     public function store(Request $request): Response
     {
-        // ฟอร์มเดียวทำทั้งสร้างและแก้ไข — `id` ที่ซ่อนอยู่เป็นตัวตัดสิน แบบเดียวกับหน้าอื่น
+        // One form does both create and edit — the hidden `id` decides, same as other pages
         $id = (int) $request->payload('id', 0);
 
         if ($id > 0) {
@@ -160,10 +165,11 @@ final class MailboxesController extends ApiController
     }
 
     /**
-     * ความพร้อมของเมลหกข้อ — PLAN-MAIL §7
+     * Mail's six readiness checks — PLAN-MAIL §7
      *
-     * เติม `fix_label` ให้หน้าจอไม่ต้องรู้จักรหัสภายใน และเติมคำอธิบายของแต่ละข้อ
-     * ที่ฝั่งเซิร์ฟเวอร์ เพราะเป็นความรู้เรื่องเมล ไม่ใช่เรื่องการแสดงผล
+     * Fills in `fix_label` so the screen never needs to know the internal
+     * codes, and fills in each check's description server-side, because that's
+     * knowledge about mail, not about display
      */
     public function readiness(Request $request): Response
     {
@@ -183,7 +189,7 @@ final class MailboxesController extends ApiController
                 'label' => $this->t($labels[$check['key']] ?? $check['key']),
                 'tone' => $check['ok'] ? 'ok' : 'danger',
                 'status' => $check['ok'] ? $this->t('Ready') : $this->t('Not ready'),
-                // ข้อที่ panel แก้ให้ไม่ได้ต้องบอกให้ชัดว่าต้องไปทำที่ไหน
+                // An item the panel can't fix itself must clearly say where to go fix it
                 'fix_label' => $check['fix'] === 'provider'
                     ? $this->t('Set this at your VPS provider — the panel cannot do it')
                     : $this->t('The panel can fix this'),
@@ -191,7 +197,7 @@ final class MailboxesController extends ApiController
             (array) ($result['checks'] ?? []),
         );
 
-        // อยู่ใน `data` ด้วยเหตุผลเดียวกับ index() — ป้ายสรุปที่ผูกกับ `meta` ไม่เคยขึ้นเลย
+        // Lives in `data` for the same reason as index() — a summary bound to `meta` never once showed up
         return $this->ok([
             'ready' => (bool) ($result['ready'] ?? false),
             'failed' => (int) ($result['failed'] ?? 0),
@@ -201,11 +207,13 @@ final class MailboxesController extends ApiController
     }
 
     /**
-     * ผูกใบรับรองของ mail hostname เข้ากับ Postfix และ Dovecot — PLAN-MAIL เฟส M3
+     * Bind the mail hostname's certificate into Postfix and Dovecot — PLAN-MAIL phase M3
      *
-     * ปุ่มนี้ไม่ได้ "ขอใบรับรอง" — ใบขอจากหน้า SSL ที่มีอยู่แล้วเหมือนใบของเว็บทุกใบ ·
-     * ที่นี่คือขั้นที่เหลือ: บอกเดมอนเมลว่าให้ใช้ใบนั้น · งานตามเวลาทำให้เองทุกวันอยู่แล้ว
-     * ปุ่มมีไว้ให้ไม่ต้องรอถึงพรุ่งนี้เช้าหลังเพิ่งขอใบมาสด ๆ
+     * This button doesn't "request a certificate" — it's requested from the
+     * existing SSL page, the same as every website's certificate · this is the
+     * remaining step: telling the mail daemons to use that certificate · the
+     * scheduled job already does this every day on its own — the button exists
+     * so nobody has to wait until tomorrow morning right after requesting a fresh one
      */
     public function certificate(Request $request): Response
     {
@@ -215,23 +223,26 @@ final class MailboxesController extends ApiController
         return $this->done(
             $message,
             [
-                // ยังไม่มีใบให้ผูกไม่ใช่ข้อผิดพลาด แต่ก็ไม่ใช่ความสำเร็จที่ควรฉลอง —
-                // ข้อความบอกวิธีขอใบ ซึ่งผู้ใช้ต้องอ่านจริง ๆ ไม่ใช่แค่เห็นแวบเดียว
+                // No certificate to bind yet isn't an error, but it's not a
+                // success worth celebrating either — the message explains how
+                // to request one, and the user genuinely needs to read it, not just glimpse it
                 ['type' => 'notification',
                     'level' => ($result['found'] ?? false) ? 'success' : 'warning',
                     'message' => $message],
-                // ตารางความพร้อมผูกกับข้อมูลของการ์ดนี้ · ปุ่มมี data-refresh-table
-                // สั่งโหลดใหม่ให้อยู่แล้ว ที่นี่จึงบอกผลอย่างเดียว
+                // The readiness table is bound to this card's own data · the
+                // button already has data-refresh-table telling it to reload, so
+                // this just reports the result
             ],
             is_array($result) ? $result : [],
         );
     }
 
     /**
-     * คำสั่งให้หน้าจอแสดงรหัสผ่านที่ระบบสุ่มให้
+     * The command telling the screen to show a system-generated password
      *
-     * รหัสนี้ไม่มีที่อื่นให้ดูย้อนหลังอีกเลย — ระบบเก็บแค่แฮช · ต้องแสดงเป็นกล่อง
-     * ที่ผู้ใช้ต้องกดปิดเอง ไม่ใช่ข้อความแจ้งเตือนที่หายไปเองใน 5 วินาที
+     * This password has no other place it can ever be viewed again — the system
+     * only stores a hash · it must be shown as a box the user closes themselves,
+     * not a notification that vanishes on its own after 5 seconds
      *
      * @param array<string,mixed> $result
      * @return list<array<string,mixed>>
@@ -240,17 +251,20 @@ final class MailboxesController extends ApiController
     {
         $password = (string) ($result['password'] ?? '');
 
-        // ปิดฟอร์มก่อนเสมอ — แล้วค่อยเปิดหน้าต่างรหัสผ่านทับ ถ้ามีรหัสให้แสดง
+        // Always closes the form first — then opens the password dialog on top of it, if there's a password to show
         $actions = [['type' => 'modal', 'action' => 'close']];
 
         /*
-         * แถบแจ้งผล — เดิมขาดไปทั้งที่ปิด Modal และโหลดตารางใหม่ครบแล้ว
+         * The notification bar — this used to be missing even though the modal
+         * closed and the table reloaded correctly
          *
-         * ผลคือกดบันทึกแล้ว Modal หายไปเฉย ๆ แถวใหม่โผล่ในตารางโดยไม่มีอะไรยืนยันว่า
-         * "สำเร็จ" — ผู้ดูแลที่ไม่ได้จ้องตารางอยู่จึงไม่รู้ว่าคำสั่งผ่านหรือเงียบหายไป
-         * และมักกดซ้ำ · หน้าอื่นในระบบใช้ `saved()` ซึ่งมีแถบนี้ให้อยู่แล้ว
+         * The result was clicking save just made the modal disappear, a new row
+         * appeared in the table with nothing confirming "success" — an admin not
+         * watching the table closely couldn't tell whether it went through or
+         * silently vanished, and would often click again · other pages in the
+         * system use `saved()`, which already includes this bar
          *
-         * ต้องมาก่อนหน้าต่างรหัสผ่าน เพื่อไม่ให้ถูกบังตอนที่มีรหัสให้แสดง
+         * Must come before the password dialog, so it isn't hidden behind it when there's a password to show
          */
         if ($message !== '') {
             $actions[] = ['type' => 'notification', 'level' => 'success', 'message' => $message];
@@ -268,9 +282,10 @@ final class MailboxesController extends ApiController
         }
 
         /*
-         * **สั่งโหลดตารางด้วยชนิดที่เฟรมเวิร์กมีตัวรับจริง** — `{type:"event"}` ไม่มี
-         * ตัวรับเลย `ResponseHandler` เตือนใน console แล้วทิ้ง · ตารางกล่องจดหมายดึง
-         * ข้อมูลเองแล้ว (`data-source`) จึงสั่งให้มันโหลดใหม่ได้ตรง ๆ
+         * **Tells the table to reload using a type the framework genuinely
+         * handles** — `{type:"event"}` has no handler at all; `ResponseHandler`
+         * warns in the console and drops it · the mailbox table already fetches
+         * its own data (`data-source`), so it can be told to reload directly
          */
         $actions[] = ['type' => 'redirect', 'url' => 'reload', 'target' => 'mailboxes'];
 
@@ -290,10 +305,10 @@ final class MailboxesController extends ApiController
     }
 
     /**
-     * โหลดกล่องพร้อมตรวจว่าผู้เรียกมีสิทธิ์เห็นมันจริง
+     * Load a mailbox while checking the caller genuinely has permission to see it
      *
-     * คืน null ทั้งกรณี "ไม่มีอยู่" และ "ไม่ใช่ของคุณ" โดยตั้งใจ — การแยกสองอย่างนี้
-     * ออกจากกันบอกคนนอกได้ว่ากล่องไหนมีอยู่จริงบนเครื่อง
+     * Deliberately returns null for both "doesn't exist" and "isn't yours" —
+     * telling these two apart would let an outsider learn which mailboxes genuinely exist on the machine
      *
      * @return array<string,mixed>|null
      */
@@ -313,7 +328,7 @@ final class MailboxesController extends ApiController
         return new MailboxRepository($this->app->db());
     }
 
-    /** 0 = เห็นทั้งเครื่อง (ผู้ดูแล) · ค่าอื่น = เห็นเฉพาะของตัวเอง */
+    /** 0 = sees the whole machine (an admin) · anything else = sees only their own */
     private function scopeOwner(): int
     {
         return $this->ctx->role() === Permissions::WEBADMIN ? $this->ctx->userId() : 0;
