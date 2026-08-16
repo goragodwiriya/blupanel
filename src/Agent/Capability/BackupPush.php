@@ -18,18 +18,23 @@ use Phpcp\Security\Secret;
 use Phpcp\Support\Validator;
 
 /**
- * ส่งไฟล์สำรองที่มีอยู่แล้วออกไปยังปลายทางนอกเครื่อง
+ * Pushes an existing backup file out to an offsite destination
  *
- * **ตรวจ checksum ก่อนส่งเสมอ** · การส่งไฟล์ที่เสียแล้วออกไปเก็บไว้ ทำให้ผู้ดูแลมี
- * "ไฟล์สำรองนอกเครื่อง" ที่กู้ไม่ได้จริง ซึ่งแย่กว่าไม่มีไฟล์นั้นเลย เพราะมันปิดโอกาส
- * ที่จะมีใครสังเกตว่าระบบสำรองพังอยู่ · checksum คำนวณจากไฟล์เดี๋ยวนั้น ไม่ใช่อ่าน
- * จากตาราง — โฟลเดอร์เป็นของลูกค้า ไฟล์ในนั้นเปลี่ยนได้ระหว่างสองครั้งที่เรามอง
+ * **Always checks the checksum before sending** · sending a corrupted file out to
+ * be stored leaves an admin with an "offsite backup" that can't actually be
+ * restored, which is worse than having no file at all, because it closes off any
+ * chance of someone noticing the backup system is broken · the checksum is
+ * computed from the file right at that moment, not read from the table — the
+ * folder belongs to the customer, and the file inside it can change between the
+ * two times it's looked at.
  *
- * **จำกัดที่ผู้ดูแลระดับเซิร์ฟเวอร์** — ปลายทางเป็นทรัพยากรของทั้งเครื่อง และการเลือก
- * ปลายทางได้เองเท่ากับเลือกได้ว่าจะส่งข้อมูลของเว็บไซต์ออกไปที่ไหน
+ * **Limited to server-level admins** — a destination is a whole-machine resource,
+ * and being able to choose one means being able to choose where a website's data
+ * gets sent.
  *
- * ชื่อไฟล์ที่ปลายทางเติมชื่อบัญชีนำหน้า — ปลายทางเดียวรับไฟล์จากทุกบัญชีบนเครื่อง
- * และสองบัญชีมีเว็บชื่อเดียวกันไม่ได้ก็จริง แต่ไฟล์ที่ลูกค้าเปลี่ยนชื่อเองแล้วชนกันได้
+ * The destination filename has the account name prepended — one destination
+ * receives files from every account on the machine, and while two accounts can't
+ * have a site with the same name, files a customer renamed themselves can still collide.
  */
 final class BackupPush extends BackupCapability implements Capability
 {
@@ -50,7 +55,7 @@ final class BackupPush extends BackupCapability implements Capability
 
     public function summary(): string
     {
-        return 'ส่งไฟล์สำรองออกไปเก็บที่ปลายทางนอกเครื่อง';
+        return 'Push backup file to offsite destination';
     }
 
     public function validate(array $args): array
@@ -58,8 +63,9 @@ final class BackupPush extends BackupCapability implements Capability
         return [
             'user_id' => Validator::requireInt($args, 'user_id', 1),
             'file' => BackupFiles::assertName(Validator::requireString($args, 'file', 255)),
-            // 0 = ปลายทางเดียวที่เปิดใช้งานอยู่ · เครื่องหนึ่งมีปลายทางได้ชุดเดียว
-            // (§4.2) การบังคับให้ผู้เรียกระบุจึงเป็นการถามคำถามที่มีคำตอบเดียวอยู่แล้ว
+            // 0 = the single enabled destination · a machine has only one active
+            // destination (§4.2), so forcing the caller to specify one would just
+            // be asking a question that already has one answer
             'destination_id' => Validator::optionalInt($args, 'destination_id', 0, 0),
         ];
     }
@@ -67,7 +73,7 @@ final class BackupPush extends BackupCapability implements Capability
     public function run(array $args, Executor $executor, Context $context): array
     {
         if (!self::isAdmin($context->actor->role)) {
-            throw new PermissionDenied('การส่งไฟล์สำรองออกนอกเครื่องต้องใช้สิทธิ์ผู้ดูแลเซิร์ฟเวอร์');
+            throw new PermissionDenied('Pushing a backup file offsite requires server admin permission');
         }
 
         $owner = $this->ownerAccount($context, $args['user_id']);
@@ -83,13 +89,13 @@ final class BackupPush extends BackupCapability implements Capability
         if ($row === null) {
             throw new ValidationError(
                 $args['destination_id'] > 0
-                    ? 'ไม่พบปลายทางที่ระบุ'
-                    : 'เครื่องนี้ยังไม่ได้ตั้งปลายทางนอกเครื่อง — ตั้งก่อนแล้วค่อยส่งไฟล์ออก',
+                    ? 'The specified destination was not found'
+                    : 'This machine has no offsite destination configured yet — configure one before pushing files',
             );
         }
 
         if ((int) ($row['enabled'] ?? 0) !== 1) {
-            throw new ValidationError('ปลายทางนี้ถูกปิดใช้งานอยู่');
+            throw new ValidationError('This destination is currently disabled');
         }
 
         $destinationId = (int) $row['id'];
@@ -97,10 +103,10 @@ final class BackupPush extends BackupCapability implements Capability
         $checksum = @hash_file('sha256', $executor->path($path));
 
         if ($checksum === false) {
-            throw new ExecutionFailed('อ่านไฟล์สำรองเพื่อตรวจสอบก่อนส่งไม่ได้');
+            throw new ExecutionFailed('Failed to read the backup file to verify it before sending');
         }
 
-        // ตรวจซ้ำผ่านด่านเดียวกับที่การกู้คืนใช้ — ไฟล์ที่หายไประหว่างนี้ต้องถูกจับ
+        // Re-checked through the same gate restore uses — a file that vanished in the meantime must be caught
         (new BackupManager())->assertIntact($executor, $path, $checksum);
 
         $destination = (new DestinationFactory($destinations, $owner->backupDir()))->make($row);
@@ -125,7 +131,7 @@ final class BackupPush extends BackupCapability implements Capability
             'destination' => $row['name'],
             'remote_path' => $remotePath,
             'bytes' => $bytes,
-            'message' => sprintf('ส่ง %s ไปที่ "%s" แล้ว', $args['file'], $row['name']),
+            'message' => sprintf('Pushed %s to "%s"', $args['file'], $row['name']),
         ];
     }
 }

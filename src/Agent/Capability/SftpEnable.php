@@ -14,18 +14,21 @@ use Phpcp\Driver\Ssh\SftpAccessManager;
 use Phpcp\Support\Validator;
 
 /**
- * เปิด SFTP ให้บัญชีโฮสติ้ง พร้อมตั้งรหัสผ่าน — PLAN-V2 เฟส E4
+ * Enables SFTP for a hosting account and sets its password — PLAN-V2 Phase E4
  *
- * ใช้เปลี่ยนรหัสผ่านด้วย (เรียกซ้ำได้) จึงไม่มี capability `sftp.password` แยกต่างหาก —
- * การเปิดใช้งานกับการตั้งรหัสผ่านใหม่คือการกระทำเดียวกันในทางเทคนิค และการมีสองเส้นทาง
- * ที่ทำสิ่งเดียวกันคือที่มาของกรณีที่ทางหนึ่งลืมตรวจสิ่งที่อีกทางตรวจ
+ * Also used to change the password (safe to call again), so there's no separate
+ * `sftp.password` capability — enabling and setting a new password are
+ * technically the same action, and having two paths that do the same thing is
+ * exactly how one path ends up forgetting a check the other one has.
  *
- * **สิทธิ์ `customer.manage` (superadmin/sysadmin) ไม่ใช่สิทธิ์ของลูกค้าเอง** — การเปิด SFTP
- * คือการเปิดช่องเข้าถึงเครื่องผ่าน sshd ซึ่งไม่มี rate limit และ 2FA แบบที่ panel มี
- * จึงเป็นการตัดสินใจของผู้ดูแลเซิร์ฟเวอร์ ไม่ใช่ของเจ้าของบัญชี
+ * **The `customer.manage` permission (superadmin/sysadmin) is not something a
+ * customer holds themselves** — enabling SFTP opens a channel into the machine
+ * through sshd, which has none of the rate limiting or 2FA the panel has, so this
+ * is a server admin's decision, not the account owner's.
  *
- * **บัญชีระบบต้องมีอยู่ก่อน** — สร้างแบบ lazy ตอนสร้างเว็บแรก บัญชีที่ยังไม่มีเว็บเลย
- * จึงเปิด SFTP ไม่ได้ ซึ่งถูกต้องเพราะยังไม่มีไฟล์อะไรให้เข้าถึง
+ * **The system account must already exist** — created lazily when the first site
+ * is created, so an account with no site yet can't have SFTP enabled, which is
+ * correct, since there's nothing to access yet.
  */
 final class SftpEnable extends CustomerCapability implements Capability
 {
@@ -46,7 +49,7 @@ final class SftpEnable extends CustomerCapability implements Capability
 
     public function summary(): string
     {
-        return 'เปิดใช้งาน SFTP และตั้งรหัสผ่านให้บัญชีโฮสติ้ง';
+        return 'Enable SFTP and set password for a hosting account';
     }
 
     public function validate(array $args): array
@@ -61,18 +64,19 @@ final class SftpEnable extends CustomerCapability implements Capability
     {
         $user = $this->loadHostingAccount($context, $args['user_id']);
 
-        // โควตา 0 = แพ็กเกจนี้ไม่รวม SFTP · -1 หรือ >0 = เปิดได้ (ดูเหตุผลที่ migration 0013)
+        // Quota of 0 = this package doesn't include SFTP · -1 or >0 = can be
+        // enabled (see the reasoning at migration 0013)
         if (Quota::isDisabled((int) ($user['quota_ftp_users'] ?? 0))) {
             throw new ValidationError(
-                'บัญชีนี้ถูกตั้งโควตา FTP/SFTP เป็น 0 จึงเปิดใช้งานไม่ได้ — '
-                . 'แก้โควตาก่อนถ้าต้องการให้ใช้ได้',
+                'This account has its FTP/SFTP quota set to 0, so it cannot be enabled — '
+                . 'change the quota first if it should be usable',
             );
         }
 
         if (($user['system_user'] ?? null) === null) {
             throw new ValidationError(
-                'บัญชีนี้ยังไม่มีบัญชีระบบ (สร้างให้อัตโนมัติตอนสร้างเว็บไซต์แรก) — '
-                . 'สร้างเว็บไซต์ก่อนจึงจะเปิด SFTP ได้',
+                'This account has no system account yet (created automatically when the first '
+                . 'website is created) — create a website first before SFTP can be enabled',
             );
         }
 
@@ -85,11 +89,12 @@ final class SftpEnable extends CustomerCapability implements Capability
             'updated_at' => time(),
         ], ['id' => $args['user_id']]);
 
-        // รหัสผ่านไม่อยู่ในคำตอบ — Dispatcher::redact() ปิดบังใน audit ให้อยู่แล้ว
-        // แต่คำตอบที่ส่งกลับหน้าเว็บก็ไม่ควรมีซ้ำอีกที่หนึ่ง
+        // The password never appears in the response — Dispatcher::redact()
+        // already masks it in the audit log, but the response sent back to the
+        // web page shouldn't repeat it either
         return $result + [
             'user_id' => (int) $args['user_id'],
-            'message' => sprintf('เปิด SFTP ให้ %s แล้ว', $account->username),
+            'message' => sprintf('Enabled SFTP for %s', $account->username),
         ];
     }
 }

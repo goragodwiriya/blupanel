@@ -11,16 +11,18 @@ use Phpcp\Domain\MailAddress;
 use Phpcp\Support\Validator;
 
 /**
- * ที่อยู่ส่งต่อ — alias, forwarder และ catch-all (PLAN-MAIL เฟส M2)
+ * Forwarding addresses — alias, forwarder, and catch-all (PLAN-MAIL Phase M2)
  *
- * สามอย่างนี้เป็นกลไกเดียวกันในสายตาของ Postfix ต่างกันแค่ค่าที่ใส่:
+ * These three are the same mechanism as far as Postfix is concerned, differing
+ * only in the value entered:
  *
- *   alias      `sales@example.com` → `somchai@example.com`  (กล่องในเครื่องเดียวกัน)
- *   forwarder  `sales@example.com` → `someone@gmail.com`    (ออกไปข้างนอก)
- *   catch-all  ไม่ระบุชื่อ → รับทุกชื่อที่ไม่ตรงกับกล่องหรือ alias อื่นของโดเมนนั้น
+ *   alias      `sales@example.com` → `somchai@example.com`  (a mailbox on the same machine)
+ *   forwarder  `sales@example.com` → `someone@gmail.com`    (going out externally)
+ *   catch-all  no name specified → catches every name that doesn't match a mailbox or other alias on that domain
  *
- * **catch-all เป็นดาบสองคม** — รับเมลที่สะกดชื่อผิดได้ก็จริง แต่ก็รับสแปมที่ยิงสุ่ม
- * ชื่อทั้งหมดด้วย ซึ่งเป็นวิธีที่สแปมเมอร์ใช้หาที่อยู่จริงของโดเมน
+ * **catch-all is a double-edged sword** — it does catch mail with a misspelled
+ * name, but it also catches spam blasted at every name at random, which is how
+ * spammers discover a domain's real addresses.
  */
 final class MailAliasSet extends MailCapability
 {
@@ -31,7 +33,7 @@ final class MailAliasSet extends MailCapability
 
     public function summary(): string
     {
-        return 'ตั้งที่อยู่ส่งต่อหรือ catch-all';
+        return 'Set forwarding address or catch-all';
     }
 
     public function validate(array $args): array
@@ -39,7 +41,7 @@ final class MailAliasSet extends MailCapability
         $domain = Validator::domain(Validator::requireString($args, 'domain', 253));
         $source = trim((string) ($args['source'] ?? ''));
 
-        // ว่าง = catch-all ของโดเมนนี้ · มีค่า = ต้องเป็นชื่อกล่องที่ถูกต้อง
+        // Empty = this domain's catch-all · a value = must be a valid mailbox name
         if ($source !== '') {
             $source = MailAddress::assertLocalPart($source);
         }
@@ -53,16 +55,16 @@ final class MailAliasSet extends MailCapability
                 continue;
             }
 
-            // ปลายทางเป็นที่อยู่เต็มเสมอ จะในเครื่องหรือข้างนอกก็ได้
+            // A destination is always a full address, whether local or external
             $destinations[] = MailAddress::parse($one)->full();
         }
 
         if ($destinations === []) {
-            throw new ValidationError('ต้องระบุปลายทางอย่างน้อยหนึ่งที่อยู่');
+            throw new ValidationError('At least one destination address must be specified');
         }
 
         if (count($destinations) > 20) {
-            throw new ValidationError('ปลายทางได้ไม่เกิน 20 ที่อยู่ต่อหนึ่งรายการ');
+            throw new ValidationError('No more than 20 destinations are allowed per entry');
         }
 
         return ['domain' => $domain, 'source' => $source, 'destination' => implode(',', $destinations)];
@@ -74,15 +76,16 @@ final class MailAliasSet extends MailCapability
         $domain = $this->domainOrFail($context, $args['domain']);
 
         if ((int) ($domain['mail_enabled'] ?? 0) !== 1) {
-            throw new ValidationError('โดเมน ' . $args['domain'] . ' ยังไม่ได้เปิดเมล');
+            throw new ValidationError('Domain ' . $args['domain'] . ' does not have mail enabled yet');
         }
 
-        // ชื่อที่มีกล่องอยู่แล้วต้องไม่ถูกเบียดด้วย alias — Postfix อ่าน virtual_alias_maps
-        // ก่อน virtual_mailbox_maps เสมอ ผลคือเมลจะไม่มีวันถึงกล่องนั้นอีกเลย
+        // A name that already has a mailbox must never be crowded out by an alias
+        // — Postfix always reads virtual_alias_maps before virtual_mailbox_maps,
+        // so mail would never reach that mailbox again
         if ($args['source'] !== '' && $repository->findMailbox((int) $domain['id'], $args['source']) !== null) {
             throw new ValidationError(
-                'มีกล่อง ' . $args['source'] . '@' . $args['domain'] . ' อยู่แล้ว — ตั้งเป็นที่อยู่ส่งต่อไม่ได้'
-                . ' เพราะเมลจะถูกส่งต่อไปที่อื่นแทนที่จะเข้ากล่อง',
+                'Mailbox ' . $args['source'] . '@' . $args['domain'] . ' already exists — it cannot be set as a'
+                . ' forwarding address, since mail would be forwarded elsewhere instead of reaching the mailbox',
             );
         }
 
@@ -95,7 +98,7 @@ final class MailAliasSet extends MailCapability
             'id' => $id,
             'source' => $label,
             'destination' => $args['destination'],
-            'message' => sprintf('ตั้งให้ %s ส่งต่อไปที่ %s แล้ว', $label, $args['destination']),
+            'message' => sprintf('Set %s to forward to %s', $label, $args['destination']),
         ];
     }
 }

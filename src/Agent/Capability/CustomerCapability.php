@@ -12,20 +12,23 @@ use Phpcp\Domain\UserRepository;
 use Phpcp\Security\Permissions;
 
 /**
- * ฐานร่วมของ capability ที่จัดการบัญชีโฮสติ้ง (customer.*)
+ * The shared base for capabilities that manage hosting accounts (customer.*)
  *
- * ตั้งแต่ migration 0005 "ลูกค้า" คือแถวใน users ที่มี role=webadmin ไม่ใช่ตารางแยก
- * อีกต่อไป — capability กลุ่มนี้จึงทำงานบน users โดยตรง
+ * Since migration 0005, a "customer" is a row in users with role=webadmin, no
+ * longer a separate table — so this group of capabilities works directly on users.
  *
- * **ขอบเขตสิทธิ์ที่บังคับไว้ที่นี่:** ทุกตัวโหลดบัญชีผ่าน loadHostingAccount() ซึ่งยอมรับ
- * เฉพาะแถวที่ role=webadmin เท่านั้น · ผลคือผู้ที่มีสิทธิ์ `customer.manage` (sysadmin)
- * แตะบัญชี superadmin/sysadmin ผ่านเส้นทางนี้ไม่ได้เลย แม้จะเดารหัสบัญชีถูก
- * การจัดการบัญชีผู้ดูแลต้องใช้สิทธิ์ `user.manage` ซึ่งเป็นคนละเส้นทาง
- * ถ้าไม่กันตรงนี้ การยุบสองตารางเป็นตารางเดียวจะกลายเป็นการยกระดับสิทธิ์ให้ sysadmin ทันที
+ * **The permission boundary enforced right here:** every one of them loads an
+ * account through loadHostingAccount(), which only ever accepts a row with
+ * role=webadmin · the result is that someone holding `customer.manage`
+ * (sysadmin) can never touch a superadmin/sysadmin account through this path,
+ * even guessing the right account id. Managing an admin account requires
+ * `user.manage`, a completely separate path. Without this guard right here,
+ * merging the two tables into one would have instantly become a privilege
+ * escalation for sysadmin.
  *
- * กฎค่าโควตา (-1 = ไม่จำกัด, 0 = ปิด) อยู่ที่คลาส Quota ที่เดียว ที่นี่แค่แปลงชนิด
- * exception ให้เป็น ValidationError เพื่อให้ agent ตอบว่า "ค่าที่ส่งมาไม่ถูกต้อง"
- * แทนที่จะเป็น "เกิดข้อผิดพลาดภายในระบบ"
+ * Quota value rules (-1 = unlimited, 0 = disabled) live in the Quota class alone
+ * — this just converts its exception type into a ValidationError, so the agent
+ * answers "the value sent was invalid" instead of "an internal error occurred".
  */
 abstract class CustomerCapability
 {
@@ -40,7 +43,7 @@ abstract class CustomerCapability
     }
 
     /**
-     * ตรวจค่าโควตา — ข้ามค่า null (ไม่ได้ส่งมา = ไม่เปลี่ยน)
+     * Validates a quota value — skips null (not sent = not changed)
      *
      * @throws ValidationError
      */
@@ -58,10 +61,12 @@ abstract class CustomerCapability
     }
 
     /**
-     * โหลดบัญชีโฮสติ้ง หรือปฏิเสธไปเลย
+     * Loads a hosting account, or rejects outright
      *
-     * บัญชีที่ไม่ใช่ webadmin ตอบว่า "ไม่พบ" เหมือนกับที่ไม่มีอยู่จริง ไม่ใช่ "ห้ามเข้าถึง" —
-     * เพราะการบอกว่า "มีอยู่แต่คุณแตะไม่ได้" คือการยืนยันให้ผู้เรียกรู้ว่ารหัสไหนเป็นบัญชีผู้ดูแล
+     * An account that isn't webadmin answers "not found", the same as one that
+     * genuinely doesn't exist, never "access denied" — because saying "it exists
+     * but you can't touch it" would confirm to the caller which id belongs to an
+     * admin account.
      *
      * @return array<string,mixed>
      *
@@ -72,17 +77,19 @@ abstract class CustomerCapability
         $user = $this->users($context)->find($userId);
 
         if ($user === null || $user['role'] !== Permissions::WEBADMIN) {
-            throw new ValidationError("ไม่พบบัญชีโฮสติ้งรหัส {$userId}");
+            throw new ValidationError("Hosting account {$userId} not found");
         }
 
         return $user;
     }
 
     /**
-     * เว็บไซต์ที่จะโอนให้มีโดเมน/ฐานข้อมูลติดมาอยู่แล้ว เจ้าของใหม่ยังมีโควตาพอหรือไม่
+     * A website being transferred already carries its domains/databases with it
+     * — does the new owner still have enough quota?
      *
-     * ต้องตรวจตรงนี้ ไม่ใช่แค่ตอนเพิ่มโดเมนทีละรายการ — เว็บหนึ่งเว็บอาจมี subdomain
-     * และ alias ติดมาสิบกว่ารายการพร้อมกัน การโอนจึงทำให้ทะลุโควตาได้ในคำสั่งเดียว
+     * This has to be checked right here, not only when adding domains one at a
+     * time — a single site can carry a dozen-plus subdomains and aliases at once,
+     * so a transfer can blow through quota in a single command.
      *
      * @return array{ok:bool,message:string}
      */
