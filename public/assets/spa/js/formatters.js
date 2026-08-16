@@ -162,20 +162,22 @@
   }
 
   /**
-   * ปุ่ม "เปิดใน phpMyAdmin" ของแต่ละแถวในตารางฐานข้อมูล
+   * The "Open phpMyAdmin" button for each row in the databases table
    *
-   * **ต้องเป็นตัวจัดรูปแบบ ไม่ใช่ `data-row-actions`** · การเปิดเป็นสองจังหวะที่แยก
-   * กันไม่ได้: POST ที่มี CSRF token เพื่อสร้าง session ฝั่ง phpMyAdmin แล้วค่อยพาไป
-   * ที่ URL ที่ได้ — ซึ่ง `data-row-actions` (ที่ประกอบได้แค่ลิงก์หรือคำขอเดียว)
-   * ทำไม่ได้ · ของเดิมลิงก์ตรงไปที่ `/phpmyadmin/index.php?...` เป็น GET ที่ไม่มี
-   * session ผู้ใช้จึงเจอหน้าล็อกอินของ phpMyAdmin แทนฐานข้อมูลของตัวเอง
+   * **Must be a formatter, not `data-row-actions`** · opening it is two steps
+   * that can't be split apart: a POST carrying a CSRF token to create a
+   * session on phpMyAdmin's side, then navigating to the URL that returns —
+   * which `data-row-actions` (which can only build a single link or request)
+   * can't do · the old direct link to `/phpmyadmin/index.php?...` was a bare
+   * GET with no session, so the user landed on phpMyAdmin's own login screen
+   * instead of their own database.
    *
-   * ปุ่มเดียวกับที่หัวหน้าจอใช้ ต่างกันแค่มี `data-db` ติดไปด้วย
+   * The same button the page header uses, just with `data-db` attached too.
    */
   window.formatDatabaseActions = (cell, existsOnServer, row) => {
     cell.textContent = '';
 
-    // ฐานที่ panel รู้จักแต่ไม่มีอยู่บนเครื่องแล้ว กดไปก็ได้แต่หน้าผิดพลาด
+    // A database the panel knows about but the machine no longer has — clicking it would only reach an error page
     if (existsOnServer === false) return;
 
     const open = document.createElement('button');
