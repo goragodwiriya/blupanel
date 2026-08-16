@@ -7,11 +7,12 @@ namespace Phpcp\Domain;
 use Phpcp\Agent\SelfProtection;
 
 /**
- * รายการ service ที่ panel ยอมให้จัดการ — allowlist ตายตัว
+ * The list of services the panel is allowed to manage — a hardcoded allowlist
  *
- * นี่คือรายการเดียวกันที่ capability ใช้ตรวจ argument และที่ UI ใช้เรนเดอร์หน้า Services
- * เพิ่ม service ใหม่ต้องมาแก้ที่นี่ที่เดียว และแก้แล้วต้องผ่าน SelfProtection เสมอ
- * — บริการของ panel เองจึงเข้ามาอยู่ในรายการนี้ไม่ได้แม้จะพิมพ์ชื่อลงไป
+ * This is the same list a capability uses to validate arguments and the UI uses to
+ * render the Services page. Adding a new service means editing this one place, and
+ * every edit always passes through SelfProtection — so the panel's own services can
+ * never end up in this list, even if someone types the name in.
  */
 final class ServiceCatalog
 {
@@ -23,16 +24,18 @@ final class ServiceCatalog
     public const KIND_MAIL = 'mail';
     public const KIND_ACCESS = 'access';
 
-    /** เวอร์ชัน PHP ที่ระบบรู้จัก เรียงจากใหม่ไปเก่า */
+    /** PHP versions the system recognizes, newest first */
     public const PHP_VERSIONS = ['8.5', '8.4', '8.3', '8.2', '8.1', '8.0', '7.4'];
 
     /**
-     * เวอร์ชันที่หมดระยะสนับสนุนด้านความปลอดภัยแล้ว — ไม่มีแพตช์ช่องโหว่อีกต่อไป
+     * Versions whose security support has already ended — no more vulnerability patches
      *
-     * ยังให้เลือกใช้ได้อยู่ เพราะเว็บเก่าจำนวนมากย้ายเวอร์ชันทันทีไม่ได้
-     * แต่ศูนย์ความปลอดภัยจะนับเป็นข้อที่ต้องแก้ ไม่ใช่แค่เตือน
+     * Still selectable, since a large number of older sites can't move versions
+     * right away, but the security score counts this as something that must be
+     * fixed, not just a warning.
      *
-     * ต้องปรับรายการนี้ตามปฏิทินของ php.net เมื่อมีเวอร์ชันหมดอายุเพิ่ม
+     * This list must be updated against php.net's own calendar whenever another
+     * version reaches end of life.
      */
     public const PHP_EOL_VERSIONS = ['7.4', '8.0', '8.1'];
 
@@ -61,39 +64,49 @@ final class ServiceCatalog
         $catalog['cron'] = ['label' => 'Cron', 'kind' => self::KIND_SCHEDULER, 'critical' => false];
 
         /*
-         * SSH — ขาดจากรายการนี้มาตลอด ทั้งที่เป็นบริการที่ผู้ดูแลต้องมองเห็นมากที่สุด
+         * SSH — missing from this list forever, despite being the service an admin
+         * most needs visibility into
          *
-         * SFTP ของลูกค้าทุกรายวิ่งบนตัวนี้ (ดู SftpAccessManager) เมื่อมันไม่โผล่ในหน้า
-         * Services ผู้ดูแลจึงไม่มีทางรู้จากหน้าเว็บเลยว่า SSH อยู่ในสภาพไหน และไม่มีทาง
-         * สั่ง start/restart ได้ — ต้องไปหาเครื่องหรือ ssh เข้าไปเอง ซึ่งเป็นไปไม่ได้พอดี
-         * ในกรณีที่ SSH นั่นแหละเป็นตัวที่พัง
+         * Every customer's SFTP runs on this (see SftpAccessManager). While it
+         * didn't appear on the Services page, the admin had no way to know from the
+         * web page what state SSH was in at all, and no way to start/restart it —
+         * they'd have to go find the machine or ssh in themselves, which is exactly
+         * impossible in the case where SSH itself is the thing that's broken.
          *
-         * `critical` = true เพราะนี่คือทางเข้าเครื่องทางเดียวที่เหลือเมื่อ panel ล่ม
-         * · `sshd` สำหรับ RHEL, `ssh` สำหรับ Debian/Ubuntu — เครื่องหนึ่งมีตัวเดียว
-         * อีกตัวจะรายงานเป็น not_installed แล้วหน้าจอกรองทิ้งเอง (แบบเดียวกับ named/bind9)
+         * `critical` = true because this is the only remaining way into the
+         * machine when the panel itself is down · `sshd` for RHEL, `ssh` for
+         * Debian/Ubuntu — a machine only has one of the two, and the other reports
+         * as not_installed and gets filtered out by the screen on its own (same as
+         * named/bind9).
          */
         $catalog['ssh'] = ['label' => 'SSH / SFTP', 'kind' => self::KIND_ACCESS, 'critical' => true];
         $catalog['sshd'] = ['label' => 'SSH / SFTP', 'kind' => self::KIND_ACCESS, 'critical' => true];
 
         /*
-         * เมล (PLAN-MAIL) — สามเดมอนนี้เพิ่มเข้ามาในเฟส M1–M3 แต่ไม่เคยโผล่ในหน้าบริการเลย
-         * ผู้ดูแลจึงมองไม่เห็นว่ามันมีอยู่ ไม่รู้ว่าตัวไหนทำงาน และสั่งเริ่มใหม่จากหน้าเว็บไม่ได้
+         * Mail (PLAN-MAIL) — these three daemons were added in Phases M1–M3 but
+         * never appeared on the Services page, so the admin couldn't see they
+         * existed, couldn't tell which ones were running, and couldn't restart them
+         * from the web page.
          *
-         * **critical ไม่เท่ากันโดยตั้งใจ:**
-         *   postfix  จริงทุกเครื่อง — เป็นทางออกของเมลแจ้งเตือนด้วย ไม่ใช่แค่เมลโฮสติ้ง
-         *            ดับเมื่อไหร่แปลว่าข้อความเตือนทุกฉบับส่งไม่ออกและไม่มีใครรู้
-         *   dovecot  ติดมากับ postfix ทุกเครื่อง แต่มีความหมายเฉพาะเครื่องที่เปิดเมลโฮสติ้ง
-         *   rspamd   เมลยังส่งได้ปกติเมื่อมันล่ม แค่ไม่มีลายเซ็น DKIM
-         *            (`milter_default_action = accept` — ดู hosting.cf.tpl)
+         * **`critical` is deliberately not the same across all three:**
+         *   postfix  real on every machine — it's also the outbound path for the
+         *            panel's own notification emails, not just hosting mail ·
+         *            it going down means every notification silently fails to send
+         *   dovecot  ships alongside postfix on every machine, but only matters on
+         *            a machine that has hosting mail turned on
+         *   rspamd   mail still sends normally when this is down, it just loses
+         *            DKIM signing (`milter_default_action = accept` — see
+         *            hosting.cf.tpl)
          *
-         * สองตัวหลังจึงไม่ปลุกใครกลางดึกบนเครื่องที่ไม่ได้ทำเมลโฮสติ้ง — ยังเห็นสถานะ
-         * และสั่งงานได้จากหน้าบริการเหมือนกัน
+         * So the latter two never wake anyone up at night on a machine that isn't
+         * doing hosting mail — their status is still visible and they can still be
+         * controlled from the Services page just the same.
          */
         $catalog['postfix'] = ['label' => 'Postfix (SMTP)', 'kind' => self::KIND_MAIL, 'critical' => true];
         $catalog['dovecot'] = ['label' => 'Dovecot (IMAP/POP3)', 'kind' => self::KIND_MAIL, 'critical' => false];
-        $catalog['rspamd'] = ['label' => 'rspamd (สแปม/DKIM)', 'kind' => self::KIND_MAIL, 'critical' => false];
+        $catalog['rspamd'] = ['label' => 'rspamd (spam/DKIM)', 'kind' => self::KIND_MAIL, 'critical' => false];
 
-        // กันพลาด: ต่อให้มีใครเผลอเพิ่ม unit ของ panel ลงในรายการข้างบน ก็ถูกตัดทิ้งที่นี่
+        // Safety net: even if someone accidentally adds a panel unit to the list above, it gets stripped out here
         return array_filter(
             $catalog,
             static fn(string $unit): bool => !SelfProtection::isProtectedUnit($unit),
@@ -131,7 +144,7 @@ final class ServiceCatalog
         return self::all()[$unit]['kind'] ?? 'other';
     }
 
-    /** true = การหยุดบริการนี้ทำให้เว็บไซต์ล่ม ต้องเตือนแรงกว่าปกติ */
+    /** true = this service going down takes sites down with it, must warn harder than usual */
     public static function isCritical(string $unit): bool
     {
         return self::all()[$unit]['critical'] ?? false;
@@ -145,18 +158,20 @@ final class ServiceCatalog
         return 'php'.$phpVersion.'-fpm';
     }
 
-    /** แปลง php8.4-fpm → 8.4 คืน null ถ้าไม่ใช่ unit ของ PHP-FPM */
+    /** Converts php8.4-fpm → 8.4, returns null if this isn't a PHP-FPM unit */
     public static function phpVersionFromUnit(string $unit): ?string
     {
         return preg_match('/^php(\d\.\d{1,2})-fpm$/', $unit, $m) === 1 ? $m[1] : null;
     }
 
     /**
-     * ชุด service ที่แสดงบนแดชบอร์ด
+     * The set of services shown on the dashboard
      *
-     * ชุดเดิมตาม PROMPT.md มีแค่ apache2/nginx/php-fpm/mariadb/cron — เขียนไว้ก่อนเฟสเมล
-     * (PLAN-MAIL) จะเพิ่ม postfix/dovecot/rspamd เข้า all() เลยไม่เคยถูกดึงมาแสดงที่นี่
-     * ทั้งที่ postfix เป็นทางออกของเมลแจ้งเตือนของ panel เองด้วย จึงต้องอยู่ในหน้าแรก
+     * The original set per PROMPT.md was only apache2/nginx/php-fpm/mariadb/cron —
+     * written before the mail phase (PLAN-MAIL) added postfix/dovecot/rspamd into
+     * all(), so they never got pulled in here either, even though postfix is also
+     * the outbound path for the panel's own notification emails and therefore
+     * belongs on the front page.
      */
     public static function dashboardUnits(): array
     {
