@@ -96,9 +96,11 @@ abstract class DbCapability implements Capability
     /**
      * Checks that the caller genuinely has permission over this database
      *
-     * A site owner can only touch databases bound to their own website — guards
-     * against IDOR. Always checked in the agent too, never relying on the web
-     * tier's check alone.
+     * A customer can only touch their own databases — guards against IDOR.
+     * Always checked in the agent too, never relying on the web tier's check
+     * alone. Checked against `owner_user_id` directly, not through `sites` —
+     * a database left unlinked to any website (the create form allows that)
+     * still has a real owner and must still be manageable by them.
      */
     protected function assertOwnership(Context $context, string $database): void
     {
@@ -110,9 +112,7 @@ abstract class DbCapability implements Capability
         }
 
         $owned = (int) $context->db->value(
-            'SELECT count(*) FROM databases_ d
-             JOIN sites s ON s.id = d.site_id
-             WHERE d.db_name = :name AND s.owner_user_id = :user',
+            'SELECT count(*) FROM databases_ WHERE db_name = :name AND owner_user_id = :user',
             ['name' => $database, 'user' => $actor->userId],
             0,
         );

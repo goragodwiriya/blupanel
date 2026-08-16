@@ -314,7 +314,7 @@ final class DbCreate extends DbAccountCapability
             throw $e;
         }
 
-        $this->record($context, $args);
+        $this->record($context, $args, $owner?->userId);
         $this->invalidateSizesCache($executor, $context);
 
         return [
@@ -329,12 +329,13 @@ final class DbCreate extends DbAccountCapability
     }
 
     /** @param array<string,mixed> $args */
-    private function record(Context $context, array $args): void
+    private function record(Context $context, array $args, ?int $ownerUserId): void
     {
-        $context->db->transaction(static function ($db) use ($args): void {
+        $context->db->transaction(static function ($db) use ($args, $ownerUserId): void {
             $databaseId = $db->insert('databases_', [
                 'db_name' => $args['name'],
                 'site_id' => $args['site_id'] > 0 ? $args['site_id'] : null,
+                'owner_user_id' => $ownerUserId,
                 'charset' => $args['charset'],
                 'size_bytes' => 0,
                 'created_at' => time(),

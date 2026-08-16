@@ -67,36 +67,14 @@ final class DbList extends DbCapability
 
         $isAdmin = in_array($context->actor->role, [Permissions::SUPERADMIN, Permissions::SYSADMIN], true);
 
-        /*
-         * `databases_` has no `owner_user_id` column at all — only a nullable
-         * `site_id`. A database created without a website link (the "Not
-         * linked to a website" choice the create form deliberately offers)
-         * is real and owned by whoever created it, but has no site to derive
-         * that ownership from.
-         *
-         * Found on a real report (2026-08-16): a webadmin's own unlinked
-         * database was completely invisible in this list, while the "Open
-         * phpMyAdmin" button still opened it fine — because that button
-         * checks ownership through a different path entirely
-         * (`db.account_credentials`, which resolves access via the actor's
-         * own `db_accounts` row and its MariaDB grants, never touching
-         * `sites`). This EXISTS clause matches that same path: a database
-         * this actor's own dedicated MariaDB user has been granted access to
-         * is theirs, regardless of whether it's linked to a site.
-         *
-         * `db_accounts.mysql_user` is unique system-wide (SECURITY §2.6 —
-         * one dedicated user per database owner, never shared), so matching
-         * on username alone here can't accidentally surface another
-         * customer's database.
-         */
-        $where = $isAdmin ? '' : ' WHERE s.owner_user_id = :user
-             OR EXISTS (
-                 SELECT 1 FROM db_grants g
-                 JOIN db_users u ON u.id = g.db_user_id
-                 JOIN db_accounts a ON a.mysql_user = u.username
-                 WHERE g.db_id = d.id AND a.user_id = :user2
-             )';
-        $params = $isAdmin ? [] : ['user' => $context->actor->userId, 'user2' => $context->actor->userId];
+        // A database created without a website link (the "Not linked to a
+        // website" choice the create form deliberately offers) has no site
+        // to derive ownership from — `owner_user_id` is recorded directly on
+        // `databases_` at creation for exactly that reason (see migration
+        // 0025_database_owner_id.sql for why joining through `sites` alone
+        // used to hide these).
+        $where = $isAdmin ? '' : ' WHERE d.owner_user_id = :user';
+        $params = $isAdmin ? [] : ['user' => $context->actor->userId];
 
         $rows = $context->db->all(
             'SELECT d.*, s.primary_domain

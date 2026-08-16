@@ -413,13 +413,17 @@ test('capability ที่คืนความลับต้องไม่ถ
 
 test('รายการฐานข้อมูลต้องเห็นฐานที่ไม่ได้ผูกกับเว็บไซต์ของบัญชีตัวเอง', static function (): void {
     /*
-     * databases_ ไม่มีคอลัมน์ owner_user_id เลย มีแค่ site_id (nullable) —
      * ฐานข้อมูลที่ตอนสร้างเลือก "ไม่ผูกกับเว็บไซต์" (ตัวเลือกที่ฟอร์มรองรับจริง)
-     * จึงไม่มีทางสืบไปถึงเจ้าของผ่าน sites ได้เลย
+     * ไม่มี site ให้สืบเจ้าของผ่าน — `databases_.owner_user_id` (migration
+     * 0025_database_owner_id.sql) จึงเป็นแหล่งความจริงเดียวสำหรับกรณีนี้
+     * เหมือนที่ DbCreate::run() บันทึกไว้ตอนสร้างจริง
      *
      * เจอจากรายงานจริง (2026-08-16): ลูกค้าที่มีฐานข้อมูลแบบนี้ไม่เห็นมันในตาราง
      * ทั้งที่ปุ่ม "เปิด phpMyAdmin" ที่หัวหน้าเปิดได้ปกติ — เพราะปุ่มนั้นตรวจสิทธิ์
-     * ผ่าน db_accounts/db_grants คนละทางกับ query ของรายการที่กรองผ่าน sites เท่านั้น
+     * ผ่าน db_accounts/MariaDB grant คนละทางกับ query ของรายการที่เดิมกรองผ่าน
+     * sites เท่านั้น (ความพยายามแก้รอบแรกด้วย EXISTS ผ่าน db_grants→db_users→
+     * db_accounts ก็ยังพลาด เพราะ db_users ที่ DbCreate บันทึกไว้เป็นผู้ใช้ MariaDB
+     * เฉพาะของฐานข้อมูลนั้น ไม่ใช่ชื่อบัญชีเจ้าของ — สองอย่างนี้ไม่มีวันตรงกัน)
      */
     $db = migratedDb();
     $users = new Phpcp\Domain\UserRepository($db);
@@ -432,33 +436,24 @@ test('รายการฐานข้อมูลต้องเห็นฐ�
     $db->update('users', ['system_user' => 'otherguy'], ['id' => $otherId]);
 
     // ฐานของ bluprint เอง — ไม่ผูกกับเว็บไซต์ใดเลย (site_id = NULL)
-    $dbId = $db->insert('databases_', [
+    $db->insert('databases_', [
         'db_name' => 'bluprint_standalone',
         'site_id' => null,
+        'owner_user_id' => $ownerId,
         'charset' => 'utf8mb4',
         'size_bytes' => 0,
         'created_at' => $now,
     ]);
 
     // ฐานของอีกคน — ก็ไม่ผูกกับเว็บไซต์เหมือนกัน ต้องไม่โผล่ในรายการของ bluprint
-    $otherDbId = $db->insert('databases_', [
+    $db->insert('databases_', [
         'db_name' => 'otherguy_standalone',
         'site_id' => null,
+        'owner_user_id' => $otherId,
         'charset' => 'utf8mb4',
         'size_bytes' => 0,
         'created_at' => $now,
     ]);
-
-    $db->insert('db_accounts', [
-        'user_id' => $ownerId,
-        'mysql_user' => 'bluprint',
-        'host' => 'localhost',
-        'password_enc' => 'ciphertext-not-real',
-        'created_at' => $now,
-    ]);
-
-    $dbUserId = $db->insert('db_users', ['username' => 'bluprint', 'host' => 'localhost']);
-    $db->insert('db_grants', ['db_id' => $dbId, 'db_user_id' => $dbUserId, 'privileges' => 'full']);
 
     $context = new Context(
         new Actor($ownerId, 'bluprint', Permissions::WEBADMIN, '127.0.0.1', 'test'),
@@ -481,4 +476,26 @@ test('รายการฐานข้อมูลต้องเห็นฐ�
         !in_array('otherguy_standalone', $names, true),
         'ฐานที่ไม่ผูกเว็บไซต์ของคนอื่นต้องไม่โผล่มาด้วย: ' . implode(', ', $names),
     );
+
+    // ปุ่มลบ/เปลี่ยนรหัสผ่านใช้ assertOwnership() คนละจุดกับ DbList แต่พึ่งพา
+    // owner_user_id ตัวเดียวกัน — เจ้าของฐานที่ไม่ผูกเว็บไซต์ต้องลบฐานตัวเองได้จริง
+    // ไม่ใช่โดน PermissionDenied เหมือนก่อนแก้ (assertOwnership เดิม JOIN sites
+    // ตรง ๆ ซึ่งไม่มีวันเจอแถวที่ site_id เป็น NULL)
+    $drop = new Phpcp\Agent\Capability\DbDrop();
+    $thrown = null;
+
+    try {
+        $drop->run(
+            $drop->validate(['name' => 'bluprint_standalone', 'confirm' => 'bluprint_standalone', 'drop_user' => '0']),
+            $executor,
+            $context,
+        );
+    } catch (Phpcp\Agent\PermissionDenied $e) {
+        $thrown = $e;
+    } catch (\Throwable) {
+        // ไม่มี mariadb จริงในแซนด์บ็อกซ์ ล้มตอนคุยกับเครื่องได้ — ที่ต้องเช็คคือ
+        // ไม่ล้มตอนตรวจสิทธิ์ (PermissionDenied) ต่างหาก
+    }
+
+    assertTrue($thrown === null, 'เจ้าของฐานที่ไม่ผูกเว็บไซต์ต้องผ่านการตรวจสิทธิ์ก่อนลบฐานตัวเองได้');
 });

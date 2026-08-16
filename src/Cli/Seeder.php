@@ -189,6 +189,7 @@ final class Seeder
                 $dbId = $db->insert('databases_', [
                     'db_name' => $name,
                     'site_id' => $siteIds[$site],
+                    'owner_user_id' => $userIds[$siteOwners[$site] ?? ''] ?? $adminId,
                     'size_bytes' => $size,
                     'created_at' => $now - (200 - $index * 20) * $day
                 ]);
