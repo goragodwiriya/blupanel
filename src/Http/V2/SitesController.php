@@ -13,33 +13,34 @@ use Phpcp\Kernel\Response;
 use Phpcp\Security\Permissions;
 
 /**
- * เว็บไซต์ — `/api/v2/sites` (PLAN-V2 §4.6)
+ * Websites — `/api/v2/sites` (PLAN-V2 §4.6)
  *
- * ทุกคำสั่งที่เปลี่ยนแปลงอะไรเดินผ่าน agent ทั้งหมด controller ตัวนี้จึงมีหน้าที่แค่
- * แปลงคำขอ HTTP เป็น argument ของ capability และแปลงผลลัพธ์กลับเป็น JSON
- * — ไม่มีตรรกะการสร้าง/ลบเว็บไซต์อยู่ที่นี่เลยแม้แต่บรรทัดเดียว
+ * Every command that changes anything goes through the agent · this controller's
+ * only job is turning HTTP requests into capability arguments and turning
+ * results back into JSON — not one line of website create/delete logic lives here
  *
- * `AgentException` ไม่ต้อง catch: HttpKernel แปลงเป็นรหัสที่ถูกต้องให้แล้ว
- * (ValidationError→422, PermissionDenied→403, TransportError→503)
+ * `AgentException` never needs catching: HttpKernel already converts it to the
+ * right status code (ValidationError→422, PermissionDenied→403, TransportError→503)
  */
 final class SitesController extends HostingController
 {
-    /** ฟิลด์ที่ยอมให้เรียงได้ — ค่านี้ต่อท้าย ORDER BY จึงต้องเป็น allowlist เท่านั้น */
+    /** Fields sorting is allowed on — this value is appended to ORDER BY, so it must be an allowlist */
     private const SORTABLE = ['primary_domain', 'created_at', 'disk_used', 'php_version', 'status'];
 
     /**
-     * ชื่อฟิลด์ที่ API ใช้ → ชื่อคอลัมน์ในฐานข้อมูล
+     * The API's field name → the database's column name
      *
-     * มีรายการเดียวเพราะเป็นที่เดียวที่หน่วยของ API (ไบต์) ไม่ตรงกับหน่วยที่เก็บ (MB)
-     * การเรียงให้ผลเหมือนกันทั้งสองหน่วย จึงเรียงด้วยคอลัมน์ดิบได้เลย
+     * Only one entry, because this is the one place the API's unit (bytes) doesn't
+     * match the stored unit (MB) — sorting gives the same result in either unit,
+     * so the raw column can be sorted on directly
      */
     private const SORT_COLUMN = ['disk_used' => 'disk_used_mb'];
 
     /**
-     * รายการเว็บไซต์ — รองรับค้นหา กรองสถานะ เรียง และแบ่งหน้าตาม §4.5
+     * The website list — supports search, status filtering, sorting, and pagination per §4.5
      *
-     * การกรองตามเจ้าของทำที่ระดับ query เสมอ ไม่ใช่กรองหลังดึงมาแล้ว —
-     * ข้อมูลของลูกค้ารายอื่นต้องไม่ถูกอ่านขึ้นมาในหน่วยความจำตั้งแต่แรก
+     * Filtering by owner is always done at the query level, never after the fact —
+     * another customer's data must never even be read into memory in the first place
      */
     public function index(Request $request): Response
     {
@@ -83,12 +84,12 @@ final class SitesController extends HostingController
         return $this->paginate(SiteResource::collection($slice), $total, $page['page'], $page['per_page']);
     }
 
-    /** สร้างเว็บไซต์ใหม่ */
+    /** Create a new website */
     public function store(Request $request): Response
     {
         $aliases = $request->payload('aliases', []);
 
-        // รับได้ทั้ง array (JSON) และข้อความคั่นด้วยเว้นวรรค/จุลภาค (ฟอร์มและ curl)
+        // Accepts either an array (JSON) or space/comma-separated text (forms and curl)
         if (is_string($aliases)) {
             $aliases = array_values(array_filter(array_map(trim(...), preg_split('/[\s,]+/', $aliases) ?: [])));
         }
@@ -99,7 +100,7 @@ final class SitesController extends HostingController
             'aliases' => is_array($aliases) ? array_values($aliases) : [],
             'docroot' => trim($request->payloadString('docroot')),
             'pointer_root' => trim($request->payloadString('pointer_root')),
-            // ลูกค้าสร้างเว็บได้เฉพาะของตัวเอง — ไม่ยอมให้ระบุเจ้าของคนอื่นเด็ดขาด
+            // A customer can only create their own website — never allowed to name another owner
             'owner_user_id' => $this->ctx->role() === Permissions::WEBADMIN
                 ? $this->ctx->userId()
                 : (int) $request->payload('owner_user_id', 0)
@@ -121,12 +122,13 @@ final class SitesController extends HostingController
     }
 
     /**
-     * รายละเอียดเว็บไซต์เดียว พร้อมโดเมนทั้งหมดของมัน
+     * A single website's details, with all of its domains
      *
-     * `id=0` เป็นค่าจองพิเศษที่แปลว่า "ยังไม่มีเว็บไซต์นี้อยู่จริง — ขอค่าเริ่มต้น
-     * สำหรับสร้างใหม่" แทนที่จะเป็น 404 · หน้าฟอร์มสร้างเว็บไซต์ (site-create.html)
-     * จึงโหลดข้อมูลด้วย endpoint เดียวกับหน้าแก้ไข (site.html) ได้ — ไม่ต้องมี
-     * endpoint แยกต่างหากที่ทำหน้าที่คล้ายกันแค่เพื่อกรณีสร้างใหม่
+     * `id=0` is a special reserved value meaning "this website doesn't exist yet —
+     * give me the defaults for creating one" instead of a 404 · this lets the
+     * website-create form (site-create.html) load its data from the same endpoint
+     * as the edit page (site.html) — no separate endpoint doing nearly the same
+     * job just for the new-website case
      */
     public function show(Request $request): Response
     {
@@ -138,9 +140,10 @@ final class SitesController extends HostingController
                 $pointerRoots[] = ['value' => $root, 'text' => $root];
             }
 
-            // ต้องตอบ 200 เสมอแม้ agent ล่ม — หน้านี้เป็นแค่ค่าเริ่มต้นของฟอร์ม
-            // ไม่ใช่คำสั่งที่ต้องพึ่ง agent จริง ๆ (ดู SystemController::health)
-            // เวอร์ชัน PHP เลือกไม่ได้แค่ช่วงนั้น ไม่ใช่ทั้งหน้าใช้งานไม่ได้
+            // Must always answer 200 even if the agent is down — this page only holds
+            // form defaults, not a command that genuinely depends on the agent (see
+            // SystemController::health) · only the PHP version choice is unavailable
+            // for that moment, not the whole page
             $phpVersions = [];
 
             if ($this->agent()->isAvailable()) {
@@ -150,8 +153,8 @@ final class SitesController extends HostingController
             }
 
             return $this->ok([
-                // ค่าเริ่มต้นของ select เจ้าของ — ผู้ดูแลเปลี่ยนได้ ลูกค้าเปลี่ยนไม่ได้เพราะ
-                // ownerOptions() คืนตัวเลือกเดียวคือตัวเอง
+                // The owner select's default — an admin can change it, a customer can't,
+                // because ownerOptions() returns only themselves as a choice
                 'owner_user_id' => $this->ctx->userId(),
                 'has_pointer_roots' => $pointerRoots !== [],
                 'options' => [
@@ -175,12 +178,15 @@ final class SitesController extends HostingController
 
         return $this->ok(SiteResource::one($site) + [
             /*
-             * แต่ละโดเมนบอกเองว่าเสิร์ฟจากที่ไหน — ไม่ใช่ให้ผู้ดูแลอนุมานจากเลย์เอาต์
+             * Each domain states its own serving location — not left for the admin
+             * to infer from the layout
              *
-             * เว็บสองแห่งของบัญชีเดียวกันอยู่คนละที่ได้ (โดเมนหลักได้ `public_html`
-             * ส่วนที่เพิ่มทีหลังได้โฟลเดอร์ชื่อตัวเอง) และโดเมนย่อยชี้ไปพาธย่อยได้อีก ·
-             * การแสดงรูปทรงรวมของบัญชีจึงตอบคำถามที่ผู้ดูแลถามจริงไม่ได้ ซึ่งคือ
-             * "ชื่อนี้เปิดไปเจอไฟล์ที่ไหน"
+             * Two websites on the same account can live in different places (the
+             * primary domain gets `public_html`, one added later gets a folder
+             * named after itself), and a subdomain can point at a sub-path on top
+             * of that · showing the account's overall shape can't answer the
+             * question an admin actually asks, which is "where does this name
+             * lead on disk"
              */
             'domains' => array_map(
                 fn (array $row): array => DomainResource::one($row) + [
@@ -189,25 +195,26 @@ final class SitesController extends HostingController
                 $domains,
             ),
             'aliases' => $this->sites()->aliasesOf((int) $site['id']),
-            // ปุ่มบนหน้าจอถาม `can[...]` จากคำตอบนี้ ไม่ได้เดาเองจากบทบาท
+            // The screen's buttons ask `can[...]` from this response — never guessed from the role
             'can' => $this->can([
                 'edit' => 'site.edit',
                 'suspend' => 'site.suspend',
                 'delete' => 'site.delete',
                 'manage_domains' => 'domain.manage',
-                // ไฟล์ตั้งค่าเพิ่มเติมเป็นของผู้ดูแลเครื่อง ไม่ใช่เจ้าของเว็บ
+                // The extra config-file screen belongs to the machine's admin, not the website owner
                 'edit_config' => 'settings.manage'
             ])
         ]);
     }
 
     /**
-     * ตัวเลือกเจ้าของเว็บไซต์ใหม่ — โครงเดียวกับตัวเลือก php_version คือ list ของ
-     * {value, text} ให้ select ฝั่ง SPA ใช้ตรง ๆ
+     * The choice of a new website's owner — the same shape as the php_version
+     * choice, a list of {value, text} for the SPA's select to use directly
      *
-     * ผู้ดูแล (ทุกบทบาทที่ไม่ใช่ webadmin) มอบเว็บให้บัญชีโฮสติ้งไหนก็ได้ จึงเห็นบัญชี
-     * role=webadmin ทั้งหมด ส่วนลูกค้า (webadmin) สร้างเว็บได้เฉพาะของตัวเอง — เห็น
-     * ตัวเลือกเดียวคือชื่อตัวเอง ให้ตรงกับกฎเดียวกับที่ store() บังคับอยู่แล้ว
+     * An admin (any role other than webadmin) can hand a website to any hosting
+     * account, so they see every role=webadmin account · a customer (webadmin)
+     * can only create their own website — they see only their own name as a
+     * choice, matching the same rule store() already enforces
      *
      * @return list<array{value:int,text:string}>
      */
@@ -227,12 +234,13 @@ final class SitesController extends HostingController
     }
 
     /**
-     * แก้ไขบางส่วน
+     * A partial edit
      *
-     * ตอนนี้รองรับเฉพาะ `php_version` เพราะเป็นฟิลด์เดียวของเว็บไซต์ที่มี capability
-     * รองรับอยู่จริง · การเปลี่ยนชื่อหรือ docroot ต้องรอ capability ของมันเอง —
-     * ชั้นนี้จะไม่เขียนฐานข้อมูลตรง ๆ เพื่อความสะดวก เพราะนั่นคือการข้ามชั้นที่ 2
-     * และทำให้การเปลี่ยนแปลงนั้นไม่มีใน audit log
+     * Only `php_version` is supported right now, because it's the only website
+     * field with a capability that actually backs it · renaming or changing
+     * docroot has to wait for its own capability — this layer won't write the
+     * database directly for convenience, because that skips layer 2 and leaves
+     * that change out of the audit log
      */
     public function update(Request $request): Response
     {
@@ -248,14 +256,14 @@ final class SitesController extends HostingController
             return $this->problem(
                 ApiProblem::ValidationError,
                 'php_version is the only field that can be changed here',
-                ['php_version' => 'ต้องระบุเวอร์ชัน PHP ที่ต้องการเปลี่ยนไปใช้'],
+                ['php_version' => 'The PHP version to switch to is required'],
             );
         }
 
         return $this->applyPhpVersion($request, (int) $site['id'], $phpVersion);
     }
 
-    /** เปลี่ยนเวอร์ชัน PHP — แทนที่ค่าทั้งค่า จึงเป็น PUT */
+    /** Change PHP version — replaces the whole value, so it's a PUT */
     public function setPhpVersion(Request $request): Response
     {
         $site = $this->findSite($request->paramInt('id'));
@@ -268,11 +276,11 @@ final class SitesController extends HostingController
     }
 
     /**
-     * ระงับหรือเปิดใช้งานเว็บไซต์
+     * Suspend or resume a website
      *
-     * เป็น `PUT` บนทรัพยากรที่เป็นคำนาม (`suspension`) ตาม §4.1 ไม่ใช่ `POST /suspend`
-     * ข้อดีที่ได้จริงคือสั่งซ้ำได้โดยผลไม่เปลี่ยน — หน้าจอที่กดปุ่มสองครั้งเพราะเน็ตช้า
-     * จะไม่ได้ผลลัพธ์แปลก ๆ
+     * A `PUT` on a noun resource (`suspension`) per §4.1, not `POST /suspend` — the
+     * real benefit is that it's safe to repeat: a screen where a slow connection
+     * causes a double-click doesn't get a strange result
      */
     public function setSuspension(Request $request): Response
     {
@@ -288,7 +296,7 @@ final class SitesController extends HostingController
             return $this->problem(
                 ApiProblem::ValidationError,
                 'The wanted status is required',
-                ['suspended' => 'ต้องเป็น true (ระงับ) หรือ false (เปิดใช้งาน)'],
+                ['suspended' => 'Must be true (suspend) or false (resume)'],
             );
         }
 
@@ -307,11 +315,13 @@ final class SitesController extends HostingController
     }
 
     /**
-     * อ่านค่าการจำกัดอัตราคำขอ พร้อมสถานะจริงจาก fail2ban
+     * Read the rate-limit setting, along with real status from fail2ban
      *
-     * `status` มาจากตัว fail2ban ไม่ใช่จากฐานข้อมูลของ panel เพราะสองอย่างนี้ไม่ตรงกันได้:
-     * ผู้ดูแลอาจสั่ง `fail2ban-client` เองจากบรรทัดคำสั่ง หรือ fail2ban อาจไม่ได้โหลด jail
-     * เพราะไฟล์ผิด · หน้าจอต้องบอกสิ่งที่เป็นจริงบนเครื่อง ไม่ใช่สิ่งที่เราคิดว่าตั้งไว้
+     * `status` comes from fail2ban itself, not the panel's database, because the
+     * two can disagree: an admin might run `fail2ban-client` directly from the
+     * command line, or fail2ban might have failed to load the jail because of a
+     * bad file · the screen must state what's actually true on the machine, not
+     * what we think was configured
      */
     public function rateLimit(Request $request): Response
     {
@@ -326,7 +336,7 @@ final class SitesController extends HostingController
             ['id' => (int) $site['id']],
         );
 
-        // ยังไม่เคยตั้ง = ส่งค่าเริ่มต้นให้ฟอร์มกรอกไว้ ไม่ใช่ค่าว่างที่ผู้ใช้ต้องเดาเอง
+        // Never configured = send form defaults to prefill, not an empty value the user has to guess
         $data = [
             'site_id' => (int) $site['id'],
             'domain' => (string) $site['primary_domain'],
@@ -337,8 +347,9 @@ final class SitesController extends HostingController
             'ignore_ips' => (string) ($row['ignore_ips'] ?? ''),
         ];
 
-        // ถามสถานะจริงเฉพาะเมื่อเปิดไว้ — การเรียก fail2ban-client ทุกครั้งที่เปิดหน้า
-        // ของเว็บที่ไม่ได้ใช้ฟีเจอร์นี้เป็นการเสียเวลาเปล่าและทำให้หน้าโหลดช้าโดยไม่จำเป็น
+        // Only asks for real status when it's turned on — calling fail2ban-client every
+        // time a website that doesn't use this feature opens its page is wasted work
+        // that slows the page down for no reason
         if ($data['enabled']) {
             $result = $this->agent()->data(
                 'site.rate_limit_status',
@@ -351,18 +362,20 @@ final class SitesController extends HostingController
         }
 
         return $this->ok($data, [
-            // ข้อแลกเปลี่ยนที่ผู้ดูแลต้องรู้ก่อนเปิด — หน้าจอเอาไปแสดงเป็นคำเตือน
-            'ban_scope' => 'เครื่อง',
-            'notice' => 'การแบนมีผลทั้งเครื่อง ไม่ใช่เฉพาะเว็บนี้ — IP ที่ถูกแบนจะเข้าเว็บอื่นบนเครื่องเดียวกันไม่ได้ด้วย',
+            // The trade-off an admin needs to know before turning this on — the screen shows it as a warning
+            'ban_scope' => $this->t('the machine'),
+            'notice' => $this->t('A ban applies to the whole machine, not just this website — a banned IP is also locked out of other websites on the same machine'),
         ]);
     }
 
     /**
-     * รายการ IP ที่ถูกแบนอยู่ — แยก endpoint เพราะตารางของ SPA ต้องการ `data` ที่เป็น array
+     * The list of currently banned IPs — a separate endpoint because the SPA's
+     * table needs `data` to be an array
      *
-     * `GET /rate-limit` คืน `data` เป็น object (ค่าตั้งของฟอร์ม) ซึ่ง `data-table`
-     * ผูกไม่ได้ · การยัดสองรูปแบบไว้ใน endpoint เดียวแล้วให้หน้าจอเลือกเอง แปลว่า
-     * ต้องเขียน JS ประจำหน้า ซึ่งทั้ง SPA นี้ไม่มีเลยสักหน้า
+     * `GET /rate-limit` returns `data` as an object (the form's settings), which
+     * `data-table` can't bind to · cramming both shapes into one endpoint and
+     * letting the screen pick would mean writing page-specific JS, which not one
+     * single page in this whole SPA has
      */
     public function rateLimitBans(Request $request): Response
     {
@@ -390,7 +403,7 @@ final class SitesController extends HostingController
         ]);
     }
 
-    /** เปิด ปิด หรือปรับค่าการจำกัดอัตราคำขอ */
+    /** Turn the rate limit on, off, or adjust its settings */
     public function setRateLimit(Request $request): Response
     {
         $site = $this->findSite($request->paramInt('id'));
@@ -415,10 +428,11 @@ final class SitesController extends HostingController
     }
 
     /**
-     * ปลดแบน IP หนึ่ง
+     * Unban one IP
      *
-     * ต้องมีเพราะการแบนสั่งที่ firewall ซึ่งไม่รู้จัก vhost — ผู้ดูแลที่ทดสอบเว็บตัวเอง
-     * แรงไปหน่อยแล้วโดนแบน จะเข้า panel ไม่ได้เลยถ้าไม่มีทางปลดจากที่อื่น
+     * Needed because a ban is issued at the firewall, which knows nothing about
+     * vhosts — an admin who tests their own website a bit too hard and gets
+     * banned would be locked out of the panel entirely with no other way to lift it
      */
     public function unbanIp(Request $request): Response
     {
@@ -440,10 +454,11 @@ final class SitesController extends HostingController
     }
 
     /**
-     * ลบเว็บไซต์ — ต้องยืนยันด้วยชื่อโดเมนเสมอ
+     * Delete a website — always requires confirming with the domain name
      *
-     * ชื่อโดเมนรับทาง body หรือ query ก็ได้ เพราะ `DELETE` ที่มี body ยังมีไคลเอนต์
-     * บางตัวที่ตัดทิ้ง การบังคับให้ส่งได้ทางเดียวจะทำให้ลบผ่าน curl ไม่ได้ในบางเครื่อง
+     * The domain name is accepted via either body or query, because some clients
+     * still strip the body from a `DELETE` — forcing only one way to send it would
+     * make deleting via curl impossible on some machines
      */
     public function destroy(Request $request): Response
     {
@@ -460,8 +475,9 @@ final class SitesController extends HostingController
             'confirm_domain' => $confirm
         ], $this->ctx->actor($request));
 
-        // กลับไปหน้ารายการเสมอ — กดลบจากหน้ารายละเอียดแล้วอยู่ที่เดิมจะได้ 404
-        // ส่วนกดลบจากหน้ารายการ การไปที่เส้นทางเดิมทำให้ตารางโหลดใหม่พอดี
+        // Always goes back to the list page — deleting from the detail page and
+        // staying there would get a 404 · deleting from the list page and going to
+        // the same route just makes the table reload correctly
         return $this->done(
             $this->t('Website {domain} deleted', ['domain' => (string) $site['primary_domain']]),
             [
@@ -473,7 +489,7 @@ final class SitesController extends HostingController
         );
     }
 
-    /** ตั้งเจ้าของไฟล์ของเว็บไซต์กลับให้ถูกต้อง */
+    /** Reset a website's file ownership back to correct */
     public function resetOwner(Request $request): Response
     {
         $site = $this->findSite($request->paramInt('id'));
@@ -490,7 +506,7 @@ final class SitesController extends HostingController
         return $this->refreshed((string) ($result['message'] ?? 'File ownership reset'), extra: $result);
     }
 
-    /** โดเมนทั้งหมดของเว็บไซต์นี้ */
+    /** Every domain belonging to this website */
     public function domains(Request $request): Response
     {
         $site = $this->findSite($request->paramInt('id'));
@@ -518,13 +534,14 @@ final class SitesController extends HostingController
         );
     }
 
-    /** เพิ่มโดเมนย่อยหรือ alias ให้เว็บไซต์นี้ */
+    /** Add a subdomain or alias to this website */
     /**
-     * โครงเปล่าของฟอร์มเพิ่มโดเมนให้เว็บนี้ พร้อมคำสั่งเปิด modal
+     * The empty shell of the add-domain form for this website, with the command to open its modal
      *
-     * ปลายทางของฟอร์มขึ้นกับเว็บไซต์ จึงส่ง `form_action` มาให้ผูกกับแอตทริบิวต์
-     * action ตรง ๆ — เทมเพลตของ modal ถูกโหลดทีหลังจึงไม่ผ่านการแทนค่า `{id}`
-     * ของ RouterManager เหมือน HTML ของหน้า
+     * The form's destination depends on the website, so `form_action` is sent
+     * ready to bind straight to the action attribute — the modal's template is
+     * loaded later, so it never goes through RouterManager's `{id}` substitution
+     * the way a page's own HTML does
      */
     public function domainForm(Request $request): Response
     {
@@ -584,9 +601,10 @@ final class SitesController extends HostingController
     }
 
     /**
-     * แทนที่รายการโดเมนทั้งชุดตามชนิดที่ระบุ
+     * Replace the whole domain list for a given type
      *
-     * ใช้ตอนแก้ไขรายการทั้งก้อนจากหน้าจอเดียว — capability จะคำนวณเองว่าต้องเพิ่มหรือลบอะไร
+     * Used when editing the whole list from a single screen — the capability
+     * works out on its own what needs adding or removing
      */
     public function setDomains(Request $request): Response
     {
@@ -614,7 +632,7 @@ final class SitesController extends HostingController
         );
     }
 
-    /** ลบโดเมนย่อยหรือ alias ออกจากเว็บไซต์ */
+    /** Remove a subdomain or alias from a website */
     public function removeDomain(Request $request): Response
     {
         $site = $this->findSite($request->paramInt('id'));
@@ -625,14 +643,14 @@ final class SitesController extends HostingController
 
         $this->agent()->data('site.remove_domain', [
             'site_id' => (int) $site['id'],
-            // ชื่อโดเมนมาจาก path จึงต้องถอด urlencode ก่อน (จุดกับขีดไม่ถูกเข้ารหัส แต่กันไว้)
+            // The domain name comes from the path, so it must be urldecoded first (dots and hyphens aren't encoded, but this guards against it anyway)
             'domain' => rawurldecode($request->param('domain'))
         ], $this->ctx->actor($request));
 
         return $this->refreshed($this->t('Domain {domain} removed', ['domain' => rawurldecode($request->param('domain'))]), 'sites');
     }
 
-    /** ส่งคำสั่งเปลี่ยนเวอร์ชัน PHP ไปที่ agent — ใช้ร่วมกันระหว่าง PATCH และ PUT */
+    /** Send the change-PHP-version command to the agent — shared between PATCH and PUT */
     private function applyPhpVersion(Request $request, int $siteId, string $phpVersion): Response
     {
         $result = $this->agent()->data('site.set_php', [
@@ -646,13 +664,15 @@ final class SitesController extends HostingController
         );
     }
     /**
-     * โดเมนนี้เสิร์ฟไฟล์จากไดเรกทอรีไหน
+     * Which directory this domain serves files from
      *
-     * โดเมนย่อยที่ผูกไว้กับพาธย่อย (`redirect_target`) ชี้ไปที่นั่น · ที่เหลือใช้ docroot
-     * ของเว็บ ซึ่งมาจากเลย์เอาต์ของเจ้าของหรือจาก Domain Pointer ที่ตั้งไว้
+     * A subdomain bound to a sub-path (`redirect_target`) points there · everything
+     * else uses the website's docroot, which comes from the owner's layout or from
+     * a configured Domain Pointer
      *
-     * คำนวณจาก `Site` ตัวจริงเสมอ ไม่ประกอบเส้นทางเองที่นี่ — ที่นี่เป็นชั้นเว็บ
-     * การประกอบเส้นทางซ้ำคือทางที่ทำให้หน้าจอกับความจริงบนดิสก์เริ่มไม่ตรงกัน
+     * Always computed from the real `Site`, never assembled by hand here — this is
+     * the web layer, and re-assembling the path here is exactly how the screen and
+     * the truth on disk start to disagree
      *
      * @param array<string,mixed> $site
      * @param array<string,mixed> $domain
