@@ -8,24 +8,27 @@ use Phpcp\Agent\ExecutionFailed;
 use Phpcp\Agent\ValidationError;
 
 /**
- * แจ้งเตือนผ่าน Telegram
+ * Sends notifications through Telegram
  *
- * เลือก Telegram เพราะเป็นช่องทางเดียวที่ตั้งค่าเสร็จใน 2 นาทีโดยไม่ต้องมีโดเมน
- * ไม่ต้องมีเมลเซิร์ฟเวอร์ และไม่มีปัญหาจดหมายเข้าถังขยะ — ซึ่งเป็นเหตุผลว่าทำไม
- * การแจ้งเตือนทางอีเมลของ panel ส่วนใหญ่ถึงไม่มีใครได้รับจริง
+ * Telegram was chosen because it's the one channel that can be set up in 2
+ * minutes with no domain needed, no mail server needed, and no
+ * spam-folder problem — which is exactly why most of a panel's email
+ * notifications never actually reach anyone.
  *
- * ข้อควรรู้ที่สำคัญที่สุด: **การแจ้งเตือนต้องไม่ทำให้งานหลักล้ม**
- * ถ้าเครือข่ายมีปัญหาหรือ Telegram ล่ม การสร้างเว็บไซต์ต้องยังสำเร็จเหมือนเดิม
- * ทุกเมธอดที่ส่งข้อความจึงกลืนข้อผิดพลาดไว้เอง ยกเว้นตอนที่ผู้ใช้กด "ทดสอบ" ซึ่งต้องดัง
+ * The single most important thing to know: **a notification must never
+ * fail the main job it's attached to** — if the network has a problem or
+ * Telegram is down, creating a website still has to succeed exactly the
+ * same · every method that sends a message therefore swallows its own
+ * error, except when a user clicks "test", which has to be loud about it.
  */
 final class TelegramNotifier
 {
     private const API = 'https://api.telegram.org/bot';
 
-    /** สั้น ๆ เพราะนี่คือการแจ้งเตือน ไม่ใช่งานหลัก — ช้าไม่ได้ */
+    /** Short, since this is a notification, not the main job — it must never be allowed to run slow */
     private const TIMEOUT = 8;
 
-    /** Telegram จำกัดข้อความละ 4096 ตัวอักษร */
+    /** Telegram limits a message to 4096 characters */
     private const MAX_LENGTH = 3800;
 
     public function __construct(
@@ -40,11 +43,12 @@ final class TelegramNotifier
     }
 
     /**
-     * ส่งข้อความแบบ "ล้มได้ ไม่โยน error"
+     * Sends in "can fail, never throws" mode
      *
-     * ใช้กับการแจ้งเตือนอัตโนมัติทุกจุด — งานหลักสำเร็จไปแล้วตอนที่เรียกมาถึงตรงนี้
-     * ถ้าปล่อยให้ exception หลุดออกไป การสร้างเว็บไซต์ที่สำเร็จแล้วจะถูกรายงานว่าล้มเหลว
-     * เพียงเพราะส่งข้อความแจ้งเตือนไม่ได้
+     * Used everywhere an automatic notification is sent — the main job has
+     * already succeeded by the time this is called · letting an exception
+     * escape here would report a website that was already created
+     * successfully as a failure, just because sending a notification failed.
      */
     public function notify(string $title, string $body, string $level = 'info'): bool
     {
@@ -62,21 +66,22 @@ final class TelegramNotifier
     }
 
     /**
-     * ส่งข้อความแบบ "ล้มแล้วต้องรู้"
+     * Sends in "must know if it fails" mode
      *
-     * ใช้เฉพาะตอนผู้ใช้กดปุ่มทดสอบ — ถ้าเงียบไปเฉย ๆ ผู้ใช้จะคิดว่าตั้งค่าถูกแล้ว
-     * ทั้งที่ token ผิด แล้วจะไม่ได้รับการแจ้งเตือนจริงตอนที่จำเป็น
+     * Used only when a user clicks the test button — staying quiet on
+     * failure would leave the user believing the setup is correct even with
+     * a wrong token, and they wouldn't get a real notification exactly when it mattered.
      */
     public function test(): array
     {
         if (!$this->isConfigured()) {
-            throw new ValidationError('ยังไม่ได้ตั้งค่า token หรือ chat id ของ Telegram');
+            throw new ValidationError("Telegram's token or chat id is not set yet");
         }
 
         $response = $this->send($this->format(
-            'ทดสอบการแจ้งเตือน',
-            "ถ้าคุณเห็นข้อความนี้ แปลว่าการตั้งค่าถูกต้องแล้ว\n"
-            . 'ส่งจาก PHP Server Control Panel เมื่อ ' . date('d/m/Y H:i:s'),
+            'Notification test',
+            "If you see this message, the setup is correct\n"
+            . 'Sent from PHP Server Control Panel at ' . date('d/m/Y H:i:s'),
             'ok',
         ));
 
@@ -84,11 +89,12 @@ final class TelegramNotifier
     }
 
     /**
-     * จัดรูปข้อความ
+     * Formats the message
      *
-     * ใช้โหมด HTML ของ Telegram และ escape เนื้อหาทุกส่วน — ข้อความแจ้งเตือนมี
-     * ชื่อโดเมนและข้อความผิดพลาดจากระบบปนอยู่ ซึ่งอาจมี < > & ที่ทำให้ Telegram
-     * ปฏิเสธทั้งข้อความ กลายเป็นการแจ้งเตือนที่หายไปเงียบ ๆ ในจังหวะที่สำคัญที่สุด
+     * Uses Telegram's HTML mode and escapes every part of the content —
+     * notification messages contain domain names and system error text
+     * mixed in, which might contain < > & that would make Telegram reject
+     * the whole message, turning into a notification that silently vanishes exactly when it matters most.
      */
     private function format(string $title, string $body, string $level): string
     {
@@ -117,7 +123,7 @@ final class TelegramNotifier
         $handle = curl_init(self::API . $this->token . '/sendMessage');
 
         if ($handle === false) {
-            throw new ExecutionFailed('เริ่มการเชื่อมต่อ Telegram ไม่สำเร็จ');
+            throw new ExecutionFailed('Failed to start a connection to Telegram');
         }
 
         curl_setopt_array($handle, [
@@ -140,16 +146,16 @@ final class TelegramNotifier
         curl_close($handle);
 
         if ($raw === false) {
-            throw new ExecutionFailed('ส่งข้อความไม่สำเร็จ: ' . $error);
+            throw new ExecutionFailed('Failed to send message: ' . $error);
         }
 
         $data = json_decode((string) $raw, true);
 
         if (!is_array($data) || ($data['ok'] ?? false) !== true) {
-            // ข้อความผิดพลาดของ Telegram ตรงไปตรงมาพอที่จะแสดงให้ผู้ใช้เห็นได้เลย
-            // เช่น "chat not found" หรือ "Unauthorized" ซึ่งบอกทางแก้ในตัว
+            // Telegram's own error messages are direct enough to show a
+            // user as-is — e.g. "chat not found" or "Unauthorized" already say how to fix it
             throw new ExecutionFailed(
-                'Telegram ปฏิเสธ: ' . (is_array($data) ? (string) ($data['description'] ?? 'ไม่ทราบสาเหตุ') : 'ตอบกลับผิดรูปแบบ'),
+                'Telegram rejected the message: ' . (is_array($data) ? (string) ($data['description'] ?? 'unknown reason') : 'malformed response'),
             );
         }
 
@@ -162,10 +168,11 @@ final class TelegramNotifier
             return '';
         }
 
-        // รูปแบบของ token คือ <ตัวเลข>:<อักขระ 35 ตัว> ตรวจไว้เพื่อจับการวางผิดช่อง
-        // ตั้งแต่ตอนบันทึก ดีกว่าไปรู้ตอนที่การแจ้งเตือนสำคัญส่งไม่ออก
+        // A token's shape is <number>:<35 characters> — checked to catch a
+        // value pasted into the wrong field at save time, better than
+        // finding out when an important notification fails to send
         if (preg_match('/^\d{5,}:[A-Za-z0-9_-]{30,}$/', $token) !== 1) {
-            throw new ValidationError('รูปแบบ token ของบอทไม่ถูกต้อง (ต้องเป็น 123456789:AA...)');
+            throw new ValidationError("The bot token's format is invalid (must look like 123456789:AA...)");
         }
 
         return $token;
@@ -177,9 +184,9 @@ final class TelegramNotifier
             return '';
         }
 
-        // รับได้ทั้งตัวเลข (รวมค่าติดลบของกลุ่ม) และ @username ของช่องสาธารณะ
+        // Accepts either a number (including a group's negative value) or a public channel's @username
         if (preg_match('/^(-?\d+|@[A-Za-z][A-Za-z0-9_]{4,})$/', $chatId) !== 1) {
-            throw new ValidationError('chat id ต้องเป็นตัวเลข หรือ @username ของช่อง');
+            throw new ValidationError('The chat id must be a number or a channel @username');
         }
 
         return $chatId;

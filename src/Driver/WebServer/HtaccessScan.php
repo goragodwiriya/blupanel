@@ -7,41 +7,49 @@ namespace Phpcp\Driver\WebServer;
 use Phpcp\Agent\Executor\Executor;
 
 /**
- * ตัดสินว่าเว็บนี้ให้ nginx ตอบไฟล์ static เองได้แค่ไหน โดยไม่ทำให้กฎใน `.htaccess` หาย
+ * Decides how much of this site's static files nginx can safely serve
+ * directly, without silently dropping any `.htaccess` rule
  *
- * **ปัญหาที่ต้องแก้:** ให้ nginx ตอบไฟล์เองคือเหตุผลหลักที่เอา nginx มาวางหน้า Apache
- * แต่ `.htaccess` คุมไฟล์ static ได้ด้วย (`Require all denied`, `AuthType Basic`,
- * `<FilesMatch>` ปฏิเสธ, `Header set`) ถ้า nginx ตอบไปเลยกฎเหล่านั้นจะถูกข้ามเงียบ ๆ —
- * โฟลเดอร์ที่ลูกค้าคิดว่าป้องกันไว้แล้วจะเปิดให้ทุกคนเข้าถึงโดยไม่มีอะไรบอก
+ * **The problem this solves:** serving static files itself is the main
+ * reason nginx sits in front of Apache at all, but `.htaccess` can also
+ * control static files (`Require all denied`, `AuthType Basic`, a
+ * `<FilesMatch>` denial, `Header set`) — if nginx serves those files
+ * directly, those rules get silently skipped entirely — a folder a
+ * customer believes is protected becomes open to everyone with nothing telling them.
  *
- * **วิธีตัดสิน** — แยกสองอย่างที่ต่างกันมาก:
+ * **How the decision is made** — separates two very different cases:
  *
- *   1. `.htaccess` ที่มีแต่ **กฎ rewrite** (WordPress, Laravel, CodeIgniter ที่ส่งทุก
- *      คำขอที่ไม่ตรงไฟล์จริงเข้า index.php) — กฎพวกนี้มีผลเฉพาะตอนไฟล์ **ไม่มีอยู่จริง**
- *      การให้ nginx ตอบไฟล์ที่มีอยู่จริงจึงไม่เปลี่ยนพฤติกรรมอะไรเลย · **ปลอดภัย**
- *   2. `.htaccess` ที่มี **กฎควบคุมการเข้าถึงหรือแก้ response** — ต้องให้ Apache ตอบ
- *      เท่านั้น เพราะ nginx ไม่รู้จักกฎเหล่านั้น
+ *   1. An `.htaccess` containing only **rewrite rules** (WordPress, Laravel,
+ *      CodeIgniter routing every request that doesn't match a real file
+ *      into index.php) — these rules only ever take effect when the file
+ *      **doesn't actually exist**, so letting nginx serve a file that
+ *      genuinely exists changes nothing about the outcome · **safe**.
+ *   2. An `.htaccess` containing an **access-control or response-modifying
+ *      rule** — must be served by Apache only, since nginx has no idea
+ *      those rules exist.
  *
- * โฟลเดอร์ย่อยที่มี `.htaccess` ชนิดที่ 2 จะถูกบังคับให้ผ่าน Apache เป็นราย location
- * ส่วนที่เหลือของเว็บยังได้ความเร็วของ nginx เต็ม ๆ
+ * A subfolder with the second kind of `.htaccess` is forced through Apache
+ * per-location, while the rest of the site still gets nginx's full speed.
  *
- * **จงใจตัดสินแบบระแวงไว้ก่อน** — เจอคำสั่งที่ไม่รู้จักถือว่าไม่ปลอดภัย เพราะการเดาผิด
- * ด้านนี้แค่ทำให้ช้าลง แต่เดาผิดอีกด้านคือข้อมูลลูกค้าหลุด
+ * **Deliberately errs on the side of suspicion** — an unrecognized
+ * directive is treated as unsafe, because a wrong guess in that direction
+ * only makes things slower, while a wrong guess in the other direction leaks a customer's data.
  */
 final class HtaccessScan
 {
-    /** ไม่ไล่ลึกเกินนี้ — เว็บที่มีโฟลเดอร์ซ้อนลึกมากไม่ควรทำให้การเขียน vhost ช้า */
+    /** Never descends past this — a site with very deeply nested folders shouldn't slow down writing the vhost */
     private const MAX_DEPTH = 3;
 
-    /** จำนวนโฟลเดอร์สูงสุดที่ยอมสแกน กันเว็บที่มีโฟลเดอร์นับหมื่น */
+    /** The maximum number of folders allowed to be scanned — guards against a site with tens of thousands of them */
     private const MAX_DIRS = 500;
 
     /**
-     * คำสั่งที่แปลว่า "ไฟล์ในโฟลเดอร์นี้ต้องผ่าน Apache"
+     * Directives that mean "files in this folder have to go through Apache"
      *
-     * ครอบคลุมการปฏิเสธการเข้าถึง (Require/Deny/Allow), การขอรหัสผ่าน (Auth*),
-     * การกำหนดขอบเขตรายไฟล์ (<Files>/<FilesMatch>) และการแก้ response header
-     * (Header/Expires/AddType) ซึ่งทั้งหมดเปลี่ยนผลลัพธ์ของไฟล์ static โดยตรง
+     * Covers access denial (Require/Deny/Allow), password prompts (Auth*),
+     * per-file scoping (<Files>/<FilesMatch>), and response header changes
+     * (Header/Expires/AddType) — all of which directly change the outcome
+     * for a static file.
      */
     private const UNSAFE_DIRECTIVES = [
         'require', 'deny', 'allow', 'satisfy',
@@ -54,16 +62,16 @@ final class HtaccessScan
 
     /**
      * @return array{static_ok:bool,proxy_dirs:list<string>}
-     *   static_ok  — nginx ตอบไฟล์ static ของเว็บนี้เองได้ไหม
-     *   proxy_dirs — เส้นทาง URL ของโฟลเดอร์ที่ต้องบังคับผ่าน Apache
+     *   static_ok  — can nginx serve this site's static files itself?
+     *   proxy_dirs — the URL paths of folders that must be forced through Apache
      */
     public static function inspect(Executor $executor, string $docroot): array
     {
         $root = $executor->path($docroot);
 
         if (!$executor->exists($root)) {
-            // ยังไม่มีไฟล์เว็บ (เพิ่งสร้าง) — ปลอดภัยที่จะให้ nginx ตอบ static
-            // ครั้งถัดไปที่เขียน vhost จะสแกนใหม่อยู่แล้ว
+            // No website files exist yet (just created) — safe to let nginx serve static files
+            // The next time the vhost is written, it will be scanned again anyway
             return ['static_ok' => true, 'proxy_dirs' => []];
         }
 
@@ -77,10 +85,11 @@ final class HtaccessScan
     }
 
     /**
-     * ไฟล์นี้มีแต่กฎที่ไม่กระทบไฟล์ static ที่มีอยู่จริงหรือไม่
+     * Does this file contain only rules that don't affect a static file that genuinely exists?
      *
-     * ยอมรับเฉพาะบรรทัดที่รู้จักแน่ ๆ ว่าไม่เป็นอันตราย — บรรทัดว่าง คอมเมนต์
-     * บล็อก `<IfModule mod_rewrite.c>` และตระกูล Rewrite* ทั้งหมด
+     * Only accepts lines confidently known to be harmless — blank lines,
+     * comments, an `<IfModule mod_rewrite.c>` block, and the entire
+     * Rewrite* family.
      */
     public static function isRewriteOnly(string $contents): bool
     {
@@ -93,7 +102,7 @@ final class HtaccessScan
 
             $lower = strtolower($line);
 
-            // บล็อก IfModule ของ mod_rewrite และตัวปิดบล็อก ถือว่าไม่มีผลในตัวเอง
+            // An IfModule block for mod_rewrite, and its closing tag, are treated as having no effect on their own
             if (str_starts_with($lower, '<ifmodule mod_rewrite')
                 || str_starts_with($lower, '</ifmodule')
                 || str_starts_with($lower, 'rewrite')
@@ -107,7 +116,7 @@ final class HtaccessScan
                 }
             }
 
-            // คำสั่งที่ไม่รู้จัก — ระแวงไว้ก่อน ให้ Apache ตอบทั้งเว็บ
+            // Unrecognized directive — err on the side of suspicion, let Apache serve the whole thing
             return false;
         }
 
@@ -115,9 +124,9 @@ final class HtaccessScan
     }
 
     /**
-     * ไล่หาโฟลเดอร์ย่อยที่มี `.htaccess` ซึ่งต้องผ่าน Apache
+     * Walks subfolders looking for an `.htaccess` that must go through Apache
      *
-     * @return list<string> เส้นทางแบบ URL ขึ้นต้นและลงท้ายด้วย /
+     * @return list<string> URL-style paths, starting and ending with /
      */
     private static function scan(Executor $executor, string $absolute, string $urlPath, int $depth): array
     {
@@ -147,7 +156,7 @@ final class HtaccessScan
 
             if ($executor->exists($childAbs . '/.htaccess')
                 && !self::isRewriteOnly($executor->readFile($childAbs . '/.htaccess'))) {
-                // เจอกฎที่ nginx ทำแทนไม่ได้ — ส่งทั้งโฟลเดอร์ให้ Apache แล้วไม่ต้องไล่ลึกต่อ
+                // Found a rule nginx can't stand in for — send the whole folder to Apache and stop descending further
                 $found[] = $childUrl . '/';
                 continue;
             }
