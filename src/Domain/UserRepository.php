@@ -9,10 +9,11 @@ use Phpcp\Security\Password;
 use Phpcp\Security\Permissions;
 
 /**
- * ผู้ใช้ของ panel — คนละเรื่องกับ system user ของ Linux โดยสิ้นเชิง
+ * A panel user — an entirely different thing from a Linux system user
  *
- * ผู้ใช้ที่นี่คือคนที่ล็อกอินเข้าหน้าเว็บ ส่วน system user (web_17) คือเจ้าของไฟล์เว็บไซต์
- * PROMPT.md แยกสองอย่างนี้ไว้ชัดเจนแล้ว และโค้ดก็ต้องแยกตาม
+ * A user here is someone who logs into the web page; the system user (web_17) is the
+ * owner of the site's files. PROMPT.md already draws this distinction clearly, and
+ * the code must follow it too.
  */
 final class UserRepository
 {
@@ -55,7 +56,7 @@ final class UserRepository
         bool $mustChangePassword = false,
     ): int {
         if (!Permissions::isValidRole($role)) {
-            throw new \InvalidArgumentException("บทบาทไม่ถูกต้อง: {$role}");
+            throw new \InvalidArgumentException("Invalid role: {$role}");
         }
 
         $now = time();
@@ -84,7 +85,7 @@ final class UserRepository
         $this->db->update('users', $data, ['id' => $userId]);
     }
 
-    /** true = บัญชีถูกล็อกชั่วคราวจากการล็อกอินผิดซ้ำ ๆ */
+    /** true = the account is temporarily locked out from repeated failed logins */
     public function isLocked(array $user): bool
     {
         $until = $user['locked_until'] ?? null;
@@ -100,8 +101,9 @@ final class UserRepository
     }
 
     /**
-     * บันทึกการล็อกอินผิด และล็อกบัญชีเมื่อครบจำนวนครั้ง
-     * ระยะเวลาล็อกเพิ่มขึ้นแบบทวีคูณเพื่อให้การเดารหัสแบบต่อเนื่องแพงขึ้นเรื่อย ๆ
+     * Record a failed login, and lock the account once the attempt count is reached
+     * The lockout duration grows exponentially, so sustained password guessing gets
+     * progressively more expensive.
      */
     public function registerFailure(int $userId, int $maxAttempts, int $lockSeconds): void
     {
@@ -123,10 +125,11 @@ final class UserRepository
     }
 
     /**
-     * จดว่ารหัส 2FA ของช่วงเวลาไหนถูกใช้ไปแล้ว — รหัสเดิมต้องใช้ซ้ำไม่ได้
+     * Record which 2FA time-step has already been used — the same code must not be reusable
      *
-     * เก็บหมายเลขช่วงเวลา ไม่ใช่ตัวรหัส · ตัวเลขเดินหน้าอย่างเดียว จึงเทียบง่ายและ
-     * ไม่ต้องเก็บความลับอะไรเพิ่ม ({@see \Phpcp\Security\Totp::verifyAt()})
+     * Stores the time-step number, not the code itself · the number only ever moves
+     * forward, so comparison is simple and nothing extra needs to be kept secret
+     * ({@see \Phpcp\Security\Totp::verifyAt()})
      */
     public function recordTotpCounter(int $userId, int $counter): void
     {
@@ -147,7 +150,7 @@ final class UserRepository
             'updated_at' => time(),
         ];
 
-        // แฮชใหม่ถ้าพารามิเตอร์ Argon2id เปลี่ยนไปตั้งแต่ครั้งก่อน
+        // Rehash if the Argon2id parameters have changed since last time
         if (Password::needsRehash($currentHash)) {
             $data['password_hash'] = $currentHash;
         }
@@ -158,7 +161,7 @@ final class UserRepository
     public function setRole(int $userId, string $role): void
     {
         if (!Permissions::isValidRole($role)) {
-            throw new \InvalidArgumentException("บทบาทไม่ถูกต้อง: {$role}");
+            throw new \InvalidArgumentException("Invalid role: {$role}");
         }
 
         $this->db->update('users', ['role' => $role, 'updated_at' => time()], ['id' => $userId]);
@@ -202,7 +205,7 @@ final class UserRepository
         }
     }
 
-    /** ใช้รหัสสำรอง 1 ครั้ง คืน true ถ้าใช้ได้ */
+    /** Consume one recovery code, returns true if it was valid */
     public function consumeRecoveryCode(int $userId, string $code): bool
     {
         $rows = $this->db->all(
@@ -222,8 +225,8 @@ final class UserRepository
     }
 
     /**
-     * ห้ามเหลือผู้ดูแลระบบที่ใช้งานได้น้อยกว่า 1 คน
-     * ตรวจก่อนลบ ปิดบัญชี หรือลดบทบาท (SECURITY §2.5)
+     * There must never be fewer than 1 active superadmin left
+     * Check before deleting, disabling, or demoting an account (SECURITY §2.5)
      */
     public function wouldRemoveLastSuperadmin(int $userId): bool
     {
@@ -241,18 +244,21 @@ final class UserRepository
     }
 
     // =========================================================================
-    // บัญชีโฮสติ้ง — เดิมเป็นตาราง customers แยกต่างหาก
+    // Hosting accounts — used to be a separate `customers` table
     //
-    // ตั้งแต่ migration 0005 ลูกค้าคือ users แถวเดียวกับที่ใช้ล็อกอิน ไม่ใช่ตารางคู่ขนาน
-    // อีกต่อไป จึงไม่มี password_hash สองชุด ไม่มีสถานะสองชุดที่ขัดกันเอง และไม่ต้อง
-    // แปลง customer_id ↔ user_id ตามจุดต่าง ๆ ทั่วระบบอีก
+    // Since migration 0005, a customer is the same `users` row used for login, no
+    // longer a parallel table — so there's no second password_hash, no second status
+    // that can contradict the first, and no more converting customer_id ↔ user_id
+    // back and forth throughout the system.
     // =========================================================================
 
     /**
-     * ชื่อผู้ใช้ที่ห้ามใช้ เพราะจะกลายเป็นชื่อบัญชี Linux และโฟลเดอร์บ้านจริง ๆ ในเฟส M3
+     * Usernames that are off-limits, because they become real Linux account names and
+     * home folders in Phase M3
      *
-     * นี่เป็นด่านแรกเท่านั้น ด่านที่เชื่อถือได้จริงคือ agent ตรวจ `getent passwd` ก่อนสร้าง
-     * บัญชี เพราะรายชื่อที่เขียนตายตัวย่อมตกหล่นบัญชีที่ผู้ดูแลสร้างเองทีหลัง
+     * This is only the first guard — the guard that actually matters is the agent
+     * checking `getent passwd` before creating an account, because a hardcoded list
+     * will always miss an account an admin created by hand afterward.
      *
      * @var list<string>
      */
@@ -265,10 +271,11 @@ final class UserRepository
     ];
 
     /**
-     * ตรวจชื่อผู้ใช้ตามกฎที่ปลอดภัยพอจะเอาไปเป็นชื่อบัญชี Linux
+     * Validate a username against rules safe enough for it to become a Linux account name
      *
-     * เข้มกว่าเดิมสามอย่าง: พิมพ์เล็กล้วน (ระบบไฟล์และ MariaDB ปฏิบัติกับตัวพิมพ์ไม่เหมือนกัน),
-     * ห้ามมีจุด (ทำให้ chown, quota และเครื่องมือจัดการเมลตีความผิด) และห้ามชนชื่อระบบ
+     * Three ways this is stricter than a plain username: lowercase only (the
+     * filesystem and MariaDB don't treat case the same way), no dots allowed (breaks
+     * how chown, quota, and mail tools interpret it), and can't collide with a system name.
      *
      * @throws \InvalidArgumentException
      */
@@ -276,19 +283,19 @@ final class UserRepository
     {
         if (preg_match('/^[a-z][a-z0-9_-]{2,31}$/', $username) !== 1) {
             throw new \InvalidArgumentException(
-                'ชื่อผู้ใช้ต้องยาว 3-32 ตัว ขึ้นต้นด้วยตัวอักษรพิมพ์เล็ก ใช้ได้เฉพาะ a-z 0-9 _ -',
+                'Username must be 3-32 characters, start with a lowercase letter, and use only a-z 0-9 _ -',
             );
         }
 
         if (in_array($username, self::RESERVED_USERNAMES, true)) {
-            throw new \InvalidArgumentException("ชื่อ \"{$username}\" ถูกสงวนไว้สำหรับระบบ");
+            throw new \InvalidArgumentException("The name \"{$username}\" is reserved for the system");
         }
     }
 
     /**
-     * สร้างบัญชีโฮสติ้ง (role=webadmin พร้อมโควตา)
+     * Create a hosting account (role=webadmin, with quotas)
      *
-     * @param array<string,int> $quotas ชนิดทรัพยากร → จำนวน (ไม่ระบุ = ใช้ค่าเริ่มต้นของตาราง)
+     * @param array<string,int> $quotas resource type → amount (omitted = use the table's default)
      *
      * @throws \InvalidArgumentException
      */
@@ -303,15 +310,15 @@ final class UserRepository
         self::assertUsername($username);
 
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            throw new \InvalidArgumentException('อีเมลไม่ถูกต้อง');
+            throw new \InvalidArgumentException('Invalid email');
         }
 
         if ($this->findByUsername($username) !== null) {
-            throw new \InvalidArgumentException('มีผู้ใช้ชื่อนี้อยู่แล้ว');
+            throw new \InvalidArgumentException('A user with this name already exists');
         }
 
         if ($expiryAt !== null && $expiryAt < time()) {
-            throw new \InvalidArgumentException('วันหมดอายุต้องเป็นเวลาในอนาคต');
+            throw new \InvalidArgumentException('Expiry date must be in the future');
         }
 
         $now = time();
@@ -337,7 +344,7 @@ final class UserRepository
     }
 
     /**
-     * @return list<array<string,mixed>> บัญชีโฮสติ้งทั้งหมดพร้อมจำนวนเว็บที่ถือครอง
+     * @return list<array<string,mixed>> all hosting accounts, with the number of sites each owns
      */
     public function hostingAccounts(): array
     {
@@ -357,7 +364,7 @@ final class UserRepository
         );
     }
 
-    /** จำนวนบัญชีที่จะหมดอายุภายในกี่วันข้างหน้า */
+    /** Number of accounts expiring within the given number of days ahead */
     public function countExpiring(int $daysBefore): int
     {
         $now = time();
@@ -372,24 +379,26 @@ final class UserRepository
     }
 
     /**
-     * แก้ชื่อที่แสดงและอีเมล
+     * Edit the display name and email
      *
-     * **อีเมลว่างได้ และหมายถึง "ไม่มีอีเมล" ไม่ใช่ค่าที่ผิด** — บัญชีที่สร้างจาก
-     * `phpcp user:create` ไม่มีอีเมล และตารางก็ไม่ได้บังคับไว้ · เดิมตรวจรูปแบบกับ
-     * ค่าว่างด้วย ผลคือบัญชีที่ไม่มีอีเมล **แก้ชื่อที่แสดงไม่ได้เลย** เพราะ
-     * `UsersController::update()` ส่งอีเมลเดิม (ที่ว่าง) กลับเข้ามาเป็นค่าตั้งต้น
+     * **Email can be empty, and that means "no email," not an invalid value** —
+     * accounts created via `phpcp user:create` have no email, and the table doesn't
+     * require one · this used to validate the format even against an empty value,
+     * which meant an account with no email **couldn't have its display name edited at
+     * all**, because `UsersController::update()` passes the existing (empty) email
+     * back in as the default.
      */
     public function updateProfile(int $userId, string $email): void
     {
         if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            throw new \InvalidArgumentException('อีเมลไม่ถูกต้อง');
+            throw new \InvalidArgumentException('Invalid email');
         }
 
         $this->db->update('users', ['email' => $email, 'updated_at' => time()], ['id' => $userId]);
     }
 
     /**
-     * @param array<string,int|null> $quotas ชนิดทรัพยากร → จำนวน (null = ไม่แก้)
+     * @param array<string,int|null> $quotas resource type → amount (null = don't change)
      *
      * @throws \InvalidArgumentException
      */
@@ -418,34 +427,35 @@ final class UserRepository
     public function updateExpiry(int $userId, ?int $expiryAt): void
     {
         if ($expiryAt !== null && $expiryAt < time()) {
-            throw new \InvalidArgumentException('วันหมดอายุต้องเป็นเวลาในอนาคตหรือ null');
+            throw new \InvalidArgumentException('Expiry date must be in the future, or null');
         }
 
         $this->db->update('users', ['expiry_at' => $expiryAt, 'updated_at' => time()], ['id' => $userId]);
     }
 
     /**
-     * เปลี่ยนสถานะบริการโฮสติ้ง — คนละแกนกับ status ที่คุมสิทธิ์ล็อกอิน
+     * Change the hosting service status — a separate axis from `status`, which controls login access
      *
-     * ตั้งใจให้ระงับบริการแล้วผู้ใช้ยังล็อกอินเข้ามาดูสาเหตุและต่ออายุได้ ซึ่งของเดิมทำไม่ได้
-     * เพราะ setStatus() ไปปิดบัญชีล็อกอินให้ด้วยทุกครั้ง
+     * Deliberately allows a suspended account to still log in to see why and renew —
+     * something the previous behavior couldn't do, because setStatus() always disabled
+     * login too.
      *
      * @throws \InvalidArgumentException
      */
     public function setServiceStatus(int $userId, string $status): void
     {
         if (!in_array($status, ['active', 'suspended', 'expired'], true)) {
-            throw new \InvalidArgumentException('สถานะบริการไม่ถูกต้อง');
+            throw new \InvalidArgumentException('Invalid service status');
         }
 
         $this->db->update('users', ['service_status' => $status, 'updated_at' => time()], ['id' => $userId]);
     }
 
     /**
-     * บังคับให้เปลี่ยนรหัสผ่านตอนล็อกอินครั้งถัดไป
+     * Force a password change on the next login
      *
-     * ใช้เมื่อรหัสผ่านถูกสุ่มโดยระบบแล้วแสดงบนหน้าจอ — รหัสที่ผ่านตาคนกลางมาแล้ว
-     * ต้องมีอายุสั้นที่สุด
+     * Used when the system generated a random password and displayed it on screen —
+     * a password that's passed through a middleman's eyes needs the shortest possible lifespan.
      */
     public function requirePasswordChange(int $userId): bool
     {
@@ -456,7 +466,7 @@ final class UserRepository
         ) > 0;
     }
 
-    /** @return list<int> id ของเว็บที่ผู้ใช้เป็นเจ้าของ */
+    /** @return list<int> ids of the sites the user owns */
     public function siteIds(int $userId): array
     {
         $rows = $this->db->all(
@@ -468,9 +478,9 @@ final class UserRepository
     }
 
     /**
-     * เว็บทั้งหมดของผู้ใช้ พร้อมชื่อบัญชีระบบของเจ้าของ
+     * All of a user's sites, along with the owner's system account name
      *
-     * ต้องมีชื่อเจ้าของติดมาด้วยเสมอ เพราะผู้รับผลลัพธ์เอาไปประกอบเป็นเส้นทางไฟล์
+     * The owner's name must always be included, since the caller uses it to build file paths.
      *
      * @return list<array<string,mixed>>
      */
@@ -485,9 +495,9 @@ final class UserRepository
     }
 
     /**
-     * โควตาที่ตั้งไว้ของผู้ใช้
+     * The user's configured quotas
      *
-     * @return array<string,int>|null null = ไม่พบผู้ใช้
+     * @return array<string,int>|null null = user not found
      */
     public function quotas(int $userId): ?array
     {
@@ -506,10 +516,11 @@ final class UserRepository
     }
 
     /**
-     * จำนวนทรัพยากรที่ผู้ใช้ใช้ไปแล้ว
+     * The amount of resources the user has already used
      *
-     * นับจาก sites.owner_user_id โดยตรง — เดิมต้องผ่านตาราง customer_sites ซึ่งเป็นความจริง
-     * คนละชุดกับ owner_user_id และในฐานข้อมูลจริงก็ขัดกันเองอยู่
+     * Counted directly from sites.owner_user_id — this used to go through a
+     * customer_sites table, which was a separate source of truth from owner_user_id
+     * and actually contradicted it in real data.
      *
      * @return array<string,int>
      */
@@ -519,9 +530,11 @@ final class UserRepository
 
         $usage = array_fill_keys(array_keys(Quota::TYPES), 0);
 
-        // SFTP นับจากสถานะจริงของบัญชี ไม่ใช่จากตารางแยก — หนึ่งบัญชีโฮสติ้งมีได้บัญชีเดียว
-        // เสมอตั้งแต่เฟส E4 · ต้องนับก่อนออกจากฟังก์ชันตอนไม่มีเว็บ เพราะสถานะนี้ไม่ได้ขึ้น
-        // กับจำนวนเว็บ (แม้จะเปิด SFTP ได้ต่อเมื่อมีบัญชีระบบ ซึ่งเกิดตอนสร้างเว็บแรกก็ตาม)
+        // SFTP is counted from the account's actual status, not a separate table — a
+        // hosting account has always had exactly one system account since Phase E4 ·
+        // this must be counted before returning early when there are no sites, since
+        // this status doesn't depend on site count (even though SFTP can only be
+        // enabled once a system account exists, which happens when the first site is created)
         $usage['ftp_users'] = (int) $this->db->value(
             'SELECT sftp_enabled FROM users WHERE id = :id',
             ['id' => $userId],
@@ -551,8 +564,9 @@ final class UserRepository
             0,
         );
 
-        // กล่องจดหมายนับจากตารางจริงตั้งแต่ PLAN-MAIL เฟส M2 — ก่อนหน้านี้ค่านี้เป็น 0
-        // ตายตัว ทำให้ช่องโควตาในหน้าลูกค้าแสดงตัวเลขที่ไม่มีความหมายมาตลอด
+        // Mailboxes are counted from the real table since PLAN-MAIL Phase M2 — before
+        // that, this value was hardcoded to 0, so the quota field on the customer's
+        // page always showed a number that meant nothing.
         $usage['emails'] = (int) $this->db->value(
             "SELECT count(*)
                FROM mailboxes m
@@ -562,12 +576,12 @@ final class UserRepository
             0,
         );
 
-        // SFTP นับไปแล้วด้านบนจาก `sftp_enabled`
+        // SFTP was already counted above, from `sftp_enabled`
         return $usage;
     }
 
     /**
-     * บริการของผู้ใช้ยังใช้งานได้อยู่หรือไม่
+     * Whether the user's service is still usable
      *
      * @return array{ok:bool,message:string}
      */
@@ -576,25 +590,25 @@ final class UserRepository
         $user = $this->find($userId);
 
         if ($user === null) {
-            return ['ok' => false, 'message' => 'ไม่พบผู้ใช้'];
+            return ['ok' => false, 'message' => 'User not found'];
         }
 
         if ($user['service_status'] === 'expired') {
-            return ['ok' => false, 'message' => 'บัญชีหมดอายุแล้ว'];
+            return ['ok' => false, 'message' => 'Account has expired'];
         }
 
         if ($user['service_status'] === 'suspended') {
-            return ['ok' => false, 'message' => 'บัญชีถูกระงับชั่วคราว'];
+            return ['ok' => false, 'message' => 'Account is temporarily suspended'];
         }
 
         if ($user['expiry_at'] !== null && (int) $user['expiry_at'] < time()) {
-            return ['ok' => false, 'message' => 'วันหมดอายุผ่านไปแล้ว'];
+            return ['ok' => false, 'message' => 'Expiry date has passed'];
         }
 
-        return ['ok' => true, 'message' => 'ใช้งานได้'];
+        return ['ok' => true, 'message' => 'Active'];
     }
 
-    /** true = บันทึกการแจ้งเตือนใหม่ · false = เคยแจ้งรอบนี้ไปแล้ว */
+    /** true = a new notification was recorded · false = this round was already notified */
     public function recordExpiryNotification(int $userId, int $daysBefore): bool
     {
         $existing = $this->db->first(
@@ -615,7 +629,7 @@ final class UserRepository
         return true;
     }
 
-    /** @return list<array<string,mixed>> บัญชีที่ควรแจ้งเตือนว่าใกล้หมดอายุ */
+    /** @return list<array<string,mixed>> accounts that should be notified their expiry is approaching */
     public function findExpiring(int $daysBefore): array
     {
         $now = time();
@@ -631,10 +645,11 @@ final class UserRepository
     }
 
     /**
-     * ระดับโควตาดิสก์ล่าสุดที่แจ้งเตือนไปแล้ว (0/80/90/100) — 0 = ยังไม่เคยแจ้ง
+     * The most recent disk quota threshold already notified (0/80/90/100) — 0 = never notified
      *
-     * ต่างจาก expiry_notifications ตรงที่การใช้ดิสก์ขึ้นลงได้ จึงเก็บแค่ค่าล่าสุดค่าเดียว
-     * ไม่ใช่ประวัติทุกครั้งที่แจ้ง — ดูเหตุผลเต็มในคอมเมนต์ของ migration 0011
+     * Differs from expiry_notifications in that disk usage can go up and down, so only
+     * the single most recent value is kept, not a history of every notification —
+     * full reasoning in migration 0011's comment.
      */
     public function diskQuotaThreshold(int $userId): int
     {
@@ -646,8 +661,9 @@ final class UserRepository
     }
 
     /**
-     * บันทึกระดับที่ตรวจล่าสุด — เรียกทุกครั้งที่ `quota.disk_check` ทำงาน ไม่ว่าระดับ
-     * จะขึ้นหรือลง เพื่อให้ `diskQuotaThreshold()` สะท้อนสถานะปัจจุบันเสมอ
+     * Record the most recently checked threshold — called every time `quota.disk_check`
+     * runs, whether the level went up or down, so `diskQuotaThreshold()` always
+     * reflects the current state.
      */
     public function recordDiskQuotaThreshold(int $userId, int $threshold): void
     {
@@ -662,15 +678,16 @@ final class UserRepository
     }
 
     /**
-     * แก้ไขโควตาพื้นที่ดิสก์ — แยกจาก updateQuota() เพราะดิสก์วัดเป็น MB ไม่ใช่จำนวนชิ้น
-     * จึงไม่อยู่ใน Quota::TYPES (ซึ่งมีกฎ "ห้ามเป็น 0" เฉพาะบางชนิดที่ไม่เกี่ยวกับดิสก์เลย)
+     * Edit the disk space quota — separate from updateQuota() because disk is measured
+     * in MB, not item count, so it's not in Quota::TYPES (which has a "can't be 0" rule
+     * for certain types that has nothing to do with disk at all).
      *
      * @throws \InvalidArgumentException
      */
     public function updateDiskQuota(int $userId, int $quotaMb): void
     {
         if ($quotaMb < Quota::UNLIMITED) {
-            throw new \InvalidArgumentException('โควตาพื้นที่ดิสก์ต้องเป็น -1 (ไม่จำกัด) หรือจำนวนเต็มไม่ติดลบ (MB)');
+            throw new \InvalidArgumentException('Disk quota must be -1 (unlimited) or a non-negative integer (MB)');
         }
 
         $this->db->update('users', ['disk_quota_mb' => $quotaMb, 'updated_at' => time()], ['id' => $userId]);
