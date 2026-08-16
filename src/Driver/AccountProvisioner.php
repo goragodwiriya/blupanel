@@ -9,13 +9,15 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Domain\UserAccount;
 
 /**
- * สร้างและรื้อบัญชีระบบของผู้ใช้โฮสติ้งหนึ่งคน
+ * Creates and tears down a hosting user's system account
  *
- * แยกออกจาก SiteProvisioner ตั้งแต่ migration 0006 เพราะบัญชีระบบไม่ได้ผูกกับเว็บอีกแล้ว
- * แต่ผูกกับผู้ใช้: หนึ่งผู้ใช้ = หนึ่ง uid = หนึ่งบ้าน = หลายเว็บ
+ * Kept separate from SiteProvisioner since migration 0006, because a
+ * system account no longer ties to a website — it ties to a user: one user
+ * = one uid = one home = many sites.
  *
- * บัญชีถูกสร้างแบบ lazy คือตอนสร้างเว็บแรกเท่านั้น — ผู้ดูแลระบบที่ไม่เคยโฮสต์เว็บ
- * จึงไม่มีบัญชี Linux ให้เป็นพื้นที่ผิวโดยเปล่าประโยชน์
+ * An account is created lazily, only when the first site is created — a
+ * server admin who has never hosted a site therefore has no Linux account
+ * sitting around as pointless attack surface.
  */
 final class AccountProvisioner
 {
@@ -26,7 +28,7 @@ final class AccountProvisioner
     }
 
     /**
-     * สร้างบัญชีและบ้านให้พร้อมใช้ — เรียกซ้ำได้ ไม่มีผลข้างเคียงถ้ามีอยู่แล้ว
+     * Creates the account and home, ready to use — idempotent, no side effect if it already exists
      *
      * @return array{uid:int,gid:int}
      */
@@ -44,11 +46,11 @@ final class AccountProvisioner
             $account->username,
         ], timeout: 20);
 
-        // exit 9 = มีผู้ใช้อยู่แล้ว ถือว่าใช้ได้ (เช่นสร้างเว็บที่สองของคนเดิม
-        // หรือสร้างซ้ำหลังล้มกลางทางรอบก่อน)
+        // exit 9 = the user already exists, which is fine (e.g. creating the
+        // same person's second site, or retrying after a previous run failed partway)
         if (!$result->ok() && $result->exitCode !== 9) {
             throw new ExecutionFailed(
-                'สร้างบัญชีระบบไม่สำเร็จ: '.trim($result->stderr),
+                'Failed to create system account: '.trim($result->stderr),
                 $result->exitCode,
                 $result->stderr,
             );
@@ -60,53 +62,57 @@ final class AccountProvisioner
     }
 
     /**
-     * ชื่อนี้ยังว่างอยู่ หรือเป็นบัญชีที่ panel สร้างไว้เองหรือไม่
+     * Is this name still free, or is it an account the panel created itself?
      *
-     * **ด่านที่เชื่อถือได้จริงของกฎชื่อผู้ใช้** — รายชื่อต้องห้ามที่เขียนตายตัวใน
-     * `UserRepository::RESERVED_USERNAMES` ย่อมตกหล่นบัญชีที่ผู้ดูแลสร้างเองทีหลัง
-     * และถ้าปล่อยผ่าน เราจะ `chown -R` ไฟล์เว็บไปให้ uid ของคนอื่นที่มีอยู่ก่อนแล้ว
-     * ซึ่งแปลว่าคนนั้นอ่านและแก้ไฟล์ของลูกค้าได้ทั้งหมด
+     * **The genuinely trustworthy gate for the username rule** — a
+     * hardcoded denylist like `UserRepository::RESERVED_USERNAMES` will
+     * always miss an account an admin creates later by hand, and letting
+     * that slip through would `chown -R` a site's files to an existing
+     * unrelated uid, letting that person read and edit a customer's files entirely.
      *
-     * ตัดสินจาก**ลายเซ็นที่ panel ประทับไว้ในช่อง comment** ตอน `useradd` ไม่ใช่จากชื่อ
-     * และไม่ใช่จากเส้นทางบ้าน
+     * Decided from **the signature the panel stamps into the comment
+     * field** at `useradd` time, never from the name, and never from the home path.
      *
-     * เดิมเทียบ home directory ซึ่งใช้ได้ตอนบ้านอยู่ที่ `/srv/phpcp/users` — บัญชีของ
-     * ระบบไม่มีทางมีบ้านอยู่ในนั้น · **แต่ตั้งแต่บ้านย้ายมาที่ `/home` การเทียบแบบนั้น
-     * กลับด้านทันที**: ผู้ใช้ระบบชื่อ `deploy` ที่มีบ้าน `/home/deploy` อยู่ก่อนแล้ว
-     * จะ "ตรง" กับที่ panel คำนวณได้พอดี แล้ว panel จะถือว่าเป็นบัญชีของตัวเอง
-     * → `chown -R` ไฟล์ของคนนั้นไปเป็นของ www-data และเอาบ้านเขาไปเป็นที่เก็บเว็บ
+     * This used to compare the home directory, which worked back when
+     * homes lived at `/srv/phpcp/users` — a system account could never have
+     * a home in there · **but since homes moved to `/home`, that comparison
+     * flips backward instantly**: a system user named `deploy` who already
+     * had a home at `/home/deploy` would exactly "match" what the panel
+     * computed, and the panel would treat it as its own account → `chown
+     * -R` that person's files to www-data and take over their home as a site's storage.
      *
-     * ช่อง comment เป็นหลักฐานที่ตรงกว่า เพราะ panel เขียนมันเองตอนสร้างและไม่มีเหตุ
-     * ให้บัญชีที่ผู้ดูแลสร้างเองมีข้อความนี้
+     * The comment field is stronger evidence, because the panel writes it
+     * itself at creation time, and there's no reason an account an admin created by hand would ever carry it.
      */
     private function assertNameAvailable(Executor $executor, UserAccount $account): void
     {
         $entry = $executor->exec(['/usr/bin/getent', 'passwd', $account->username], timeout: 10);
 
         if (!$entry->ok()) {
-            return; // ไม่พบ = ชื่อว่าง
+            return; // Not found = the name is free
         }
 
-        // รูปแบบ: name:x:uid:gid:comment:home:shell
+        // Shape: name:x:uid:gid:comment:home:shell
         $fields = explode(':', trim($entry->output()));
         $comment = $fields[4] ?? '';
         $home = $fields[5] ?? '';
 
         if ($comment === self::comment($account->username)) {
-            return; // บัญชีของ panel เอง สร้างไว้รอบก่อน
+            return; // The panel's own account, created in an earlier pass
         }
 
         throw new ExecutionFailed(
-            "ชื่อ {$account->username} ถูกใช้เป็นบัญชีของระบบอยู่แล้ว (บ้านอยู่ที่ {$home}) — "
-            .'ต้องเปลี่ยนชื่อผู้ใช้ก่อนจึงจะสร้างเว็บได้',
+            "The name {$account->username} is already in use as a system account (home at {$home}) — "
+            .'the username has to change before a site can be created',
         );
     }
 
     /**
-     * ลายเซ็นในช่อง comment ของ /etc/passwd — หลักฐานว่าบัญชีนี้ panel สร้างเอง
+     * The signature stamped in /etc/passwd's comment field — proof this account was created by the panel itself
      *
-     * ต้องคงที่ตลอดไป การเปลี่ยนข้อความนี้แปลว่าบัญชีที่สร้างไว้ก่อนหน้าจะถูกมองว่า
-     * เป็นของคนอื่นทันที แล้วเว็บที่สองของลูกค้าเดิมจะสร้างไม่ได้อีก
+     * Must remain constant forever — changing this text would mean every
+     * previously-created account is instantly seen as belonging to someone
+     * else, and that same customer's second site could never be created again.
      */
     public static function comment(string $username): string
     {
@@ -114,11 +120,12 @@ final class AccountProvisioner
     }
 
     /**
-     * โครงสร้างบ้านของผู้ใช้
+     * A user's home layout
      *
-     * `0711` ที่ชั้นแม่ (`/srv/phpcp/users`) สำคัญกว่าที่เห็น: ผู้ใช้เดินเข้าบ้านตัวเองได้
-     * แต่สั่ง `ls` ดูรายชื่อบ้านทั้งหมดไม่ได้ — ลูกค้าจึงไม่รู้ด้วยซ้ำว่าบนเครื่องนี้
-     * มีลูกค้ารายอื่นอยู่กี่รายและชื่ออะไร
+     * `0711` at the parent level (`/srv/phpcp/users`) matters more than it
+     * looks: a user can traverse into their own home, but can't `ls` to
+     * list every home there — so a customer never even learns how many
+     * other customers exist on this machine, let alone their names.
      */
     private function createHome(Executor $executor, UserAccount $account): void
     {
@@ -129,8 +136,8 @@ final class AccountProvisioner
             $executor->makeDirectory($executor->path($dir), 0750);
         }
 
-        // tmp และ .ssh ต้องไม่ให้กลุ่มของเว็บเซิร์ฟเวอร์อ่าน — session ของ PHP อยู่ใน tmp
-        // และการอ่าน session ของคนอื่นคือการสวมสิทธิ์ผู้ใช้เว็บนั้นได้ทันที
+        // tmp and .ssh must never be readable by the web server's group —
+        // PHP sessions live in tmp, and reading another site's session file is instant account takeover
         $executor->makeDirectory($executor->path($account->tmpDir()), 0700);
         $executor->makeDirectory($executor->path($account->sshDir()), 0700);
 
@@ -138,16 +145,17 @@ final class AccountProvisioner
     }
 
     /**
-     * เจ้าของคือผู้ใช้ กลุ่มคือกลุ่มของเว็บเซิร์ฟเวอร์
+     * The owner is the user, the group is the web server's own group
      *
-     * เหตุผลเดียวกับที่ SiteProvisioner อธิบายไว้: ถ้าตั้งกลุ่มเป็นของผู้ใช้เอง
-     * เว็บเซิร์ฟเวอร์จะเดินผ่านไดเรกทอรี 0750 ไม่ได้เลย ไฟล์สแตติกทุกไฟล์จะตอบ 403
-     * รวมถึงไฟล์ตรวจสอบของ Let's Encrypt ซึ่งทำให้ต่ออายุใบรับรองไม่ได้ด้วย
+     * The same reasoning SiteProvisioner explains: if the group were set to
+     * the user's own, the web server couldn't traverse a 0750 directory at
+     * all, and every static file would answer 403 — including Let's
+     * Encrypt's validation file, which would also break certificate renewal.
      */
     private function setOwnership(Executor $executor, UserAccount $account): void
     {
         if ($this->sharedOwner) {
-            return; // filesystem เก็บเจ้าของไม่ได้ — SiteProvisioner พิสูจน์ให้แล้ว
+            return; // The filesystem can't retain ownership — SiteProvisioner already proved this
         }
 
         $executor->exec([
@@ -157,13 +165,16 @@ final class AccountProvisioner
             $executor->path($account->home()),
         ], timeout: 60);
 
-        // tmp กับ .ssh ต้องเป็นของผู้ใช้ล้วน ไม่ใช่กลุ่มของเว็บเซิร์ฟเวอร์
+        // tmp and .ssh must belong entirely to the user, never to the web server's group
         //
-        // **หมายเหตุสำหรับ SFTP (เฟส E4):** เคยเปลี่ยนบ้านชั้นบนสุดเป็น root เพื่อให้ตรง
-        // เงื่อนไข `ChrootDirectory` ของ OpenSSH แล้วพบว่าทำให้ www-data เดินผ่านไปถึง
-        // docroot ไม่ได้ (เว็บตอบ 403 ทั้งเว็บ) · ทางแก้ที่ถูกคือ chroot ที่ไดเรกทอรี**แม่**
-        // ซึ่งเป็น root:root 0711 อยู่แล้ว — บ้านของผู้ใช้จึงไม่ต้องเปลี่ยนอะไรเลย
-        // ดูคำอธิบายเต็มใน SftpAccessManager::configContent()
+        // **A note for SFTP (phase E4):** the topmost home directory used
+        // to be changed to root, to satisfy OpenSSH's `ChrootDirectory`
+        // requirement, and that turned out to stop www-data from
+        // traversing through to the docroot at all (the whole site answers
+        // 403) · the correct fix is to chroot at the **parent** directory,
+        // which is already root:root 0711 — so the user's own home never
+        // needs to change at all · see the full explanation at
+        // SftpAccessManager::configContent()
         foreach ([$account->tmpDir(), $account->sshDir()] as $private) {
             $executor->exec([
                 '/usr/bin/chown',
@@ -175,15 +186,15 @@ final class AccountProvisioner
     }
 
     /**
-     * ลบบัญชีและบ้านทั้งหมด — เรียกได้ก็ต่อเมื่อผู้ใช้ไม่เหลือเว็บแล้วเท่านั้น
+     * Deletes the account and its entire home — only ever called once a user has no site left
      *
-     * ไม่ใช้ `userdel --remove` เพราะมันลบทุกอย่างใต้ home รวมถึงสิ่งที่ผู้ดูแล
-     * อาจ mount ไว้ · ผู้เรียกเป็นคนตัดสินใจเรื่องไฟล์เอง
+     * Never uses `userdel --remove`, since that deletes everything under
+     * the home, including anything an admin might have mounted there · the caller decides what to do with the files.
      */
     public function remove(Executor $executor, UserAccount $account): void
     {
-        // ล้มก็ไม่เป็นไร — เว็บถูกลบไปแล้ว บัญชีที่ค้างไม่ได้ทำอันตราย
-        // และการโยน error ที่นี่จะทำให้ผู้ใช้เข้าใจว่าลบไม่สำเร็จทั้งที่ลบไปแล้ว
+        // A failure here is fine — the site was already deleted, and a leftover account does no harm,
+        // while throwing here would make the user think deletion failed when it actually already succeeded
         $executor->exec(['/usr/sbin/userdel', $account->username], timeout: 20);
     }
 
@@ -194,7 +205,7 @@ final class AccountProvisioner
         $gid = $executor->exec(['/usr/bin/id', '-g', $user], timeout: 10);
 
         if (!$uid->ok() || !$gid->ok()) {
-            throw new ExecutionFailed("อ่าน uid ของผู้ใช้ {$user} ไม่ได้");
+            throw new ExecutionFailed("Failed to read the uid of user {$user}");
         }
 
         return ['uid' => (int) $uid->output(), 'gid' => (int) $gid->output()];
