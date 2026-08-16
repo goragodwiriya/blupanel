@@ -14,16 +14,19 @@ use Phpcp\Driver\Db\DbAccountManager;
 use Phpcp\Security\Secret;
 
 /**
- * ฐานร่วมของ capability ที่ดูแลบัญชี MariaDB ประจำผู้ใช้
+ * The shared base for capabilities managing a user's own MariaDB account
  *
- * **กฎที่ห้ามละเมิดของ capability กลุ่มนี้: ทำงานกับบัญชีของ actor เองเท่านั้น**
- * ไม่มีตัวไหนรับ `user_id` เป็น argument เลย — ทุกตัวอ่านจาก `$context->actor->userId`
- * ซึ่งมาจาก session ที่ผ่านการยืนยันตัวตนแล้ว · ถ้ารับ id เป็น argument
- * แล้วค่อยตรวจสิทธิ์ทีหลัง จะเหลือช่องให้พลาดได้เสมอ (ลืมตรวจ ตรวจผิดตัวแปร
- * ตรวจหลังใช้งานไปแล้ว) แต่การไม่มี argument ให้ส่งมาตั้งแต่แรกทำให้พลาดไม่ได้เลย
+ * **The rule this group of capabilities must never break: only ever works on
+ * the actor's own account.** None of them accept `user_id` as an argument at
+ * all — every one reads from `$context->actor->userId`, which comes from an
+ * already-authenticated session · accepting an id as an argument and checking
+ * permission afterward always leaves room for a mistake (forgetting the check,
+ * checking the wrong variable, checking after the fact) — having no argument to
+ * send in the first place makes that mistake impossible.
  *
- * ผู้ดูแลระบบที่ต้องเข้าฐานข้อมูลของลูกค้าให้ใช้ root ผ่าน unix_socket บนเครื่อง
- * ซึ่งเป็นเส้นทางที่มี audit ของตัวเองอยู่แล้ว ไม่ใช่สวมบัญชีของลูกค้า
+ * An admin who needs into a customer's database should use root over the
+ * machine's unix_socket, a path that already has its own audit trail — not
+ * impersonate the customer's account.
  */
 abstract class DbAccountCapability extends DbCapability
 {
@@ -37,7 +40,7 @@ abstract class DbAccountCapability extends DbCapability
     }
 
     /**
-     * แถวของ actor ที่กำลังเรียก
+     * The row of the actor currently calling
      *
      * @return array<string,mixed>
      *
@@ -48,20 +51,20 @@ abstract class DbAccountCapability extends DbCapability
         $userId = $context->actor->userId;
 
         if ($userId <= 0) {
-            throw new ValidationError('คำสั่งนี้ต้องเรียกในนามผู้ใช้ที่ล็อกอินอยู่ ไม่ใช่ในนามระบบ');
+            throw new ValidationError('This command must be called as a logged-in user, not as the system');
         }
 
         $user = (new UserRepository($context->db))->find($userId);
 
         if ($user === null) {
-            throw new ValidationError('ไม่พบผู้ใช้ที่กำลังใช้งานอยู่');
+            throw new ValidationError('The current user was not found');
         }
 
         return $user;
     }
 
     /**
-     * บัญชีระบบของ actor ที่กำลังเรียก — เป็นชื่อเดียวกับที่ใช้เป็นผู้ใช้ MariaDB
+     * The calling actor's own system account — the same name used as its MariaDB user
      *
      * @param array<string,mixed> $user
      *
@@ -77,15 +80,17 @@ abstract class DbAccountCapability extends DbCapability
     }
 
     /**
-     * ผู้ใช้คนนี้ควรได้สิทธิ์ฐานข้อมูลระดับทั้งเครื่องหรือไม่
+     * Should this user get machine-wide database privileges?
      *
-     * **เฉพาะ superadmin เท่านั้น** — ผูกกับบทบาทโดยตรง ถอนบทบาทเมื่อไรสิทธิ์หาย
-     * ทันทีที่เปิด phpMyAdmin ครั้งถัดไป ต่างจากการให้รหัส root ที่ให้ไปแล้วเอาคืนไม่ได้
+     * **superadmin only** — bound directly to the role, so a revoked role loses
+     * this privilege the moment phpMyAdmin is next opened, unlike handing out a
+     * root password, which can never be taken back once given.
      *
-     * **ทำไมไม่รวม sysadmin ทั้งที่เป็นผู้ดูแลเหมือนกัน:** sysadmin มี `db.view`
-     * แต่ไม่มี `db.manage` — ให้สิทธิ์ทั้งเครื่องใน MariaDB เท่ากับเปิดทางให้ทำผ่าน
-     * phpMyAdmin ได้มากกว่าที่ panel ยอมให้ทำ ซึ่งทำให้ตาราง permission กลายเป็น
-     * ของประดับ · สิทธิ์ในฐานข้อมูลต้องไม่เกินสิทธิ์ใน panel เด็ดขาด
+     * **Why sysadmin isn't included, despite also being an admin:** sysadmin
+     * holds `db.view` but not `db.manage` — granting machine-wide MariaDB
+     * privileges would let them do more through phpMyAdmin than the panel itself
+     * allows, turning the permission table into decoration · database privileges
+     * must never exceed panel privileges, no exceptions.
      *
      * @param array<string,mixed> $user
      */

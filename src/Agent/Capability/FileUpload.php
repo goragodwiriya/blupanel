@@ -12,14 +12,15 @@ use Phpcp\Support\PathGuard;
 use Phpcp\Support\Validator;
 
 /**
- * รับไฟล์ที่ผู้ใช้อัปโหลด
+ * Accepts a file the user uploaded
  *
- * เนื้อไฟล์เดินทางมาเป็น base64 เพราะโปรโตคอลของ agent เป็น JSON บรรทัดเดียว
- * ซึ่งรับไบต์ดิบไม่ได้ base64 ขยายข้อมูล 4/3 เท่า ขนาดที่รับจึงถูกจำกัดไว้
- * ต่ำกว่า Protocol::MAX_FRAME พอสมควร (FileCatalog::MAX_TRANSFER_BYTES)
+ * The file's content travels as base64, because the agent's protocol is
+ * single-line JSON, which can't carry raw bytes. base64 inflates data by 4/3, so
+ * the accepted size is capped comfortably under Protocol::MAX_FRAME
+ * (FileCatalog::MAX_TRANSFER_BYTES).
  *
- * ชื่อไฟล์ที่ผู้ใช้ส่งมาไม่เคยถูกเชื่อ — ตัดเหลือแต่ basename แล้วตรวจด้วย PathGuard
- * ก่อนนำไปต่อกับเส้นทางใด ๆ
+ * A filename the user sends is never trusted — trimmed down to just its
+ * basename, then validated with PathGuard before it's joined to any path at all.
  */
 final class FileUpload extends FileCapability
 {
@@ -35,7 +36,7 @@ final class FileUpload extends FileCapability
 
     public function summary(): string
     {
-        return 'อัปโหลดไฟล์เข้าเว็บไซต์';
+        return 'Upload file to website';
     }
 
     /**
@@ -46,21 +47,21 @@ final class FileUpload extends FileCapability
     {
         $base = self::baseArgs($args);
 
-        // basename ก่อนตรวจ: เบราว์เซอร์บางตัวส่งเส้นทางเต็มของเครื่องผู้ใช้มาให้
-        // และผู้โจมตีอาจส่ง '../../etc/cron.d/x' มาตรง ๆ
+        // basename before validating: some browsers send the user's full local
+        // path, and an attacker might send '../../etc/cron.d/x' directly
         $name = PathGuard::name(basename(Validator::requireString($args, 'name', 255)), 'ชื่อไฟล์');
 
         $encoded = $args['content'] ?? '';
         if (!is_string($encoded)) {
-            throw new ValidationError('เนื้อไฟล์ไม่ถูกต้อง');
+            throw new ValidationError('Invalid file content');
         }
 
         $content = base64_decode($encoded, true);
         if ($content === false) {
-            throw new ValidationError('ถอดรหัสเนื้อไฟล์ไม่สำเร็จ');
+            throw new ValidationError('Failed to decode file content');
         }
         if (strlen($content) > FileCatalog::MAX_TRANSFER_BYTES) {
-            throw new ValidationError('ไฟล์ใหญ่เกิน '.(int) (FileCatalog::MAX_TRANSFER_BYTES / 1048576).' MB');
+            throw new ValidationError('File exceeds '.(int) (FileCatalog::MAX_TRANSFER_BYTES / 1048576).' MB');
         }
 
         return $base + [
@@ -82,7 +83,7 @@ final class FileUpload extends FileCapability
         $content = $args['content'];
         $overwrite = $args['overwrite'];
 
-        // รู้ขนาดแน่นอนตั้งแต่ validate() แล้ว — ด่านนี้จึงเทียบตัวเลขจริง ไม่ใช่เดา
+        // The exact size is already known from validate() — this check compares real numbers, not a guess
         $this->assertQuotaAllows($context, $scope, strlen($content));
 
         $this->withPath(
@@ -94,15 +95,16 @@ final class FileUpload extends FileCapability
 
                 if ($existing !== null) {
                     if (!$overwrite) {
-                        throw new ValidationError('มีไฟล์ชื่อนี้อยู่แล้ว');
+                        throw new ValidationError('A file with this name already exists');
                     }
                     if ($existing['type'] !== 'file') {
-                        throw new ValidationError('ปลายทางไม่ใช่ไฟล์ธรรมดา');
+                        throw new ValidationError('The destination is not a regular file');
                     }
                 }
 
-                // 0640 ไม่ใช่ 0644: ไฟล์ที่อัปโหลดอาจมีข้อมูลลับ ผู้ใช้อื่นบนเครื่องไม่ควรอ่านได้
-                // และไม่ตั้ง execute bit เด็ดขาด แม้ไฟล์จะเป็นสคริปต์ก็ตาม
+                // 0640, not 0644: an uploaded file might hold secrets that other
+                // users on the machine shouldn't be able to read, and the execute
+                // bit is never set, even if the file is a script
                 $executor->writeFile($target, $content, 0o640);
 
                 return [];
@@ -116,7 +118,7 @@ final class FileUpload extends FileCapability
             'path' => $relative,
             'name' => $args['name'],
             'size' => strlen($content),
-            'message' => 'อัปโหลด '.$args['name'].' แล้ว'
+            'message' => 'Uploaded '.$args['name']
         ];
     }
 }

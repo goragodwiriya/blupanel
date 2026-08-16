@@ -11,15 +11,17 @@ use Phpcp\Support\PathGuard;
 use Phpcp\Support\Validator;
 
 /**
- * อ่านรายการไฟล์ในโฟลเดอร์เดียว — ไม่ลงลึกในโฟลเดอร์ย่อย
+ * Reads a file listing for a single folder — never recurses into subfolders
  *
- * ไม่ลงลึกโดยตั้งใจ: การไล่ทั้งต้นไม้ทำให้เว็บไซต์ที่มี node_modules
- * ค้างไปเป็นนาทีและส่งข้อมูลเกินขนาด frame ที่โปรโตคอลรับได้
+ * Never recurses, on purpose: walking a whole tree makes a website with
+ * node_modules hang for minutes and sends data past the protocol's frame size limit.
  *
- * ตัดหน้าที่นี่ (agent) ด้วยเหตุผลเดียวกัน — โฟลเดอร์แบนที่มีไฟล์หลักหมื่น
- * (เช่นแคชหรือ log ที่ไม่เคยเคลียร์) ส่งทีเดียวหมดจะชน MAX_FRAME ของโปรโตคอล
- * เหมือนกับกรณีลงลึกทั้งต้นไม้ จึงต้องตัดก่อนที่จะประกอบเป็นข้อความส่งออกจาก agent
- * ไม่ใช่ตัดที่ชั้นเว็บซึ่งได้รับข้อมูลที่เกินมาแล้ว
+ * Pagination happens right here, in the agent, for the same reason — a flat
+ * folder with tens of thousands of files (an uncleared cache or log directory,
+ * say) sent all at once would hit the protocol's MAX_FRAME just like walking a
+ * whole tree would, so it has to be cut down before being assembled into the
+ * message the agent sends out, not at the web tier, which would have already
+ * received the oversized data by then.
  */
 final class FileList extends FileCapability
 {
@@ -38,7 +40,7 @@ final class FileList extends FileCapability
 
     public function summary(): string
     {
-        return 'อ่านรายการไฟล์ในโฟลเดอร์';
+        return 'Read folder file listing';
     }
 
     /**
@@ -71,7 +73,7 @@ final class FileList extends FileCapability
         $result = $this->withPath($executor, $scope, $relative, static function (string $root, string $target) use ($executor, $relative, $scope): array {
             $info = $executor->stat($target);
             if ($info === null || $info['type'] !== 'dir') {
-                throw new \Phpcp\Agent\ValidationError('เส้นทางนี้ไม่ใช่โฟลเดอร์');
+                throw new \Phpcp\Agent\ValidationError('This path is not a folder');
             }
 
             $entries = [];
@@ -82,21 +84,23 @@ final class FileList extends FileCapability
                 $described['editable'] = $entry['type'] === 'file'
                 && FileCatalog::isEditable($entry['name'], $entry['size']);
                 $described['kind'] = $entry['type'] === 'dir' ? 'folder' : FileCatalog::kind($entry['name']);
-                // ขนาดของ inode โฟลเดอร์ (มักเป็น 4096) ไม่ได้บอกอะไรผู้ใช้ — null ให้ตัว
-                // จัดรูปแบบมาตรฐานของตาราง (data-format="bytes" + data-empty-text) แสดง "—"
-                // ให้เอง แทนที่จะต้องมีตัวจัดรูปแบบเฉพาะกิจฝั่งหน้าจอ
+                // A folder's inode size (usually 4096) tells the user nothing —
+                // null lets the table's standard formatter (data-format="bytes" +
+                // data-empty-text) show "—" on its own, instead of needing an
+                // ad-hoc formatter on the screen side
                 if ($entry['type'] === 'dir') {
                     $described['size'] = null;
                 }
-                // แต่ละแถวพกชื่อขอบเขตของตัวเองมาด้วย เพื่อให้ผลลัพธ์หนึ่งแถวประกอบ URL
-                // ดาวน์โหลด/แก้ไขได้จากข้อมูลในแถวล้วน ๆ ไม่ต้องพึ่งค่าที่เลือกไว้นอกแถว
+                // Each row carries its own scope name, so one row's result can
+                // build a download/edit URL purely from data in that row, with no
+                // reliance on a value selected outside the row
                 $described['root'] = $scope->key;
 
                 $entries[] = $described;
             }
 
-            // โฟลเดอร์ขึ้นก่อนเสมอ แล้วเรียงตามชื่อแบบไม่สนตัวพิมพ์ —
-            // เรียงที่ agent ไม่ใช่ที่เบราว์เซอร์ เพื่อให้ผลลัพธ์เหมือนกันทุกเครื่อง
+            // Folders always come first, then sorted by name case-insensitively —
+            // sorted in the agent, not the browser, so results look the same on every machine
             usort($entries, static function (array $a, array $b): int {
                 $rank = static fn(array $e): int => $e['type'] === 'dir' ? 0 : 1;
 
@@ -112,7 +116,7 @@ final class FileList extends FileCapability
         $total = count($result['entries']);
         $perPage = $args['per_page'];
         $pages = max(1, (int) ceil($total / $perPage));
-        // เกินหน้าสุดท้ายได้ง่าย ๆ ถ้าไฟล์ถูกลบไประหว่างที่ผู้ใช้เปิดหน้าค้างไว้ — เลื่อนกลับมาหน้าสุดท้ายแทนที่จะคืนรายการว่าง
+        // Easy to overshoot the last page if files get deleted while the user's page sits open — clamps back to the last page instead of returning an empty list
         $page = min($args['page'], $pages);
 
         return [
@@ -132,13 +136,13 @@ final class FileList extends FileCapability
     }
 
     /**
-     * แตกเส้นทางเป็นชิ้นสำหรับแถบนำทาง
+     * Splits a path into pieces for the breadcrumb bar
      *
      * @return list<array{label:string,path:string}>
      */
     private static function breadcrumb(string $relative): array
     {
-        $crumbs = [['label' => 'หน้าแรก', 'path' => '']];
+        $crumbs = [['label' => 'Home', 'path' => '']];
 
         if ($relative === '') {
             return $crumbs;
