@@ -11,21 +11,23 @@ use Phpcp\Driver\Notify\WebhookNotifier;
 use Phpcp\Kernel\Db;
 
 /**
- * ตัดสินใจว่าเรื่องไหนควรแจ้ง แล้วส่งไปยังช่องทางที่เปิดไว้
+ * Decides what's worth notifying, then sends it to every channel that's enabled
  *
- * แยกจาก TelegramNotifier เพราะสองอย่างนี้ตอบคนละคำถาม:
- * ตัวนั้นตอบ "ส่งข้อความยังไง" ตัวนี้ตอบ "เรื่องนี้ควรส่งไหม"
- * ถ้ารวมกัน การเพิ่มช่องทางที่สอง (เช่น Discord) จะต้องคัดลอกตรรกะการกรองทั้งชุด
+ * Kept separate from TelegramNotifier because the two answer different questions:
+ * that one answers "how to send a message," this one answers "should this be sent
+ * at all." Merging them would mean adding a second channel (e.g. Discord) has to
+ * duplicate the entire filtering logic.
  *
- * หลักการเลือกว่าอะไรควรแจ้ง: **แจ้งเฉพาะเรื่องที่ต้องลงมือทำ**
- * การแจ้งทุกอย่างที่เกิดขึ้นทำให้คนปิดการแจ้งเตือนภายในสัปดาห์เดียว
- * แล้วตอนที่เกิดเรื่องจริงก็จะไม่มีใครเห็น — ซึ่งแย่กว่าไม่มีระบบแจ้งเตือนเลย
- * เพราะผู้ดูแลเข้าใจว่าตัวเองมีระบบเฝ้าระวังอยู่
+ * The principle for what deserves a notification: **only notify what needs action**.
+ * Notifying about everything that happens gets people to turn notifications off
+ * within a week, and then when something real happens, nobody sees it — which is
+ * worse than having no notification system at all, since the admin believes they're
+ * being watched over when they aren't.
  */
 final class Notifier
 {
     /**
-     * หมวดของเหตุการณ์ พร้อมคีย์ที่ใช้เปิด/ปิด
+     * Event categories, with the key used to turn each on/off
      *
      * @var array<string,string>
      */
@@ -40,21 +42,23 @@ final class Notifier
     ];
 
     public const LABELS = [
-        'security' => 'ความปลอดภัย — พบความเสี่ยงที่ต้องแก้',
-        'ssl' => 'ใบรับรอง SSL — ใกล้หมดอายุหรือต่ออายุไม่สำเร็จ',
-        'service' => 'บริการสำคัญหยุดทำงาน',
-        'backup' => 'ผลการสำรองและกู้คืนข้อมูล',
-        'login' => 'เข้าสู่ระบบล้มเหลวผิดปกติ',
-        'quota' => 'โควตาพื้นที่ดิสก์ของบัญชีลูกค้าใกล้เต็ม',
-        'alert' => 'เกณฑ์เตือนของเครื่อง — ดิสก์ แรม โหลด บริการ และใบรับรอง',
+        'security' => 'Security — a risk was found that needs fixing',
+        'ssl' => 'SSL certificate — nearing expiry or failed to renew',
+        'service' => 'A critical service has stopped',
+        'backup' => 'Backup and restore results',
+        'login' => 'Unusual login failures',
+        'quota' => "A customer account's disk quota is nearing full",
+        'alert' => 'Machine alert thresholds — disk, RAM, load, services, and certificates',
     ];
 
     private SettingsRepository $settings;
 
     /**
-     * @param Executor|null $executor จำเป็นเฉพาะช่องทางอีเมล — การเรียก `sendmail` ต้องผ่าน
-     *        `Executor` เสมอ (ARCHITECTURE §4.4) ต่างจาก Telegram/webhook ที่ยิง HTTPS ตรงได้
-     *        · ผู้เรียกจากชั้น web tier ที่ไม่มี executor จึงส่งได้เฉพาะสองช่องทางนั้น
+     * @param Executor|null $executor only needed for the email channel — calling
+     *        `sendmail` must always go through `Executor` (ARCHITECTURE §4.4),
+     *        unlike Telegram/webhook, which can fire an HTTPS request directly ·
+     *        a caller from the web tier with no executor can therefore only send
+     *        through those two channels
      */
     public function __construct(
         private readonly Db $db,
@@ -64,14 +68,16 @@ final class Notifier
     }
 
     /**
-     * ส่งการแจ้งเตือนไปทุกช่องทางที่เปิดไว้ ถ้าหมวดนี้ถูกเปิด
+     * Send a notification to every enabled channel, if this category is turned on
      *
-     * คืนค่าเป็น bool แทนการโยน exception เสมอ เพราะผู้เรียกคืองานหลักที่สำเร็จไปแล้ว
-     * ความล้มเหลวของการแจ้งเตือนต้องไม่ย้อนกลับไปทำให้งานนั้นดูเหมือนล้มเหลว
+     * Always returns bool instead of throwing, because the caller is the actual
+     * work that has already succeeded — a notification failing must never bounce
+     * back and make that work look like it failed too.
      *
-     * **ส่งทุกช่องทางที่เปิด ไม่ใช่ช่องแรกที่สำเร็จ** — ผู้ดูแลที่ตั้งทั้ง Telegram และอีเมล
-     * ตั้งใจให้ได้รับทั้งสองทาง (มือถือกับกล่องจดหมายของทีม) · คืน true ถ้ามีอย่างน้อย
-     * หนึ่งช่องที่ส่งออกได้ — ช่องที่ล้มไม่ทำให้ช่องที่สำเร็จถูกนับว่าล้มไปด้วย
+     * **Sends to every enabled channel, not just the first one that succeeds** — an
+     * admin who's set up both Telegram and email deliberately wants both (their
+     * phone, and the team's inbox) · returns true if at least one channel sent
+     * successfully — a failed channel doesn't count a successful one as failed too.
      */
     public function send(string $event, string $title, string $body, string $level = 'info'): bool
     {
@@ -100,7 +106,7 @@ final class Notifier
                 ))->notify($event, $title, $body, $level) || $sent;
             }
 
-            // อีเมลส่งได้เฉพาะเมื่อผู้เรียกมี executor ให้ — ไม่ใช่ความล้มเหลวถ้าไม่มี
+            // Email can only be sent when the caller provided an executor — not a failure if there isn't one
             if ($this->executor !== null && $this->settings->bool('notify.email.enabled')) {
                 $sent = (new EmailNotifier(
                     $this->executor,
@@ -111,22 +117,24 @@ final class Notifier
 
             return $sent;
         } catch (\Throwable) {
-            // รวมถึงกรณีฐานข้อมูลล็อกอยู่ — การแจ้งเตือนที่ส่งไม่ได้ต้องเงียบ
+            // Including the case where the database is locked — a notification that can't be sent must fail silently
             return false;
         }
     }
 
-    /** มีช่องทางที่ใช้งานได้จริงอย่างน้อยหนึ่งช่องหรือไม่ */
+    /** Whether at least one channel is actually usable */
     public function isActive(): bool
     {
         return $this->activeChannels() !== [];
     }
 
     /**
-     * ช่องทางที่ตั้งค่าครบและเปิดใช้งานอยู่จริง
+     * Channels that are both fully configured and actually enabled
      *
-     * "เปิดสวิตช์ไว้แต่ยังไม่ได้กรอก token" ต้องไม่นับว่าใช้งานได้ — ไม่งั้นหน้าจอจะบอกว่า
-     * ระบบแจ้งเตือนพร้อมแล้วทั้งที่ไม่มีอะไรส่งออกได้เลย ซึ่งอันตรายกว่าไม่มีระบบแจ้งเตือน
+     * "Switch turned on but the token was never filled in" must not count as
+     * usable — otherwise the screen would report that notifications are ready when
+     * nothing can actually be sent out at all, which is more dangerous than having
+     * no notification system.
      *
      * @return list<string>
      */

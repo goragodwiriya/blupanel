@@ -32,7 +32,7 @@ final class SettingsController extends ApiController
         return $this->ok($data, [
             'keys' => SettingsRepository::keys(),
             'events' => Notifier::EVENTS,
-            'event_labels' => Notifier::LABELS,
+            'event_labels' => array_map(fn (string $label): string => $this->t($label), Notifier::LABELS),
             'notify_active' => $notifier->isActive(),
             // ช่องทางที่ "ตั้งค่าครบและเปิดอยู่" ไม่ใช่แค่ติ๊กสวิตช์ไว้ — หน้าจอใช้บอกความจริง
             // ว่าตอนนี้ข้อความจะออกไปทางไหนได้บ้าง (ดู Notifier::activeChannels)
