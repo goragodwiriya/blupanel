@@ -8,24 +8,27 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * ไฟล์ตั้งค่าของระบบ — `/api/v2/config-files` (ตัวกลางที่ทุกหน้าจอเรียกใช้ได้)
+ * The system's configuration files — `/api/v2/config-files` (a shared surface every screen can call)
  *
- * แยกออกมาเป็นทรัพยากรของตัวเองแทนที่จะซ่อนไว้ใต้ `/sites/{id}` เพราะเป็นเรื่องเดียวกัน
- * ไม่ว่าไฟล์นั้นจะเป็นของเว็บไซต์ DNS หรือเมล · หน้าจอเรียกด้วยรูปแบบเดียว เปิด Modal
- * ตัวเดียวกัน และกติกาความปลอดภัยข้อเดียวกันบังคับใช้กับทุกไฟล์โดยอัตโนมัติ
+ * Broken out as its own resource instead of hidden under `/sites/{id}`,
+ * because it's the same problem whether the file belongs to a website, DNS,
+ * or mail · the screen calls it the same way, opens the same modal, and the
+ * same security rule automatically applies to every file
  *
- * **หน้าจอส่ง "คีย์" ไม่เคยส่งเส้นทาง** — เส้นทางจริงถูกประกอบใน `ConfigFileCatalog`
- * จากข้อมูลที่ผ่านการตรวจแล้ว ผู้เรียกจึงขอไฟล์นอกทะเบียนไม่ได้เลย
+ * **The screen always sends a "key," never a path** — the real path is
+ * assembled inside `ConfigFileCatalog` from data that's already been
+ * validated, so a caller can never request a file outside the registry at all
  */
 final class ConfigFilesController extends HostingController
 {
     /**
-     * อ่านไฟล์ตามขอบเขตที่ขอมา — เว็บไซต์หนึ่ง หรือระบบเมลของทั้งเครื่อง
+     * Read a file within the requested scope — one website, or the whole machine's mail system
      *
-     * ขอบเขตมาจากพารามิเตอร์ `scope` ไม่ใช่จากเส้นทางไฟล์ · เพิ่มขอบเขตใหม่ (DNS ฯลฯ)
-     * ทำที่นี่ที่เดียวแล้วหน้าจอทุกหน้าใช้รูปแบบเดิมได้ทันที
+     * The scope comes from the `scope` parameter, not the file path · adding a
+     * new scope (DNS, etc.) happens in this one place, and every screen can
+     * immediately use the same pattern
      *
-     * @return array{0:string,1:array<string,mixed>}|Response  [ชื่อ capability, args] หรือคำตอบข้อผิดพลาด
+     * @return array{0:string,1:array<string,mixed>}|Response  [capability name, args] or an error response
      */
     private function scopeArgs(Request $request, string $key = ''): array|Response
     {
@@ -48,7 +51,7 @@ final class ConfigFilesController extends HostingController
         return ['config.file_read', ['site_id' => $siteId] + ($key === '' ? [] : ['key' => $key])];
     }
 
-    /** รายการไฟล์ของขอบเขตหนึ่ง — ตอนนี้มีขอบเขตเดียวคือเว็บไซต์ */
+    /** The file list for one scope — currently only the website scope exists */
     public function index(Request $request): Response
     {
         $resolved = $this->scopeArgs($request);
@@ -68,13 +71,13 @@ final class ConfigFilesController extends HostingController
                 'label' => $this->t((string) ($file['label'] ?? '')),
             ] + $file + [
                 'row_id' => $file['key'],
-                // ปุ่มในแถวประกอบ URL จากค่าในแถว — ต้องมีทั้งสองค่าติดไปด้วย
-                // ไม่งั้นตัวแปรกลายเป็นค่าว่างแล้วเปิดไฟล์ไม่ได้
+                // The row's button assembles its URL from values in the row —
+                // both values must be attached, or a variable becomes empty and the file can't be opened
                 'site_id' => $siteId,
                 'scope' => $scope,
                 'writable' => $file['kind'] === 'writable',
-                // ป้ายที่บอกให้ชัดว่าแก้ได้หรือดูได้อย่างเดียว — เป็นคำตอบจากเซิร์ฟเวอร์
-                // ไม่ใช่การเดาของหน้าจอจากชื่อไฟล์
+                // A label stating plainly whether it's editable or read-only —
+                // an answer from the server, not the screen guessing from the filename
                 'kind_label' => $file['kind'] === 'writable'
                     ? $this->t('You can edit this')
                     : $this->t('Read-only — the panel rewrites it'),
@@ -88,10 +91,11 @@ final class ConfigFilesController extends HostingController
     }
 
     /**
-     * เปิดไฟล์เดียวใน Modal
+     * Open a single file in a modal
      *
-     * ไฟล์ที่แก้ได้เปิดเป็นฟอร์ม ไฟล์ที่แก้ไม่ได้เปิดเป็นข้อความอ่านอย่างเดียว —
-     * ตัดสินที่เซิร์ฟเวอร์จากทะเบียน ไม่ใช่ที่หน้าจอ · เทมเพลตเดียวรองรับทั้งสองแบบ
+     * An editable file opens as a form, a non-editable one opens as read-only
+     * text — decided by the server from the registry, not the screen · one
+     * template supports both shapes
      */
     public function show(Request $request): Response
     {
@@ -131,21 +135,26 @@ final class ConfigFilesController extends HostingController
     }
 
     /**
-     * เขียนไฟล์ที่แก้ได้
+     * Write an editable file
      *
-     * **ตัวเขียนไม่เชื่อคีย์ที่ส่งมาเรื่องสิทธิ์การเขียน** — capability เป็นคนตัดสินจาก
-     * ทะเบียนอีกรอบว่าไฟล์นี้แก้ได้จริงไหม · หน้าจอที่ส่งคีย์ของไฟล์อ่านอย่างเดียวมา
-     * จึงถูกปฏิเสธที่ชั้นล่างสุด ไม่ใช่แค่ปุ่มไม่ขึ้นบนหน้าจอ
+     * **The writer never trusts a submitted key's claim about write
+     * permission** — the capability decides for itself, from the registry,
+     * whether this file is genuinely editable · a screen that submits a
+     * read-only file's key is rejected at the lowest layer, not just by the
+     * button never appearing on screen
      */
     public function update(Request $request): Response
     {
         /*
-         * **ตัวเขียนไม่เชื่อคีย์ที่ส่งมาเรื่องสิทธิ์การเขียน** — capability เป็นคนตัดสินจาก
-         * ทะเบียนอีกรอบว่าไฟล์นี้แก้ได้จริงไหม · หน้าจอที่ส่งคีย์ของไฟล์อ่านอย่างเดียวมา
-         * จึงถูกปฏิเสธที่ชั้นล่างสุด ไม่ใช่แค่ปุ่มไม่ขึ้นบนหน้าจอ
+         * **The writer never trusts a submitted key's claim about write
+         * permission** — the capability decides for itself, from the registry,
+         * whether this file is genuinely editable · a screen that submits a
+         * read-only file's key is rejected at the lowest layer, not just by the
+         * button never appearing on screen
          *
-         * คีย์มาในเนื้อคำขอ ไม่ใช่เส้นทาง — ฟอร์มอยู่ใน Modal ซึ่งไม่มีใครเติมค่าลง
-         * ตัวแปรในเส้นทางให้ (`RouterManager` เติมให้เฉพาะเทมเพลตของหน้า)
+         * The key comes in the request body, not the path — the form lives in
+         * a modal, and nothing fills a path variable in for it
+         * (`RouterManager` only fills those in for a page's own template)
          */
         $key = $request->payloadString('key');
 
