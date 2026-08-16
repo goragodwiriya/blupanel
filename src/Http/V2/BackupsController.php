@@ -10,16 +10,19 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * ไฟล์สำรอง — `/api/v2/backups`
+ * Backup files — `/api/v2/backups`
  *
- * **รายการมาจากโฟลเดอร์จริงในบ้านของลูกค้า ไม่ใช่จากตาราง** (PLAN-BACKUP-V2 ข้อ B4) ·
- * `<บ้าน>/backup` เปิดให้ลูกค้าเข้าถึงผ่าน SFTP โดยตั้งใจ เขาลบไฟล์ของตัวเองได้ทุกเมื่อ
- * — แถวในตารางที่บันทึกไว้ตอนสร้างจึงเป็นคำโกหกที่รอเวลา · ที่นี่จึงถาม agent ให้อ่าน
- * โฟลเดอร์ให้ทุกครั้ง (`backup.list`) แทนการ SELECT
+ * **The list comes from the real folder in the customer's home directory, not
+ * a table** (PLAN-BACKUP-V2 item B4) · `<home>/backup` is deliberately opened
+ * to the customer via SFTP, and they can delete their own files at any time —
+ * so a table row recorded at creation time is a lie waiting to happen ·
+ * that's why this always asks the agent to read the folder fresh
+ * (`backup.list`) instead of a SELECT
  *
- * ไฟล์ถูกอ้างด้วย **บัญชี + ชื่อไฟล์** ไม่ใช่รหัสแถว · เส้นทางของ REST จึงเป็น
- * `/api/v2/backups/{user}/{file}` ซึ่งอ้างถึงตัวไฟล์จริงที่ยังอยู่หรือไม่อยู่ก็ได้
- * ต่างจากรหัสแถวที่ชี้ไปยังบันทึกที่อาจไม่ตรงกับความจริงแล้ว
+ * A file is referenced by **account + filename**, not a row id · so REST's
+ * path is `/api/v2/backups/{user}/{file}`, which refers to the real file
+ * itself, present or not, unlike a row id pointing at a record that may no
+ * longer match reality
  */
 final class BackupsController extends HostingController
 {
@@ -44,9 +47,10 @@ final class BackupsController extends HostingController
         $page = $this->pagination($request);
         $slice = array_slice($files, $page['offset'], $page['per_page']);
 
-        // เงื่อนไขปุ่มในตารางอ่านได้แค่ค่าในแถวเดียวกัน — สิทธิ์จึงต้องมากับแถว
-        // (ชื่อแบน ๆ can_manage/can_restore/can_offsite ไม่ใช่ can.manage ซ้อนกัน
-        // เพราะเงื่อนไขของ data-row-actions ยังไม่ยืนยันว่ารองรับ property path ซ้อน)
+        // A button's condition in the table can only read values in the same row
+        // — so permission must travel with the row (flat names like
+        // can_manage/can_restore/can_offsite, not a nested can.manage, since
+        // data-row-actions' condition isn't confirmed to support nested property paths)
         $canManage = $this->ctx->can('backup.manage');
         $canRestore = $this->ctx->can('backup.restore');
         $canOffsite = $this->ctx->can('backup.offsite');
@@ -68,14 +72,16 @@ final class BackupsController extends HostingController
     }
 
     /**
-     * ที่เก็บไฟล์สำรอง — **ผู้ใช้ต้องรู้ว่าไฟล์ของตัวเองอยู่ที่ไหนจริง ๆ**
+     * Where backup files are stored — **the user needs to know exactly where their own files really live**
      *
-     * ตอนนี้คำตอบมีความหมายกับลูกค้าโดยตรง ไม่ใช่แค่กับผู้ดูแล: เส้นทางที่ตอบไปคือ
-     * เส้นทางที่เขา `cd` เข้าไปได้จริงผ่าน SFTP แล้วดาวน์โหลดไฟล์ออกมาเอง
+     * The answer now means something directly to a customer, not just an admin:
+     * the path returned is the real path they can `cd` into via SFTP and
+     * download files from themselves
      *
-     * **แยกเป็น endpoint ของตัวเอง ไม่ใช่ `meta` ของรายการ** — `meta.*` ผูกกับ
-     * `data-text`/`data-if` ของ Now.js ไม่ได้ (คอมโพเนนต์เห็นเฉพาะชั้น `data`)
-     * ป้ายที่ผูกกับ meta จึงไม่เคยขึ้นเลย · เรื่องนี้เสียเวลาไปแล้วหนึ่งรอบในหน้า Mailboxes
+     * **A separate endpoint of its own, not the list's `meta`** — `meta.*` can't
+     * be bound by Now.js's `data-text`/`data-if` (the component only sees the
+     * `data` layer), so a label bound to meta never once showed up · this
+     * already cost one round of debugging time on the Mailboxes page
      */
     public function storage(Request $request): Response
     {
@@ -86,9 +92,9 @@ final class BackupsController extends HostingController
         $files = is_array($result['files'] ?? null) ? $result['files'] : [];
         $owner = $this->scopeOwner();
 
-        // ลูกค้าเห็นเส้นทางเดียวคือของตัวเอง · ผู้ดูแลเห็นหลายบัญชีจึงบอกเป็นรูปแบบ
+        // A customer sees only their own path · an admin sees several accounts, so this states the pattern instead
         $path = $owner === null
-            ? Paths::usersDir() . '/<บัญชี>/backup'
+            ? Paths::usersDir() . '/<account>/backup'
             : (string) ($this->app->db()->value(
                 'SELECT COALESCE(system_user, username) FROM users WHERE id = :id',
                 ['id' => $owner],
@@ -103,16 +109,17 @@ final class BackupsController extends HostingController
             'path' => $path,
             'files' => count($files),
             'bytes' => (int) ($result['bytes'] ?? 0),
-            // ไฟล์อยู่ในบ้านของลูกค้าแล้ว จึงเปิดดูได้จากขอบเขตไฟล์ที่เขามีอยู่แล้ว
-            // ไม่ต้องมีขอบเขตพิเศษของ panel อีก (ถอนออกแล้วใน PLAN-BACKUP-V2 §4.1)
+            // The files already sit in the customer's own home directory, so
+            // they're viewable through a file scope they already have — no
+            // special panel scope needed anymore (removed in PLAN-BACKUP-V2 §4.1)
             'scope' => '',
         ]);
     }
 
     /**
-     * โครงเปล่าของฟอร์มสร้างไฟล์สำรอง พร้อมคำสั่งเปิด modal
+     * The empty shell of the create-backup form, with the command to open its modal
      *
-     * ไฟล์สำรองแก้ไม่ได้ (สร้าง · กู้คืน · ลบ) จึงมีแต่ฟอร์มของใหม่
+     * A backup can't be edited (only created · restored · deleted), so there's only a form for a new one
      */
     public function form(Request $request): Response
     {
@@ -130,10 +137,11 @@ final class BackupsController extends HostingController
     }
 
     /**
-     * สร้างไฟล์สำรอง
+     * Create a backup file
      *
-     * ตอบ 201 ไม่ใช่ 202 เพราะ capability ทำงานแบบ synchronous จริง ๆ — ไฟล์พร้อมใช้
-     * ตั้งแต่ตอนที่คำตอบกลับไปถึงผู้เรียกแล้ว
+     * Answers 201, not 202, because the capability genuinely runs
+     * synchronously — the file is already usable by the time the response
+     * reaches the caller
      */
     public function store(Request $request): Response
     {
@@ -163,10 +171,11 @@ final class BackupsController extends HostingController
     }
 
     /**
-     * กู้คืนจากไฟล์สำรอง — ต้องยืนยันด้วยชื่อโดเมน
+     * Restore from a backup file — requires confirming with the domain name
      *
-     * capability ตรวจ checksum ก่อนเสมอ อ่านใบแจ้งข้อมูลว่าไฟล์นี้เป็นของเว็บนี้จริง
-     * และสร้างไฟล์สำรองนิรภัยของสถานะปัจจุบันไว้ก่อนเขียนทับ
+     * The capability always checks the checksum first, reads the manifest
+     * confirming this file genuinely belongs to this website, and creates a
+     * safety backup of the current state before overwriting anything
      */
     public function restore(Request $request): Response
     {
@@ -184,10 +193,10 @@ final class BackupsController extends HostingController
     }
 
     /**
-     * ส่งไฟล์สำรองออกไปยังปลายทางนอกเครื่อง
+     * Send a backup file to an offsite destination
      *
-     * เป็น sub-resource ชื่อ `offsite-copy` ตาม §4.1 (คำนาม ไม่ใช่กริยา) — สิ่งที่ถูก
-     * สร้างขึ้นคือ "สำเนาที่อยู่นอกเครื่อง" ของไฟล์สำรองนั้น
+     * A sub-resource named `offsite-copy` per §4.1 (a noun, not a verb) — what's
+     * being created is "the offsite copy" of that backup file
      */
     public function pushOffsite(Request $request): Response
     {
@@ -219,14 +228,16 @@ final class BackupsController extends HostingController
     }
 
     /**
-     * ชื่อไฟล์จากเส้นทาง — ถอดรหัส URL ก่อนเสมอ
+     * The filename from the path — always URL-decoded first
      *
-     * Router จับคู่กับส่วนของเส้นทางที่ยัง**เข้ารหัสอยู่** และไม่ถอดให้ · ชื่อไฟล์ที่
-     * ระบบสร้างเองปลอดภัยกับ URL อยู่แล้ว แต่โฟลเดอร์นี้เป็นของลูกค้า เขาเปลี่ยนชื่อ
-     * ไฟล์เป็นภาษาไทยหรือใส่ช่องว่างได้ · ไม่ถอด = ปุ่มลบของไฟล์พวกนั้นตอบว่า "ไม่พบไฟล์"
+     * The router matches against the part of the path that's still
+     * **URL-encoded** and doesn't decode it · a filename the system generated
+     * itself is already URL-safe, but this folder belongs to the customer, who
+     * can rename a file with non-ASCII characters or spaces in it · not
+     * decoding means the delete button for those files answers "file not found"
      *
-     * `%2F` ที่ถอดออกมาเป็น `/` ยังถูก `BackupFiles::assertName()` ปฏิเสธอยู่ดี —
-     * การถอดรหัสไม่ได้เปิดทางให้ไต่ออกนอกโฟลเดอร์
+     * A decoded `%2F` becoming `/` is still rejected by
+     * `BackupFiles::assertName()` — decoding doesn't open a path to climb out of the folder
      */
     private static function fileParam(Request $request): string
     {
@@ -234,10 +245,11 @@ final class BackupsController extends HostingController
     }
 
     /**
-     * โดเมน → รหัสเว็บไซต์ที่ผู้เรียกมีสิทธิ์เห็น
+     * Domain → the website id the caller has permission to see
      *
-     * ปุ่มกู้คืนต้องส่ง `site_id` ไปด้วย แต่รายการอ่านมาจากชื่อไฟล์ซึ่งรู้แค่ชื่อโดเมน ·
-     * แปลงที่นี่ทีเดียวแทนการ query ต่อแถว
+     * The restore button must send `site_id` along, but the list is read from
+     * filenames, which only know the domain name · converted once here instead
+     * of querying per row
      *
      * @return array<string,int>
      */
