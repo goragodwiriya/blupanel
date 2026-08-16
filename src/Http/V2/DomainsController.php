@@ -13,18 +13,21 @@ use Phpcp\Kernel\Response;
 use Phpcp\Security\Permissions;
 
 /**
- * โดเมนทั้งระบบและ DNS record ของแต่ละโดเมน — `/api/v2/domains`
+ * Every domain in the system and each one's DNS records — `/api/v2/domains`
  *
- * ต่างจาก `/sites/{id}/domains` ตรงที่นี่มองข้ามเว็บไซต์: ใช้ตอนที่ผู้ดูแลอยากเห็น
- * "โดเมนทั้งหมดบนเครื่องนี้" โดยไม่ต้องไล่เปิดทีละเว็บ
+ * Different from `/sites/{id}/domains` in that this looks past websites
+ * entirely: used when an admin wants to see "every domain on this machine"
+ * without opening each website one by one
  *
- * DNS record ยังไม่ผ่าน agent เพราะ panel ยังไม่ได้เป็น DNS server (ARCHITECTURE §15 Q1)
- * — ตารางนี้เก็บค่าที่ตั้งใจให้เป็นแล้วส่งออกเป็น zone file · เมื่อเฟส E3 เชื่อม BIND9 จริง
- * เส้นทางเหล่านี้จะเปลี่ยนไปสั่งผ่าน capability `dns.zone_write` แทนโดยที่สัญญาไม่เปลี่ยน
+ * DNS records don't go through the agent yet, because the panel isn't a DNS
+ * server itself (ARCHITECTURE §15 Q1) — this table stores the intended values
+ * and exports them as a zone file · once phase E3 connects BIND9 for real,
+ * these routes will switch to going through the `dns.zone_write` capability
+ * instead, with the contract unchanged
  */
 final class DomainsController extends HostingController
 {
-    /** รายการโดเมนทั้งหมดที่ผู้เรียกมีสิทธิ์เห็น */
+    /** Every domain the caller has permission to see */
     public function index(Request $request): Response
     {
         $owner = $this->scopeOwner();
@@ -62,7 +65,7 @@ final class DomainsController extends HostingController
         );
     }
 
-    /** เพิ่มโดเมนย่อย/alias โดยระบุเว็บไซต์ปลายทางใน body */
+    /** Add a subdomain/alias, naming the destination website in the body */
     public function store(Request $request): Response
     {
         $siteId = (int) $request->payload('site_id', 0);
@@ -96,7 +99,7 @@ final class DomainsController extends HostingController
         )->withHeader('Location', '/api/v2/domains' . ($row === null ? '' : '/' . $row['id']));
     }
 
-    /** ลบโดเมนด้วย id ของแถวโดเมนเอง */
+    /** Delete a domain using the domain row's own id */
     public function destroy(Request $request): Response
     {
         $domain = $this->findDomain($request->paramInt('id'));
@@ -124,7 +127,7 @@ final class DomainsController extends HostingController
         );
     }
 
-    /** DNS record ทั้งหมดของโดเมนหนึ่ง */
+    /** Every DNS record belonging to one domain */
     public function records(Request $request): Response
     {
         $domain = $this->findDomain($request->paramInt('id'));
@@ -138,9 +141,10 @@ final class DomainsController extends HostingController
             ['id' => $domain['id']],
         );
 
-        // เงื่อนไขปุ่มลบในตารางอ่านได้แค่ค่าในแถวเดียวกัน — สิทธิ์จึงต้องมากับแถว
-        // (หน้าฟอร์มเพิ่มเรกคอร์ดใช้ `permissions['domain.manage']` จาก /api/v2/session แทน
-        // เพราะไม่ใช่แถวของตาราง — ดูหมายเหตุใน domain.html)
+        // The delete button's condition in the table can only read values in the
+        // same row — so permission must travel with the row (the add-record
+        // form instead uses `permissions['domain.manage']` from /api/v2/session,
+        // since it isn't a table row — see the note in domain.html)
         $manage = $this->ctx->can('domain.manage');
 
         return $this->ok(array_map(
@@ -149,15 +153,16 @@ final class DomainsController extends HostingController
         ));
     }
 
-    /** เพิ่ม DNS record */
+    /** Add a DNS record */
     /**
-     * โครงเปล่าของฟอร์มเพิ่มเรกคอร์ด พร้อมคำสั่งเปิด modal
+     * The empty shell of the add-record form, with the command to open its modal
      *
-     * ปลายทางของฟอร์มขึ้นกับโดเมน จึงส่ง `form_action` มาให้ผูกกับแอตทริบิวต์ action
-     * ตรง ๆ — เทมเพลตของ modal ถูกโหลดทีหลังจึงไม่ผ่านการแทนค่า `{id}` ของ
-     * RouterManager เหมือน HTML ของหน้า (ดูหมายเหตุใน domain.html)
+     * The form's destination depends on the domain, so `form_action` is sent
+     * ready to bind straight to the action attribute — the modal's template is
+     * loaded later, so it never goes through RouterManager's `{id}` substitution
+     * the way a page's own HTML does (see the note in domain.html)
      *
-     * เรกคอร์ด DNS แก้ไม่ได้ (เพิ่มกับลบเท่านั้น) จึงมีแต่ฟอร์มของใหม่
+     * A DNS record can't be edited (only added or deleted), so there's only a form for a new one
      */
     public function recordForm(Request $request): Response
     {
@@ -194,7 +199,7 @@ final class DomainsController extends HostingController
             return $this->problem(ApiProblem::NotFound, 'Domain not found');
         }
 
-        // ValidationError ที่โยนออกไปถูกแปลงเป็น 422 โดย HttpKernel ให้แล้ว
+        // A thrown ValidationError is already converted to a 422 by HttpKernel
         $clean = DnsRecord::validate([
             'type' => $request->payloadString('type'),
             'name' => $request->payloadString('name'),
@@ -230,10 +235,11 @@ final class DomainsController extends HostingController
     }
 
     /**
-     * แจ้งเตือนเพิ่มเมื่อการซิงก์ BIND9 ล้มเหลวจริง (ไม่ใช่แค่ปิด dns.enabled ไว้)
+     * An extra warning only when syncing to BIND9 genuinely fails (not just because dns.enabled is off)
      *
-     * ปิด dns.enabled คือสถานะปกติของการติดตั้งส่วนใหญ่ — ถ้าเตือนทุกครั้งที่แก้เรกคอร์ด
-     * ผู้ดูแลจะเห็นข้อความนี้ทุกครั้งจนเลิกอ่าน (หลักการเดียวกับ `Notifier`)
+     * dns.enabled being off is the normal state for most installs — warning on
+     * every record edit would mean an admin sees this message so often they
+     * stop reading it (same principle as `Notifier`)
      *
      * @param array{dns_synced:bool,dns_message:string} $sync
      * @return list<array<string,mixed>>
@@ -247,7 +253,7 @@ final class DomainsController extends HostingController
         return [['type' => 'notification', 'level' => 'warning', 'message' => $this->t('Sync to BIND9 failed') . ': ' . $sync['dns_message']]];
     }
 
-    /** ลบ DNS record — ใช้ id ของเรกคอร์ดตรง ๆ ตาม §4.6 */
+    /** Delete a DNS record — uses the record's own id directly per §4.6 */
     public function deleteRecord(Request $request): Response
     {
         $record = $this->app->db()->first(
@@ -262,7 +268,7 @@ final class DomainsController extends HostingController
         $domain = $this->findDomain((int) $record['domain_id']);
 
         if ($domain === null) {
-            // เรกคอร์ดมีอยู่จริงแต่โดเมนไม่ใช่ของผู้เรียก — ตอบ 404 เหมือนกรณีไม่มีอยู่
+            // The record genuinely exists, but the domain isn't the caller's own — answer 404 as if it didn't exist
             return $this->problem(ApiProblem::NotFound, 'DNS record not found');
         }
 
@@ -291,11 +297,13 @@ final class DomainsController extends HostingController
     }
 
     /**
-     * ส่ง zone ของโดเมนนี้ไปยัง BIND9 หลังแก้เรกคอร์ด — ล้มได้โดยไม่ทำให้การแก้เรกคอร์ด
-     * (ที่บันทึกลงฐานข้อมูลสำเร็จไปแล้ว) กลายเป็นคำขอที่ล้มเหลวไปด้วย
+     * Push this domain's zone to BIND9 after a record changes — allowed to fail
+     * without turning the record edit (already saved to the database
+     * successfully) into a failed request
      *
-     * ต่างจาก `Notifier` ตรงที่**ไม่เงียบ** — ความล้มเหลวของการซิงก์ BIND9 สำคัญพอที่ผู้ใช้
-     * ต้องเห็นในคำตอบเดียวกันนี้เลย ไม่ใช่ต้องไปเปิด audit log เอง (PLAN-V2 เฟส E3)
+     * Different from `Notifier` in that it's **not silent** — a BIND9 sync
+     * failure matters enough that the user must see it in this same response,
+     * not have to go open the audit log themselves (PLAN-V2 phase E3)
      *
      * @return array{dns_synced:bool,dns_message:string}
      */
@@ -314,11 +322,12 @@ final class DomainsController extends HostingController
     }
 
     /**
-     * zone file ของโดเมน
+     * A domain's zone file
      *
-     * คืนเป็น JSON ที่มีเนื้อหาอยู่ในฟิลด์ `content` ไม่ใช่ไฟล์แนบ — สัญญาของ v2 คือ
-     * "ทุก endpoint ตอบ JSON" ฝั่ง SPA เป็นคนสร้างไฟล์ให้ดาวน์โหลดจากข้อความนี้เอง
-     * ซึ่งทำได้ในเบราว์เซอร์อยู่แล้วและไม่ต้องแลกกับความสม่ำเสมอของ API
+     * Returns JSON with the content in a `content` field, not an attachment —
+     * v2's contract is "every endpoint answers JSON," and the SPA builds a
+     * downloadable file from this text itself, which the browser can already do
+     * with no need to trade away the API's consistency
      */
     public function zoneFile(Request $request): Response
     {
@@ -334,13 +343,16 @@ final class DomainsController extends HostingController
         );
 
         /*
-         * **ไฟล์จริงบนดิสก์มาก่อนเสมอถ้าอ่านได้** — สองอย่างนี้ต่างกันได้ และเวลาที่มัน
-         * ต่างกันคือเวลาที่ผู้ดูแลต้องการคำตอบมากที่สุด ("ทำไมค่าที่เห็นในหน้าจอไม่ตรงกับ
-         * ที่ DNS ตอบจริง") · การแสดงค่าที่ประกอบใหม่ในนาทีนั้นคือการยืนยันความเข้าใจผิด
-         * ด้วยหน้าจอที่ดูน่าเชื่อถือ
+         * **The real file on disk always wins when it can be read** — the two
+         * can genuinely disagree, and the moment they do is exactly the moment
+         * an admin needs an answer most ("why doesn't what I see on screen match
+         * what DNS actually answers") · showing a freshly-reassembled value at
+         * that exact moment would confirm the misunderstanding with a
+         * screen that looks trustworthy
          *
-         * อ่านไม่ได้ก็ไม่ใช่เหตุให้ทั้งหน้าพัง — เครื่องที่ยังไม่เปิด `dns.enabled` ไม่มีไฟล์
-         * นี้เลยตามปกติ และ agent ที่ไม่ตอบต้องไม่ทำให้ดูเรกคอร์ดไม่ได้
+         * Failing to read it isn't cause to break the whole page either — a
+         * machine that hasn't turned on `dns.enabled` normally has no such file
+         * at all, and an agent that doesn't answer must never make records unviewable
          */
         $disk = $this->zoneOnDisk($request, (int) $domain['id']);
 
@@ -353,8 +365,9 @@ final class DomainsController extends HostingController
                     ? $disk['content']
                     : DnsRecord::toZoneFile((string) $domain['domain'], $records),
                 /*
-                 * **ส่งมาเป็นคู่ตรงข้ามเพราะตัวผูกค่าไม่มีเครื่องหมาย "ไม่ใช่"** — เทมเพลต
-                 * ต้องเลือกแสดงคำเตือน "ยังไม่มีไฟล์" หรือเนื้อไฟล์ อย่างใดอย่างหนึ่ง
+                 * **Sent as the inverted value because the binder has no "not"
+                 * operator** — the template must choose to show either the
+                 * "no file yet" warning or the file's content, one or the other
                  */
                 'no_file' => !$disk['on_disk'],
             ] + $disk,
@@ -370,12 +383,14 @@ final class DomainsController extends HostingController
     }
 
     /**
-     * ช่องแก้เรกคอร์ดทั้งชุด — เปิดใน Modal เหมือนฟอร์มอื่นของหน้านี้
+     * The edit-all-records box — opens in a modal like this page's other forms
      *
-     * **ข้อความตั้งต้นเป็นเรกคอร์ดที่ระบบเก็บอยู่ ไม่ใช่ไฟล์ทั้งไฟล์** — ผู้ใช้จึงแก้เฉพาะ
-     * สิ่งที่ตัวเองเป็นเจ้าของ · `SOA`/`NS` ที่ยอดโดเมนถูกสร้างจากค่าตั้งของเครื่องเสมอ
-     * การเอามาแสดงในช่องแก้ไขคือการชวนให้แก้สิ่งที่แก้ไม่ได้ · อยากเห็นไฟล์เต็มให้กด
-     * ปุ่มดูไฟล์ ซึ่งแสดงของจริงบนดิสก์ทั้งไฟล์
+     * **The starting text is the records the system has stored, not the whole
+     * file** — so the user only ever edits what they actually own · the
+     * `SOA`/`NS` records at the domain's apex are always generated from the
+     * machine's own settings, and showing them in the edit box would invite
+     * editing something that can't be edited · to see the full file, click the
+     * view-file button, which shows the real file on disk in full
      */
     public function zoneForm(Request $request): Response
     {
@@ -409,7 +424,7 @@ final class DomainsController extends HostingController
     }
 
     /**
-     * สภาพของ zone file ตัวจริงบนดิสก์ — ค่าว่างเมื่ออ่านไม่ได้ด้วยเหตุผลใดก็ตาม
+     * The real zone file's state on disk — empty values when it can't be read, for whatever reason
      *
      * @return array{content:string,path:string,on_disk:bool,drift:bool,drift_reason:string,source:string,source_label:string}
      */
@@ -447,10 +462,11 @@ final class DomainsController extends HostingController
     }
 
     /**
-     * แทนที่เรกคอร์ดทั้ง zone จากข้อความที่ผู้ดูแลแก้
+     * Replace the whole zone's records from the text an admin edited
      *
-     * **ไม่ได้เขียนไฟล์ที่ส่งมาลงดิสก์** — ข้อความถูกแปลงกลับเป็นเรกคอร์ดในฐานข้อมูล
-     * แล้วระบบเขียนไฟล์เองตามปกติ · ดูเหตุผลที่ `DnsZoneImport`
+     * **The submitted text is never written to disk directly** — it's parsed
+     * back into database records, and the system writes the file itself as
+     * normal · see `DnsZoneImport` for why
      */
     public function zoneImport(Request $request): Response
     {
@@ -473,18 +489,20 @@ final class DomainsController extends HostingController
     }
 
     /**
-     * ซิงก์ zone ของทุกโดเมนกับ BIND9 ใหม่ทั้งหมด — `dns.manage` (ทั้งเครื่อง ไม่ใช่รายโดเมน)
+     * Resync every domain's zone with BIND9 from scratch — `dns.manage` (the whole machine, not per-domain)
      *
-     * ใช้ตอนเพิ่งเปิด `dns.enabled` ครั้งแรก (มีเรกคอร์ดที่เพิ่มไว้ก่อนหน้าค้างอยู่) หรือมีใคร
-     * แก้ไฟล์ของ BIND9 ตรง ๆ แล้วต้องการให้ panel เขียนทับคืนสภาพที่ควรจะเป็น
+     * Used right after turning on `dns.enabled` for the first time (records
+     * added before that are sitting unsynced), or when someone edited BIND9's
+     * files directly and wants the panel to write over them back to what they should be
      */
     public function reloadAll(Request $request): Response
     {
         $result = $this->agent()->data('dns.reload', [], $this->ctx->actor($request));
         $message = (string) ($result['message'] ?? 'All DNS zones synced');
 
-        // ล้มบางโดเมน = ต้องขึ้นแถบเหลือง ไม่ใช่เขียว · ล้มทั้งหมด agent โยน error ออกมาแล้ว
-        // (`completed()` ใส่ level success ตายตัว จึงประกอบ actions เองตรงนี้)
+        // Some domains failing = must show a yellow bar, not green · failing
+        // entirely already means the agent threw an error
+        // (`completed()` hardcodes level success, so actions are assembled by hand here instead)
         $failed = is_array($result['failed'] ?? null) ? $result['failed'] : [];
 
         return $this->done(
@@ -499,7 +517,7 @@ final class DomainsController extends HostingController
     }
 
     /**
-     * โหลดโดเมนที่ผู้เรียกมีสิทธิ์เห็น
+     * Load a domain the caller has permission to see
      *
      * @return array<string,mixed>|null
      */
