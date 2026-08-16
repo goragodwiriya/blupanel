@@ -7,16 +7,17 @@ namespace Phpcp\Domain;
 use Phpcp\Kernel\Db;
 
 /**
- * ความสัมพันธ์ระหว่างบริการของเซิร์ฟเวอร์กับสิ่งที่ Hosting ใช้งานอยู่ — PROMPT.md
+ * The relationship between a server service and what hosting actually uses it — PROMPT.md
  *
- *   Nginx / Apache  → เว็บไซต์ที่ใช้งาน
- *   PHP-FPM 8.4     → เว็บไซต์ที่ตั้งค่าใช้เวอร์ชันนี้
- *   MariaDB         → ฐานข้อมูลที่ใช้งาน
+ *   Nginx / Apache  → the sites currently in use
+ *   PHP-FPM 8.4     → sites configured to use this version
+ *   MariaDB         → the databases in use
  *
- * จุดสำคัญตาม "Important UX Rule": หน้านี้ "แสดง" ความสัมพันธ์เพื่อให้เห็นผลกระทบ
- * แต่ไม่ได้เปิดให้จัดการเว็บไซต์จากที่นี่ — สองชั้นยังแยกกันชัดเจน
+ * The key point per the "Important UX Rule": this page "shows" the relationship so
+ * impact is visible, but doesn't open a way to manage sites from here — the two
+ * layers stay clearly separate.
  *
- * ดึงด้วย query ชุดเดียวต่อหนึ่งหน้า ไม่ใช่ query ต่อบริการ (กัน N+1)
+ * Pulled with a single set of queries per page load, not one query per service (avoids N+1).
  */
 final class ServiceRelations
 {
@@ -25,7 +26,7 @@ final class ServiceRelations
     }
 
     /**
-     * ความสัมพันธ์ของทุกบริการในครั้งเดียว
+     * Every service's relationship, all in one call
      *
      * @param list<string> $units
      * @return array<string,array{kind:string,label:string,items:list<array{name:string,detail:string,url:string}>,total:int}>
@@ -78,7 +79,7 @@ final class ServiceRelations
             ];
         }
 
-        return ['kind' => 'sites', 'label' => 'เว็บไซต์ที่ใช้งาน', 'items' => $items, 'total' => count($items)];
+        return ['kind' => 'sites', 'label' => 'Sites in use', 'items' => $items, 'total' => count($items)];
     }
 
     /** @param list<array<string,mixed>> $sites */
@@ -93,12 +94,12 @@ final class ServiceRelations
 
             $items[] = [
                 'name' => (string) $site['primary_domain'],
-                'detail' => $site['status'] === 'active' ? 'ทำงานปกติ' : 'ถูกระงับ',
+                'detail' => $site['status'] === 'active' ? 'Active' : 'Suspended',
                 'url' => '/sites/' . $site['id'],
             ];
         }
 
-        return ['kind' => 'sites', 'label' => 'เว็บไซต์ที่ใช้งาน', 'items' => $items, 'total' => count($items)];
+        return ['kind' => 'sites', 'label' => 'Sites in use', 'items' => $items, 'total' => count($items)];
     }
 
     /** @param list<array<string,mixed>> $databases */
@@ -109,12 +110,12 @@ final class ServiceRelations
         foreach ($databases as $database) {
             $items[] = [
                 'name' => (string) $database['db_name'],
-                'detail' => (string) ($database['primary_domain'] ?? 'ไม่ผูกกับเว็บไซต์'),
+                'detail' => (string) ($database['primary_domain'] ?? 'Not tied to a site'),
                 'url' => '/databases',
             ];
         }
 
-        return ['kind' => 'databases', 'label' => 'ฐานข้อมูลที่ใช้งาน', 'items' => $items, 'total' => count($items)];
+        return ['kind' => 'databases', 'label' => 'Databases in use', 'items' => $items, 'total' => count($items)];
     }
 
     /** @param list<array<string,mixed>> $crons */
@@ -134,12 +135,13 @@ final class ServiceRelations
             ];
         }
 
-        return ['kind' => 'crons', 'label' => 'งานอัตโนมัติที่เปิดใช้งาน', 'items' => $items, 'total' => count($items)];
+        return ['kind' => 'crons', 'label' => 'Enabled scheduled jobs', 'items' => $items, 'total' => count($items)];
     }
 
     /**
-     * ข้อความเตือนผลกระทบก่อนหยุดบริการ — ใช้ในกล่องยืนยัน (SECURITY §4)
-     * คำนวณจากข้อมูลจริงในระบบ ไม่ใช่ข้อความทั่วไป
+     * A warning message about the impact of stopping a service — used in a
+     * confirmation dialog (SECURITY §4), computed from real data in the system,
+     * not generic text
      *
      * @param array{items:list<array{name:string,detail:string,url:string}>,total:int} $relation
      */
@@ -149,29 +151,29 @@ final class ServiceRelations
         $total = $relation['total'] ?? 0;
 
         if ($action === 'reload') {
-            return "โหลดค่าตั้งใหม่ของ {$label} — บริการจะไม่หยุดทำงาน";
+            return "Reload {$label}'s configuration — the service will not stop";
         }
 
         if ($total === 0) {
             return $action === 'stop'
-                ? "ยืนยันหยุดบริการ {$label} หรือไม่"
-                : "ยืนยันรีสตาร์ตบริการ {$label} หรือไม่";
+                ? "Stop the {$label} service?"
+                : "Restart the {$label} service?";
         }
 
         $names = array_slice(array_column($relation['items'], 'name'), 0, 5);
         $list = implode(', ', $names);
         if ($total > 5) {
-            $list .= ' และอีก ' . ($total - 5) . ' รายการ';
+            $list .= ' and ' . ($total - 5) . ' more';
         }
 
         $kindWord = match ($relation['kind'] ?? '') {
-            'databases' => 'ฐานข้อมูล',
-            'crons' => 'งานอัตโนมัติ',
-            default => 'เว็บไซต์',
+            'databases' => 'database',
+            'crons' => 'scheduled job',
+            default => 'site',
         };
 
         return $action === 'stop'
-            ? "การหยุดบริการนี้อาจทำให้{$kindWord}ที่เกี่ยวข้องไม่สามารถใช้งานได้\n\n{$kindWord} {$total} รายการที่ได้รับผลกระทบ: {$list}"
-            : "การรีสตาร์ตจะทำให้{$kindWord}ที่เกี่ยวข้องหยุดให้บริการชั่วขณะ\n\n{$kindWord} {$total} รายการที่ได้รับผลกระทบ: {$list}";
+            ? "Stopping this service may make the related {$kindWord}s unavailable\n\n{$total} affected {$kindWord}(s): {$list}"
+            : "Restarting this service will briefly stop the related {$kindWord}s\n\n{$total} affected {$kindWord}(s): {$list}";
     }
 }

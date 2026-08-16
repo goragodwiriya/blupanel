@@ -48,6 +48,16 @@ final class ServicesController extends ApiController
             }
 
             $affects = $relations[$unit] ?? ['items' => []];
+
+            if (isset($affects['label'])) {
+                $affects['label'] = $this->t((string) $affects['label']);
+            }
+
+            $affects['items'] = array_map(
+                fn (array $item): array => ['detail' => $this->t((string) ($item['detail'] ?? ''))] + $item,
+                $affects['items'] ?? [],
+            );
+
             $affectedNames = array_column($affects['items'] ?? [], 'name');
             $status = (string) ($service['status'] ?? '');
 
