@@ -8,13 +8,13 @@ use Phpcp\Kernel\Config;
 use Phpcp\Kernel\Db;
 
 /**
- * Session ของ panel — เก็บเองใน SQLite ไม่ใช้ session ของ PHP
+ * The panel's sessions — stored by hand in SQLite, not PHP's own session mechanism
  *
- * เหตุผลที่ไม่ใช้ $_SESSION: ต้องการควบคุมการหมุน id, การผูกกับ IP/User-Agent,
- * การบังคับ idle timeout และการสั่งตัด session ของผู้ใช้คนหนึ่งจากหน้าจัดการผู้ใช้
- * ซึ่งทำกับไฟล์ session ของ PHP ได้ลำบากและไม่น่าเชื่อถือ
+ * Why not $_SESSION: this needs control over id rotation, binding to IP/User-
+ * Agent, enforcing an idle timeout, and being able to destroy one user's
+ * sessions from the user-management page — all of which are awkward and unreliable to do with PHP's own session files
  *
- * เก็บเฉพาะ hash ของ session id — ผู้ที่ได้ไฟล์ panel.db ไปสวมรอย session ไม่ได้
+ * Only the session id's hash is stored — whoever gets hold of the panel.db file can't impersonate a session with it
  */
 final class SessionStore
 {
@@ -27,24 +27,21 @@ final class SessionStore
     }
 
     /**
-     * ชื่อคุกกี้ — ใช้ prefix __Host- เมื่อเป็น HTTPS
-     * prefix นี้บังคับให้เบราว์เซอร์ยอมรับเฉพาะคุกกี้ที่ Secure, Path=/ และไม่มี Domain
-     * ทำให้ subdomain อื่นเขียนคุกกี้ทับไม่ได้ (session fixation)
-     */
-    /**
-     * ช่วงผ่อนผันหลังหมุน id (วินาที) — id เดิมยังใช้ได้ในช่วงนี้
+     * The grace window after rotating the id, in seconds — the old id still works during this window
      *
-     * 30 วินาทีพอสำหรับคำขอที่ค้างอยู่ระหว่างทางของหน้าหนึ่ง (SPA ยิงพร้อมกัน 2–4 ก้อน
-     * และแต่ละก้อนใช้เวลาไม่ถึงวินาทีบน LAN) แต่สั้นพอที่จะไม่ยืดอายุคุกกี้ที่รั่วไป
-     * อย่างมีนัยสำคัญ ซึ่งเป็นเหตุผลทั้งหมดที่ต้องหมุน id ตั้งแต่แรก
+     * 30 seconds is enough for a request already in flight from a page (the
+     * SPA fires 2–4 requests at once, and each takes under a second on a
+     * LAN), but short enough not to meaningfully extend a leaked cookie's
+     * lifespan — which is the entire reason for rotating the id in the first place
      */
     private const ROTATE_GRACE = 30;
 
     /**
-     * เหตุผลที่ `load()` ปฏิเสธครั้งล่าสุด — ว่าง = ไม่ได้ปฏิเสธ หรือปฏิเสธด้วยเหตุผลปกติ
+     * The reason `load()` rejected the last time — empty = not rejected, or rejected for an ordinary reason
      *
-     * มีเฉพาะกรณีที่**ควรมีคนเห็น** (คุกกี้ถูกใช้จาก IP อื่น) · หมดอายุกับ idle timeout
-     * ไม่ถูกเก็บ เพราะเกิดกับผู้ใช้ทุกคนทุกวันและไม่ได้บอกอะไรเลย
+     * Only set for cases that **someone should see** (a cookie used from a
+     * different IP) · expiry and idle timeout aren't recorded here, since they
+     * happen to every user every day and say nothing meaningful
      *
      * @var array<string,mixed>
      */
@@ -56,6 +53,11 @@ final class SessionStore
         return $this->rejection;
     }
 
+    /**
+     * The cookie name — uses the __Host- prefix over HTTPS
+     * This prefix forces the browser to only accept a cookie that's Secure,
+     * Path=/, and has no Domain, which prevents another subdomain from overwriting it (session fixation)
+     */
     public function cookieName(): string
     {
         return $this->config->bool('panel.cookie_secure') ? '__Host-phpcp_sid' : 'phpcp_sid';
@@ -72,7 +74,7 @@ final class SessionStore
     }
 
     /**
-     * สร้าง session ใหม่ คืน id ดิบสำหรับใส่คุกกี้ (เก็บลง DB เฉพาะ hash)
+     * Create a new session, returning the raw id to put in the cookie (only the hash is stored in the DB)
      */
     public function create(int $userId, string $ip, string $uaHash, bool $pending2fa): string
     {
@@ -95,7 +97,7 @@ final class SessionStore
     }
 
     /**
-     * โหลด session พร้อมข้อมูลผู้ใช้ คืน null ถ้าไม่ผ่านเงื่อนไขข้อใดข้อหนึ่ง
+     * Load the session along with the user's data, returning null if any condition fails
      *
      * @return array<string,mixed>|null
      */
@@ -141,25 +143,30 @@ final class SessionStore
         }
 
         /*
-         * ผูก session กับ IP — ขโมยคุกกี้ไปใช้จากที่อื่นแล้วใช้ไม่ได้
+         * Bind the session to an IP — a stolen cookie used from elsewhere doesn't work
          *
-         * **ปฏิเสธคำขอเฉย ๆ ไม่ทำลาย session** (เปลี่ยนเมื่อ 2026-08-11) — เดิมตัดทิ้ง
-         * ทันทีที่ไม่ตรง ซึ่งมีปัญหาสองข้อ: ผู้ใช้ที่ถูกต้องซึ่งเน็ตสลับจาก WiFi ไป 4G
-         * ถูกล็อกเอาต์ถาวรทั้งที่ไม่มีใครทำอะไรผิด · และใครที่ได้คุกกี้ไปยิงจาก IP อื่น
-         * เพียงครั้งเดียวก็**เตะเจ้าของออกจากระบบ**ได้ ซึ่งกลายเป็นเครื่องมือก่อกวน
+         * **Just reject the request without destroying the session** (changed
+         * 2026-08-11) — it used to destroy the session immediately on a
+         * mismatch, which had two problems: a legitimate user whose network
+         * switched from WiFi to 4G got permanently logged out even though
+         * nobody did anything wrong · and anyone who got hold of the cookie
+         * could **kick the real owner out** just by firing one request from a
+         * different IP, which turned into a harassment tool
          *
-         * ปฏิเสธอย่างเดียวให้ผลกันขโมยเท่าเดิม (คุกกี้ที่ถูกขโมยใช้ไม่ได้อยู่ดี)
-         * โดยไม่ทำร้ายเจ้าของ session
+         * Rejecting alone gives the same protection against theft (a stolen
+         * cookie still doesn't work) without harming the session's owner
          */
         if (!hash_equals((string) $row['ip'], $ip)) {
             /*
-             * **ปฏิเสธเงียบ ๆ ไม่ได้** — นี่เป็นสัญญาณที่ชัดที่สุดที่ระบบมีว่าคุกกี้
-             * ก้อนหนึ่งถูกนำไปใช้จากที่อื่น · เดิมคำขอถูกตอบกลับเป็น "ยังไม่ได้เข้าสู่ระบบ"
-             * เฉย ๆ ไม่มีร่องรอยอะไรเหลือเลย ผู้ดูแลจึงมองไม่เห็นการขโมยคุกกี้ที่กำลัง
-             * ถูกทดลองใช้อยู่ ทั้งที่ด่านนี้จับได้แล้ว
+             * **Can't reject silently** — this is the clearest signal the
+             * system has that a cookie is being used from somewhere else ·
+             * the request used to just get answered as "not signed in," with
+             * no trace left behind at all, so an admin had no way to see a
+             * cookie theft being attempted even though this check had already caught it
              *
-             * เก็บไว้ให้ผู้เรียกบันทึก แทนที่จะบันทึกเอง เพราะคลาสนี้ไม่มี (และไม่ควรมี)
-             * ทางไปถึง audit log · ผู้เรียกคือ {@see \Phpcp\Middleware\SessionMiddleware}
+             * Left here for the caller to log, rather than logging it itself,
+             * since this class has no (and shouldn't have any) path to the
+             * audit log · the caller is {@see \Phpcp\Middleware\SessionMiddleware}
              */
             $this->rejection = [
                 'reason' => 'ip_mismatch',
@@ -173,28 +180,31 @@ final class SessionStore
         }
 
         /*
-         * **ไม่ผูกกับ User-Agent แล้ว** (ตัดออกเมื่อ 2026-08-11)
+         * **No longer bound to the User-Agent** (removed 2026-08-11)
          *
-         * เหตุผลที่ตัด: ได้ประโยชน์น้อยกว่าที่เสีย · คุกกี้เป็น `__Host-` + HttpOnly +
-         * SameSite=Strict และ CSP ไม่มี `unsafe-eval` การขโมยจึงต้องถึงขั้นมีมัลแวร์
-         * บนเครื่องนั้น ซึ่งกรณีนั้นผู้โจมตีได้ UA เดียวกันไปด้วยอยู่แล้ว
+         * Why it was removed: cost more than it was worth · the cookie is
+         * already `__Host-` + HttpOnly + SameSite=Strict, and the CSP has no
+         * `unsafe-eval`, so stealing it would already require malware on that
+         * machine — and in that case the attacker gets the same UA along with it anyway
          *
-         * ส่วนที่เสียคือของจริงและเกิดบ่อย: Chrome อัปเดตเวอร์ชันทีเดียวทุกคนถูก
-         * ล็อกเอาต์พร้อมกัน · ผู้ดูแลที่ย่อหน้าจอทดสอบ responsive ใน DevTools ถูกเด้ง
-         * ออกกลางคัน (โหมดจำลองอุปกรณ์ปลอม UA ให้ด้วย) · ปุ่ม "ขอเว็บไซต์เดสก์ท็อป"
-         * บนมือถือก็เปลี่ยน UA เช่นกัน
+         * What was lost was real and frequent: a single Chrome version update
+         * logged everyone out at once · an admin resizing the screen to test
+         * responsive layout in DevTools got bounced mid-session (device
+         * emulation mode fakes the UA too) · the "request desktop site"
+         * button on mobile also changes the UA
          *
-         * ค่าที่เก็บไว้ยังมีอยู่และถูกอัปเดตเมื่อเปลี่ยน — `SessionMiddleware` บันทึกลง
-         * audit log ให้ผู้ดูแลตรวจย้อนหลังได้ว่าคุกกี้ก้อนนี้ถูกใช้จากเบราว์เซอร์อื่นเมื่อไร
+         * The stored value is still kept and updated when it changes —
+         * `SessionMiddleware` writes it to the audit log so an admin can look
+         * back and see when this cookie was used from a different browser
          */
         return $row;
     }
 
     /**
-     * อัปเดต hash ของ User-Agent ที่ผูกกับ session นี้
+     * Update the User-Agent hash bound to this session
      *
-     * เรียกเมื่อค่าที่ส่งมาต่างจากที่เก็บไว้ เพื่อให้บันทึกลง audit เพียงครั้งเดียว
-     * ต่อการเปลี่ยนหนึ่งครั้ง ไม่ใช่ทุกคำขอหลังจากนั้น
+     * Called only when the incoming value differs from what's stored, so it
+     * gets written to the audit log exactly once per change, not on every request afterward
      */
     public function noteUserAgent(string $rawId, string $uaHash): void
     {
@@ -213,9 +223,9 @@ final class SessionStore
     }
 
     /**
-     * หมุน session id ถ้าถึงเวลา คืน id ใหม่ หรือ null ถ้ายังไม่ต้องหมุน
+     * Rotate the session id if it's due, returning the new id, or null if it isn't time yet
      *
-     * การหมุนเป็นระยะทำให้คุกกี้ที่รั่วไปมีอายุใช้งานสั้นลง
+     * Rotating periodically shortens how long a leaked cookie stays useful
      */
     public function rotateIfDue(string $rawId, int $rotatedAt): ?string
     {
@@ -228,20 +238,24 @@ final class SessionStore
     }
 
     /**
-     * หมุน session id — คืน id ใหม่ หรือ **null ถ้าคำขออื่นหมุนไปแล้ว**
+     * Rotate the session id — returns the new id, or **null if another request already rotated it**
      *
-     * **บั๊กจริงที่เคยเกิด (พบ 2026-08-07):** เดิมคืน id ใหม่เสมอโดยไม่ดูว่า UPDATE
-     * โดนแถวไหนหรือเปล่า · SPA ยิงหลายคำขอพร้อมกันต่อหนึ่งหน้า ทุกคำขอเห็นว่าถึงเวลาหมุน
-     * พร้อมกัน ตัวแรกหมุน X→Y สำเร็จ ที่เหลือ UPDATE ไม่โดนแถวไหน (id เปลี่ยนไปแล้ว)
-     * แต่ยังคืน id ที่สุ่มใหม่ของตัวเองออกไปตั้งเป็นคุกกี้ · คำตอบที่มาถึงเบราว์เซอร์
-     * ทีหลังชนะ ผลคือเบราว์เซอร์ถือ id ที่**ไม่มีอยู่ในฐานข้อมูล** แล้วถูกเด้งออกทันที
+     * **A real bug that happened here (found 2026-08-07):** it used to always
+     * return a new id without checking whether the UPDATE actually hit a row
+     * · the SPA fires several requests at once per page, and all of them saw
+     * that it was time to rotate at the same moment — the first one rotated
+     * X→Y successfully, the rest of the UPDATEs hit no row at all (the id had
+     * already changed) but still returned their own freshly-random id to be
+     * set as the cookie · whichever response reached the browser last won,
+     * leaving the browser holding an id **that didn't exist in the
+     * database**, and it got bounced immediately
      *
-     * อาการที่ผู้ใช้เห็น: คลิกใช้งานไปเรื่อย ๆ แล้วจู่ ๆ เด้งไปหน้าล็อกอินเอง
-     * ทุก ๆ ประมาณ 15 นาที (เท่ากับรอบการหมุน) · UI แบบ HTML เดิมยิงคำขอเดียวต่อหน้า
-     * จึงไม่เคยชนกันเลย
+     * What the user saw: clicking around normally, then suddenly getting
+     * dropped back to the login page, roughly every 15 minutes (matching the
+     * rotation interval) · the old plain-HTML UI fired only one request per page, so this never collided
      *
-     * ทั้งการอ่านและการเขียนอยู่ใน transaction เดียว (`BEGIN IMMEDIATE`) เพื่อให้
-     * "ตรวจว่ายังเป็น id นี้อยู่ไหม แล้วค่อยเปลี่ยน" เป็นขั้นตอนเดียวที่แทรกไม่ได้
+     * Both the read and the write sit in a single transaction (`BEGIN
+     * IMMEDIATE`) so that "check it's still this id, then change it" is one uninterruptible step
      */
     public function rotate(string $rawId): ?string
     {
@@ -278,11 +292,12 @@ final class SessionStore
     }
 
     /**
-     * ลบ session
+     * Delete a session
      *
-     * ต้องจับ `prev_id_hash` ด้วย ไม่งั้นผู้ใช้ที่กดออกจากระบบด้วยคุกกี้ที่เพิ่งถูกหมุนไป
-     * (ยังอยู่ในช่วงผ่อนผัน) จะได้ 204 กลับไปแต่ session ยังอยู่ในฐานข้อมูล —
-     * "ออกจากระบบแล้วแต่ไม่ได้ออกจริง" เป็นข้อบกพร่องด้านความปลอดภัย ไม่ใช่แค่ความไม่สะดวก
+     * Must also catch `prev_id_hash`, otherwise a user who signs out with a
+     * cookie that was just rotated (still inside the grace window) gets a
+     * 204 back while the session is still in the database — "signed out but
+     * not actually signed out" is a security defect, not just an inconvenience
      */
     public function destroy(string $rawId): void
     {
@@ -292,7 +307,7 @@ final class SessionStore
         );
     }
 
-    /** ตัด session ทั้งหมดของผู้ใช้คนหนึ่ง — ใช้ตอนเปลี่ยนรหัสผ่านหรือระงับบัญชี */
+    /** Destroy every session belonging to one user — used when changing a password or suspending an account */
     public function destroyAllFor(int $userId): int
     {
         return $this->db
