@@ -478,6 +478,7 @@
     "Issuer": "ผู้ออกใบรับรอง",
     "Items": "รายการ",
     "Jails managed by the panel": "รายการที่ panel ดูแล",
+    "Job name must be 1-100 characters long": "ชื่องานต้องยาว 1-100 ตัวอักษร",
     "Keep at least {count} copies": "เก็บอย่างน้อย {count} ชุด",
     "Keep for (days)": "เก็บไว้ (วัน)",
     "Kept in the account's home folder at": "เก็บไว้ในบ้านของบัญชีที่",
