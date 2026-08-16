@@ -9,16 +9,18 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\ValidationError;
 
 /**
- * จัดการ MariaDB/MySQL ผ่านคำสั่ง mysql/mysqldump — ARCHITECTURE §4.3
+ * Manages MariaDB/MySQL through the mysql/mysqldump commands — ARCHITECTURE §4.3
  *
- * ความปลอดภัยที่สำคัญที่สุดของคลาสนี้: SQL ที่ส่งไปประกอบจาก identifier
- * ที่ผ่าน allowlist regex มาแล้วเท่านั้น และส่งผ่าน stdin ไม่ใช่ผ่าน argv
+ * This class's most important safety property: SQL sent out is assembled
+ * only from identifiers that already passed an allowlist regex, and sent
+ * through stdin, never through argv.
  *
- * เหตุผลที่ใช้ stdin: argv ของโปรเซสมองเห็นได้จาก /proc/<pid>/cmdline
- * โดยผู้ใช้ทุกคนบนเครื่อง — รหัสผ่านที่ส่งผ่าน argv จึงรั่วให้เว็บไซต์ที่ถูกแฮ็กเห็นได้
+ * Why stdin: a process's argv is visible via /proc/<pid>/cmdline to every
+ * user on the machine — a password sent through argv would leak to a
+ * compromised website.
  *
- * ตัว identifier ยังถูกครอบด้วย backtick อีกชั้นเผื่อกรณีที่ regex หลุด
- * (ป้องกันสองชั้นเหมือนที่ทำกับ argv array ใน RealExecutor)
+ * An identifier is also wrapped in backticks as a second layer, in case the
+ * regex ever slips (the same double-guard approach used for the argv array in RealExecutor).
  */
 final class MariaDbManager
 {
@@ -27,22 +29,24 @@ final class MariaDbManager
     private const DUMP = '/usr/bin/mariadb-dump';
     private const DUMP_FALLBACK = '/usr/bin/mysqldump';
 
-    /** ชื่อฐานข้อมูลและผู้ใช้ที่ระบบห้ามแตะ — เป็นของ MariaDB เอง */
+    /** Database and user names the system must never touch — these belong to MariaDB itself */
     private const RESERVED = ['mysql', 'information_schema', 'performance_schema', 'sys'];
 
     /**
-     * ไฟล์ credential ของผู้ดูแลระบบสำหรับ MariaDB
+     * MariaDB's own admin credential file
      *
-     * ตรวจสอบ /root/.my.cnf ก่อน แล้วตามด้วย /etc/mysql/debian.cnf หรือ /etc/my.cnf
-     * อ่านจากไฟล์แทนการส่งรหัสผ่านทาง argv เพราะ argv ของทุกโปรเซส
-     * อ่านได้จาก /proc/<pid>/cmdline โดยผู้ใช้ทุกคนบนเครื่อง
+     * Checks /root/.my.cnf first, then /etc/mysql/debian.cnf or
+     * /etc/my.cnf · read from a file instead of sending a password through
+     * argv, since every process's argv is readable via /proc/<pid>/cmdline
+     * by every user on the machine.
      *
-     * คืน null เมื่อไม่พบไฟล์ไหนเลย — ห้ามคืนเส้นทางที่ไม่มีอยู่จริง เพราะ
-     * --defaults-file ที่ชี้ไปยังไฟล์ที่ไม่มี ทำให้ client ตายทันทีด้วย
-     * "Could not open required defaults file" ทั้งที่ยังต่อได้ตามปกติถ้าไม่ส่ง flag นี้
+     * Returns null when no such file is found — never returns a path that
+     * doesn't genuinely exist, because a `--defaults-file` pointing at a
+     * missing file makes the client die instantly with "Could not open
+     * required defaults file", even though it would connect fine without that flag at all.
      *
-     * เมื่อคืน null ผู้เรียก (agent ซึ่งรันเป็น root) จะต่อผ่าน unix_socket
-     * ซึ่งเป็นค่าเริ่มต้นของ Debian/Ubuntu ที่ root ใช้ได้อยู่แล้วโดยไม่ต้องมีรหัสผ่าน
+     * When null is returned, the caller (the agent, running as root)
+     * connects through unix_socket instead, Debian/Ubuntu's own default, which root can already use with no password.
      */
     private function defaultsFile(Executor $executor): ?string
     {
@@ -56,7 +60,7 @@ final class MariaDbManager
     }
 
     /**
-     * flag --defaults-file เมื่อมีไฟล์ credential จริงเท่านั้น
+     * The --defaults-file flag, only when a genuine credential file exists
      *
      * @return list<string>
      */
@@ -67,7 +71,7 @@ final class MariaDbManager
         return $file === null ? [] : ['--defaults-file='.$executor->path($file)];
     }
 
-    /** สิทธิ์ที่ให้เลือกได้ แปลงเป็นรายการ GRANT จริงที่นี่ที่เดียว */
+    /** The selectable privilege levels, translated into a real GRANT list only here */
     private const PRIVILEGES = [
         'readonly' => 'SELECT, SHOW VIEW',
         'readwrite' => 'SELECT, INSERT, UPDATE, DELETE, CREATE TEMPORARY TABLES, SHOW VIEW, EXECUTE',
@@ -79,17 +83,17 @@ final class MariaDbManager
         return $this->client($executor) !== null;
     }
 
-    /** ชื่อฐานข้อมูลต้องผ่านทั้ง regex และรายการต้องห้าม */
+    /** A database name must pass both the regex and the denylist */
     public static function assertDatabaseName(string $name): string
     {
         if (preg_match('/^[a-z][a-z0-9_]{1,63}$/i', $name) !== 1) {
             throw new ValidationError(
-                'ชื่อฐานข้อมูลต้องขึ้นต้นด้วยตัวอักษร ตามด้วยตัวอักษร ตัวเลข หรือ _ ยาว 2-64 ตัว',
+                'Database name must start with a letter, followed by letters, digits, or _, 2-64 characters long',
             );
         }
 
         if (in_array(strtolower($name), self::RESERVED, true)) {
-            throw new ValidationError("ชื่อ {$name} เป็นฐานข้อมูลของระบบ ใช้ไม่ได้");
+            throw new ValidationError("Name {$name} is a system database and cannot be used");
         }
 
         return $name;
@@ -100,15 +104,15 @@ final class MariaDbManager
      */
     public static function assertUserName(string $name): string
     {
-        // MariaDB จำกัดชื่อผู้ใช้ที่ 80 ตัว แต่เราจำกัดเข้มกว่าเพื่อให้เดาง่ายและปลอดภัย
+        // MariaDB limits usernames to 80 characters, but this is stricter, to stay easy to reason about and safe
         if (preg_match('/^[a-z][a-z0-9_]{1,31}$/i', $name) !== 1) {
             throw new ValidationError(
-                'ชื่อผู้ใช้ฐานข้อมูลต้องขึ้นต้นด้วยตัวอักษร ตามด้วยตัวอักษร ตัวเลข หรือ _ ยาว 2-32 ตัว',
+                'Database username must start with a letter, followed by letters, digits, or _, 2-32 characters long',
             );
         }
 
         if (in_array(strtolower($name), ['root', 'mysql', 'mariadb.sys', 'debian-sys-maint'], true)) {
-            throw new ValidationError("ชื่อ {$name} เป็นผู้ใช้ของระบบ ใช้ไม่ได้");
+            throw new ValidationError("Name {$name} is a system user and cannot be used");
         }
 
         return $name;
@@ -121,7 +125,7 @@ final class MariaDbManager
     public static function assertPrivilege(string $level): string
     {
         if (!isset(self::PRIVILEGES[$level])) {
-            throw new ValidationError('ระดับสิทธิ์ไม่ถูกต้อง');
+            throw new ValidationError('Invalid privilege level');
         }
 
         return $level;
@@ -139,15 +143,15 @@ final class MariaDbManager
     public static function privilegeLabel(string $level): string
     {
         return match ($level) {
-            'readonly' => 'อ่านอย่างเดียว',
-            'readwrite' => 'อ่านและเขียน',
-            'full' => 'สิทธิ์เต็ม',
+            'readonly' => 'Read-only',
+            'readwrite' => 'Read and write',
+            'full' => 'Full privileges',
             default => $level,
         };
     }
 
     /**
-     * รัน SQL แล้วคืนผลเป็นแถว — SQL ส่งทาง stdin ไม่ใช่ argv
+     * Runs SQL and returns the result as rows — SQL is sent through stdin, never argv
      *
      * @return list<array<string,string>>
      */
@@ -177,16 +181,16 @@ final class MariaDbManager
         return $rows;
     }
 
-    /** รัน SQL ที่ไม่ต้องการผลลัพธ์ */
+    /** Runs SQL that doesn't need a result */
     public function execute(Executor $executor, string $sql): void
     {
         $this->run($executor, $sql, ['--batch']);
     }
 
     /**
-     * ขนาดของแต่ละฐานข้อมูลจาก information_schema
+     * Each database's size, from information_schema
      *
-     * @return array<string,int> ชื่อฐานข้อมูล => ไบต์
+     * @return array<string,int> database name => bytes
      */
     public function sizes(Executor $executor): array
     {
@@ -252,10 +256,10 @@ final class MariaDbManager
      * @param string $password
      */
     /**
-     * ผู้ใช้ MariaDB คนนี้มีอยู่บนเครื่องแล้วหรือยัง
+     * Does this MariaDB user already exist on the machine?
      *
-     * ตรวจจาก mysql.user โดยตรง ไม่ใช่จากตารางของ panel — สองอย่างนี้ไม่ตรงกันได้
-     * (เช่นกู้คืน panel.db เก่ามาแต่ MariaDB ยังเป็นของปัจจุบัน)
+     * Checked directly against mysql.user, never against the panel's own
+     * table — the two can disagree (e.g. an old panel.db was restored while MariaDB stayed current).
      */
     public function userExists(Executor $executor, string $user, string $host): bool
     {
@@ -276,7 +280,7 @@ final class MariaDbManager
         self::assertUserName($user);
         self::assertHost($host);
 
-        // รหัสผ่านเป็นค่าเดียวที่ไม่ใช่ identifier — ต้อง escape แบบสตริง
+        // The password is the one value here that isn't an identifier — it must be string-escaped
         $this->execute($executor, sprintf(
             "CREATE USER '%s'@'%s' IDENTIFIED BY '%s'",
             $user,
@@ -343,10 +347,9 @@ final class MariaDbManager
     }
 
     /**
-     * บัญชีนี้ถือสิทธิ์ระดับทั้งเซิร์ฟเวอร์ (`ON *.*`) อยู่หรือไม่
+     * Does this account hold server-wide privileges (`ON *.*`)?
      *
-     * อ่านจาก `SHOW GRANTS` ไม่ใช่จากตารางของ panel — สิทธิ์จริงอยู่ที่ MariaDB
-     * และอาจถูกแก้ด้วยมือนอก panel ได้
+     * Read from `SHOW GRANTS`, never from the panel's own table — the real privileges live in MariaDB, and can be edited by hand outside the panel.
      */
     public function hasGlobalPrivileges(Executor $executor, string $user, string $host): bool
     {
@@ -371,16 +374,20 @@ final class MariaDbManager
     }
 
     /**
-     * ให้หรือถอนสิทธิ์ระดับทั้งเซิร์ฟเวอร์
+     * Grants or revokes server-wide privileges
      *
-     * **ใช้กับบัญชีของผู้ดูแลระบบเท่านั้น** — เป็นสิทธิ์ที่เทียบเท่า root ของ MariaDB
-     * ในทางปฏิบัติ · เหตุผลที่ยอมให้มีคือผู้ดูแลต้องจัดการฐานข้อมูลทั้งเครื่องผ่าน
-     * phpMyAdmin ได้ โดยไม่ต้องไปตั้งรหัสให้บัญชี root ซึ่งปัจจุบันใช้ `unix_socket`
-     * และแตะได้เฉพาะ root ของระบบปฏิบัติการเท่านั้น — การตั้งรหัสให้ root จะทำให้
-     * บัญชีที่มีอำนาจสูงสุดกลายเป็นเป้าที่เดารหัสได้ ซึ่งแย่กว่าวิธีนี้มาก
+     * **Used only for a server admin's account** — a privilege equivalent
+     * to MariaDB's own root in practice · the reason it's allowed at all is
+     * that an admin has to manage every database on the machine through
+     * phpMyAdmin without ever having to set a password on the root
+     * account, which currently uses `unix_socket` and can only ever be
+     * touched by the operating system's own root — setting a password on
+     * root would turn the single most powerful account into something
+     * password-guessable, far worse than this approach.
      *
-     * `WITH GRANT OPTION` รวมอยู่ด้วยเพราะไม่มีมันแล้วหน้าจัดการผู้ใช้ของ phpMyAdmin
-     * จะทำงานได้ครึ่งเดียว (สร้างผู้ใช้ได้แต่ให้สิทธิ์ไม่ได้) ซึ่งสับสนกว่าไม่ให้เลย
+     * `WITH GRANT OPTION` is included because without it, phpMyAdmin's own
+     * user-management page only half works (can create a user but can't
+     * grant privileges), which is more confusing than not offering it at all.
      */
     public function setGlobalPrivileges(Executor $executor, string $user, string $host, bool $granted): void
     {
@@ -389,8 +396,9 @@ final class MariaDbManager
 
         $current = $this->hasGlobalPrivileges($executor, $user, $host);
 
-        // ไม่สั่งอะไรเมื่อสถานะตรงอยู่แล้ว — REVOKE ที่ไม่มีอะไรให้ถอนจะล้มด้วย error 1141
-        // และการกลืน error ทิ้งจะทำให้ความล้มเหลวจริงหายไปด้วย
+        // Nothing is run when the state already matches — a REVOKE with
+        // nothing to revoke fails with error 1141, and swallowing that
+        // error would also swallow a genuine failure along with it
         if ($current === $granted) {
             return;
         }
@@ -407,30 +415,33 @@ final class MariaDbManager
     }
 
     /**
-     * สำรองฐานข้อมูลเป็นไฟล์ `.sql.gz` คืนขนาดไฟล์ที่เขียนจริง
+     * Backs up a database into a `.sql.gz` file, returning the actual bytes written
      *
-     * **บีบอัดเสมอ ไม่ใช่ทางเลือก** — ไฟล์นี้ไปอยู่ในบ้านของลูกค้าและนับในโควตาของเขา
-     * (PLAN-BACKUP-V2 ข้อ B9) · ข้อความ SQL บีบได้ราว 5-10 เท่า ส่วนต่างนั้นคือพื้นที่
-     * ที่ลูกค้าจ่ายไปกับไฟล์ที่เก็บซ้ำ ๆ ทุกคืน
+     * **Always compressed, never optional** — this file lives in a
+     * customer's home and counts against their own quota (PLAN-BACKUP-V2
+     * item B9) · SQL text compresses roughly 5-10× — the difference is
+     * space a customer would otherwise pay for on a file that repeats every night.
      *
-     * บีบด้วย zlib ในโปรเซสแทนการต่อท่อไปยังคำสั่ง `gzip` เพราะ `exec()` ของโปรเจกต์นี้
-     * รับ argv ล้วน ไม่มี shell ให้ต่อท่อ (โดยเจตนา — ดู RealExecutor) · การเขียนไฟล์ดิบ
-     * ลงดิสก์ก่อนแล้วค่อยเรียก gzip จะสร้างช่วงที่ไฟล์ **ไม่บีบอัด** อยู่ในโควตาของลูกค้า
-     * และเหลือไฟล์ค้างถ้าล้มกลางทาง · ผลลัพธ์เป็นไฟล์ gzip มาตรฐานที่ `gunzip`/`zcat`
-     * อ่านได้เหมือนกัน
+     * Compressed with zlib in-process rather than piping to the `gzip`
+     * command, because this project's own `exec()` takes argv only, with
+     * no shell to pipe through (deliberately — see RealExecutor) · writing
+     * the raw file to disk first and calling gzip after would create a
+     * window where the file sits **uncompressed** against a customer's
+     * quota, and would leave a stray file behind if it failed partway
+     * through · the output is a standard gzip file, readable by `gunzip`/`zcat` the same either way.
      */
     public function dump(Executor $executor, string $database, string $target): int
     {
         self::assertDatabaseName($database);
 
         if (!str_ends_with($target, '.gz')) {
-            throw new ExecutionFailed('ไฟล์สำรองฐานข้อมูลต้องลงท้ายด้วย .gz');
+            throw new ExecutionFailed('Database backup file must end with .gz');
         }
 
         $binary = $executor->exists(self::DUMP) ? self::DUMP : self::DUMP_FALLBACK;
 
         if (!$executor->exists($binary)) {
-            throw new ExecutionFailed('ไม่พบคำสั่งสำหรับสำรองฐานข้อมูลบนเครื่องนี้');
+            throw new ExecutionFailed('No command for backing up databases was found on this machine');
         }
 
         $result = $executor->exec([
@@ -445,13 +456,13 @@ final class MariaDbManager
         ], timeout: 600);
 
         if (!$result->ok()) {
-            throw new ExecutionFailed('สำรองฐานข้อมูลไม่สำเร็จ: '.trim($result->stderr));
+            throw new ExecutionFailed('Failed to back up database: '.trim($result->stderr));
         }
 
         $compressed = gzencode($result->stdout, 6);
 
         if ($compressed === false) {
-            throw new ExecutionFailed('บีบอัดไฟล์สำรองฐานข้อมูลไม่สำเร็จ');
+            throw new ExecutionFailed('Failed to compress the database backup file');
         }
 
         $executor->writeFile($executor->path($target), $compressed, 0600);
@@ -460,7 +471,7 @@ final class MariaDbManager
     }
 
     /**
-     * รันคำสั่ง client โดยส่ง SQL ทาง stdin
+     * Runs the client, sending SQL through stdin
      *
      * @param list<string> $flags
      */
@@ -469,21 +480,23 @@ final class MariaDbManager
         $client = $this->client($executor);
 
         if ($client === null) {
-            throw new ExecutionFailed('ไม่พบ MariaDB client บนเครื่องนี้');
+            throw new ExecutionFailed('No MariaDB client was found on this machine');
         }
 
-        // อ่านบัญชีผู้ดูแลจากไฟล์ของระบบ ไม่ส่งรหัสผ่านผ่าน argv
-        // ซึ่งผู้ใช้อื่นบนเครื่องอ่านได้จาก /proc/<pid>/cmdline
-        // ต้องแมปเส้นทางไฟล์ credential ผ่าน executor เสมอ
+        // The admin credential is read from a system file, never sent as a
+        // password through argv, which other users on the machine can read
+        // via /proc/<pid>/cmdline · the credential file's path must always
+        // be mapped through the executor.
         //
-        // ถ้าส่งเส้นทางดิบไป โหมด sandbox จะอ่าน /etc/mysql/debian.cnf ของจริง
-        // แล้วไปสร้าง/ลบฐานข้อมูลบน MariaDB จริงของเครื่อง ซึ่งผิดสัญญาหลักของโหมดนั้น
+        // Sending the raw path instead would make sandbox mode read the
+        // machine's genuine /etc/mysql/debian.cnf and go create/delete
+        // databases on the machine's real MariaDB, breaking that mode's core promise
         $argv = [$client, ...$this->defaultsFlag($executor), ...$flags];
 
         $result = $executor->exec($argv, timeout: 120, stdin: $sql);
 
         if (!$result->ok()) {
-            throw new ExecutionFailed('คำสั่งฐานข้อมูลล้มเหลว: '.trim($result->stderr));
+            throw new ExecutionFailed('Database command failed: '.trim($result->stderr));
         }
 
         return $result;
@@ -511,7 +524,7 @@ final class MariaDbManager
     private static function assertCharset(string $charset): string
     {
         if (preg_match('/^[a-z0-9_]{2,32}$/i', $charset) !== 1) {
-            throw new ValidationError('ชุดอักขระไม่ถูกต้อง');
+            throw new ValidationError('Invalid character set');
         }
 
         return $charset;
@@ -523,15 +536,15 @@ final class MariaDbManager
      */
     private static function assertHost(string $host): string
     {
-        // จำกัดให้แคบกว่าที่ MariaDB ยอมรับ — โฮสต์ที่ใช้จริงมีไม่กี่แบบ
+        // Restricted narrower than what MariaDB itself would accept — only a few host values are genuinely used
         if (!in_array($host, ['localhost', '127.0.0.1', '%'], true)) {
-            throw new ValidationError('โฮสต์ของผู้ใช้ฐานข้อมูลต้องเป็น localhost, 127.0.0.1 หรือ %');
+            throw new ValidationError('A database user\'s host must be localhost, 127.0.0.1, or %');
         }
 
         return $host;
     }
 
-    /** escape สตริงสำหรับใส่ในเครื่องหมายคำพูดเดี่ยวของ SQL */
+    /** Escapes a string for use inside SQL's single quotes */
     private static function escapeString(string $value): string
     {
         return str_replace(
