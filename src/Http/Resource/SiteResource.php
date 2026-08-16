@@ -7,11 +7,12 @@ namespace Phpcp\Http\Resource;
 use Phpcp\Domain\Site;
 
 /**
- * เว็บไซต์หนึ่งเว็บ
+ * One website
  *
- * ค่าที่เป็นเส้นทางไฟล์ (`root`, `docroot`) คำนวณจาก `Site` ไม่ใช่จากคอลัมน์ในฐานข้อมูล
- * เพราะ `Site` คือแหล่งความจริงเดียวของการอนุมานเส้นทาง — ถ้าอ่านคอลัมน์ `docroot` ตรง ๆ
- * ค่าที่ API คืนอาจไม่ตรงกับที่ vhost ใช้จริงเมื่อมีการเปลี่ยน `sites.dir`
+ * File-path values (`root`, `docroot`) are computed from `Site`, never read
+ * directly from database columns — `Site` is the single source of truth for
+ * path inference, so reading the `docroot` column directly could return a
+ * value that no longer matches what the vhost actually uses once `sites.dir` changes
  */
 final class SiteResource extends Resource
 {
@@ -25,25 +26,28 @@ final class SiteResource extends Resource
             'php_version' => self::string($row['php_version'] ?? ''),
             'ssl_mode' => self::string($row['ssl_mode'] ?? 'off'),
             'status' => self::string($row['status'] ?? 'active'),
-            // สีของป้ายสถานะมาจากฝั่งเซิร์ฟเวอร์ เพื่อให้เทมเพลตเขียน `pill-${status_tone}`
-            // ได้ตรง ๆ โดยไม่ต้องมีตารางแปลงฝั่ง JS — แบบเดียวกับ UserResource::service_tone
+            // The pill's color comes from the server, so the template can
+            // write `pill-${status_tone}` directly with no JS-side lookup
+            // table — same pattern as UserResource::service_tone
             'status_tone' => match (self::string($row['status'] ?? 'active')) {
                 'active' => 'ok',
                 'suspended' => 'warn',
                 default => 'muted',
             },
-            // บัญชี Linux ที่เว็บนี้รันด้วยเป็นของ**เจ้าของ** ไม่ใช่ของเว็บ ตั้งแต่ migration 0006
-            // (คอลัมน์ sites.system_user/uid/gid ถูกลบไปแล้ว — ย้ายไปอยู่กับผู้ใช้)
+            // The Linux account this website runs under belongs to the
+            // **owner**, not the website, as of migration 0006 (the
+            // sites.system_user/uid/gid columns were dropped — moved to live with the user instead)
             'system_user' => $site?->systemUser() ?? self::string($row['owner_system_user'] ?? ''),
             'root' => $site?->root(),
             'docroot' => $site?->docroot() ?? self::string($row['docroot'] ?? ''),
             'docroot_override' => self::string($row['docroot_override'] ?? ''),
             'owner_user_id' => self::intOrNull($row['owner_user_id'] ?? null),
-            // **ไบต์คือหน่วยเดียวของ API** ถึงแม้ฐานข้อมูลจะเก็บเป็น MB ก็ตาม
+            // **Bytes are the API's only unit**, even though the database stores MB
             //
-            // ยังเป็นตัวเลขดิบ ไม่ใช่ข้อความที่จัดรูปแบบแล้ว — แต่เป็นหน่วยที่ตัวจัดรูปแบบ
-            // มาตรฐานของเฟรมเวิร์ก (`data-format="bytes"`) กินได้ทันที · ถ้าคืนเป็น MB
-            // หน้าจอจะต้องมีฟังก์ชัน JS เฉพาะโปรเจกต์ไว้คูณ 1024² ทุกที่ที่แสดงค่านี้
+            // Still a raw number, not pre-formatted text — but in the unit the
+            // framework's standard formatter (`data-format="bytes"`) can
+            // consume directly · returning MB instead would mean the screen
+            // needs its own project-specific JS function to multiply by 1024² everywhere this value is shown
             'disk_used' => ((int) ($row['disk_used_mb'] ?? 0)) * 1048576,
             'disk_quota' => isset($row['disk_quota_mb']) && $row['disk_quota_mb'] !== null
                 ? ((int) $row['disk_quota_mb']) * 1048576
@@ -54,10 +58,10 @@ final class SiteResource extends Resource
     }
 
     /**
-     * ตัวเลขที่มาจาก listWithCounts() — มีเฉพาะตอนดึงเป็นรายการ
+     * Numbers that come from listWithCounts() — present only when fetched as a list
      *
-     * ไม่ใส่คีย์เหล่านี้เลยเมื่อไม่มีข้อมูล ดีกว่าใส่ 0 ปลอม ๆ ที่หน้าจอแยกไม่ออกว่า
-     * "ไม่มีโดเมนเลย" หรือ "ไม่ได้ถามมา"
+     * These keys are left out entirely when the data isn't there, rather than
+     * filled with a fake 0 that the screen can't tell apart from "genuinely no domains at all"
      *
      * @param array<string,mixed> $row
      * @return array<string,mixed>
@@ -87,8 +91,9 @@ final class SiteResource extends Resource
      */
     private static function toSite(array $row): ?Site
     {
-        // แถวที่ยังสร้างไม่เสร็จ (system_user ว่าง) ทำให้ Site โยน error — คืน null แทน
-        // เพื่อให้ API ยังรายงานเว็บนั้นได้ว่ามีอยู่ในสถานะที่ยังไม่สมบูรณ์
+        // A row that hasn't finished being created yet (empty system_user)
+        // makes Site throw — return null instead, so the API can still
+        // report that the website exists, just in an incomplete state
         try {
             return Site::fromRow($row);
         } catch (\Throwable) {

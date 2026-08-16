@@ -10,21 +10,24 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * งานตามเวลาของ panel — `GET /api/v2/scheduled-jobs` (PLAN-V2 เฟส A1 ข้อ 7)
+ * The panel's own scheduled jobs — `GET /api/v2/scheduled-jobs` (PLAN-V2 phase A1, item 7)
  *
- * เฟส A ทิ้งข้อนี้ไว้ให้เฟส C เพราะตอนนั้นยังไม่มีหน้าจอให้แสดง · ระหว่างนั้นดูได้
- * ทาง `phpcp status` และ `phpcp-scheduler --list` เท่านั้น ซึ่งต้องเข้าเครื่องได้ก่อน
+ * Phase A left this for phase C since there was no screen to show it on yet —
+ * until now it could only be seen via `phpcp status` and `phpcp-scheduler
+ * --list`, both of which require shell access first
  *
- * **ทำไมต้องเห็นบนหน้าเว็บ:** scheduler ที่ตายไปแล้วทำให้ทุกอย่างดูปกติทั้งที่กลไก
- * คืนค่าอัตโนมัติของ SSH/firewall หายไปเงียบ ๆ · ผู้ดูแลที่ไม่มี shell ต้องมีทาง
- * เห็นชีพจรของมันเช่นกัน ไม่ใช่รู้ตัวตอนที่ล็อกตัวเองออกจากเครื่องไปแล้ว
+ * **Why it needs to be on the web page:** a dead scheduler makes everything
+ * look normal while SSH/firewall's automatic rollbacks quietly stop happening
+ * — an admin with no shell access needs a way to see its pulse too, not find
+ * out only after locking themselves out of the machine
  *
- * อ่านอย่างเดียว: การเปิด/ปิดงานตามเวลาไม่มีในแผน และเป็นการลดการป้องกันของระบบเอง
- * ผ่านหน้าเว็บ ซึ่งเป็นสิ่งเดียวกับที่ `SelfProtection` กันไว้ที่ชั้น service อยู่แล้ว
+ * Read-only: there's no plan to enable/disable jobs here, since that would be
+ * weakening the system's own protection through the web page — exactly what
+ * `SelfProtection` already guards against at the service layer
  */
 final class ScheduledJobsController extends ApiController
 {
-    /** ถือว่าตัวจับเวลา "ค้าง" เมื่อไม่ได้เดินมานานกว่านี้ — ค่าเดียวกับที่ `phpcp doctor` ใช้ */
+    /** A timer counts as "stuck" once it hasn't run for longer than this — the same value `phpcp doctor` uses */
     private const STALE_AFTER = 300;
 
     public function index(Request $request): Response
@@ -43,16 +46,24 @@ final class ScheduledJobsController extends ApiController
                     'enabled' => (bool) $row['enabled'],
                     'last_run_at' => $row['last_run_at'] === null ? null : (int) $row['last_run_at'],
                     'last_status' => $status,
-                    // ป้ายสำเร็จรูป — ไม่ใช้ last_status ตรง ๆ เป็นคีย์แปลภาษา เพราะงานที่
-                    // ยังไม่เคยรันมี last_status เป็นสตริงว่าง ซึ่งเทมเพลต {LNG_${...}}
-                    // จะกลายเป็น "{LNG_}" ที่ไม่มีความหมายให้ผู้ใช้เห็นตรง ๆ — ใช้คีย์เดียว
-                    // กับ run_status ของหน้าสำรองข้อมูลอัตโนมัติ (backups.html) เพื่อให้
-                    // คำแปล "never" ใช้ร่วมกันได้ ไม่ต้องมีคีย์แปลซ้ำซ้อนหลายชื่อ
-                    'status_label' => $status === '' ? 'never' : $status,
-                    // สีของป้ายมาจากฝั่งเซิร์ฟเวอร์ เทมเพลตจึงเขียน `pill-${status_tone}` ได้ตรง ๆ
+                    // A ready-composed label — never the raw `last_status` as
+                    // the translation key directly, since a job that hasn't
+                    // run yet has `last_status` as an empty string, and the
+                    // template's `{LNG_${...}}` would become the meaningless
+                    // "{LNG_}" — mapped to the same capitalized words used
+                    // elsewhere on the dashboard (`OK`, `Error`) so the same
+                    // th.json entry serves both screens
+                    'status_label' => match ($status) {
+                        '' => 'Never',
+                        'ok' => 'OK',
+                        'error' => 'Error',
+                        'skipped' => 'Skipped',
+                        default => $status,
+                    },
+                    // The pill's color comes from the server, so the template can write `pill-${status_tone}` directly
                     'status_tone' => match ($status) {
                         'ok' => 'ok',
-                        'failed' => 'danger',
+                        'error' => 'danger',
                         default => 'muted',
                     },
                     'last_error' => (string) ($row['last_error'] ?? ''),
@@ -63,8 +74,9 @@ final class ScheduledJobsController extends ApiController
 
         return $this->ok($jobs, [
             'last_run_at' => $lastRunAt,
-            // ให้ฝั่งหน้าจอตัดสินจากค่าเดียวกับ `phpcp doctor` ไม่ใช่คำนวณเกณฑ์ของตัวเอง
-            // — ไม่งั้นสองที่จะบอกไม่ตรงกันว่า scheduler ยังทำงานอยู่ไหม
+            // Let the screen decide from the same threshold `phpcp doctor`
+            // uses instead of computing its own — otherwise the two could
+            // disagree about whether the scheduler is still alive
             'stale' => $lastRunAt === null || (time() - $lastRunAt) > self::STALE_AFTER,
             'stale_after' => self::STALE_AFTER,
         ]);
