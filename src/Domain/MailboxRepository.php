@@ -8,12 +8,13 @@ use Phpcp\Driver\Mail\MailboxManager;
 use Phpcp\Kernel\Db;
 
 /**
- * กล่องจดหมายและที่อยู่ส่งต่อ — PLAN-MAIL เฟส M1
+ * Mailboxes and forwarding addresses — PLAN-MAIL Phase M1
  *
- * **หน้าที่หลักคือประกอบ "ภาพรวมทั้งเครื่อง" ให้ตัวเขียนไฟล์** ไม่ใช่แค่ CRUD ·
- * ตารางค้นหาของ Postfix ถูกเขียนใหม่ทั้งไฟล์ทุกครั้ง ผู้เขียนจึงต้องได้รายการที่
- * ครบทั้งเครื่องเสมอ ไม่ใช่เฉพาะสิ่งที่เพิ่งเปลี่ยน — ไม่งั้นกล่องที่ถูกลบไปแล้ว
- * จะยังรับเมลต่อได้เพราะยังค้างอยู่ในไฟล์
+ * **The main job here is assembling "the whole machine's picture" for the file
+ * writer**, not just CRUD · Postfix's own lookup table gets fully rewritten every
+ * time, so the writer must always receive the complete machine-wide list, not just
+ * what recently changed — otherwise a mailbox that's already been deleted would
+ * keep accepting mail, since it would still be sitting in the file.
  */
 final class MailboxRepository
 {
@@ -22,7 +23,7 @@ final class MailboxRepository
     }
 
     /**
-     * โดเมนทั้งหมดที่เปิดเมลไว้
+     * Every domain with mail enabled
      *
      * @return list<string>
      */
@@ -34,10 +35,11 @@ final class MailboxRepository
     }
 
     /**
-     * กล่องทั้งหมดในรูปที่ตัวเขียนไฟล์ใช้ได้ทันที
+     * Every mailbox in the shape the file writer can use immediately
      *
-     * กล่องของโดเมนที่ถูกปิดเมลไปแล้วต้องไม่ติดมาด้วย — แถวยังอยู่ในฐานข้อมูล
-     * (เผื่อเปิดกลับ) แต่ต้องไม่มีผลกับเครื่องระหว่างที่ปิดอยู่
+     * A mailbox belonging to a domain whose mail has been turned off must never be
+     * included — the row still stays in the database (in case it's turned back on)
+     * but must have no effect on the machine while it's off.
      *
      * @return list<array{address:string,maildir:string,password:string,quota_mb:int}>
      */
@@ -67,7 +69,7 @@ final class MailboxRepository
     }
 
     /**
-     * ที่อยู่ส่งต่อทั้งหมด — `source` ว่างคือ catch-all ของโดเมนนั้น
+     * Every forwarding address — an empty `source` means that domain's catch-all
      *
      * @return list<array{source:string,destination:string}>
      */
@@ -83,7 +85,7 @@ final class MailboxRepository
 
         return array_map(
             static fn (array $row): array => [
-                // Postfix เขียน catch-all เป็น `@โดเมน` ไม่ใช่ `*@โดเมน`
+                // Postfix writes a catch-all as `@domain`, not `*@domain`
                 'source' => ((string) $row['source'] === '' ? '' : (string) $row['source'])
                     . '@' . (string) $row['domain'],
                 'destination' => (string) $row['destination'],
@@ -111,7 +113,7 @@ final class MailboxRepository
         return is_array($row) ? $row : null;
     }
 
-    /** จำนวนกล่องที่บัญชีนี้เป็นเจ้าของ — ใช้กับโควตา `quota_emails` */
+    /** Number of mailboxes this account owns — used against the `quota_emails` quota */
     public function countOwnedBy(int $userId): int
     {
         return (int) $this->db->value(
@@ -164,10 +166,11 @@ final class MailboxRepository
     }
 
     /**
-     * ตั้งที่อยู่ส่งต่อ — ชื่อเดิมของโดเมนเดียวกันคือการแก้ ไม่ใช่การเพิ่มซ้ำ
+     * Set a forwarding address — the same source on the same domain is an edit, not a duplicate add
      *
-     * ตาราง unique ที่ (domain_id, source) อยู่แล้ว การ insert ซ้ำจะล้ม · ที่นี่จึง
-     * อัปเดตแทน เพื่อให้ฟอร์มเดียวใช้ได้ทั้งเพิ่มและแก้ เหมือนฟอร์มอื่นในระบบ
+     * The table already has a unique constraint on (domain_id, source), so a
+     * duplicate insert would fail · this updates instead, so a single form can
+     * handle both adding and editing, the same as every other form in the system.
      */
     public function setAlias(int $domainId, string $source, string $destination): int
     {
@@ -196,11 +199,11 @@ final class MailboxRepository
     }
 
     /**
-     * กล่องและที่อยู่ส่งต่อทั้งหมดของเจ้าของคนหนึ่ง — ใช้แสดงบนหน้าเว็บ
+     * All of one owner's mailboxes and forwarding addresses — used to display on the web page
      *
-     * `$ownerUserId` เป็น 0 = ผู้ดูแลระบบ เห็นของทุกคน · ค่าอื่น = เห็นเฉพาะของตัวเอง
-     * การกรองทำที่ query ไม่ใช่กรองหลังดึงมาแล้ว — กล่องของลูกค้ารายอื่นต้องไม่ถูก
-     * อ่านขึ้นมาในหน่วยความจำตั้งแต่แรก
+     * `$ownerUserId` of 0 = an admin, sees everyone's · any other value = sees only
+     * their own. The filtering happens in the query, not after fetching — another
+     * customer's mailbox must never be read into memory in the first place.
      *
      * @return list<array<string,mixed>>
      */
@@ -238,7 +241,7 @@ final class MailboxRepository
     }
 
     /**
-     * โดเมนที่เปิดเมลแล้วและผู้เรียกเป็นเจ้าของ — ใช้เติมตัวเลือกในฟอร์ม
+     * Domains with mail already enabled that the caller owns — used to populate a form's options
      *
      * @return list<array<string,mixed>>
      */
@@ -258,7 +261,7 @@ final class MailboxRepository
         return $this->db->all($sql . ' ORDER BY d.domain', $params);
     }
 
-    /** เจ้าของโดเมนนี้คือใคร — ใช้ตรวจสิทธิ์ก่อนแตะกล่องของโดเมน */
+    /** Who owns this domain — used to check permission before touching the domain's mailboxes */
     public function ownerOf(int $domainId): int
     {
         return (int) $this->db->value(
