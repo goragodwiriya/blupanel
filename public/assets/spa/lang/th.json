@@ -464,6 +464,7 @@
     "Mail certificate checked": "ตรวจใบรับรองของเมลแล้ว",
     "Mail hostname": "ชื่อโฮสต์ของเมล",
     "Mail is refused while the mailbox is full, so the sender knows it did not arrive": "กล่องเต็มแล้วเมลจะถูกปฏิเสธ ผู้ส่งจะได้รู้ว่าไม่ถึง",
+    "Mail mode must be local or relay": "โหมดเมลต้องเป็น local หรือ relay",
     "Mail queue": "คิวเมลขาออก",
     "Mail readiness": "ความพร้อมของเมล",
     "Mailbox created": "สร้างกล่องจดหมายแล้ว",

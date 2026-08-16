@@ -13,36 +13,40 @@ use Phpcp\Driver\Template;
 use Phpcp\Driver\WebServer\CustomConfig;
 
 /**
- * เมลขาออกผ่าน Postfix — ตั้งใจทำแค่ "ส่งออก" ไม่ใช่เมลเซิร์ฟเวอร์เต็มรูปแบบ
+ * Outbound mail through Postfix — deliberately just "sending", never a full mail server
  *
- * ## ทำไมถึงไม่ทำเมลเซิร์ฟเวอร์เต็มรูปแบบ
+ * ## Why this doesn't build a full mail server
  *
- * สิ่งที่เว็บไซต์ต้องการจริง ๆ คือ "ส่งเมลยืนยันการสมัครออกไปได้" ซึ่งเป็นคนละเรื่อง
- * กับการเป็นเมลเซิร์ฟเวอร์ที่รับเมลเข้าและเก็บกล่องจดหมาย อย่างหลังต้องมี
- * Dovecot + ระบบผู้ใช้เมล + โควตา + antispam + antivirus + webmail + การสำรอง
- * กล่องจดหมาย และที่สำคัญที่สุดคือ **ต้องมีคนดูแลชื่อเสียงของไอพีตลอดเวลา**
+ * What a website genuinely needs is "can send a signup confirmation email",
+ * an entirely different matter from being a mail server that receives
+ * inbound mail and stores mailboxes · the latter needs Dovecot + a mail
+ * user system + quotas + antispam + antivirus + webmail + mailbox backups,
+ * and most importantly, **someone has to watch the IP's reputation constantly**.
  *
- * เมลเซิร์ฟเวอร์ที่ตั้งไม่ครบเป็นภาระมากกว่าประโยชน์: ถ้า SPF/DKIM/DMARC/rDNS
- * ไม่ครบ เมลจะเข้าถังขยะหรือถูกปฏิเสธทั้งหมด และถ้าตั้ง relay ผิดจนกลายเป็น
- * open relay เครื่องจะถูกใช้ส่งสแปมภายในไม่กี่ชั่วโมง แล้วไอพีติดบัญชีดำถาวร
- * ซึ่งกระทบทุกเว็บบนเครื่องเดียวกัน
+ * An incompletely configured mail server is more burden than benefit: if
+ * SPF/DKIM/DMARC/rDNS aren't all in place, mail lands in spam or gets
+ * rejected outright, and if a relay is misconfigured into an open relay,
+ * the machine gets used to send spam within hours and the IP ends up
+ * permanently blacklisted — affecting every site on that same machine.
  *
- * v1 จึงรองรับสองโหมดที่ปลอดภัยและใช้งานได้จริง:
+ * So v1 supports two modes that are both safe and genuinely usable:
  *
- *   local  ส่งตรงจากเครื่องนี้ — ง่ายที่สุด เหมาะกับเมลภายในและการแจ้งเตือน
- *          แต่ผู้รับปลายทางอาจตีเป็นสแปมถ้า DNS ยังไม่ครบ
- *   relay  ส่งผ่านผู้ให้บริการภายนอก (SendGrid, Amazon SES, Gmail, ฯลฯ)
- *          **แนะนำสำหรับเว็บสาธารณะ** เพราะเรื่องชื่อเสียงไอพีเป็นภาระของเขา
+ *   local  sends directly from this machine — the simplest, suited to
+ *          internal mail and notifications, but the destination may treat
+ *          it as spam if DNS isn't fully set up
+ *   relay  sends through an external provider (SendGrid, Amazon SES,
+ *          Gmail, etc.) — **recommended for a public-facing site**, since
+ *          IP reputation becomes their burden instead
  *
- * ทั้งสองโหมดตั้งค่าให้ Postfix **รับคำขอส่งจากเครื่องนี้เท่านั้น** (loopback)
- * จึงไม่มีทางกลายเป็น open relay
+ * Both modes configure Postfix to **only ever accept a send request from
+ * this machine itself** (loopback), so it can never become an open relay.
  */
 final class MailManager
 {
     private const MAIN_CF = '/etc/postfix/main.cf';
     private const MASTER_CF = '/etc/postfix/master.cf';
 
-    /** พอร์ตที่เซิร์ฟเวอร์เมลอื่นใช้ส่งเมลมาหาเรา */
+    /** The port other mail servers use to send mail to us */
     private const SMTP_PORT = 25;
     private const SASL_FILE = '/etc/postfix/sasl_passwd';
     private const POSTFIX = '/usr/sbin/postfix';
@@ -58,7 +62,7 @@ final class MailManager
     }
 
     /**
-     * สถานะปัจจุบันที่อ่านจากเครื่องจริง
+     * The current status, read from the real machine
      *
      * @return array{installed:bool,mode:string,relay_host:string,hostname:string,queued:int,open_relay:bool}
      */
@@ -76,7 +80,7 @@ final class MailManager
         try {
             $main = $executor->readFile($executor->path(self::MAIN_CF));
         } catch (\Throwable) {
-            // อ่านไม่ได้ก็ยังรายงานสถานะที่เหลือได้ ดีกว่าทั้งหน้าพัง
+            // Even unreadable, the rest of the status can still be reported — better than breaking the whole page
         }
 
         $relay = $this->directive($main, 'relayhost');
@@ -87,7 +91,7 @@ final class MailManager
             'relay_host' => trim($relay, '[]'),
             'hostname' => $this->directive($main, 'myhostname'),
             'queued' => $this->queueSize($executor),
-            // ตรวจว่าเผลอเปิดรับจากทั้งโลกไว้หรือไม่ — เป็นความผิดพลาดที่ราคาแพงที่สุด
+            // Checks whether it's accidentally open to the entire world — the single most expensive mistake possible
             'open_relay' => $this->looksLikeOpenRelay($main),
         ];
     }
@@ -102,10 +106,9 @@ final class MailManager
     }
 
     /**
-     * เดาว่าเป็น open relay หรือไม่จากค่าที่อันตรายที่สุดสองตัว
+     * Guesses whether this is an open relay, from the two most dangerous values
      *
-     * ไม่ได้ครอบคลุมทุกกรณี แต่จับความผิดพลาดที่พบบ่อยที่สุดได้:
-     * เปิด inet_interfaces เป็น all แล้วอนุญาต mynetworks กว้างเกินไป
+     * Doesn't cover every case, but catches the most common mistake: inet_interfaces set to all with mynetworks allowed too broadly.
      */
     private function looksLikeOpenRelay(string $main): bool
     {
@@ -127,7 +130,7 @@ final class MailManager
             return 0;
         }
 
-        // mailq พิมพ์ "Mail queue is empty" หรือสรุปท้ายว่า "-- N Kbytes in M Requests."
+        // mailq either prints "Mail queue is empty" or ends with a summary "-- N Kbytes in M Requests."
         if (preg_match('/(\d+) Request/', $result->stdout, $m) === 1) {
             return (int) $m[1];
         }
@@ -136,7 +139,7 @@ final class MailManager
     }
 
     /**
-     * เขียนค่าตั้งของ Postfix ใหม่ทั้งชุด
+     * Rewrites Postfix's entire configuration
      *
      * @param array{mode:string,hostname:string,from:string,relay_host:string,relay_port:int,relay_user:string,relay_password:string,relay_tls:bool} $config
      */
@@ -144,15 +147,15 @@ final class MailManager
     {
         if (!$this->isInstalled($executor)) {
             throw new ValidationError(
-                'ไม่พบ Postfix บนเครื่องนี้ — ติดตั้งด้วย apt install postfix ก่อน '
-                . '(เลือก "Internet Site" หรือ "Satellite system" ตอนติดตั้งก็ได้ ระบบจะเขียนค่าให้ใหม่ทั้งหมด)',
+                'Postfix was not found on this machine — install it with apt install postfix first '
+                . '(choosing "Internet Site" or "Satellite system" during install is fine — the system will rewrite the config entirely)',
             );
         }
 
         $mode = $config['mode'];
 
         if (!in_array($mode, ['local', 'relay'], true)) {
-            throw new ValidationError('โหมดเมลต้องเป็น local หรือ relay');
+            throw new ValidationError('Mail mode must be local or relay');
         }
 
         $relayLine = '';
@@ -162,8 +165,8 @@ final class MailManager
             $host = self::assertHost($config['relay_host']);
             $port = self::assertPort($config['relay_port']);
 
-            // วงเล็บเหลี่ยมบอก Postfix ว่าอย่าไปหา MX record ของโฮสต์นี้ —
-            // ผู้ให้บริการ relay เกือบทั้งหมดต้องการแบบนี้ ถ้าไม่ใส่จะส่งไม่ออก
+            // Square brackets tell Postfix not to look up this host's own MX
+            // record — nearly every relay provider requires this shape, or mail fails to send at all
             $relayLine = sprintf('[%s]:%d', $host, $port);
 
             if ($config['relay_user'] !== '') {
@@ -175,7 +178,7 @@ final class MailManager
                         Template::assertValue('relay_user', $config['relay_user']),
                         Template::assertValue('relay_password', $config['relay_password']),
                     ),
-                    // รหัสผ่านของผู้ให้บริการเมล — ผู้ใช้อื่นบนเครื่องต้องอ่านไม่ได้เลย
+                    // The mail provider's own password — no other user on this machine may ever read it
                     0600,
                 );
             }
@@ -185,14 +188,17 @@ final class MailManager
         $interfaces = $hosting ? 'all' : 'loopback-only';
 
         /*
-         * **เปลี่ยนหน้าตัดเน็ตที่ฟังต้อง restart ไม่ใช่ reload**
+         * **Changing which network interface is listened on needs a restart, never a reload**
          *
-         * `postfix reload` อ่านค่าใหม่ทุกค่ายกเว้นค่าที่ต้องเปิด socket ใหม่ · เปิดเมล
-         * ให้โดเมนแรกแล้วสั่งแค่ reload จะได้ main.cf ที่เขียนว่า `all` แต่ Postfix
-         * ยังฟังแค่ loopback อยู่ — เมลจากอินเทอร์เน็ตไม่มีทางถึงเครื่องนี้เลย และ
-         * ไม่มีอะไรฟ้อง เพราะทุกอย่างในไฟล์ถูกต้องหมด (เจอจริงบนเครื่องจริง 2026-08-12)
+         * `postfix reload` re-reads every value except the one that
+         * requires opening a fresh socket · turning mail on for the first
+         * domain and only calling reload produces a main.cf that says
+         * `all`, while Postfix keeps listening on loopback only — mail from
+         * the internet can never reach this machine, and nothing complains,
+         * since everything in the file is correct (found on the real
+         * production machine, 2026-08-12).
          *
-         * อ่านค่าเดิมจากไฟล์ก่อนเขียนทับ เพื่อรู้ว่าครั้งนี้เปลี่ยนหรือไม่
+         * The original value is read from the file before it's overwritten, to know whether this run genuinely changes it.
          */
         $restartRequired = $this->needsRestart($executor, $hosting);
 
@@ -202,26 +208,31 @@ final class MailManager
             'RELAY_HOST' => $relayLine,
             'SASL_ENABLED' => $mode === 'relay' && $config['relay_user'] !== '' ? 'yes' : 'no',
             'TLS_SECURITY' => $config['relay_tls'] ? 'encrypt' : 'may',
-            // เปิดรับเมลเข้าต้องฟังทุกหน้าตัดเน็ต ไม่ใช่แค่ loopback — แต่ mynetworks
-            // ยังแคบเท่าเดิม คนนอกที่จะส่งผ่านเราต้องล็อกอินก่อนเสมอ
+            // Accepting inbound mail requires listening on every network
+            // interface, not just loopback — but mynetworks stays exactly
+            // as narrow, so an outsider sending through us still always has to log in first
             'INET_INTERFACES' => $interfaces,
             /*
-             * ชื่อของเครื่องเองต้องอยู่ใน mydestination ไม่งั้นเมลที่ระบบสร้างขึ้นเอง
-             * (ผลลัพธ์ cron, ข้อความจากระบบ) ค้างในคิวด้วย "loops back to myself" ตลอดไป
+             * The machine's own name must be in mydestination, or mail the
+             * system generates itself (cron output, system messages) sits
+             * in the queue forever with "loops back to myself".
              *
-             * ยกเว้นกรณีเดียว: ชื่อนั้นถูกใช้เป็นโดเมนของกล่องจดหมายด้วย — ใส่ทั้งสองที่
-             * พร้อมกันแล้ว Postfix ฟ้องและไม่รับเมลของโดเมนนั้นเลย (ดู hosting.cf.tpl)
+             * The one exception: that same name is also used as a mailbox
+             * domain — having it in both places at once makes Postfix
+             * complain and refuse mail for that domain entirely (see hosting.cf.tpl).
              */
             'MYDESTINATION' => ($config['virtual_hostname'] ?? false)
                 ? 'localhost'
                 : 'localhost, $myhostname',
             'HOSTING_SECTION' => new SafeBlock($hosting ? $this->hostingSection($config) : ''),
             /*
-             * **Postfix ไม่มีคำสั่ง include สำหรับ main.cf** — ต่างจาก Apache/nginx/Dovecot
-             * ที่ชี้ไปไฟล์ของผู้ดูแลได้ · เนื้อไฟล์จึงถูกผนวกมาที่นี่ตอนเขียนไฟล์ใหม่
-             * และเพราะ Postfix ใช้ค่าที่ประกาศทีหลัง ค่าของผู้ดูแลที่อยู่ท้ายสุดจึงชนะเสมอ
+             * **Postfix has no include directive for main.cf** — unlike
+             * Apache/nginx/Dovecot, which can point at an admin's own file
+             * · so its content is appended here at write time instead, and
+             * because Postfix uses whichever value is declared last, the
+             * admin's own value at the very end always wins.
              *
-             * ต้นฉบับยังเป็นไฟล์แยกที่ panel ไม่แตะ ค่าที่เขียนไว้จึงไม่หายตอนเขียน main.cf ใหม่
+             * The original stays a separate file the panel never touches, so nothing written there is lost when main.cf is rewritten.
              */
             'CUSTOM_SECTION' => new SafeBlock(
                 (new CustomConfig())->read($executor, 'postfix'),
@@ -239,19 +250,20 @@ final class MailManager
         $transaction->commit(fn (): array => $this->testConfig($executor));
 
         if ($mode === 'relay' && $config['relay_user'] !== '') {
-            // postmap สร้างไฟล์ .db ที่ Postfix อ่านจริง — ไฟล์ข้อความอย่างเดียวไม่มีผล
+            // postmap creates the .db file Postfix actually reads — the plain text file alone has no effect
             $result = $executor->exec([$executor->path(self::POSTMAP), $executor->path(self::SASL_FILE)], timeout: 30);
 
             if (!$result->ok()) {
-                throw new ExecutionFailed('สร้างตารางรหัสผ่านของ Postfix ไม่สำเร็จ: ' . trim($result->stderr));
+                throw new ExecutionFailed('Failed to build Postfix\'s password table: ' . trim($result->stderr));
             }
 
             $executor->changeMode($executor->path(self::SASL_FILE . '.db'), 0600);
         }
 
-        // ผู้เรียกที่กำลังทำงานใหญ่กว่านี้ (เปิดเมลให้โดเมน ซึ่งต้องเขียนตารางค้นหาต่อ)
-        // สั่ง reload เองครั้งเดียวตอนจบ — reload กลางทางแล้วล้มจะทำให้ขั้นที่เหลือ
-        // ไม่ได้ทำงาน ทั้งที่ไฟล์ที่เขียนไปแล้วถูกต้องทุกไฟล์
+        // A caller running a larger job (turning on mail for a domain,
+        // which still has to write lookup tables afterward) triggers
+        // reload itself, once, at the end — reloading partway through and
+        // failing would leave the remaining steps never run, even though every file already written is correct
         if ($reload) {
             $this->reload($executor);
         }
@@ -260,17 +272,18 @@ final class MailManager
     }
 
     /**
-     * ส่วนของ main.cf ที่มีอยู่เฉพาะตอนเปิดรับเมลเข้า
+     * The part of main.cf that only exists when inbound mail is turned on
      *
-     * แยกเป็นเทมเพลตของตัวเองเพราะเป็นคนละเรื่องกับการส่งออก และเครื่องส่วนใหญ่
-     * จะไม่มีส่วนนี้เลย — ไฟล์ตั้งค่าที่สั้นกว่าคือไฟล์ที่ตรวจสอบง่ายกว่า
+     * Kept as its own template because it's a separate matter from
+     * sending, and most machines will never have this section at all — a
+     * shorter config file is a config file that's easier to check.
      *
      * @param array<string,mixed> $config
      */
     private function hostingSection(array $config): string
     {
-        // ใบรับรองของ mail hostname ถ้ายังไม่มี ใช้ใบที่ดิสโทรสร้างให้ไปก่อน —
-        // ดีกว่าไม่มี TLS เลย และหน้าความพร้อมของเมลจะฟ้องว่ายังไม่ได้ขอใบจริง
+        // If the mail hostname has no certificate yet, falls back to the
+        // distro's own — better than no TLS at all, and the mail readiness page will point out no real one has been requested yet
         $tls = MailCertificate::pathsOrDefault(
             (string) ($config['tls_cert'] ?? ''),
             (string) ($config['tls_key'] ?? ''),
@@ -283,7 +296,7 @@ final class MailManager
     }
 
     /**
-     * ตรวจค่าตั้งด้วย Postfix เอง
+     * Validates the config with Postfix itself
      *
      * @return array{0:bool,1:string}
      */
@@ -296,15 +309,17 @@ final class MailManager
     }
 
     /**
-     * ต้องสตาร์ตใหม่ไหม — **เทียบกับสิ่งที่เดมอนทำอยู่จริง ไม่ใช่กับไฟล์เดิม**
+     * Does this need a restart? — **compared against what the daemon is genuinely doing, never against the previous file**
      *
-     * เทียบ "ค่าเก่าในไฟล์ กับ ค่าใหม่ที่จะเขียน" ดูสมเหตุสมผล แต่พลาดกรณีที่สำคัญ
-     * ที่สุด: เครื่องที่ไฟล์เขียนว่า `all` อยู่แล้วจากรอบก่อน แต่ Postfix ไม่เคยถูก
-     * สตาร์ตใหม่ จึงยังฟังแค่ loopback · รอบถัดไปจะเห็นว่า "ค่าไม่เปลี่ยน" แล้วไม่
-     * สตาร์ตใหม่อีก — ค้างอยู่แบบนั้นตลอดไปโดยไม่มีอะไรฟ้อง (เจอจริงบนเครื่องจริง)
+     * Comparing "the old value in the file" against "the new value about to
+     * be written" sounds reasonable, but misses the single most important
+     * case: a machine whose file already said `all` from an earlier run,
+     * but Postfix was never actually restarted, so it's still only
+     * listening on loopback · the next run would see "nothing changed" and
+     * never restart it either — stuck that way forever with nothing ever
+     * complaining (genuinely found on a real machine).
      *
-     * ตรวจจากพอร์ตที่เปิดอยู่จริงแทน · ตรวจไม่ได้ = สตาร์ตใหม่ไว้ก่อน ซึ่งแพงกว่า
-     * แต่ไม่ทำให้เมลหาย
+     * Checked against the port genuinely open instead · can't check = restart just to be safe, more costly but never loses mail.
      */
     private function needsRestart(Executor $executor, bool $hosting): bool
     {
@@ -336,9 +351,9 @@ final class MailManager
     }
 
     /**
-     * สตาร์ต Postfix ใหม่ทั้งตัว — ใช้เมื่อพอร์ตที่ฟังเปลี่ยนเท่านั้น
+     * Fully restarts Postfix — used only when the listening port changes
      *
-     * แพงกว่า reload (มีช่วงสั้น ๆ ที่ไม่รับเมล) จึงไม่ใช้เป็นค่าเริ่มต้น
+     * More costly than a reload (there's a short window where mail isn't accepted), so this is never the default.
      */
     public function restart(Executor $executor): void
     {
@@ -354,17 +369,18 @@ final class MailManager
 
         if (!$result->ok()) {
             throw new ExecutionFailed(
-                "เขียนค่าตั้งเรียบร้อยแล้วแต่สั่ง reload postfix ไม่สำเร็จ — ค่าใหม่จะยังไม่มีผล\n\n"
+                "The configuration was written successfully, but reloading postfix failed — the new configuration will have no effect\n\n"
                 . trim($result->stderr ?: $result->stdout),
             );
         }
     }
 
     /**
-     * ส่งเมลทดสอบ
+     * Sends a test email
      *
-     * ใช้ `sendmail` ไม่ใช่ฟังก์ชัน mail() ของ PHP เพราะต้องพิสูจน์ว่า
-     * "เส้นทางของระบบ" ใช้ได้จริง ซึ่งเป็นเส้นทางเดียวกับที่เว็บไซต์ของผู้ใช้จะใช้
+     * Uses `sendmail`, not PHP's own mail() function, because what needs
+     * proving is that "the system's own path" genuinely works — the exact
+     * same path a user's website will use.
      */
     public function sendTest(Executor $executor, string $to, string $from): array
     {
@@ -376,9 +392,9 @@ final class MailManager
             . "MIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s\r\n",
             $from,
             $to,
-            base64_encode('ทดสอบเมลขาออกจาก PHP Server Control Panel'),
-            "ถ้าคุณได้รับข้อความนี้ แปลว่าเมลขาออกของเซิร์ฟเวอร์ทำงานแล้ว\n\n"
-            . 'ส่งเมื่อ ' . date('d/m/Y H:i:s'),
+            base64_encode('Outbound mail test from PHP Server Control Panel'),
+            "If you received this message, the server's outbound mail is working\n\n"
+            . 'Sent at ' . date('d/m/Y H:i:s'),
         );
 
         $result = $executor->exec(
@@ -388,7 +404,7 @@ final class MailManager
         );
 
         if (!$result->ok()) {
-            throw new ExecutionFailed('ส่งเมลทดสอบไม่สำเร็จ: ' . trim($result->stderr ?: $result->stdout));
+            throw new ExecutionFailed('Failed to send the test email: ' . trim($result->stderr ?: $result->stdout));
         }
 
         return [
@@ -400,7 +416,7 @@ final class MailManager
     public static function assertEmail(string $email): string
     {
         if (filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
-            throw new ValidationError("อีเมลไม่ถูกต้อง: {$email}");
+            throw new ValidationError("Invalid email: {$email}");
         }
 
         return $email;
@@ -409,16 +425,16 @@ final class MailManager
     public static function assertHost(string $host): string
     {
         if ($host === '') {
-            throw new ValidationError('ต้องระบุชื่อโฮสต์');
+            throw new ValidationError('A hostname must be specified');
         }
 
-        // รับได้ทั้งชื่อโดเมนและไอพี — ผู้ให้บริการ relay บางรายให้มาเป็นไอพี
+        // Accepts either a domain name or an IP — some relay providers give out an IP
         if (filter_var($host, FILTER_VALIDATE_IP) !== false) {
             return $host;
         }
 
         if (preg_match('/^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i', $host) !== 1) {
-            throw new ValidationError("ชื่อโฮสต์ไม่ถูกต้อง: {$host}");
+            throw new ValidationError("Invalid hostname: {$host}");
         }
 
         return strtolower($host);
@@ -427,7 +443,7 @@ final class MailManager
     public static function assertPort(int $port): int
     {
         if ($port < 1 || $port > 65535) {
-            throw new ValidationError('หมายเลขพอร์ตต้องอยู่ระหว่าง 1 ถึง 65535');
+            throw new ValidationError('Port number must be between 1 and 65535');
         }
 
         return $port;
