@@ -7,18 +7,23 @@ namespace Phpcp\Domain;
 use Phpcp\Kernel\Paths;
 
 /**
- * บัญชีระบบของผู้ใช้หนึ่งคน พร้อมเส้นทางทั้งหมดที่อนุมานจากชื่อ
+ * One user's system account, with every path derived from their name
  *
- * ตั้งแต่ migration 0006 หน่วยของการแยกสิทธิ์คือ **ผู้ใช้** ไม่ใช่เว็บไซต์:
- * หนึ่งผู้ใช้ = หนึ่ง uid = หนึ่งบ้าน = หลายเว็บ = FPM pool เท่าจำนวนเวอร์ชัน PHP ที่ใช้จริง
+ * Since migration 0006, the unit of privilege separation is **the user**, not the
+ * site: one user = one uid = one home = many sites = one FPM pool per PHP version
+ * actually in use.
  *
- * เดิมหนึ่งเว็บ = หนึ่ง uid ทำให้ลูกค้าที่มี 5 เว็บได้บัญชี Linux 5 บัญชีที่ไม่เกี่ยวข้องกันเลย
- * ทั้งที่เป็นคนเดียวกัน — SFTP ต้องมี 5 บัญชี โควตาดิสก์นับแยกไม่ตรงกับที่ขายจริง
- * และมี pool 5 ตัวกินหน่วยความจำโดยไม่ได้แยกอะไรที่ควรแยก
+ * It used to be one site = one uid, which meant a customer with 5 sites got 5
+ * completely unrelated Linux accounts despite being the same person — SFTP needed 5
+ * separate accounts, disk quota was counted separately in a way that did not match
+ * what was actually sold, and 5 pools ate memory without separating anything that
+ * actually needed separating.
  *
- * **สิ่งที่แลกไป:** เว็บของผู้ใช้*คนเดียวกัน*อ่านไฟล์กันได้และแชร์คิว process กัน
- * รับได้เพราะเป็นทรัพย์สินของคนเดียวกัน และเป็นโมเดลเดียวกับ cPanel/Plesk/DirectAdmin ·
- * **การแยกระหว่างผู้ใช้ต่างคนยังแน่นเท่าเดิมทุกประการ** ซึ่งเป็นขอบเขตที่สำคัญจริง
+ * **What this trades away:** sites belonging to the *same* user can read each
+ * other's files and share a process queue. That is acceptable, since they are the
+ * same person's own property, and it is the same model cPanel/Plesk/DirectAdmin use
+ * · **separation between different users remains exactly as strict as before**,
+ * which is the boundary that actually matters.
  */
 final readonly class UserAccount
 {
@@ -26,25 +31,27 @@ final readonly class UserAccount
         public int $userId,
         public string $username,
         /**
-         * รูปทรงของไฟล์ใต้บ้านคนนี้ — null = ตามค่าเริ่มต้นของระบบ
+         * The shape of files under this user's home — null = follow the system default
          *
-         * เก็บเป็น nullable ไม่ใช่เติมค่าเริ่มต้นให้ตั้งแต่ตรงนี้ เพราะ "ยังไม่เคยเลือก"
-         * กับ "เลือก phpcp ไว้" เป็นคนละเรื่อง: อันแรกต้องขยับตามเมื่อผู้ดูแลเปลี่ยน
-         * ค่าเริ่มต้นของระบบ อันหลังต้องไม่ขยับ · ดู SiteLayout::parse()
+         * Stored as nullable instead of resolving to a default value right here,
+         * because "never chosen" and "chose phpcp" are different things: the former
+         * must move along when the admin changes the system default, the latter must
+         * not · see SiteLayout::parse()
          */
         public ?SiteLayout $layout = null,
-        /** โดเมนที่ได้ `public_html` ไปในเลย์เอาต์ cpanel — ว่าง = ยังไม่มีเว็บ */
+        /** The domain that gets `public_html` in the cpanel layout — empty = no site yet */
         public string $mainDomain = '',
     ) {
     }
 
     /**
-     * @param array<string,mixed> $row แถวจากตาราง users
+     * @param array<string,mixed> $row a row from the users table
      */
     public static function fromRow(array $row): self
     {
-        // system_user เป็น null ได้เมื่อผู้ใช้ยังไม่เคยมีเว็บ (บัญชีระบบสร้างแบบ lazy)
-        // กรณีนั้นใช้ชื่อผู้ใช้ซึ่งจะกลายเป็นชื่อบัญชีตอน provision จริง
+        // system_user can be null when the user has never had a site (the system
+        // account is created lazily) — in that case, use the username, which
+        // becomes the account name at actual provisioning time.
         $name = (string) ($row['system_user'] ?? '');
 
         return new self(
@@ -55,18 +62,19 @@ final readonly class UserAccount
         );
     }
 
-    /** เลย์เอาต์ที่ใช้จริง — เติมค่าเริ่มต้นของระบบให้เมื่อผู้ใช้ยังไม่เคยเลือก */
+    /** The layout actually in effect — falls back to the system default when the user has never chosen one */
     public function layout(): SiteLayout
     {
         return $this->layout ?? SiteLayout::systemDefault();
     }
 
     /**
-     * โดเมนนี้คือโดเมนหลักของบัญชีหรือไม่ — ตัวตัดสินว่าใครได้ `public_html`
+     * Whether this domain is the account's primary domain — decides who gets `public_html`
      *
-     * บัญชีที่ยังไม่มี `main_domain` (เว็บแรกกำลังจะถูกสร้าง) ให้ถือว่าโดเมนที่ถามมา
-     * **คือ**โดเมนหลัก — ไม่งั้นเว็บแรกของบัญชี cpanel จะไปลงที่ `<home>/<domain>`
-     * แล้ว `public_html` จะไม่มีวันถูกสร้างเลย
+     * An account that has no `main_domain` yet (its first site is about to be
+     * created) treats the domain being asked about as **the** primary domain —
+     * otherwise a cpanel account's first site would land at `<home>/<domain>`, and
+     * `public_html` would never get created at all.
      */
     public function isMainDomain(string $domain): bool
     {
@@ -74,64 +82,69 @@ final readonly class UserAccount
     }
 
     /**
-     * ชื่อบัญชีระบบต้องปลอดภัยพอจะเป็นชื่อผู้ใช้ Linux, ชื่อโฟลเดอร์ และชื่อ pool พร้อมกัน
+     * A system account name must be safe enough to be a Linux username, a folder
+     * name, and a pool name all at once
      *
-     * ตรวจซ้ำที่นี่แม้ `UserRepository::assertUsername()` จะตรวจตอนสร้างแล้ว เพราะค่านี้
-     * ไปโผล่ในเส้นทางไฟล์และไฟล์ config ที่รันด้วยสิทธิ์ root — ค่าที่หลุดเข้ามาทางอื่น
-     * (เช่นแถวที่ถูกแก้ด้วยมือในฐานข้อมูล) ต้องถูกจับที่นี่ก่อนถึงปลายทาง
+     * Validated again here even though `UserRepository::assertUsername()` already
+     * validates it at creation time, because this value ends up in file paths and
+     * config files that run with root privileges — a value that got in some other
+     * way (e.g. a row edited by hand in the database) must be caught here before it
+     * reaches its destination.
      */
     public static function assertSystemUser(string $user): string
     {
         if (preg_match('/^[a-z][a-z0-9_-]{2,31}$/', $user) !== 1) {
             throw new \InvalidArgumentException(
-                "ชื่อบัญชีระบบไม่ถูกต้อง: {$user} — ต้องเป็น a-z 0-9 _ - ยาว 3-32 ตัว ขึ้นต้นด้วยตัวอักษร",
+                "Invalid system account name: {$user} — must be a-z 0-9 _ -, 3-32 characters, starting with a letter",
             );
         }
 
         return $user;
     }
 
-    /** บ้านของผู้ใช้ — ทุกอย่างของผู้ใช้คนนี้อยู่ใต้เส้นทางนี้ */
+    /** The user's home — everything belonging to this user lives under this path */
     public function home(): string
     {
         return Paths::usersDir().'/'.$this->username;
     }
 
     /**
-     * โฟลเดอร์แม่ของเว็บทุกแห่ง — มีเฉพาะเลย์เอาต์ phpcp
+     * The parent folder for every site — only exists in the phpcp layout
      *
-     * เลย์เอาต์ cpanel ไม่มีชั้นนี้ (ไฟล์เว็บอยู่ที่ `public_html` กับ `<domain>` ใต้บ้าน
-     * โดยตรง) จึงคืนบ้านไปเลย · ผู้เรียกที่ต้องการ "ที่เก็บของเว็บนี้" ต้องใช้
-     * `siteRoot()` ไม่ใช่ประกอบเส้นทางเองจากค่านี้
+     * The cpanel layout has no such tier (site files live at `public_html` and
+     * `<domain>` directly under the home), so it just returns the home instead ·
+     * a caller that wants "this site's own storage" must use `siteRoot()`, not
+     * build a path from this value itself.
      */
     public function domainsDir(): string
     {
         return $this->layout() === SiteLayout::Phpcp ? $this->home().'/domains' : $this->home();
     }
 
-    /** ที่เก็บของประจำเว็บหนึ่งแห่งที่ไม่ใช่ไฟล์เว็บ — log, backup, หน้าระงับบริการ */
+    /** One site's own storage for things that are not site files — logs, backups, the suspended-service page */
     public function siteRoot(string $domain): string
     {
         return $this->layout()->stateDir($this->home(), $domain);
     }
 
-    /** ไดเรกทอรีที่เว็บเซิร์ฟเวอร์เสิร์ฟจริงสำหรับโดเมนนี้ */
+    /** The directory the web server actually serves for this domain */
     public function siteDocroot(string $domain): string
     {
         return $this->layout()->docroot($this->home(), $domain, $this->isMainDomain($domain));
     }
 
-    /** ที่พักไฟล์ชั่วคราวของ pool — ใช้ร่วมกันทุกเว็บของผู้ใช้คนนี้ */
+    /** The pool's temp file storage — shared by every site belonging to this user */
     public function tmpDir(): string
     {
         return $this->home().'/tmp';
     }
 
     /**
-     * ที่เก็บไฟล์สำรองของบัญชีนี้ — หนึ่งบัญชีหนึ่งโฟลเดอร์ ทุกเว็บใช้ร่วมกัน
+     * Where this account's backup files are stored — one folder per account, shared by every site
      *
-     * อยู่ในบ้านเพราะไฟล์สำรองเป็นของลูกค้า: นับในโควตาของเขาและเขาดาวน์โหลดเองได้
-     * · รูปทรงไม่ขึ้นกับเลย์เอาต์ ดู {@see SiteLayout::backupDir()}
+     * Lives in the home because a backup file belongs to the customer: it counts
+     * toward their quota, and they can download it themselves · the shape doesn't
+     * depend on the layout, see {@see SiteLayout::backupDir()}
      */
     public function backupDir(): string
     {
@@ -139,11 +152,13 @@ final readonly class UserAccount
     }
 
     /**
-     * log ของ PHP-FPM
+     * PHP-FPM's log
      *
-     * อยู่ระดับผู้ใช้ไม่ใช่ระดับเว็บ เพราะ pool เดียวรับหลายเว็บ — การแยกเป็นรายเว็บ
-     * จะได้ไฟล์ที่ pool เขียนลงไม่ได้จริงหรือได้ log ที่ไม่ครบ
-     * (log ของเว็บเซิร์ฟเวอร์ยังแยกรายเว็บเหมือนเดิม เพราะ vhost แยกกันจริง)
+     * Lives at the user level, not the site level, since one pool serves multiple
+     * sites — splitting it per site would produce either a file the pool can't
+     * actually write into, or an incomplete log.
+     * (The web server's own log still stays split per site, since each site
+     * genuinely has its own separate vhost.)
      */
     public function logDir(): string
     {
@@ -160,13 +175,13 @@ final readonly class UserAccount
         return $this->sshDir().'/authorized_keys';
     }
 
-    /** ชื่อ pool ในไฟล์ config ของ FPM */
+    /** The pool name inside FPM's config file */
     public function poolName(string $phpVersion): string
     {
         return $this->username.'-'.$phpVersion;
     }
 
-    /** socket ของ pool — หนึ่งตัวต่อเวอร์ชัน PHP ที่ผู้ใช้คนนี้ใช้จริง */
+    /** The pool's socket — one per PHP version this user actually uses */
     public function fpmSocket(string $phpVersion): string
     {
         return '/run/php/phpcp-'.$this->username.'-'.$phpVersion.'.sock';
