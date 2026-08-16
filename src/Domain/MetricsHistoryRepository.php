@@ -7,29 +7,32 @@ namespace Phpcp\Domain;
 use Phpcp\Kernel\Db;
 
 /**
- * เก็บและอ่าน metrics ย้อนหลังแบบลดความละเอียดตามอายุ — PLAN-V2 เฟส E6
+ * Store and read historical metrics, resolution shrinking with age — PLAN-V2 Phase E6
  *
- * **สามชั้นและอายุของแต่ละชั้น** (ดูเหตุผลเต็มใน `db/migrations/0014_metrics_history.sql`):
- * นาที/24 ชม. → ชั่วโมง/30 วัน → วัน/365 วัน · รวมแล้วคงที่ ~2,500 แถวต่อเครื่องตลอดกาล
+ * **Three tiers, each with its own retention** (full reasoning in
+ * `db/migrations/0014_metrics_history.sql`): minute/24h → hour/30 days → day/365
+ * days · together this stays a fixed ~2,500 rows per machine forever.
  *
- * **การรวมค่าถ่วงน้ำหนักด้วย `samples` เสมอ ไม่ใช่เฉลี่ยของค่าเฉลี่ย** — แถวรายชั่วโมงที่
- * รวมมาจาก 60 ตัวอย่าง กับแถวที่รวมมาจาก 3 ตัวอย่าง (เครื่องเพิ่งบูต) ต้องมีน้ำหนักต่างกัน
- * ตอนยุบขึ้นชั้นวัน มิฉะนั้นช่วงที่เก็บข้อมูลได้น้อยจะดึงค่าเฉลี่ยทั้งวันไปหาตัวมันเอง
+ * **Combining always weights by `samples`, never averages of averages** — an hourly
+ * row built from 60 samples and one built from 3 samples (the machine just booted)
+ * must carry different weight when rolling up into the day tier, otherwise a period
+ * with sparse data would pull the whole day's average toward itself.
  *
- * **`cpu_peak` แยกจาก `cpu_percent`** เพราะค่าเฉลี่ยกลบพีคสั้น ๆ จนมองไม่เห็น — ซึ่งเป็น
- * ต้นเหตุของอาการ "เว็บช้าเป็นช่วง ๆ" ที่กราฟย้อนหลังมีไว้เพื่อตอบโดยเฉพาะ
+ * **`cpu_peak` is kept separate from `cpu_percent`** because averaging erases a short
+ * spike entirely — which is exactly the root cause behind "the site is slow in
+ * bursts," the very thing this historical graph exists to answer.
  */
 final class MetricsHistoryRepository
 {
     /**
-     * ชั้น => [ความยาวช่วงเป็นวินาที, เก็บนานกี่วินาที]
+     * tier => [bucket length in seconds, how long to retain in seconds]
      *
      * @var array<string,array{0:int,1:int}>
      */
     public const BUCKETS = [
-        'minute' => [60, 86400],          // 1 นาที · เก็บ 24 ชม.
-        'hour' => [3600, 2592000],        // 1 ชม. · เก็บ 30 วัน
-        'day' => [86400, 31536000],       // 1 วัน · เก็บ 365 วัน
+        'minute' => [60, 86400],          // 1 minute · keep 24h
+        'hour' => [3600, 2592000],        // 1 hour · keep 30 days
+        'day' => [86400, 31536000],       // 1 day · keep 365 days
     ];
 
     public function __construct(private readonly Db $db)
@@ -37,9 +40,9 @@ final class MetricsHistoryRepository
     }
 
     /**
-     * บันทึกตัวอย่างหนึ่งจุดลงชั้นนาที แล้วยุบขึ้นชั้นบนให้เอง
+     * Record one sample into the minute tier, then roll it up into the higher tiers itself
      *
-     * @param array<string,mixed> $metrics ผลลัพธ์ของ capability `system.metrics`
+     * @param array<string,mixed> $metrics the result of the `system.metrics` capability
      * @return array{bucket_at:int,rolled_up:int}
      */
     public function record(array $metrics, ?int $now = null): array
@@ -65,12 +68,14 @@ final class MetricsHistoryRepository
     }
 
     /**
-     * ยุบชั้นละเอียดขึ้นชั้นหยาบ แล้วลบข้อมูลที่เกินอายุของแต่ละชั้น
+     * Roll finer tiers up into coarser ones, then delete anything past its tier's retention
      *
-     * เรียกได้บ่อยเท่าที่ต้องการ — ยุบซ้ำช่วงเดิมได้ผลเท่าเดิมเพราะคำนวณจากชั้นล่างใหม่
-     * ทั้งช่วงทุกครั้ง ไม่ใช่บวกสะสมเข้าไป (ซึ่งจะทำให้ค่าเพี้ยนขึ้นเรื่อย ๆ เมื่อเรียกซ้ำ)
+     * Safe to call as often as needed — rolling up the same period twice produces the
+     * same result, because it's recomputed fully from the lower tier every time,
+     * never added on top of the previous result (which would drift further wrong
+     * with every repeated call).
      *
-     * @return int จำนวนแถวที่ถูกลบเพราะเกินอายุ
+     * @return int number of rows deleted for exceeding retention
      */
     public function rollUp(?int $now = null): int
     {
@@ -83,7 +88,7 @@ final class MetricsHistoryRepository
     }
 
     /**
-     * อ่านข้อมูลย้อนหลังของชั้นที่ระบุ
+     * Read historical data for the given tier
      *
      * @return list<array<string,mixed>>
      */
@@ -103,18 +108,21 @@ final class MetricsHistoryRepository
     }
 
     /**
-     * ยุบแถวที่อ่านมาให้เหลือหนึ่งจุดต่อหนึ่งช่วง `$step` วินาที
+     * Collapse the rows read in down to one point per `$step`-second interval
      *
-     * **ต่างจาก `rollUp()` ตรงที่ไม่แตะฐานข้อมูลเลย** — `rollUp()` เปลี่ยนสิ่งที่ *เก็บ*
-     * ตามอายุของข้อมูล ส่วนตัวนี้เปลี่ยนสิ่งที่ *ส่งให้หน้าจอ* ตามช่วงที่ผู้ใช้เลือก ·
-     * ชั้นเดียวกันจึงตอบได้หลายช่วง (7 วันกับ 30 วันอ่านจากชั้นชั่วโมงเหมือนกัน
-     * แต่ต้องการ 14 จุดกับ 30 จุดตามลำดับ)
+     * **Differs from `rollUp()` in that it never touches the database at all** —
+     * `rollUp()` changes what gets *stored*, based on data age; this changes what
+     * gets *sent to the screen*, based on the range the user picked · so the same
+     * tier can answer multiple ranges (7 days and 30 days both read from the hour
+     * tier, but need 14 points and 30 points respectively).
      *
-     * ถ่วงน้ำหนักด้วย `samples` ด้วยเหตุผลเดียวกับ `rollUpInto()` — ช่วงที่เก็บตัวอย่าง
-     * ได้น้อย (เครื่องเพิ่งบูต หรือ scheduler ขาดไปบางนาที) ต้องไม่ดึงค่าเฉลี่ยของทั้ง
-     * ช่วงไปหาตัวมันเอง · `cpu_peak` เอาค่าสูงสุดเพราะพีคสั้น ๆ คือสิ่งที่กราฟมีไว้ตอบ
+     * Weighted by `samples` for the same reason as `rollUpInto()` — a period with
+     * few recorded samples (the machine just booted, or the scheduler missed a few
+     * minutes) must not pull the whole interval's average toward itself ·
+     * `cpu_peak` takes the maximum, since a short spike is exactly what this graph
+     * exists to answer.
      *
-     * @param list<array<string,mixed>> $rows เรียงตาม bucket_at แล้ว
+     * @param list<array<string,mixed>> $rows already sorted by bucket_at
      * @return list<array<string,mixed>>
      */
     public function summarise(array $rows, int $step): array
@@ -134,7 +142,7 @@ final class MetricsHistoryRepository
         $summary = [];
 
         foreach ($groups as $bucketAt => $group) {
-            // ตัวอย่างรวมของทั้งช่วง — ศูนย์ไม่ได้ในทางปฏิบัติ แต่ถ้าเป็นก็ห้ามหารด้วย
+            // Total samples across the whole interval — can't practically be zero, but never divide by it if it is
             $weight = array_sum(array_map(static fn (array $r): int => max(1, (int) $r['samples']), $group));
 
             $average = function (string $column) use ($group, $weight): float {
@@ -156,7 +164,7 @@ final class MetricsHistoryRepository
                 'memory_percent' => $average('memory_percent'),
                 'disk_percent' => $average('disk_percent'),
                 'load1' => $average('load1'),
-                // ไบต์ใช้ค่าล่าสุดของช่วง ไม่ใช่ค่าเฉลี่ย — ตอบคำถาม "ตอนนั้นใช้ไปเท่าไร"
+                // Bytes use the interval's most recent value, not an average — answers "how much was in use at that moment"
                 'memory_used_bytes' => (int) $last['memory_used_bytes'],
                 'disk_used_bytes' => (int) $last['disk_used_bytes'],
                 'samples' => $weight,
@@ -166,7 +174,7 @@ final class MetricsHistoryRepository
         return $summary;
     }
 
-    /** ชั้นที่เหมาะกับช่วงเวลาที่ขอ — เลือกให้เองเพื่อไม่ให้หน้าจอต้องรู้กฎนี้ */
+    /** The tier that fits a requested time range — chosen automatically so the screen never needs to know this rule */
     public static function bucketForRange(int $seconds): string
     {
         return match (true) {
@@ -180,7 +188,7 @@ final class MetricsHistoryRepository
     {
         if (!isset(self::BUCKETS[$bucket])) {
             throw new \InvalidArgumentException(
-                'ชั้นข้อมูลไม่ถูกต้อง — ใช้ได้: ' . implode(', ', array_keys(self::BUCKETS)),
+                'Invalid tier — valid values: ' . implode(', ', array_keys(self::BUCKETS)),
             );
         }
 
@@ -188,11 +196,12 @@ final class MetricsHistoryRepository
     }
 
     /**
-     * เขียนหรือรวมตัวอย่างเข้าแถวของช่วงนั้น
+     * Write or merge a sample into that interval's row
      *
-     * ใช้ `ON CONFLICT DO UPDATE` คำนวณค่าเฉลี่ยใหม่จากค่าเดิม + ค่าใหม่ **ในคำสั่งเดียว**
-     * แทนที่จะอ่านแล้วเขียน — สองโปรเซสที่บันทึกพร้อมกัน (scheduler กับการเรียกด้วยมือ)
-     * จึงไม่ทับค่าของกันและกัน
+     * Uses `ON CONFLICT DO UPDATE` to compute the new average from the old value +
+     * the new value **in a single statement**, instead of reading then writing — so
+     * two processes recording at the same time (the scheduler and a manual call)
+     * never overwrite each other's value.
      *
      * @param array<string,float|int> $sample
      */
@@ -227,10 +236,12 @@ final class MetricsHistoryRepository
     }
 
     /**
-     * ยุบชั้นหนึ่งขึ้นอีกชั้น — คำนวณใหม่ทั้งช่วงทุกครั้ง ไม่บวกสะสม
+     * Roll one tier up into the next — always recomputed for the whole interval, never accumulated
      *
-     * ยุบเฉพาะช่วงที่**ปิดแล้ว** (จบไปก่อนช่วงปัจจุบัน) เพราะช่วงที่ยังเดินอยู่จะมีตัวอย่าง
-     * เพิ่มเข้ามาอีก การยุบตอนนี้จะได้ค่าที่ไม่ครบแล้วถูกเขียนทับอีกรอบโดยเปล่าประโยชน์
+     * Only rolls up intervals that are **already closed** (ended before the current
+     * one), since an interval still in progress will keep getting more samples —
+     * rolling it up now would produce an incomplete value that gets overwritten again
+     * for no benefit.
      */
     private function rollUpInto(string $from, string $to, int $now): void
     {
@@ -244,14 +255,15 @@ final class MetricsHistoryRepository
              SELECT
                 :to,
                 (bucket_at / :size) * :size,
-                -- ถ่วงน้ำหนักด้วย samples เสมอ — เฉลี่ยของค่าเฉลี่ยผิดเมื่อแต่ละแถวมี
-                -- จำนวนตัวอย่างไม่เท่ากัน (เช่นช่วงที่เครื่องเพิ่งบูต)
+                -- Always weighted by samples — averaging averages is wrong when
+                -- each row carries a different sample count (e.g. a period right
+                -- after the machine booted)
                 SUM(cpu_percent    * samples) / SUM(samples),
                 MAX(cpu_peak),
                 SUM(memory_percent * samples) / SUM(samples),
                 SUM(disk_percent   * samples) / SUM(samples),
                 SUM(load1          * samples) / SUM(samples),
-                -- ไบต์ใช้ค่าล่าสุดของช่วง ไม่ใช่ค่าเฉลี่ย — ตอบคำถาม "ตอนนั้นใช้ไปเท่าไร"
+                -- Bytes use the most recent value of the interval, not an average -- answers how much was in use at that moment
                 (SELECT memory_used_bytes FROM metrics_history i
                   WHERE i.bucket = :from2 AND (i.bucket_at / :size2) * :size2 = (o.bucket_at / :size3) * :size3
                   ORDER BY i.bucket_at DESC LIMIT 1),
@@ -261,11 +273,14 @@ final class MetricsHistoryRepository
                 SUM(samples),
                 :now
              FROM metrics_history o
-             -- CAST จำเป็น ไม่ใช่ของประดับ: PDO ผูกพารามิเตอร์เป็น TEXT โดยปริยาย และ SQLite
-             -- จัดลำดับชนิดโดย INTEGER มาก่อน TEXT เสมอ · การเทียบผลลัพธ์ของ **expression**
-             -- (ซึ่งไม่มี type affinity ของคอลัมน์มาช่วยแปลงให้) กับพารามิเตอร์ที่เป็น TEXT
-             -- จึงเป็นจริงเสมอ ทำให้ช่วงเวลาปัจจุบันที่ยังไม่ปิดถูกยุบก่อนเวลาโดยไม่มี error
-             -- (คำสั่งที่เทียบคอลัมน์ตรง ๆ เช่น `bucket_at < :cutoff` ไม่มีปัญหานี้)
+             -- CAST is necessary, not decoration: PDO binds parameters as TEXT by
+             -- default, and SQLite always orders INTEGER before TEXT for type
+             -- affinity purposes -- comparing the result of an **expression**
+             -- (which has no column type affinity to help convert it) against a
+             -- TEXT parameter is therefore always true, silently rolling up the
+             -- still-open current interval early with no error (a statement that
+             -- compares a column directly, like `bucket_at < :cutoff`, does not
+             -- have this problem)
              WHERE bucket = :from AND (bucket_at / :size6) * :size6 < CAST(:currentTarget AS INTEGER)
              GROUP BY (bucket_at / :size7) * :size7
              ON CONFLICT(bucket, bucket_at) DO UPDATE SET
@@ -288,7 +303,7 @@ final class MetricsHistoryRepository
         );
     }
 
-    /** ลบแถวที่เกินอายุของแต่ละชั้น */
+    /** Delete rows past each tier's retention */
     private function prune(int $now): int
     {
         $removed = 0;
@@ -303,7 +318,7 @@ final class MetricsHistoryRepository
         return $removed;
     }
 
-    /** ปัดเวลาลงให้ตรงจุดเริ่มของช่วง */
+    /** Round a timestamp down to the start of its interval */
     private function floorTo(int $timestamp, int $size): int
     {
         return intdiv($timestamp, $size) * $size;

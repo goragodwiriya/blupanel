@@ -435,6 +435,7 @@
     "Invalid role": "บทบาทไม่ถูกต้อง",
     "Invalid service status": "สถานะบริการไม่ถูกต้อง",
     "Invalid status": "สถานะไม่ถูกต้อง",
+    "Invalid tier — valid values: minute, hour, day": "ชั้นข้อมูลไม่ถูกต้อง — ใช้ได้: minute, hour, day",
     "Invalid username": "ชื่อผู้ใช้ไม่ถูกต้อง",
     "Issue, renew and remove certificates per website": "ออก ต่ออายุ และลบใบรับรองรายเว็บไซต์",
     "Issued by": "ออกโดย",
