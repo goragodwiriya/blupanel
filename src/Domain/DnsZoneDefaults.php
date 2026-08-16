@@ -7,39 +7,42 @@ namespace Phpcp\Domain;
 use Phpcp\Kernel\Db;
 
 /**
- * เรกคอร์ดชุดแรกที่โดเมนต้องมีเพื่อให้ zone ใช้งานได้จริง
+ * The first set of records a domain needs before its zone actually works
  *
- * ## ปัญหาที่แก้
+ * ## The problem this fixes
  *
- * เดิมการสร้างเว็บไม่สร้างเรกคอร์ด DNS ให้เลยแม้แต่ตัวเดียว · ผู้ดูแลได้โดเมนที่มี
- * หน้า DNS ว่างเปล่า ต้องพิมพ์เองทุกบรรทัด และ **zone file จะไม่เกิดขึ้นเลย**
- * จนกว่าจะเพิ่มเรกคอร์ดแรก — ต่างจาก cPanel/DirectAdmin/Plesk ที่สร้างโดเมนแล้วได้
- * zone ที่ใช้งานได้ทันที
+ * Creating a site used to produce zero DNS records · the admin got a domain with an
+ * empty DNS page, had to type every line themselves, and **the zone file never got
+ * generated at all** until the first record was added — unlike cPanel/DirectAdmin/Plesk,
+ * where creating a domain produces a working zone immediately.
  *
- * ## glue record คือส่วนที่พลาดแล้ว zone เสียทั้งไฟล์
+ * ## The glue record — miss it and the whole zone breaks
  *
- * `dns.nameservers` มักตั้งเป็นชื่อที่อยู่**ในโดเมนของตัวเอง** (`ns1.example.com`
- * สำหรับ zone `example.com`) · เมื่อชื่อของเนมเซิร์ฟเวอร์อยู่ใต้ zone ที่มันดูแลเอง
- * ตัว zone ต้องมี A record ของชื่อนั้นอยู่ข้างในด้วย ไม่งั้นไม่มีใครหาที่อยู่ของมันเจอ
- * (ปัญหาไก่กับไข่) · `named-checkzone` ปฏิเสธตรง ๆ ว่า
- * *"NS 'ns1.example.com' has no address records"* แล้ว **ทั้ง zone โหลดไม่ขึ้น**
+ * `dns.nameservers` is usually set to a name **inside the domain itself**
+ * (`ns1.example.com` for the zone `example.com`) · when the nameserver's own name
+ * lives under the zone it manages, that zone must contain an A record for that name
+ * too, otherwise nobody can find its address (a chicken-and-egg problem) ·
+ * `named-checkzone` rejects it outright with *"NS 'ns1.example.com' has no address
+ * records"*, and **the entire zone fails to load**.
  *
- * เจอบนเซิร์ฟเวอร์จริง 2026-08-14: zone แรกของเครื่องเขียนไม่ผ่านด้วยเหตุนี้พอดี
+ * Found on a real server, 2026-08-14: the machine's very first zone failed to write
+ * for exactly this reason.
  *
- * ## ที่ไม่ใส่ให้
+ * ## What's deliberately not included
  *
- * ไม่ใส่ MX — โดเมนที่ยังไม่เปิดเมลไม่ควรประกาศว่ารับเมล เพราะเมลที่ส่งมาจะเด้ง
- * แบบถาวรแทนที่จะไปที่เดิมของลูกค้า · `MailDomainSet` เป็นคนใส่ให้ตอนเปิดเมลจริง
+ * No MX — a domain that hasn't turned mail on shouldn't announce that it accepts
+ * mail, since incoming mail would then bounce permanently instead of reaching the
+ * customer's actual mail server · `MailDomainSet` adds it once mail is actually turned on.
  */
 final class DnsZoneDefaults
 {
-    /** TTL สั้นในช่วงแรกเพื่อให้แก้ผิดแล้วกระจายเร็ว — ผู้ดูแลปรับขึ้นเองได้ภายหลัง */
+    /** A short initial TTL so a mistake propagates quickly — the admin can raise it later */
     public const TTL = 3600;
 
     /**
-     * เรกคอร์ดที่ควรมีสำหรับโดเมนหนึ่ง
+     * The records a domain should have
      *
-     * @param  list<string> $nameservers ชื่อเนมเซิร์ฟเวอร์ตามค่าตั้งของระบบ
+     * @param  list<string> $nameservers nameserver names from the system's settings
      * @return list<array{type:string,name:string,value:string,ttl:int,priority:null}>
      */
     public static function forDomain(string $domain, string $ip, array $nameservers): array
@@ -50,7 +53,7 @@ final class DnsZoneDefaults
 
         $names = ['@', 'www'];
 
-        // glue ของเนมเซิร์ฟเวอร์ที่อยู่ใต้ zone นี้ — ดูเหตุผลที่หัวคลาส
+        // Glue for any nameserver that lives under this zone — see the class docblock for why
         foreach ($nameservers as $ns) {
             $label = self::labelInside($ns, $domain);
 
@@ -72,14 +75,15 @@ final class DnsZoneDefaults
     }
 
     /**
-     * เขียนเรกคอร์ดที่ยังไม่มีลงฐานข้อมูล — เรียกซ้ำได้โดยไม่สร้างของซ้ำ
+     * Write records that don't already exist into the database — safe to call repeatedly, never duplicates
      *
-     * ข้ามชื่อที่มีเรกคอร์ดอยู่แล้ว**ไม่ว่าชนิดใด** ไม่ใช่แค่ชนิดเดียวกัน · ผู้ดูแลที่
-     * ตั้ง `www` เป็น CNAME ไว้เองต้องไม่ได้ A record ซ้อนเข้ามาเงียบ ๆ ซึ่งจะทำให้
-     * zone ขัดกันเอง (CNAME อยู่ร่วมกับเรกคอร์ดชนิดอื่นที่ชื่อเดียวกันไม่ได้ตามมาตรฐาน)
+     * Skips any name that already has a record of **any type**, not just the same
+     * type · an admin who's already set `www` to a CNAME must not silently get an A
+     * record layered on top, which would make the zone self-contradictory (a CNAME
+     * can't coexist with another record type at the same name, per the standard).
      *
      * @param  list<string> $nameservers
-     * @return list<string> ชื่อที่เพิ่งสร้าง
+     * @return list<string> names that were just created
      */
     public static function seed(Db $db, int $domainId, string $domain, string $ip, array $nameservers): array
     {
@@ -91,15 +95,19 @@ final class DnsZoneDefaults
         $wanted = self::forDomain($domain, $ip, $nameservers);
 
         /*
-         * โดเมนที่เครื่องนี้ให้บริการอยู่แล้วและอยู่**ใต้** zone ที่กำลังสร้าง ต้องมีชื่อ
-         * อยู่ใน zone นี้ด้วยตั้งแต่วินาทีแรก
+         * A domain this machine already serves, and that lives **under** the zone
+         * being created, must have its name present in this zone from the very first
+         * second.
          *
-         * **เจอบนเซิร์ฟเวอร์จริง 2026-08-14:** เครื่องให้บริการ `srv.example.com` อยู่ก่อน
-         * โดยอาศัยเรกคอร์ดที่ผู้รับจดโดเมน · พอผู้ดูแลสร้างเว็บ `example.com` แล้วชี้ NS
-         * มาที่เครื่องนี้ zone ใหม่ไม่มีชื่อ `srv` เลย — เว็บที่ใช้งานได้อยู่กลายเป็น
-         * NXDOMAIN ทันทีและ certbot ต่ออายุใบรับรองไม่ได้อีก โดยไม่มีอะไรเตือนสักคำ
+         * **Found on a real server, 2026-08-14:** the machine was already serving
+         * `srv.example.com`, relying on a record set at the domain registrar · once
+         * the admin created a site for `example.com` and pointed its NS here, the new
+         * zone had no `srv` entry at all — the already-working site became NXDOMAIN
+         * immediately, and certbot could no longer renew its certificate, with
+         * nothing warning about it.
          *
-         * การรับ zone มาดูแลต้องไม่ทำให้สิ่งที่เครื่องนี้ให้บริการอยู่แล้วหายไป
+         * Taking over a zone must never make something this machine is already
+         * serving disappear.
          */
         foreach ($db->all('SELECT domain FROM domains WHERE id <> :id', ['id' => $domainId]) as $row) {
             $label = self::labelInside((string) $row['domain'], $domain);
@@ -128,24 +136,28 @@ final class DnsZoneDefaults
     }
 
     /**
-     * zone ที่ **ควร** เก็บเรกคอร์ดของโดเมนนี้ — null = โดเมนนี้เป็น zone ของตัวเอง
+     * The zone that **should** hold this domain's records — null = this domain is its own zone
      *
-     * ## ทำไมต้องมี
+     * ## Why this exists
      *
-     * เว็บสองแห่งที่เป็นแม่ลูกกันทางชื่อ (`example.com` กับ `srv.example.com`) ถูกเก็บ
-     * เป็นสองแถวใน `domains` เท่ากัน · แต่ในโลกของ DNS มันไม่เท่ากันเลย: เมื่อเครื่องนี้
-     * เป็นเจ้าของ zone `example.com` แล้ว **ชื่อ `srv.example.com` ต้องเป็นเรกคอร์ด
-     * อยู่ข้างใน zone นั้น** ไม่ใช่ zone แยกอีกไฟล์ (นอกจากจะตั้งใจ delegate ออกไป
-     * ซึ่งเป็นงานคนละอย่างที่ต้องมี NS record บอกชัด)
+     * Two sites related by name (`example.com` and `srv.example.com`) are stored as
+     * two equal rows in `domains` · but in DNS terms they're not equal at all: once
+     * this machine owns the zone `example.com`, **the name `srv.example.com` must be
+     * a record living inside that zone**, not a separate zone file of its own (unless
+     * it's deliberately delegated out, which is a different job requiring an explicit
+     * NS record).
      *
-     * **เจอบนเซิร์ฟเวอร์จริง 2026-08-14:** เครื่องมี `srv.example.com` ให้บริการอยู่ก่อน
-     * โดยอาศัยเรกคอร์ดที่ผู้รับจดโดเมน · พอผู้ดูแลสร้างเว็บ `example.com` แล้วชี้ NS
-     * มาที่เครื่องนี้ zone ใหม่ไม่มีชื่อ `srv` อยู่เลย — `srv.example.com` จึงกลายเป็น
-     * NXDOMAIN ทันที เว็บที่ใช้งานได้อยู่ล่มโดยไม่มีอะไรเตือน และ certbot ต่ออายุ
-     * ใบรับรองไม่ได้อีกเลยเพราะพิสูจน์สิทธิ์ไม่ผ่าน
+     * **Found on a real server, 2026-08-14:** the machine already had
+     * `srv.example.com` serving traffic, relying on a record set at the domain
+     * registrar · once the admin created a site for `example.com` and pointed its NS
+     * here, the new zone had no `srv` entry at all — `srv.example.com` became
+     * NXDOMAIN immediately, the already-working site went down with no warning, and
+     * certbot could no longer renew its certificate at all because it could no longer
+     * pass authorization.
      *
-     * เลือก zone ที่ยาวที่สุดที่ครอบชื่อนี้ — เครื่องที่โฮสต์ทั้ง `example.com` และ
-     * `sub.example.com` เป็น zone แยกกันจริง ๆ ต้องได้ zone ที่ใกล้ที่สุดเป็นเจ้าของ
+     * Picks the longest zone that covers this name — a machine hosting both
+     * `example.com` and `sub.example.com` as genuinely separate zones must get the
+     * nearest one as the owner.
      *
      * @return array{id:int,domain:string,label:string}|null
      */
@@ -178,10 +190,11 @@ final class DnsZoneDefaults
     }
 
     /**
-     * เรกคอร์ดของชื่อที่อยู่ **ใต้ zone ของคนอื่น** — ใช้แทน forDomain() ในกรณีนั้น
+     * Records for a name that lives **under someone else's zone** — used instead of
+     * forDomain() in that case
      *
-     * ได้ `srv` กับ `www.srv` เทียบเท่ากับ `@` กับ `www` ของ zone ปกติ เพื่อให้
-     * พฤติกรรมที่ผู้ดูแลเห็นเหมือนกันไม่ว่าโดเมนจะอยู่ระดับไหน
+     * Produces `srv` and `www.srv`, the equivalent of `@` and `www` in a normal zone,
+     * so the admin sees the same behavior no matter which level the domain sits at.
      *
      * @return list<array{type:string,name:string,value:string,ttl:int,priority:null}>
      */
@@ -204,7 +217,7 @@ final class DnsZoneDefaults
     }
 
     /**
-     * เขียนเรกคอร์ดของ subdomain ลง zone แม่ — เรียกซ้ำได้
+     * Write a subdomain's records into the parent zone — safe to call repeatedly
      *
      * @return list<string>
      */
@@ -230,11 +243,11 @@ final class DnsZoneDefaults
     }
 
     /**
-     * ส่วนหน้าของ `$ns` เมื่อมันอยู่ใต้ `$domain` — null เมื่ออยู่คนละ zone
+     * The part of `$ns` in front, when it lives under `$domain` — null when it's in a different zone
      *
-     * `ns1.example.com` ใต้ `example.com` → `ns1`
-     * `ns1.other.com`   ใต้ `example.com` → null (คนละ zone ไม่ต้องมี glue)
-     * `example.com`     ใต้ `example.com` → `@`
+     * `ns1.example.com` under `example.com` → `ns1`
+     * `ns1.other.com`   under `example.com` → null (different zone, no glue needed)
+     * `example.com`     under `example.com` → `@`
      */
     private static function labelInside(string $ns, string $domain): ?string
     {
