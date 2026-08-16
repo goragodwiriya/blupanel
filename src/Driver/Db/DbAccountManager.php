@@ -10,20 +10,22 @@ use Phpcp\Domain\UserAccount;
 use Phpcp\Security\Secret;
 
 /**
- * บัญชี MariaDB ประจำผู้ใช้ — ตัวกลางระหว่างผู้ใช้ MariaDB จริงกับตาราง db_accounts
+ * A user's own MariaDB account — the go-between for a real MariaDB user and the db_accounts table
  *
- * แยกออกมาจาก capability เพราะมีผู้เรียกสองกลุ่มที่คิดคนละแบบ:
- *   - `db.account.*` ทำงานกับบัญชีของ **actor เอง** (ผู้ใช้กดเปิด phpMyAdmin)
- *   - `db.create` ทำงานกับบัญชีของ **เจ้าของเว็บ** ซึ่งอาจไม่ใช่คนที่กดสร้าง
- *     (ผู้ดูแลสร้างฐานข้อมูลให้ลูกค้า)
+ * Kept separate from any capability, because there are two groups of caller
+ * that think about this differently:
+ *   - `db.account.*` operates on **the actor's own** account (a user clicking to open phpMyAdmin)
+ *   - `db.create` operates on **the website owner's** account, who may not
+ *     be the one who clicked create (an admin creating a database for a customer)
  *
- * ถ้าเขียนตรรกะนี้ไว้ในคลาสฐานของ capability กลุ่มแรก ผู้เรียกกลุ่มที่สองจะต้องสืบทอด
- * ตามไปด้วยแล้วได้เมธอด `currentAccount()` ติดมาโดยไม่ควรมี — ซึ่งเป็นจุดที่คนอ่านโค้ด
- * ทีหลังจะเผลอใช้ผิดตัวได้ง่ายที่สุด
+ * If this logic lived in the first group's capability base class, the
+ * second group's callers would have to inherit from it too and end up with
+ * a `currentAccount()` method they should never have — exactly the kind of
+ * thing a future reader would most easily misuse by accident.
  */
 final class DbAccountManager
 {
-    /** ยาวได้เพราะไม่มีใครต้องพิมพ์รหัสนี้เลยสักครั้ง — panel กรอกให้ทั้งหมด */
+    /** Long, since nobody ever has to type this password — the panel fills it in entirely */
     private const PASSWORD_LENGTH = 32;
 
     public function __construct(
@@ -34,10 +36,11 @@ final class DbAccountManager
     }
 
     /**
-     * บัญชีของผู้ใช้คนนี้ต้องมีอยู่จริงและรหัสในฐานข้อมูลต้องตรงกับของจริงบนเครื่อง
+     * This user's account must genuinely exist, and its stored password must match the real one on the machine
      *
-     * เรียกซ้ำได้ · คืนรหัสผ่านก็ต่อเมื่อเพิ่งตั้งใหม่ (null = ของเดิมยังใช้ได้อยู่)
-     * ผู้เรียกที่ไม่ต้องการรหัสจึงไม่ต้องรับความลับนั้นไว้ในตัวแปรโดยไม่จำเป็น
+     * Idempotent · returns the password only when one was just freshly set
+     * (null = the existing one is still valid) — a caller with no need for
+     * the password never has to hold that secret in a variable unnecessarily.
      */
     public function ensure(Executor $executor, UserAccount $account): ?string
     {
@@ -53,11 +56,13 @@ final class DbAccountManager
     }
 
     /**
-     * ตั้งรหัสใหม่ให้บัญชี สร้างผู้ใช้ให้ถ้ายังไม่มี
+     * Sets a fresh password for the account, creating the user first if it doesn't exist yet
      *
-     * ไม่ใช้ `CREATE USER IF NOT EXISTS` เพราะต้องรองรับกรณีที่แถวใน panel.db หายไป
-     * แต่ผู้ใช้ MariaDB ยังอยู่ (เช่นกู้คืนฐานข้อมูลเก่ามา) — ผลลัพธ์ที่ต้องการคือ
-     * "รหัสที่เก็บไว้ตรงกับรหัสจริง" ไม่ว่าจะเริ่มจากสภาพไหน
+     * Doesn't use `CREATE USER IF NOT EXISTS`, because this has to handle
+     * the case where the row in panel.db is gone but the MariaDB user still
+     * exists (e.g. an old database was restored) — the outcome that
+     * actually matters is "the stored password matches the real one",
+     * regardless of which state it started from.
      */
     public function rotate(Executor $executor, UserAccount $account): string
     {
@@ -81,15 +86,18 @@ final class DbAccountManager
     }
 
     /**
-     * ปรับสิทธิ์ระดับเซิร์ฟเวอร์ให้ตรงกับบทบาทปัจจุบันของผู้ใช้
+     * Adjusts server-level privileges to match the user's current role
      *
-     * **ต้องเรียกทุกครั้งที่ออกบัตรให้ ไม่ใช่แค่ตอนสร้างบัญชี** — บทบาทเปลี่ยนได้ทีหลัง
-     * ถ้าให้สิทธิ์ตอนสร้างอย่างเดียว ผู้ดูแลที่ถูกลดเป็นลูกค้าจะยังถือสิทธิ์เห็นทุก
-     * ฐานข้อมูลอยู่ตลอดไป ซึ่งเป็นบั๊กชนิดเดียวกับที่เคยเกิดกับโควตา (สถานะที่อนุมาน
-     * จากบทบาทแต่ไม่ได้ตามไปอัปเดตเมื่อบทบาทเปลี่ยน)
+     * **Must be called every time credentials are issued, not just at
+     * account creation** — a role can change later, and if privileges were
+     * only ever granted at creation, an admin demoted to a customer would
+     * keep the ability to see every database forever — the same class of
+     * bug that once happened with quota (state derived from a role, but
+     * never re-derived when the role changes).
      *
-     * ผู้ดูแลได้สิทธิ์ทั้งเครื่องเพื่อไม่ต้องไปตั้งรหัสให้บัญชี root ของ MariaDB
-     * ซึ่งใช้ `unix_socket` และแตะได้เฉพาะ root ของระบบปฏิบัติการ
+     * An admin gets machine-wide privileges so nobody ever has to set a
+     * password on MariaDB's own root account, which uses `unix_socket` and
+     * can only ever be touched by the operating system's own root.
      */
     public function syncPrivileges(Executor $executor, UserAccount $account, bool $isAdmin): void
     {
@@ -108,7 +116,7 @@ final class DbAccountManager
     }
 
     /**
-     * รหัสผ่านที่ใช้ล็อกอินจริงของบัญชีนี้ — สร้างให้ถ้ายังไม่มี
+     * The password this account genuinely logs in with — created if it doesn't exist yet
      *
      * @return array{user:string,host:string,password:string,provisioned:bool}
      */
@@ -136,10 +144,11 @@ final class DbAccountManager
     }
 
     /**
-     * ให้บัญชีนี้เข้าถึงฐานข้อมูลที่เพิ่งสร้าง
+     * Grants this account access to a database just created
      *
-     * ต้องทำทุกครั้งที่สร้างฐานข้อมูลใหม่ ไม่ใช่ตอนเปิด phpMyAdmin — ไม่งั้นผู้ใช้จะเปิด
-     * phpMyAdmin แล้วไม่เห็นฐานข้อมูลที่เพิ่งสร้างเมื่อสักครู่ ซึ่งดูเหมือนระบบพัง
+     * Must happen every time a new database is created, not when phpMyAdmin
+     * is opened — otherwise a user would open phpMyAdmin and not see the
+     * database they just created a moment ago, which looks like the system is broken.
      */
     public function grantDatabase(Executor $executor, UserAccount $account, string $database): void
     {

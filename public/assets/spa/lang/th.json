@@ -804,6 +804,7 @@
     "The pull command succeeded, but the file was not found on this machine": "คำสั่งดึงไฟล์สำเร็จ แต่ไม่พบไฟล์บนเครื่องนี้",
     "The queue is empty — nothing is waiting to go out.": "คิวว่าง ไม่มีเมลรอส่ง",
     "The real file BIND9 is serving right now": "ไฟล์จริงที่ BIND9 กำลังใช้อยู่ตอนนี้",
+    "The recipient or sender email for notifications is not set yet": "ยังไม่ได้ตั้งอีเมลผู้รับหรือผู้ส่งสำหรับการแจ้งเตือน",
     "The request body is not valid JSON": "เนื้อหาที่ส่งมาไม่ใช่ JSON ที่ถูกต้อง",
     "The requested route was not found": "ไม่พบเส้นทางที่ร้องขอ",
     "The scan result file could not be read — it may be damaged": "อ่านไฟล์ผลตรวจไม่สำเร็จ — ไฟล์อาจเสียหาย",

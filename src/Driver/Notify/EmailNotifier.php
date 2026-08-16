@@ -10,27 +10,32 @@ use Phpcp\Agent\ValidationError;
 use Phpcp\Driver\Mail\MailManager;
 
 /**
- * แจ้งเตือนทางอีเมลผ่าน Postfix ที่ติดตั้งอยู่แล้ว — PLAN-V2 เฟส E6
+ * Sends email notifications through the Postfix already installed — PLAN-V2 phase E6
  *
- * **ใช้ `sendmail` ของระบบ ไม่ต่อ SMTP เอง** — เหตุผลเดียวกับที่ `MailManager::sendTest()`
- * ทำ: สิ่งที่ต้องพิสูจน์คือเมลขาออกของ*เครื่องนี้*ใช้ได้จริง ไม่ใช่ว่า PHP ต่อ SMTP ที่ไหน
- * สักแห่งได้ · Postfix จัดคิว ลองใหม่ และเขียน log ให้อยู่แล้ว ซึ่งดีกว่าที่โค้ดนี้จะทำเอง
+ * **Uses the system's own `sendmail`, never connects SMTP directly** — the
+ * same reason `MailManager::sendTest()` does: what needs proving is that
+ * *this machine's* outbound mail genuinely works, not that PHP can connect
+ * to some SMTP server somewhere · Postfix already handles queueing, retries,
+ * and logging, all better than this code could do on its own.
  *
- * **ต้องมี `Executor`** ต่างจาก Telegram/webhook ที่ยิง HTTPS ตรงได้ — การเรียกโปรแกรม
- * บนเครื่องต้องผ่าน `Executor` เสมอเพื่อให้ได้ audit, โหมด dryrun และการจำกัดสิทธิ์ครบชุด
- * (ARCHITECTURE §4.4) · ผู้เรียกที่ไม่มี executor จึงส่งอีเมลไม่ได้ ซึ่งถูกต้องแล้ว
+ * **Requires an `Executor`**, unlike Telegram/webhook, which can hit HTTPS
+ * directly — running a program on the machine must always go through
+ * `Executor`, to get the full set of audit logging, dryrun mode, and
+ * permission limits (ARCHITECTURE §4.4) · a caller with no executor
+ * therefore cannot send email, and that's correct.
  *
- * **เตือนแล้วต้องไม่กลายเป็นช่องส่งสแปม** — ผู้รับมาจากค่าตั้งของผู้ดูแลเท่านั้น ไม่เคยมา
- * จากข้อมูลที่ผู้ใช้ปลายทางกรอก และหัวข้อ/เนื้อความถูก encode ก่อนเสมอ
+ * **A notifier must never become a spam vector** — the recipient comes only
+ * from an admin's own setting, never from anything an end user typed in,
+ * and the subject/body are always encoded first.
  */
 final class EmailNotifier
 {
     private const SENDMAIL = '/usr/sbin/sendmail';
 
-    /** สั้นเพราะเป็นการแจ้งเตือน — Postfix รับเข้าคิวแล้วจบ ไม่ได้รอส่งจริง */
+    /** Short, since this is a notification — Postfix accepts it into its queue and that's the end of it, no wait for real delivery */
     private const TIMEOUT = 15;
 
-    /** ตัดเนื้อความยาว ๆ ก่อนส่ง — log ทั้งไฟล์ไม่ควรกลายเป็นอีเมล */
+    /** Long bodies are truncated before sending — a whole log file shouldn't become an email */
     private const MAX_BODY = 4000;
 
     public function __construct(
@@ -45,7 +50,7 @@ final class EmailNotifier
         return $this->to !== '' && $this->from !== '';
     }
 
-    /** ส่งแบบ "ล้มได้ ไม่โยน error" — ใช้กับการแจ้งเตือนอัตโนมัติทุกจุด */
+    /** Sends in "can fail, never throws" mode — used everywhere an automatic notification is sent */
     public function notify(string $title, string $body, string $level = 'info'): bool
     {
         if (!$this->isConfigured()) {
@@ -61,17 +66,17 @@ final class EmailNotifier
         }
     }
 
-    /** ส่งแบบ "ล้มแล้วต้องรู้" — ใช้เฉพาะตอนผู้ใช้กดปุ่มทดสอบ */
+    /** Sends in "must know if it fails" mode — used only when a user clicks the test button */
     public function test(): array
     {
         if (!$this->isConfigured()) {
-            throw new ValidationError('ยังไม่ได้ตั้งอีเมลผู้รับหรือผู้ส่งสำหรับการแจ้งเตือน');
+            throw new ValidationError('The recipient or sender email for notifications is not set yet');
         }
 
         $this->send(
-            'ทดสอบการแจ้งเตือนทางอีเมล',
-            "ถ้าคุณได้รับข้อความนี้ แปลว่าการแจ้งเตือนทางอีเมลทำงานแล้ว\n"
-            . 'ส่งจาก PHP Server Control Panel เมื่อ ' . date('d/m/Y H:i:s'),
+            'Email notification test',
+            "If you received this message, email notifications are working\n"
+            . 'Sent from PHP Server Control Panel at ' . date('d/m/Y H:i:s'),
             'ok',
         );
 
@@ -82,15 +87,16 @@ final class EmailNotifier
     {
         $icon = match ($level) {
             'ok' => '[OK]',
-            'warn', 'warning' => '[เตือน]',
-            'danger' => '[ด่วน]',
-            default => '[แจ้งเตือน]',
+            'warn', 'warning' => '[WARN]',
+            'danger' => '[URGENT]',
+            default => '[ALERT]',
         };
 
         $subject = $icon . ' ' . $title;
 
-        // หัวข้อที่มีอักษรไทยต้อง encode เป็น Base64 ตาม RFC 2047 ไม่งั้นตัวอ่านเมล
-        // แสดงเป็นอักขระเพี้ยน · เนื้อความประกาศ charset ไว้ที่ header แล้วส่งดิบได้
+        // A subject containing non-ASCII characters has to be encoded as
+        // Base64 per RFC 2047, or a mail reader shows garbled characters ·
+        // the body declares its charset in the header, so it can be sent raw
         $message = sprintf(
             "From: %s\r\nTo: %s\r\nSubject: =?UTF-8?B?%s?=\r\n"
             . "X-Phpcp-Level: %s\r\n"
@@ -109,17 +115,17 @@ final class EmailNotifier
         );
 
         if (!$result->ok()) {
-            throw new ExecutionFailed('ส่งอีเมลแจ้งเตือนไม่สำเร็จ: ' . trim($result->stderr ?: $result->stdout));
+            throw new ExecutionFailed('Failed to send notification email: ' . trim($result->stderr ?: $result->stdout));
         }
     }
 
-    /** บอกว่ามาจากเครื่องไหน — ผู้ดูแลที่ดูหลายเครื่องต้องแยกออกได้จากตัวอีเมลเอง */
+    /** States which machine this came from — an admin watching several machines has to be able to tell them apart from the email alone */
     private function footer(string $body): string
     {
-        return $body . "\n\n-- \n" . 'phpcp บนเครื่อง ' . (gethostname() ?: 'ไม่ทราบชื่อ');
+        return $body . "\n\n-- \n" . 'phpcp on ' . (gethostname() ?: 'unknown host');
     }
 
-    /** ตรวจรูปแบบอีเมลตอนบันทึกค่าตั้ง — ใช้กฎเดียวกับเมลขาออกทั้งระบบ */
+    /** Validates email format when settings are saved — uses the same rule as the whole system's outbound mail */
     public static function assertEmail(string $email): string
     {
         return $email === '' ? '' : MailManager::assertEmail($email);
