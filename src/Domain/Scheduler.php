@@ -8,18 +8,21 @@ use Phpcp\Kernel\Db;
 use Phpcp\Kernel\Logger;
 
 /**
- * ตัวตัดสินว่างานไหนถึงเวลาแล้ว และสั่งงานนั้นผ่าน agent — เฟส A1 ของ PLAN-V2
+ * Decides which jobs are due, and dispatches them through the agent — PLAN-V2 Phase A1
  *
- * แยกออกจาก bin/phpcp-scheduler เพื่อให้ทดสอบได้โดยไม่ต้องมี agent จริง:
- * ตัวสั่งงานถูกฉีดเข้ามาเป็น closure เทสต์จึงส่งตัวปลอมที่บันทึกไว้ว่าถูกเรียกด้วยอะไร
+ * Kept separate from bin/phpcp-scheduler so it can be tested without a real agent:
+ * the dispatcher is injected as a closure, so a test can pass in a fake one that
+ * records what it was called with.
  *
- * หลักการที่ห้ามหลุด: ที่นี่ไม่มีสิทธิ์พิเศษใด ๆ ทั้งสิ้น ทุกอย่างที่แตะระบบจริง
- * เดินผ่าน Agent\Client เหมือนที่ชั้นเว็บทำ — scheduler จึงเป็นแค่ "ผู้กดปุ่มตามเวลา"
- * ไม่ใช่ทางลัดที่ข้ามชั้นความปลอดภัยไปสั่งงานเอง
+ * The principle that must never break: nothing here holds any special privilege at
+ * all — everything that touches the real system goes through Agent\Client, exactly
+ * the same as the web tier does. The scheduler is therefore only ever "the one who
+ * presses the button on time," never a shortcut that bypasses the security layer
+ * to issue commands itself.
  */
 final class Scheduler
 {
-    /** ไล่ย้อนหลังได้ไกลสุด 1 วัน — เครื่องที่ดับข้ามคืนไม่ควรรันงานรายวันซ้ำหลายรอบตอนกลับมา */
+    /** Can look back at most 1 day — a machine that was down overnight shouldn't run a daily job multiple times in a row once it's back */
     public const CATCH_UP_SECONDS = 86400;
 
     /** @param \Closure(string,array<string,mixed>):array<string,mixed> $dispatch */
@@ -31,9 +34,10 @@ final class Scheduler
     }
 
     /**
-     * รันทุกงานที่ถึงเวลาแล้วหนึ่งรอบ
+     * Run every job that's due, in a single pass
      *
-     * งานหนึ่งล้มต้องไม่ทำให้งานที่เหลือไม่ได้รัน — รอบนี้อาจเป็นรอบเดียวในนาทีนี้
+     * One job failing must never stop the rest from running — this pass might be
+     * the only one that happens this minute.
      *
      * @return list<array{name:string,status:string,message:string,duration_ms:int}>
      */
@@ -51,10 +55,10 @@ final class Scheduler
             try {
                 $due = CronSchedule::isDue($schedule, $now, $lastRunAt, self::CATCH_UP_SECONDS);
             } catch (\Throwable $e) {
-                // ตารางเวลาที่ผิดรูปแบบต้องดังพอให้เห็น ไม่ใช่ถูกข้ามเงียบ ๆ ทุกนาทีตลอดไป
-                $jobs->recordRun((int) $job['id'], 'error', 'ตารางเวลาไม่ถูกต้อง: ' . $e->getMessage(), $now);
+                // A malformed schedule must be loud enough to notice, not silently skipped every minute forever
+                $jobs->recordRun((int) $job['id'], 'error', 'Invalid schedule: ' . $e->getMessage(), $now);
                 $results[] = $this->result($name, 'error', $e->getMessage(), 0);
-                $this->log('error', "งาน {$name} มีตารางเวลาไม่ถูกต้อง: " . $e->getMessage());
+                $this->log('error', "Job {$name} has an invalid schedule: " . $e->getMessage());
 
                 continue;
             }
@@ -70,7 +74,7 @@ final class Scheduler
     }
 
     /**
-     * บังคับรันงานหนึ่งทันทีโดยไม่สนตารางเวลา — ใช้จากบรรทัดคำสั่งตอนตรวจสอบ
+     * Force one job to run immediately, ignoring its schedule — used from the command line for testing
      *
      * @return array{name:string,status:string,message:string,duration_ms:int}
      */
@@ -80,7 +84,7 @@ final class Scheduler
         $job = $jobs->find($name);
 
         if ($job === null) {
-            return $this->result($name, 'error', "ไม่พบงานชื่อ {$name}", 0);
+            return $this->result($name, 'error', "No job found named {$name}", 0);
         }
 
         return $this->run($jobs, $job, time(), force: true);
@@ -99,10 +103,10 @@ final class Scheduler
         $args = is_array($args) ? $args : [];
 
         if (!$force && !$this->hasWork($capability)) {
-            // ข้ามอย่างตั้งใจ ยังบันทึก last_run_at เพราะ "ตรวจแล้วไม่มีอะไรต้องทำ" คือการทำงานหนึ่งรอบ
+            // Deliberately skipped, but last_run_at is still recorded — "checked and found nothing to do" still counts as one pass
             $jobs->recordRun($id, 'skipped', '', $now);
 
-            return $this->result($name, 'skipped', 'ไม่มีงานค้าง', 0);
+            return $this->result($name, 'skipped', 'No work pending', 0);
         }
 
         $startedAt = hrtime(true);
@@ -110,33 +114,37 @@ final class Scheduler
         try {
             $data = ($this->dispatch)($capability, $args);
             $durationMs = (int) ((hrtime(true) - $startedAt) / 1_000_000);
-            $message = is_string($data['message'] ?? null) ? $data['message'] : 'สำเร็จ';
+            $message = is_string($data['message'] ?? null) ? $data['message'] : 'Success';
 
             $jobs->recordRun($id, 'ok', '', $now);
-            $this->log('info', sprintf('งาน %s สำเร็จใน %d ms — %s', $name, $durationMs, $message));
+            $this->log('info', sprintf('Job %s succeeded in %d ms — %s', $name, $durationMs, $message));
 
             return $this->result($name, 'ok', $message, $durationMs);
         } catch (\Throwable $e) {
             $durationMs = (int) ((hrtime(true) - $startedAt) / 1_000_000);
 
             $jobs->recordRun($id, 'error', $e->getMessage(), $now);
-            $this->log('error', sprintf('งาน %s ล้มเหลว: %s', $name, $e->getMessage()));
+            $this->log('error', sprintf('Job %s failed: %s', $name, $e->getMessage()));
 
             return $this->result($name, 'error', $e->getMessage(), $durationMs);
         }
     }
 
     /**
-     * มีอะไรให้ทำจริงไหม — ถามก่อนสั่งงานที่รันถี่มาก
+     * Is there actually anything to do — asked before dispatching a job that runs very often
      *
-     * เหตุผลที่ต้องมี: ทุกคำสั่งที่เปลี่ยนแปลงระบบถูกบันทึก audit สองแถวต่อครั้ง
-     * `rollback.run` ที่รันทุกนาทีจึงเติม audit log ประมาณ 2,880 แถวต่อวันโดยที่
-     * เกือบทั้งหมดคือ "ตรวจแล้วไม่มีอะไร" — audit log ที่เต็มไปด้วยแถวไร้ความหมาย
-     * ทำให้ตามหาสิ่งที่เกิดขึ้นจริงย้อนหลังไม่ได้ ซึ่งทำลายเหตุผลที่มันมีอยู่
+     * Why this exists: every command that changes the system gets two audit rows
+     * per call · `rollback.run`, running every minute, would add roughly 2,880
+     * audit rows a day, nearly all of them "checked and found nothing" — an audit
+     * log flooded with meaningless rows makes it impossible to find what actually
+     * happened later, which defeats the entire reason it exists.
      *
-     * เงื่อนไขที่ใช้ตัดสินต้องเป็นแหล่งความจริงเดียวกับที่ capability ใช้เท่านั้น
-     * (คิวรีเดียวกับ RollbackGuard::expired()) และถ้าถามไม่ได้ต้องตอบว่า "มีงาน"
-     * เสมอ — ตัดสินผิดทางนี้แค่เปลืองแถว audit แต่ผิดอีกทางคือ rollback ไม่ทำงาน
+     * The condition used to decide this must come from the exact same source of
+     * truth the capability itself uses (the same query as
+     * `RollbackGuard::expired()`), and if it can't be checked, the answer must
+     * always default to "there is work" — getting this wrong in one direction just
+     * wastes an audit row, but getting it wrong the other way means rollback stops
+     * working.
      */
     private function hasWork(string $capability): bool
     {
