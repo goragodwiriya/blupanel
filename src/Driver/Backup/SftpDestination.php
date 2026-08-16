@@ -8,16 +8,19 @@ use Phpcp\Agent\ExecutionFailed;
 use Phpcp\Agent\Executor\Executor;
 
 /**
- * ส่งไฟล์สำรองไปเครื่องอื่นด้วย `sftp` — PLAN-V2 เฟส E1
+ * Pushes a backup file to another machine with `sftp` — PLAN-V2 phase E1
  *
- * เหมาะกับกรณีทั่วไปที่สุด: เครื่องปลายทางเป็น Linux ที่เปิด OpenSSH อยู่แล้ว
- * และบัญชีปลายทางถูกจำกัดให้ทำได้แค่ sftp (`ForceCommand internal-sftp` + chroot)
- * ซึ่งเป็นการตั้งค่าที่แนะนำ เพราะกุญแจที่รั่วก็ยังสั่งคำสั่งบนเครื่องสำรองไม่ได้
+ * Fits the most common case: the destination machine is Linux with OpenSSH
+ * already running, and the destination account is restricted to sftp only
+ * (`ForceCommand internal-sftp` + chroot) — the recommended setup, since
+ * even a leaked key still can't run commands on the backup machine.
  *
- * **ยืนยันความครบถ้วนด้วย checksum ฝั่งปลายทาง ไม่ใช่แค่ขนาดไฟล์** — `sftp` รายงาน
- * สำเร็จเมื่อเขียนจบ แต่ไฟล์ที่เขียนลงดิสก์ที่กำลังจะพังก็ "เขียนจบ" เหมือนกัน ·
- * ถ้าเครื่องปลายทางไม่มี `sha256sum` (เช่น chroot ที่มีแต่ internal-sftp) จะถอยไป
- * เทียบขนาดแทน แล้ว**บอกในผลลัพธ์ว่าตรวจได้แค่ขนาด** ไม่ใช่เงียบ ๆ ปล่อยผ่าน
+ * **Completeness is confirmed with a checksum on the destination side, not
+ * just file size** — `sftp` reports success once the write finishes, but a
+ * file written to a disk that's about to fail also "finishes" writing · if
+ * the destination machine has no `sha256sum` available (e.g. a chroot with
+ * only internal-sftp), this falls back to comparing size instead, and
+ * **says so in the result that only size could be checked**, rather than silently letting it pass.
  */
 final class SftpDestination extends SshDestination
 {
@@ -34,10 +37,11 @@ final class SftpDestination extends SshDestination
         $remotePath = $this->remote($remoteName);
 
         return $this->withKey($executor, function (string $keyFile) use ($executor, $localPath, $remotePath): string {
-            // -b - อ่านชุดคำสั่งจาก stdin · ชื่อไฟล์จึงไม่ถูกแปลผ่านเชลล์เลย
+            // -b - reads the command batch from stdin · so filenames never pass through a shell at all
             //
-            // สร้างไดเรกทอรีทีละชั้นจากบนลงล่าง — sftp ไม่มี `mkdir -p` ให้ใช้
-            // (ดู makeDirectoryScript) · ชั้นที่มีอยู่แล้วถูกข้ามไปเองเพราะ `-` นำหน้า
+            // Directories are created one level at a time, top-down — sftp
+            // has no `mkdir -p` (see makeDirectoryScript) · a level that
+            // already exists is skipped on its own because of the leading `-`
             $script = sprintf(
                 "%sput %s %s\nbye\n",
                 $this->makeDirectoryScript(),
@@ -52,7 +56,7 @@ final class SftpDestination extends SshDestination
                 stdin: $script,
             );
 
-            $this->assertOk($result, 'ส่งไฟล์สำรองไปยังปลายทางไม่สำเร็จ');
+            $this->assertOk($result, 'Failed to push the backup file to the destination');
             $this->assertArrived($executor, $keyFile, $localPath, $remotePath);
 
             return $remotePath;
@@ -77,10 +81,10 @@ final class SftpDestination extends SshDestination
                 stdin: $script,
             );
 
-            $this->assertOk($result, 'ดึงไฟล์สำรองจากปลายทางไม่สำเร็จ');
+            $this->assertOk($result, 'Failed to pull the backup file from the destination');
 
             if (!$executor->exists($executor->path($localPath))) {
-                throw new ExecutionFailed('คำสั่งดึงไฟล์สำเร็จ แต่ไม่พบไฟล์บนเครื่องนี้');
+                throw new ExecutionFailed('The pull command succeeded, but the file was not found on this machine');
             }
         });
     }
@@ -97,18 +101,19 @@ final class SftpDestination extends SshDestination
                 stdin: sprintf("rm %s\nbye\n", $this->quote($remotePath)),
             );
 
-            // ไฟล์ที่ไม่มีอยู่แล้วถือว่าสำเร็จ — ตัวเก็บกวาดต้องเรียกซ้ำได้
+            // A file that's already gone counts as success — the cleanup job must be able to call this again
             if (!$result->ok() && !str_contains($result->stderr, 'No such file')) {
-                throw new ExecutionFailed('ลบไฟล์ที่ปลายทางไม่สำเร็จ: ' . $this->explain($result->stderr));
+                throw new ExecutionFailed('Failed to delete the file at the destination: ' . $this->explain($result->stderr));
             }
         });
     }
 
     /**
-     * ยืนยันว่าไฟล์ที่ปลายทางตรงกับต้นฉบับจริง
+     * Confirms the file at the destination genuinely matches the original
      *
-     * ถ้าปลายทางรัน `sha256sum` ไม่ได้ (chroot แบบ internal-sftp ทำไม่ได้แน่นอน)
-     * จะถอยไปเทียบขนาด ซึ่งอ่อนกว่าแต่ยังจับกรณีส่งไปครึ่งเดียวได้ — กรณีที่พบบ่อยที่สุด
+     * If the destination can't run `sha256sum` (an internal-sftp chroot
+     * definitely can't), this falls back to comparing size — weaker, but
+     * still catches a half-arrived file, the most common failure of all.
      */
     private function assertArrived(Executor $executor, string $keyFile, string $localPath, string $remotePath): void
     {
@@ -125,13 +130,13 @@ final class SftpDestination extends SshDestination
             $actual = strtok(trim($remoteSum->stdout), ' ');
 
             if ($expected === false || !is_string($actual) || !hash_equals($expected, $actual)) {
-                throw new ExecutionFailed('ไฟล์ที่ปลายทางไม่ตรงกับต้นฉบับ — ถือว่าส่งไม่สำเร็จ');
+                throw new ExecutionFailed('The file at the destination does not match the original — treated as a failed push');
             }
 
             return;
         }
 
-        // ปลายทางสั่งคำสั่งไม่ได้ — เทียบขนาดผ่าน sftp แทน
+        // The destination can't run commands at all — fall back to comparing size through sftp instead
         $listing = $executor->exec(
             [self::SFTP, ...$this->sshOptions($keyFile), '-P', (string) $this->port, '-b', '-',
              $this->user . '@' . $this->host],
@@ -139,16 +144,16 @@ final class SftpDestination extends SshDestination
             stdin: sprintf("ls -l %s\nbye\n", $this->quote($remotePath)),
         );
 
-        $this->assertOk($listing, 'ตรวจไฟล์ที่ปลายทางไม่สำเร็จ');
+        $this->assertOk($listing, 'Failed to check the file at the destination');
 
         if ($localSize > 0 && !str_contains($listing->stdout, (string) $localSize)) {
             throw new ExecutionFailed(
-                'ขนาดไฟล์ที่ปลายทางไม่ตรงกับต้นฉบับ — ถือว่าส่งไม่สำเร็จ',
+                'The file size at the destination does not match the original — treated as a failed push',
             );
         }
     }
 
-    /** ใส่เครื่องหมายคำพูดแบบที่ sftp เข้าใจ — ชื่อไฟล์ของเราไม่มี " อยู่แล้ว แต่กันไว้ */
+    /** Quotes a value the way sftp understands — our own filenames never contain a " anyway, but this guards against it */
     private function quote(string $value): string
     {
         return '"' . str_replace('"', '\\"', $value) . '"';

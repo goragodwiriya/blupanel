@@ -8,17 +8,21 @@ use Phpcp\Agent\ExecutionFailed;
 use Phpcp\Agent\Executor\Executor;
 
 /**
- * ส่งไฟล์สำรองด้วย `rsync` over ssh — PLAN-V2 เฟส E1
+ * Pushes a backup file with `rsync` over ssh — PLAN-V2 phase E1
  *
- * **ต่างจาก sftp ตรงไหน:** rsync ส่งเฉพาะส่วนที่ต่างจากไฟล์ที่ปลายทางมีอยู่แล้ว และ
- * ส่งต่อจากจุดที่ค้างได้เมื่อเน็ตหลุด (`--partial`) · สำคัญมากกับไฟล์สำรองขนาดหลาย
- * กิกะไบต์ที่ส่งข้ามอินเทอร์เน็ตทุกคืน ซึ่งเป็นกรณีที่ sftp ต้องเริ่มใหม่ทั้งไฟล์ทุกครั้ง
+ * **How this differs from sftp:** rsync sends only the part that differs
+ * from whatever the destination already has, and can resume from where it
+ * left off if the connection drops (`--partial`) · this matters a lot for a
+ * multi-gigabyte backup file sent across the internet every night, a case
+ * where sftp has to start the whole file over from scratch every time.
  *
- * **`--checksum` ไม่ได้เปิดตอนส่ง** เพราะมันบังคับให้อ่านไฟล์ทั้งก้อนทั้งสองฝั่งก่อน
- * ตัดสินใจ ซึ่งช้ากว่าการส่งไฟล์ใหม่ทั้งไฟล์ในหลายกรณี · ความครบถ้วนถูกยืนยันหลังส่ง
- * ด้วยการเทียบ checksum ครั้งเดียว ซึ่งได้ผลเท่ากันแต่จ่ายค่าอ่านแค่รอบเดียว
+ * **`--checksum` is not turned on for the push itself**, because it forces
+ * reading the entire file on both sides before deciding what to do, which
+ * is slower than just sending the whole file again in plenty of cases ·
+ * completeness is instead confirmed after the push with a single checksum
+ * comparison, which gets the same guarantee while paying the read cost only once.
  *
- * ต้องมี `rsync` ทั้งสองฝั่ง — ถ้าปลายทางไม่มี ให้ใช้ปลายทางแบบ sftp แทน
+ * Requires `rsync` on both ends — if the destination doesn't have it, use an sftp destination instead.
  */
 final class RsyncDestination extends SshDestination
 {
@@ -35,28 +39,28 @@ final class RsyncDestination extends SshDestination
         $remotePath = $this->remote($remoteName);
 
         return $this->withKey($executor, function (string $keyFile) use ($executor, $localPath, $remotePath): string {
-            // สร้างไดเรกทอรีปลายทางก่อน — rsync ไม่สร้างชั้นกลางให้เองถ้าไม่ใช้ --relative
+            // The destination directory is created first — rsync doesn't create intermediate levels unless --relative is used
             $mkdir = $executor->exec(
                 [self::SSH, ...$this->sshOptions($keyFile), '-p', (string) $this->port,
                  $this->user . '@' . $this->host, 'mkdir', '-p', '--', dirname($remotePath)],
                 timeout: 120,
             );
 
-            $this->assertOk($mkdir, 'สร้างไดเรกทอรีที่ปลายทางไม่สำเร็จ');
+            $this->assertOk($mkdir, 'Failed to create the directory at the destination');
 
             $result = $executor->exec([
                 self::RSYNC,
                 '--archive',
-                '--partial',          // เน็ตหลุดแล้วส่งต่อจากจุดเดิมได้ ไม่ต้องเริ่มใหม่
+                '--partial',          // Resumes from where it left off if the connection drops, instead of starting over
                 '--compress',
                 '--times',
-                '--chmod=F600',       // ไฟล์สำรองที่ปลายทางต้องไม่ให้คนอื่นบนเครื่องนั้นอ่าน
+                '--chmod=F600',       // A backup file at the destination must not be readable by other users on that machine
                 '--rsh', $this->rshCommand($keyFile),
                 $executor->path($localPath),
                 sprintf('%s@%s:%s', $this->user, $this->host, $remotePath),
             ], timeout: 3600);
 
-            $this->assertOk($result, 'ส่งไฟล์สำรองไปยังปลายทางไม่สำเร็จ');
+            $this->assertOk($result, 'Failed to push the backup file to the destination');
             $this->assertArrived($executor, $keyFile, $localPath, $remotePath);
 
             return $remotePath;
@@ -78,10 +82,10 @@ final class RsyncDestination extends SshDestination
                 $executor->path($localPath),
             ], timeout: 3600);
 
-            $this->assertOk($result, 'ดึงไฟล์สำรองจากปลายทางไม่สำเร็จ');
+            $this->assertOk($result, 'Failed to pull the backup file from the destination');
 
             if (!$executor->exists($executor->path($localPath))) {
-                throw new ExecutionFailed('คำสั่งดึงไฟล์สำเร็จ แต่ไม่พบไฟล์บนเครื่องนี้');
+                throw new ExecutionFailed('The pull command succeeded, but the file was not found on this machine');
             }
         });
     }
@@ -91,18 +95,18 @@ final class RsyncDestination extends SshDestination
         $this->assertInsidePath($remotePath);
 
         $this->withKey($executor, function (string $keyFile) use ($executor, $remotePath): void {
-            // `rm -f` ไม่ล้มเมื่อไฟล์หายไปแล้ว ซึ่งเป็นสิ่งที่ตัวเก็บกวาดต้องการพอดี
+            // `rm -f` doesn't fail when the file is already gone, which is exactly what the cleanup job needs
             $result = $executor->exec(
                 [self::SSH, ...$this->sshOptions($keyFile), '-p', (string) $this->port,
                  $this->user . '@' . $this->host, 'rm', '-f', '--', $remotePath],
                 timeout: 120,
             );
 
-            $this->assertOk($result, 'ลบไฟล์ที่ปลายทางไม่สำเร็จ');
+            $this->assertOk($result, 'Failed to delete the file at the destination');
         });
     }
 
-    /** ยืนยันด้วย sha256 ที่ปลายทาง — rsync มี rsync เสมอ จึงคาดหวังเชลล์ได้ */
+    /** Confirmed with sha256 at the destination — a machine that has rsync always has a shell, so this can be expected to work */
     private function assertArrived(Executor $executor, string $keyFile, string $localPath, string $remotePath): void
     {
         $remoteSum = $executor->exec(
@@ -111,22 +115,23 @@ final class RsyncDestination extends SshDestination
             timeout: 600,
         );
 
-        $this->assertOk($remoteSum, 'ตรวจไฟล์ที่ปลายทางไม่สำเร็จ');
+        $this->assertOk($remoteSum, 'Failed to check the file at the destination');
 
         $expected = @hash_file('sha256', $executor->path($localPath));
         $actual = strtok(trim($remoteSum->stdout), ' ');
 
         if ($expected === false || !is_string($actual) || !hash_equals($expected, $actual)) {
-            throw new ExecutionFailed('ไฟล์ที่ปลายทางไม่ตรงกับต้นฉบับ — ถือว่าส่งไม่สำเร็จ');
+            throw new ExecutionFailed('The file at the destination does not match the original — treated as a failed push');
         }
     }
 
     /**
-     * คำสั่ง ssh ที่ rsync จะใช้
+     * The ssh command rsync will use
      *
-     * `--rsh` รับเป็นสตริงเดียวที่ rsync แยกคำเอง · ค่าทุกตัวในนี้มาจากฟิลด์ที่ถูก
-     * ตรวจรูปแบบแล้วตอนสร้างอ็อบเจกต์ (host/port/path) หรือเป็นเส้นทางไฟล์ที่เราสร้างเอง
-     * จึงไม่มีค่าที่ผู้ใช้พิมพ์อิสระหลุดเข้ามาในสตริงนี้
+     * `--rsh` takes a single string that rsync splits into words itself ·
+     * every value in it comes from a field already validated when the
+     * object was constructed (host/port/path) or is a file path this code
+     * built itself, so no freely-typed user value can ever leak into this string.
      */
     private function rshCommand(string $keyFile): string
     {
