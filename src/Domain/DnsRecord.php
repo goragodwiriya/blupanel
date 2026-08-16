@@ -8,67 +8,74 @@ use Phpcp\Agent\ValidationError;
 use Phpcp\Support\Validator;
 
 /**
- * กฎของ DNS record หนึ่งแถว — ที่เดียวที่ตอบได้ว่าค่าแบบไหนใช้ได้
+ * Rules for a single DNS record row — the one place that answers what values are valid
  *
- * แยกออกมาจาก controller เพราะตอนนี้มีสองทางที่เพิ่มเรกคอร์ดได้ (หน้าเว็บเดิมกับ REST API)
- * ถ้าปล่อยให้แต่ละทางตรวจเอง จะมีวันที่ทางหนึ่งยอมรับค่าที่อีกทางปฏิเสธ แล้วผู้ใช้
- * จะเจอ "เพิ่มผ่านหน้าเว็บได้แต่ผ่าน API ไม่ได้" ซึ่งเป็นบั๊กที่อธิบายยากที่สุดชนิดหนึ่ง
+ * Split out from the controller because there are now two paths that add records
+ * (the legacy web page and the REST API). Leaving each path to validate on its own
+ * guarantees a day when one accepts a value the other rejects, and the user hits
+ * "works when added through the web page but not through the API" — one of the
+ * hardest bugs to explain.
  *
- * ขอบเขตตาม ARCHITECTURE §15 Q1: ตารางนี้เก็บ "ค่าที่ตั้งใจให้เป็น" แล้วส่งออกเป็น zone file
- * — จนกว่าเฟส E3 จะเชื่อม BIND9 จริง การแก้ที่นี่จึงยังไม่ผ่าน agent
+ * Scope per ARCHITECTURE §15 Q1: this table stores "the intended value" and exports
+ * it as a zone file — until Phase E3 actually connects BIND9, edits here don't yet
+ * go through the agent.
  */
 final class DnsRecord
 {
     /**
-     * ชนิดที่ระบบ "รู้จัก" — มีการตรวจค่าเฉพาะทางและมีช่องกรอกในฟอร์ม
+     * Types the system "recognizes" — have dedicated validation and a form field
      *
-     * **ไม่ใช่รายการที่จำกัดว่าเก็บอะไรได้** (ดู {@see assertType()}) — เป็นรายการของชนิดที่
-     * ระบบช่วยตรวจให้ได้มากกว่าปกติ เช่น A ต้องเป็น IPv4 หรือ CNAME ห้ามชี้ไป IP ·
-     * ชนิดนอกรายการนี้เก็บได้ตามปกติ แต่ตัวตัดสินความถูกต้องคือ `named-checkzone`
+     * **Not a closed list of what can be stored** (see {@see assertType()}) — it's the
+     * list of types the system can validate more thoroughly than usual, e.g. A must be
+     * IPv4, or CNAME must not point at an IP · types outside this list are stored
+     * normally, with `named-checkzone` as the real arbiter of correctness.
      *
      * @var list<string>
      */
     public const TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'CAA', 'NS', 'SRV'];
 
     /**
-     * ชนิดที่ค่าเป็น "ชื่อโฮสต์เดี่ยว" — ต้องเติมจุดปิดท้ายให้ตอนเขียนไฟล์
+     * Types whose value is a "single hostname" — need a trailing dot added when the file is written
      *
-     * ไม่รวม SRV ทั้งที่ลงท้ายด้วยชื่อโฮสต์ เพราะค่าของมันมีสี่ส่วน
-     * (`priority weight port target`) การเติมจุดท้ายทั้งก้อนจะได้ `5060 sip.example.com.`
-     * ที่ผิดตำแหน่ง — SRV จึงเก็บค่าตามที่เขียนมาทั้งบรรทัดเหมือน CAA
+     * Doesn't include SRV, even though it ends with a hostname, because its value has
+     * four parts (`priority weight port target`) — appending a trailing dot to the
+     * whole thing would produce `5060 sip.example.com.` in the wrong spot, so SRV
+     * keeps its value as the whole line as written, like CAA.
      *
      * @var list<string>
      */
     public const HOSTNAME_TYPES = ['CNAME', 'MX', 'NS'];
 
-    /** เกินนี้ไม่ใช่ zone ของโดเมนเดียวแล้ว — กันการวางข้อมูลผิดที่ลงช่องแก้ไข */
+    /** Beyond this, it's no longer a single domain's zone — guards against pasting data into the wrong field */
     public const MAX_RECORDS = 500;
 
     /**
-     * ขอบเขต TTL — กว้างพอครอบการใช้งานจริงทุกแบบ
+     * TTL bounds — wide enough to cover every real-world use
      *
-     * `0` ใช้จริงกับเรกคอร์ดที่เปลี่ยนบ่อย (dynamic DNS, failover) และหนึ่งสัปดาห์คือ
-     * ค่าที่ผู้ให้บริการรายใหญ่ตั้งให้เรกคอร์ดที่ไม่เคยเปลี่ยน · ขอบเดิม (60–86400)
-     * ตัดทั้งสองกรณีทิ้งเงียบ ๆ เพราะค่าถูก clamp ไม่ใช่ถูกปฏิเสธ
+     * `0` is used in practice for records that change often (dynamic DNS, failover),
+     * and one week is what major providers set for records that never change · the
+     * old bounds (60–86400) silently cut off both cases, since the value was clamped
+     * instead of rejected.
      */
     public const TTL_MIN = 0;
     public const TTL_MAX = 604800;
 
     /**
-     * ความยาวค่าสูงสุด — DKIM 2048 บิตยาวเกิน 512 ตัวอักษรเมื่อรวมเครื่องหมายคำพูด
-     * และการตัดทิ้งทำให้กุญแจใช้ไม่ได้โดยไม่มีอะไรฟ้อง
+     * Maximum value length — a 2048-bit DKIM key runs past 512 characters once quotes
+     * are included, and silent truncation makes the key unusable with nothing to flag it.
      */
     public const VALUE_MAX = 4096;
 
     /**
-     * ความยาวสูงสุดของ character-string หนึ่งก้อน (RFC 1035 §3.3.14) — ยาวกว่านี้ BIND
-     * ปฏิเสธทั้งไฟล์ ค่า TXT ที่ยาวกว่านี้จึงต้องถูกตัดเป็นหลายก้อนตอนเขียน
-     * ({@see txtCharacterStrings()}) ไม่ใช่ตอนรับค่า — ค่าที่ผู้ใช้กรอกยังเป็นค่าเดียว
+     * Maximum length of one character-string (RFC 1035 §3.3.14) — longer than this,
+     * BIND rejects the whole file, so a TXT value longer than this must be split into
+     * multiple chunks when it's written ({@see txtCharacterStrings()}), not when it's
+     * received — the value the user enters stays a single value.
      */
     public const TXT_STRING_MAX = 255;
 
     /**
-     * ตรวจค่าที่ผู้ใช้ส่งมาแล้วคืนแถวที่พร้อมเขียนลงฐานข้อมูล
+     * Validate what the user submitted and return a row ready to write to the database
      *
      * @param array<string,mixed> $input
      * @return array{type:string,name:string,value:string,ttl:int,priority:int|null}
@@ -79,10 +86,10 @@ final class DnsRecord
 
         $name = Validator::pattern(
             trim((string) ($input['name'] ?? '')) ?: '@',
-            // @ = โดเมนตัวเอง · * = wildcard (เดี่ยว ๆ หรือนำหน้าชื่อย่อย เช่น *.dev)
-            // ขีดล่างนำหน้าได้เพราะ SRV/DMARC/DKIM ใช้ (_sip._tcp, _dmarc, _domainkey)
+            // @ = the domain itself · * = wildcard (alone, or leading a subdomain, e.g. *.dev)
+            // A leading underscore is allowed because SRV/DMARC/DKIM use it (_sip._tcp, _dmarc, _domainkey)
             '/^(@|(\*|[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?)(\.[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?)*)$/i',
-            'ชื่อเรกคอร์ดไม่ถูกต้อง',
+            'Invalid record name',
         );
 
         $value = self::assertRdata(
@@ -92,7 +99,7 @@ final class DnsRecord
         $ttl = (int) ($input['ttl'] ?? 3600);
         $ttl = max(self::TTL_MIN, min(self::TTL_MAX, $ttl));
 
-        // MX ที่ไม่มีลำดับความสำคัญคือ zone file ที่ใช้ไม่ได้ — เติมค่าปริยายให้เสมอ
+        // An MX with no priority is a zone file that can't be used — always fill in a default.
         $priority = null;
         if ($type === 'MX') {
             $priority = max(0, min(65535, (int) ($input['priority'] ?? 10)));
@@ -104,22 +111,24 @@ final class DnsRecord
     }
 
     /**
-     * ชื่อชนิดเรกคอร์ดที่ยอมรับได้ — **รูปแบบ ไม่ใช่รายชื่อ**
+     * The record type name that's accepted — **a shape, not a list of names**
      *
-     * ## ทำไมไม่ใช้รายการปิด
+     * ## Why not a closed list
      *
-     * รายการปิดตกหล่นเสมอและตกหล่นเงียบ ๆ · สองชนิดที่เจอทุกวันในงานโฮสติ้งอย่าง SRV
-     * (Microsoft 365, Teams, SIP) กับ NS (มอบ subdomain ให้ DNS เครื่องอื่น) ไม่ได้อยู่
-     * ในรายการเดิม และรายการจะตกหล่นต่อไปเรื่อย ๆ — TLSA, SSHFP, DS, HTTPS/SVCB,
-     * NAPTR, PTR · ทุกครั้งที่มีคนเจอชนิดที่ขาด เขาต้องรอโค้ดใหม่ ซึ่งแพงเกินไปสำหรับ
-     * "พิมพ์ข้อความสามคำลงไฟล์ที่ BIND อ่านอยู่แล้ว"
+     * A closed list always falls behind, and does so silently · two types seen every
+     * day in real hosting work — SRV (Microsoft 365, Teams, SIP) and NS (delegating a
+     * subdomain to another DNS server) — weren't in the original list, and the list
+     * will keep falling behind: TLSA, SSHFP, DS, HTTPS/SVCB, NAPTR, PTR · every time
+     * someone hits a missing type, they have to wait for new code, which is too
+     * expensive for "write three words into a file BIND already reads."
      *
-     * ตัวตัดสินความถูกต้องจริงคือ **`named-checkzone` ตัวจริง** ซึ่งแม่นกว่ารายชื่อที่เรา
-     * เขียนเองได้เสมอ และเป็นตัวเดียวกับที่ BIND ใช้ตอนโหลดจริง — หลักการเดียวกับที่
-     * โปรเจกต์นี้ใช้กับไฟล์ตั้งค่าของเว็บเซิร์ฟเวอร์อยู่แล้ว
+     * The real arbiter of correctness is the **actual `named-checkzone` binary**, which
+     * is always more accurate than any list we could hand-write, and is the same one
+     * BIND uses when it actually loads the zone — the same principle this project
+     * already applies to web server config files.
      *
-     * ที่นี่จึงกันแค่สิ่งที่ตัวตรวจของ BIND กันไม่ได้: ข้อความที่ไม่ใช่ชื่อชนิดเลย ·
-     * `TYPE65535` เป็นรูปแบบตาม RFC 3597 สำหรับชนิดที่ยังไม่มีชื่อ
+     * So this only blocks what BIND's own checker can't: text that isn't a type name
+     * at all · `TYPE65535` is the RFC 3597 format for a type that doesn't have a name yet.
      */
     public static function assertType(string $type): string
     {
@@ -127,7 +136,7 @@ final class DnsRecord
 
         if (preg_match('/^[A-Z][A-Z0-9]{0,14}$/', $type) !== 1) {
             throw new ValidationError(
-                'ชนิดเรกคอร์ดไม่ถูกต้อง — ต้องเป็นตัวอักษรกับตัวเลข เช่น A, MX, SRV, TLSA',
+                'Invalid record type — must be letters and digits, e.g. A, MX, SRV, TLSA',
             );
         }
 
@@ -135,22 +144,25 @@ final class DnsRecord
     }
 
     /**
-     * ค่าของเรกคอร์ดต้องไม่มีอักขระควบคุม — **ด่านที่สำคัญที่สุดของการเปิดรับทุกชนิด**
+     * A record's value must not contain control characters — **the most important
+     * guard for accepting every type**
      *
-     * ค่าถูกเขียนลงไฟล์ที่ BIND อ่าน · การขึ้นบรรทัดใหม่ได้แปลว่าแทรกเรกคอร์ดเพิ่มเองได้
-     * หรือแทรก `$INCLUDE` ให้ BIND ไปอ่านไฟล์อื่นบนเครื่อง — ช่องโหว่ที่ไม่ต้องพึ่ง
-     * ชนิดเรกคอร์ดแปลก ๆ เลย แค่ค่า TXT ที่มี `\n` ก็พอ
+     * The value is written into a file BIND reads · being able to insert a newline
+     * means being able to inject extra records, or inject `$INCLUDE` to make BIND read
+     * another file on the machine — a hole that needs no unusual record type at all,
+     * just a TXT value containing `\n`.
      *
-     * `named-checkzone` จับกรณีนี้ได้เกือบทั้งหมดอยู่แล้ว (แล้วระบบก็คืนไฟล์เดิมให้) แต่
-     * การพึ่งตัวตรวจปลายทางอย่างเดียวแปลว่าค่าที่อันตรายถูกเขียนลงดิสก์ไปแล้วหนึ่งครั้ง
-     * ทุกครั้งที่มีคนลอง · กันตั้งแต่ต้นทางถูกกว่ามาก
+     * `named-checkzone` already catches nearly all of this itself (and the system then
+     * restores the previous file), but relying only on the downstream checker means a
+     * dangerous value gets written to disk once for every attempt · blocking it at the
+     * source is far cheaper.
      */
     public static function assertRdata(string $value): string
     {
         if (preg_match('/[\x00-\x08\x0A-\x1F\x7F]/', $value) === 1) {
             throw new ValidationError(
-                'ค่าของเรกคอร์ดมีอักขระควบคุมหรือการขึ้นบรรทัดใหม่ปนอยู่ — '
-                . 'เรกคอร์ดหนึ่งรายการต้องอยู่ในบรรทัดเดียว',
+                'Record value contains control characters or a newline — '
+                . 'a record must be a single line',
             );
         }
 
@@ -158,27 +170,30 @@ final class DnsRecord
     }
 
     /**
-     * ค่าต้องเข้ากับชนิดของเรกคอร์ด
+     * The value must match the record's type
      *
-     * ใส่ IP ลงช่อง CNAME เป็นความผิดพลาดที่พบบ่อยที่สุด และเป็นแบบที่ DNS server
-     * จะรับไว้เงียบ ๆ แล้วทำให้ชื่อนั้นใช้ไม่ได้ทั้งโดเมน — ต้องจับตั้งแต่ตอนกรอก
+     * Putting an IP into a CNAME field is the single most common mistake, and it's the
+     * kind DNS servers accept silently, breaking that name across the entire domain —
+     * it has to be caught at entry time.
      *
-     * **เคยเป็นบั๊กจริง:** ตัวตรวจเดิมใช้ `/^[a-z0-9.-]+\.?$/i` ซึ่ง "203.0.113.10"
-     * ผ่านฉลุยเพราะมีแต่ตัวเลขกับจุด — คำเตือนในคอมเมนต์บอกว่ากันไว้แล้ว แต่โค้ดไม่ได้กัน
-     * ตอนนี้ปฏิเสธค่าที่เป็น IP อย่างชัดเจนก่อน แล้วค่อยตรวจรูปแบบชื่อโฮสต์
+     * **This used to be a real bug:** the old validator used `/^[a-z0-9.-]+\.?$/i`,
+     * which let "203.0.113.10" straight through since it's all digits and dots — a
+     * comment claimed this was already guarded against, but the code didn't actually
+     * do it. It now explicitly rejects a value that's an IP first, then checks the
+     * hostname shape.
      */
     public static function assertValueMatchesType(string $type, string $value): void
     {
         match ($type) {
             'A' => filter_var($value, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false
                 ? null
-                : throw new ValidationError('เรกคอร์ด A ต้องเป็น IPv4'),
+                : throw new ValidationError('An A record must be IPv4'),
             'AAAA' => filter_var($value, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false
                 ? null
-                : throw new ValidationError('เรกคอร์ด AAAA ต้องเป็น IPv6'),
+                : throw new ValidationError('An AAAA record must be IPv6'),
             'CNAME', 'MX', 'NS' => self::assertHostname($type, $value),
             'SRV' => self::assertSrv($value),
-            // ชนิดที่ระบบไม่ได้รู้จักเป็นพิเศษ — `named-checkzone` เป็นตัวตัดสิน
+            // A type the system doesn't specifically recognize — named-checkzone is the arbiter
             default => null,
         };
     }
@@ -187,29 +202,31 @@ final class DnsRecord
     {
         if (filter_var($value, FILTER_VALIDATE_IP) !== false) {
             throw new ValidationError(
-                "เรกคอร์ด {$type} ต้องเป็นชื่อโฮสต์ ไม่ใช่ IP address"
-                . ($type === 'CNAME' ? ' — ถ้าต้องการชี้ไปที่ IP ให้ใช้เรกคอร์ด A หรือ AAAA แทน' : ''),
+                "A {$type} record must be a hostname, not an IP address"
+                . ($type === 'CNAME' ? ' — use an A or AAAA record instead if you want to point at an IP' : ''),
             );
         }
 
-        // ชื่อโฮสต์: แต่ละส่วนขึ้นต้นและลงท้ายด้วยตัวอักษรหรือตัวเลข มีขีดกลางได้
-        // ลงท้ายด้วยจุดได้ (fully qualified) และต้องมีอย่างน้อยหนึ่งจุด
+        // Hostname: each label starts and ends with a letter or digit, hyphens allowed
+        // in between, may end with a dot (fully qualified), and needs at least one dot.
         $pattern = '/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+\.?$/i';
 
         if (preg_match($pattern, $value) !== 1) {
-            throw new ValidationError("เรกคอร์ด {$type} ต้องเป็นชื่อโฮสต์ที่ถูกต้อง เช่น mail.example.com");
+            throw new ValidationError("A {$type} record must be a valid hostname, e.g. mail.example.com");
         }
     }
 
     /**
-     * SRV มีสี่ส่วนในค่าเดียว: `priority weight port target`
+     * SRV packs four parts into a single value: `priority weight port target`
      *
-     * เก็บทั้งก้อนไว้ในคอลัมน์ `value` แทนที่จะแตกเป็นคอลัมน์ใหม่สี่คอลัมน์ — เพราะ
-     * ชนิดอื่นที่ระบบเปิดรับก็มีโครงสร้างของตัวเองคนละแบบ (TLSA มีสาม, NAPTR มีหก)
-     * การไล่เพิ่มคอลัมน์ตามแต่ละชนิดคือการกลับไปสู่รายการปิดในรูปแบบอื่น
+     * Kept whole in the `value` column instead of split into four new columns —
+     * because every other type this system accepts has its own different structure
+     * (TLSA has three, NAPTR has six) · chasing after per-type columns is just a closed
+     * list wearing a different shape.
      *
-     * ตรวจแค่รูปตัวเลขสามตัวแรกกับพอร์ตที่อยู่ในช่วง เพราะนั่นคือความผิดพลาดที่คนพิมพ์เอง
-     * ทำบ่อย (สลับตำแหน่ง weight กับ port) และเป็นแบบที่ BIND รับไว้เงียบ ๆ ได้
+     * Only the first three numeric parts and the port range get validated, because
+     * that's the mistake people actually make when typing (swapping weight and port),
+     * and it's the kind BIND accepts silently.
      */
     private static function assertSrv(string $value): void
     {
@@ -217,15 +234,15 @@ final class DnsRecord
 
         if (count($parts) !== 4) {
             throw new ValidationError(
-                'เรกคอร์ด SRV ต้องมีสี่ส่วน: ลำดับความสำคัญ น้ำหนัก พอร์ต และชื่อเซิร์ฟเวอร์ '
-                . 'เช่น `0 5 5060 sip.example.com.`',
+                'An SRV record needs four parts: priority, weight, port, and target server, '
+                . 'e.g. `0 5 5060 sip.example.com.`',
             );
         }
 
         foreach (array_slice($parts, 0, 3) as $index => $number) {
             if (preg_match('/^\d+$/', $number) !== 1 || (int) $number > 65535) {
                 throw new ValidationError(sprintf(
-                    'เรกคอร์ด SRV: ส่วนที่ %d (%s) ต้องเป็นตัวเลข 0–65535',
+                    'SRV record: part %d (%s) must be a number 0–65535',
                     $index + 1,
                     $number,
                 ));
@@ -236,30 +253,34 @@ final class DnsRecord
     }
 
     /**
-     * แปลง zone file กลับเป็นเรกคอร์ด — ทางกลับของ {@see toAuthoritativeZoneFile()}
+     * Parse a zone file back into records — the reverse of {@see toAuthoritativeZoneFile()}
      *
-     * ## ทำไมต้องแปลงกลับ แทนที่จะให้แก้ไฟล์ตรง ๆ
+     * ## Why parse it back, instead of editing the file directly
      *
-     * zone file ถูกสร้างใหม่ทั้งไฟล์จากฐานข้อมูลทุกครั้งที่มีคนแตะเรกคอร์ดสักรายการ ·
-     * การเปิดให้แก้ไฟล์ตรง ๆ จึงเป็นกับดักที่คลาสสิกที่สุดของ panel แบบนี้: แก้แล้วใช้ได้
-     * ทันที ทุกอย่างดูถูกต้อง แล้ววันหนึ่งหายไปเงียบ ๆ ตอนที่มีคนกดเพิ่มเรกคอร์ดอื่น
+     * The zone file gets fully regenerated from the database every time anyone touches
+     * a single record · allowing direct file edits would be the most classic trap a
+     * panel like this can set: the edit works immediately, everything looks correct,
+     * then one day it silently disappears the next time someone adds a different record.
      *
-     * การแปลงกลับเข้าฐานข้อมูลทำให้ "แก้ไฟล์" ได้ผลเหมือนกันในสายตาผู้ใช้ แต่ฐานข้อมูล
-     * ยังเป็นแหล่งความจริงเดียว — ไม่มีอะไรหายทีหลัง และหน้าตารางกับไฟล์ตรงกันเสมอ
+     * Parsing edits back into the database makes "editing the file" behave the same way
+     * from the user's point of view, while the database stays the single source of
+     * truth — nothing is lost later, and the table view and the file always agree.
      *
-     * ## สิ่งที่ไม่รับ และทำไม
+     * ## What's not accepted, and why
      *
-     * `$INCLUDE` สั่งให้ BIND อ่านไฟล์อื่นบนเครื่อง · `$ORIGIN` เปลี่ยนความหมายของทุกชื่อ
-     * ที่ตามมา · `$GENERATE` สร้างเรกคอร์ดเป็นชุด — ทั้งสามอย่างแปลงกลับเป็นแถวในฐานข้อมูล
-     * ไม่ได้ และการรับไว้แบบครึ่ง ๆ กลาง ๆ อันตรายกว่าการปฏิเสธพร้อมบอกเหตุผล
+     * `$INCLUDE` tells BIND to read another file on the machine · `$ORIGIN` changes the
+     * meaning of every name that follows it · `$GENERATE` produces a batch of records —
+     * none of the three can be converted back into database rows, and accepting them
+     * halfway is more dangerous than rejecting them with a reason.
      *
-     * `SOA` กับ `NS` **ข้ามให้เงียบ ๆ** ไม่ใช่ปฏิเสธ — สองอย่างนี้ panel สร้างจากค่าตั้ง
-     * ของเครื่องเสมอ และมันอยู่ในไฟล์ที่ผู้ใช้กำลังแก้อยู่แล้ว การบังคับให้ลบทิ้งก่อน
-     * บันทึกคือการสร้างงานที่ไม่มีประโยชน์กับใครเลย
+     * `SOA` and `NS` are **skipped silently**, not rejected — the panel always
+     * generates both from the machine's own settings, and they're already present in
+     * the file the user is editing · forcing them to be deleted before saving would
+     * create work that helps nobody.
      *
      * @return list<array{type:string,name:string,value:string,ttl:int,priority:int|null}>
-     * @throws ValidationError พร้อมหมายเลขบรรทัดเสมอ — ข้อความว่า "รูปแบบไม่ถูกต้อง"
-     *         เฉย ๆ ทำให้ผู้ใช้ต้องไล่หาเองในข้อความ 50 บรรทัด
+     * @throws ValidationError always includes a line number — a bare "invalid format"
+     *         message forces the user to hunt through 50 lines themselves
      */
     public static function parseZoneFile(string $domain, string $text): array
     {
@@ -270,7 +291,8 @@ final class DnsRecord
         $defaultTtl = 3600;
         $owner = '@';
 
-        // เรกคอร์ดเดียวคร่อมหลายบรรทัดได้ด้วยวงเล็บ — SOA ที่ panel สร้างเองก็เป็นแบบนั้น
+        // A single record can span multiple lines via parentheses — the panel's own
+        // generated SOA does exactly that.
         $pending = '';
         $pendingLine = 0;
         $depth = 0;
@@ -283,7 +305,7 @@ final class DnsRecord
                 continue;
             }
 
-            // บรรทัดที่ขึ้นต้นด้วยช่องว่างใช้ชื่อของเรกคอร์ดก่อนหน้า (กติกาของ BIND)
+            // A line starting with whitespace reuses the previous record's name (BIND's own rule)
             if ($depth === 0 && preg_match('/^\s/', $raw) === 1) {
                 $clean = $owner . ' ' . ltrim($clean);
             }
@@ -327,24 +349,25 @@ final class DnsRecord
 
             if (count($records) > self::MAX_RECORDS) {
                 throw new ValidationError(sprintf(
-                    'เรกคอร์ดเกิน %d รายการ — มากขนาดนี้มักเป็นสัญญาณว่าวางข้อมูลผิดที่',
+                    'More than %d records — this many is usually a sign of pasted data landing in the wrong place',
                     self::MAX_RECORDS,
                 ));
             }
         }
 
         if ($depth !== 0) {
-            throw new ValidationError(sprintf('บรรทัดที่ %d: วงเล็บเปิดไว้แล้วไม่ได้ปิด', $pendingLine));
+            throw new ValidationError(sprintf('Line %d: an opening parenthesis was never closed', $pendingLine));
         }
 
         return $records;
     }
 
     /**
-     * ตัดคอมเมนต์ `;` ออก โดยไม่แตะอันที่อยู่ในเครื่องหมายคำพูด
+     * Strip `;` comments without touching one inside quotes
      *
-     * ค่า TXT ของ SPF/DKIM มี `;` อยู่ข้างในเป็นเรื่องปกติ (`v=spf1 ...; -all`) การตัด
-     * ด้วย `explode(';')` จึงทำลายค่าที่ถูกต้องเงียบ ๆ แล้วไปโผล่เป็นเมลส่งไม่ออกทีหลัง
+     * SPF/DKIM TXT values commonly contain a `;` inside them (`v=spf1 ...; -all`) —
+     * cutting with `explode(';')` would silently corrupt a correct value, only to
+     * surface later as mail that fails to send.
      */
     private static function stripZoneComment(string $line): string
     {
@@ -374,7 +397,7 @@ final class DnsRecord
     }
 
     /**
-     * แยกโทเคน โดยถือว่าข้อความในเครื่องหมายคำพูดเป็นโทเคนเดียว
+     * Split into tokens, treating quoted text as a single token
      *
      * @return list<string>
      */
@@ -386,7 +409,7 @@ final class DnsRecord
     }
 
     /**
-     * คำสั่งที่ขึ้นต้นด้วย `$` — รับแค่ `$TTL` ที่เหลือปฏิเสธพร้อมบอกเหตุผล
+     * A directive starting with `$` — only `$TTL` is accepted, everything else is rejected with a reason
      *
      * @param list<string> $tokens
      */
@@ -399,22 +422,22 @@ final class DnsRecord
         }
 
         throw new ValidationError(sprintf(
-            'บรรทัดที่ %d: %s แปลงกลับเป็นเรกคอร์ดในระบบไม่ได้ — %s',
+            'Line %d: %s can\'t be converted back into a record in this system — %s',
             $lineNo,
             $directive,
             match ($directive) {
-                '$INCLUDE' => 'มันสั่งให้ BIND อ่านไฟล์อื่นบนเครื่อง ซึ่งอยู่นอกขอบเขตของหน้านี้',
-                '$ORIGIN' => 'มันเปลี่ยนความหมายของทุกชื่อที่ตามมา · เขียนชื่อเต็มพร้อมจุดปิดท้ายแทน',
-                '$GENERATE' => 'มันสร้างเรกคอร์ดเป็นชุด · เขียนออกมาทีละรายการแทน',
-                default => 'ระบบรองรับเฉพาะ $TTL',
+                '$INCLUDE' => "it tells BIND to read another file on the machine, which is outside this page's scope",
+                '$ORIGIN' => 'it changes the meaning of every name that follows — write the full name with a trailing dot instead',
+                '$GENERATE' => 'it produces a batch of records — write them out one at a time instead',
+                default => 'only $TTL is supported',
             },
         ));
     }
 
     /**
-     * แปลงส่วนที่เหลือของบรรทัดเป็นเรกคอร์ดหนึ่งรายการ — คืน null เมื่อเป็น SOA/NS ที่ข้ามไป
+     * Convert the rest of the line into a single record — returns null for a skipped SOA/NS
      *
-     * @param list<string> $tokens โทเคนหลังชื่อเรกคอร์ด
+     * @param list<string> $tokens tokens after the record's name
      * @return array{type:string,name:string,value:string,ttl:int,priority:int|null}|null
      */
     private static function zoneStatementToRecord(
@@ -427,7 +450,7 @@ final class DnsRecord
         $ttl = $defaultTtl;
         $ttlSeen = false;
 
-        // ลำดับของ TTL กับคลาสสลับกันได้ทั้งสองแบบตามมาตรฐาน ต้องรับทั้งคู่
+        // TTL and class can appear in either order per the standard — both must be accepted.
         while ($tokens !== []) {
             $token = $tokens[0];
 
@@ -447,7 +470,7 @@ final class DnsRecord
         }
 
         if ($tokens === []) {
-            throw new ValidationError(sprintf('บรรทัดที่ %d: ไม่มีชนิดของเรกคอร์ด', $lineNo));
+            throw new ValidationError(sprintf('Line %d: missing record type', $lineNo));
         }
 
         $type = strtoupper((string) array_shift($tokens));
@@ -455,23 +478,25 @@ final class DnsRecord
         try {
             $name = self::relativeZoneName($owner, $origin);
         } catch (ValidationError $e) {
-            throw new ValidationError(sprintf('บรรทัดที่ %d: %s', $lineNo, $e->getMessage()));
+            throw new ValidationError(sprintf('Line %d: %s', $lineNo, $e->getMessage()));
         }
 
         /*
-         * SOA ข้ามเสมอ · **NS ข้ามเฉพาะที่ยอดโดเมน** — ตรงนั้น panel สร้างจาก
-         * `dns.nameservers` ของเครื่องเสมอ การเก็บของผู้ใช้ไว้ด้วยจะได้ NS ซ้ำ
+         * SOA is always skipped · **NS is skipped only at the domain apex** — there,
+         * the panel always generates it from the machine's own `dns.nameservers`, so
+         * keeping the user's own copy too would produce duplicate NS records.
          *
-         * แต่ **NS ของ subdomain คือของผู้ใช้ล้วน ๆ** — มันคือการมอบโซนย่อยให้ DNS
-         * เครื่องอื่นดูแล (delegation) ซึ่งเป็นงานจริงที่พบบ่อย · การข้ามมันไปด้วยแปลว่า
-         * ผู้ใช้บันทึกแล้วเรกคอร์ดหายไปเงียบ ๆ โดยหน้าจอบอกว่าสำเร็จ
+         * But **subdomain NS is entirely the user's own** — it's a delegation, handing
+         * a subzone off to another DNS server to manage, a genuinely common real task ·
+         * skipping it too would mean the user saves and the record silently disappears
+         * while the screen reports success.
          */
         if ($type === 'SOA' || ($type === 'NS' && $name === '@')) {
             return null;
         }
 
         if ($tokens === []) {
-            throw new ValidationError(sprintf('บรรทัดที่ %d: เรกคอร์ด %s ไม่มีค่า', $lineNo, $type));
+            throw new ValidationError(sprintf('Line %d: %s record has no value', $lineNo, $type));
         }
 
         $priority = null;
@@ -481,8 +506,8 @@ final class DnsRecord
 
             if (preg_match('/^\d+$/', $first) !== 1) {
                 throw new ValidationError(sprintf(
-                    'บรรทัดที่ %d: เรกคอร์ด MX ต้องมีลำดับความสำคัญเป็นตัวเลขก่อนชื่อเซิร์ฟเวอร์ '
-                        . 'เช่น `10 mail.example.com.`',
+                    'Line %d: an MX record needs a numeric priority before the server name, '
+                        . 'e.g. `10 mail.example.com.`',
                     $lineNo,
                 ));
             }
@@ -499,16 +524,18 @@ final class DnsRecord
                 'priority' => $priority,
             ]);
         } catch (ValidationError $e) {
-            // ข้อความของ validate() ไม่รู้จักบรรทัด — เติมให้ ไม่งั้นผู้ใช้ต้องไล่หาเอง
-            throw new ValidationError(sprintf('บรรทัดที่ %d: %s', $lineNo, $e->getMessage()));
+            // validate()'s message doesn't know the line number — add it, otherwise
+            // the user has to hunt for it themselves.
+            throw new ValidationError(sprintf('Line %d: %s', $lineNo, $e->getMessage()));
         }
     }
 
     /**
-     * ประกอบค่าของเรกคอร์ดจากโทเคนที่เหลือ
+     * Assemble a record's value from the remaining tokens
      *
-     * TXT ยาว ๆ (DKIM) ถูกตัดเป็นหลายสตริงในเครื่องหมายคำพูดแล้ววางต่อกัน — ต้องต่อกลับ
-     * เป็นค่าเดียวเสมอ ไม่งั้นกุญแจ DKIM ที่วางมาจะขาดกลางโดยไม่มีอะไรฟ้อง
+     * A long TXT value (DKIM) is split into multiple quoted strings placed side by
+     * side — these must always be joined back into a single value, otherwise a pasted
+     * DKIM key ends up truncated in the middle with nothing to flag it.
      *
      * @param list<string> $tokens
      */
@@ -521,19 +548,22 @@ final class DnsRecord
         }
 
         if (in_array($type, self::HOSTNAME_TYPES, true)) {
-            // จุดปิดท้ายถูกเติมกลับให้ตอนเขียนไฟล์ — เก็บแบบไม่มีจุดให้ตรงกับที่ฟอร์มบันทึก
+            // The trailing dot gets added back when the file is written — store it
+            // without one to match what the form saves.
             return rtrim((string) $tokens[0], '.');
         }
 
         /*
-         * ชนิดที่เหลือเก็บ**ทั้งบรรทัดตามที่เขียนมา** — CAA มีสามส่วน SRV มีสี่ TLSA มีสี่
-         * NAPTR มีหก · การไล่แตกโครงสร้างตามแต่ละชนิดคือการกลับไปสู่รายการปิดในรูปแบบอื่น
-         * และจะตกหล่นชนิดถัดไปเสมอ · `named-checkzone` เป็นตัวตัดสินว่าเขียนถูกไหม
+         * Every other type keeps **the whole line exactly as written** — CAA has three
+         * parts, SRV has four, TLSA has four, NAPTR has six · chasing after per-type
+         * structure is just a closed list wearing a different shape, and it will
+         * always fall behind the next type · `named-checkzone` is the arbiter of
+         * whether it was written correctly.
          */
         return implode(' ', $tokens);
     }
 
-    /** ถอดเครื่องหมายคำพูดและ escape ออกจากโทเคนเดียว */
+    /** Strip quotes and escaping from a single token */
     private static function unquoteZoneToken(string $token): string
     {
         if (strlen($token) >= 2 && str_starts_with($token, '"') && str_ends_with($token, '"')) {
@@ -544,15 +574,17 @@ final class DnsRecord
     }
 
     /**
-     * แปลงชื่อในไฟล์ให้เป็นชื่อสัมพัทธ์ที่ระบบเก็บ
+     * Convert a file's name into the relative name the system stores
      *
-     * **ชื่อที่ไม่มีจุดปิดท้ายและเท่ากับชื่อโดเมนพอดีต้องปฏิเสธ** ไม่ใช่เดาให้ — BIND อ่าน
-     * `example.com` (ไม่มีจุด) เป็น `example.com.example.com.` ซึ่งเกือบทุกครั้งไม่ใช่สิ่งที่
-     * คนพิมพ์ตั้งใจ · การเดาให้เป็น `@` เงียบ ๆ ทำให้ผู้ใช้ไม่มีวันรู้ว่าตัวเองเข้าใจผิด
-     * แล้วไปพลาดซ้ำที่อื่นซึ่งไม่มีใครแก้ให้
+     * **A name with no trailing dot that equals the domain name exactly must be
+     * rejected**, not guessed at — BIND reads `example.com` (no dot) as
+     * `example.com.example.com.`, which is almost never what the person typing it
+     * meant · silently guessing `@` means the user never finds out they misunderstood,
+     * and goes on to repeat the mistake somewhere nobody catches it.
      *
-     * ไม่เติมหมายเลขบรรทัดเองเพราะผู้เรียกเติมให้อยู่แล้ว — เติมทั้งสองที่ได้ข้อความที่
-     * ขึ้นต้นว่า "บรรทัดที่ 7: บรรทัดที่ 7:" ซึ่งอ่านแล้วดูเหมือนระบบพัง
+     * Doesn't add its own line number, since the caller already does — adding it in
+     * both places produces a message that starts "Line 7: Line 7:", which reads like
+     * the system is broken.
      */
     private static function relativeZoneName(string $name, string $origin): string
     {
@@ -574,7 +606,7 @@ final class DnsRecord
             }
 
             throw new ValidationError(sprintf(
-                'ชื่อ %s อยู่นอกโดเมน %s — zone นี้ประกาศชื่อนอกโดเมนตัวเองไม่ได้',
+                'The name %s is outside the domain %s — this zone cannot declare a name outside its own domain',
                 $name,
                 $origin,
             ));
@@ -582,8 +614,8 @@ final class DnsRecord
 
         if ($lower === $origin) {
             throw new ValidationError(sprintf(
-                'ชื่อ %s ไม่มีจุดปิดท้าย BIND จะอ่านเป็น %s.%s — '
-                    . 'ใช้ `@` ถ้าหมายถึงตัวโดเมนเอง หรือเติมจุดปิดท้ายเป็น `%s.`',
+                'The name %s has no trailing dot, so BIND will read it as %s.%s — '
+                    . 'use `@` if you mean the domain itself, or add a trailing dot: `%s.`',
                 $name,
                 $lower,
                 $origin,
@@ -594,11 +626,11 @@ final class DnsRecord
         return $name;
     }
 
-    /** TTL รับได้ทั้งวินาทีล้วนและแบบมีหน่วยท้าย (`1h`, `30m`) ที่พบในไฟล์ที่คัดลอกมา */
+    /** TTL accepts both plain seconds and a trailing unit (`1h`, `30m`) as seen in copied-in files */
     private static function parseTtl(string $token, int $lineNo): int
     {
         if (preg_match('/^(\d+)([smhdwSMHDW]?)$/', $token, $m) !== 1) {
-            throw new ValidationError(sprintf('บรรทัดที่ %d: TTL ไม่ถูกต้อง (%s)', $lineNo, $token));
+            throw new ValidationError(sprintf('Line %d: invalid TTL (%s)', $lineNo, $token));
         }
 
         return (int) $m[1] * match (strtolower($m[2])) {
@@ -611,16 +643,16 @@ final class DnsRecord
     }
 
     /**
-     * ประกอบ zone file จากเรกคอร์ดทั้งหมดของโดเมนหนึ่ง
+     * Assemble a zone file from all of a domain's records
      *
      * @param list<array<string,mixed>> $records
      */
     public static function toZoneFile(string $domain, array $records): string
     {
         $lines = [
-            '; zone file สำหรับ ' . $domain,
-            '; ส่งออกจาก PHP Server Control Panel เมื่อ ' . date('Y-m-d H:i:s'),
-            '; นำไปใส่ที่ผู้ให้บริการ DNS ของคุณ — panel ไม่ได้ทำหน้าที่เป็น DNS server',
+            '; zone file for ' . $domain,
+            '; exported from PHP Server Control Panel on ' . date('Y-m-d H:i:s'),
+            '; import this at your DNS provider — the panel does not act as a DNS server',
             '',
         ];
 
@@ -632,16 +664,19 @@ final class DnsRecord
     }
 
     /**
-     * บรรทัดเดียวของเรกคอร์ด — **ที่เดียวที่ตอบว่าเรกคอร์ดหนึ่งรายการหน้าตาอย่างไร**
+     * A single record's line — **the one place that answers what a record looks like**
      *
-     * เคยมีสามที่เขียน `sprintf` ก้อนเดียวกันนี้เอง (ไฟล์จริงบนดิสก์, ไฟล์ส่งออกให้ผู้ใช้
-     * ไปวางที่ DNS provider ภายนอก, ช่องแก้ไขทั้งชุด) แล้วมันแยกทางกันจริง ๆ: ไฟล์ส่งออก
-     * เป็นที่เดียวที่ไม่เคยเรียก {@see zoneValue()} เลย จึงไม่ห่อคำพูดให้ TXT และไม่เติม
-     * จุดปิดท้ายให้ CNAME/MX — ค่าที่ผู้ใช้คัดลอกไปวางที่ผู้ให้บริการภายนอกจึงเป็นคนละค่า
-     * กับที่ DNS ของเครื่องนี้ตอบ โดยไม่มีอะไรฟ้อง
+     * There used to be three places writing this exact same `sprintf` — the real file
+     * on disk, the file exported for the user to paste at an external DNS provider,
+     * and the editable text block — and they genuinely drifted apart: the exported
+     * file was the one place that never called {@see zoneValue()}, so it never wrapped
+     * TXT in quotes and never added the trailing dot to CNAME/MX — the value the user
+     * copied out to paste at an external provider was a different value than the one
+     * this machine's own DNS actually answered with, with nothing to flag it.
      *
-     * รวมไว้ที่เดียวแล้วการแก้กฎการเขียนค่าครั้งเดียวมีผลกับทุกที่ที่แสดงเรกคอร์ด —
-     * เหมือนที่ zone file ทั้งไฟล์ถูก derive จากฐานข้อมูลเสมอ ไม่ใช่ patch ทีละจุด
+     * Consolidated into one place, a single change to the value-writing rule now
+     * affects every place a record is shown — the same reasoning as the zone file
+     * always being fully derived from the database, never patched piecemeal.
      *
      * @param array<string,mixed> $record
      */
@@ -658,26 +693,29 @@ final class DnsRecord
     }
 
     /**
-     * เรกคอร์ดในรูปข้อความสำหรับช่องแก้ไข — **ของผู้ใช้ล้วน ไม่มี SOA/NS ที่ระบบสร้าง**
+     * Records as text for the edit field — **entirely the user's own, no
+     * system-generated SOA/NS**
      *
-     * ต่างจาก {@see toAuthoritativeZoneFile()} ตรงที่ไม่มีส่วนหัวที่ระบบเป็นเจ้าของ ·
-     * การเอา SOA กับ serial มาแสดงในช่องแก้ไขคือการชวนให้แก้สิ่งที่แก้ไม่ได้ แล้วผู้ใช้
-     * จะเสียเวลาปรับ serial ที่ระบบเขียนทับให้ทุกครั้งอยู่ดี
+     * Differs from {@see toAuthoritativeZoneFile()} in having no header the system
+     * owns · showing SOA and its serial in the edit field would invite editing
+     * something that can't actually be edited, and the user would waste time tweaking
+     * a serial the system overwrites every time regardless.
      *
-     * ค่าถูกจัดรูปแบบเหมือนที่จะถูกเขียนลงไฟล์จริงทุกประการ (จุดปิดท้าย, เครื่องหมายคำพูด
-     * ของ TXT) — **สิ่งที่เห็นในช่องแก้ไขต้องเป็นสิ่งที่จะได้จริง** และการวางกลับเข้าไป
-     * โดยไม่แก้อะไรต้องได้เรกคอร์ดชุดเดิมเป๊ะ ๆ
+     * Values are formatted exactly as they would be written to the real file
+     * (trailing dots, TXT quoting) — **what's shown in the edit field must be what you
+     * actually get**, and pasting it back unchanged must produce the exact same set
+     * of records.
      *
      * @param list<array<string,mixed>> $records
      */
     public static function toEditableRecords(string $domain, array $records): string
     {
         $lines = [
-            '; เรกคอร์ดของ ' . $domain . ' — แก้ได้ทั้งหมด บันทึกแล้วแทนที่ของเดิมทั้งชุด',
-            '; รายการที่ลบออกจากข้อความนี้คือลบจริง',
+            '; Records for ' . $domain . ' — fully editable, saving replaces the entire set',
+            '; A line removed from this text is a genuine deletion',
             ';',
-            '; SOA และ NS ของตัวโดเมนเองไม่ได้อยู่ที่นี่ เพราะระบบสร้างจากค่าตั้งของเครื่องเสมอ',
-            '; ชื่อที่ลงท้ายด้วยจุดคือชื่อเต็ม · `@` คือตัวโดเมนเอง',
+            "; The domain's own SOA and NS aren't here, since the system always generates them from the machine's own settings",
+            '; A name ending in a dot is a full name · `@` means the domain itself',
             '',
         ];
 
@@ -689,13 +727,14 @@ final class DnsRecord
     }
 
     /**
-     * zone file แบบสมบูรณ์ที่ BIND9 โหลดเป็น master ได้จริง — PLAN-V2 เฟส E3
+     * A complete zone file BIND9 can actually load as a master — PLAN-V2 Phase E3
      *
-     * ต่างจาก `toZoneFile()` (ไฟล์ส่งออกให้ผู้ใช้ไปวางที่ DNS provider ภายนอก) ตรงที่ต้องมี
-     * `SOA`/`NS` ครบและ `$TTL` — ไม่มีสามอย่างนี้ `named-checkzone` ปฏิเสธทันที
+     * Differs from `toZoneFile()` (the file exported for the user to paste at an
+     * external DNS provider) in that it needs a full `SOA`/`NS` and `$TTL` — without
+     * all three, `named-checkzone` rejects it immediately.
      *
      * @param list<array<string,mixed>> $records
-     * @param list<string> $nameservers ต้องมีอย่างน้อยหนึ่งตัว — ผู้เรียกเป็นคนตรวจก่อน
+     * @param list<string> $nameservers must have at least one — the caller verifies this first
      */
     public static function toAuthoritativeZoneFile(
         string $domain,
@@ -707,14 +746,14 @@ final class DnsRecord
         $primaryNs = self::fqdn($nameservers[0]);
 
         $lines = [
-            '; จัดการโดย phpcp โดยอัตโนมัติ — แก้ไขตรงนี้แล้วหายไปตอน sync รอบถัดไป',
-            '; แก้ผ่านหน้า DNS ของ panel เท่านั้น',
+            '; Managed automatically by phpcp — edits here are lost on the next sync',
+            '; Edit only through the panel\'s DNS page',
             '$TTL 3600',
             sprintf('@   IN  SOA %s %s (', $primaryNs, self::soaRname($soaEmail, $domain)),
             sprintf('        %d   ; serial', $serial),
-            '        3600        ; refresh (1 ชั่วโมง)',
-            '        900         ; retry (15 นาที)',
-            '        1209600     ; expire (14 วัน)',
+            '        3600        ; refresh (1 hour)',
+            '        900         ; retry (15 minutes)',
+            '        1209600     ; expire (14 days)',
             '        3600 )      ; minimum / negative-cache TTL',
         ];
 
@@ -732,8 +771,9 @@ final class DnsRecord
     }
 
     /**
-     * ค่าโฮสต์ต้องลงท้ายด้วยจุดเสมอใน zone file (fully qualified) ไม่งั้น BIND9 จะเอาชื่อโดเมน
-     * ต่อท้ายให้เองซ้ำ กลายเป็น `ns1.example.com.example.com` แบบเงียบ ๆ — บั๊กคลาสสิกของ DNS
+     * A host value must always end with a dot in a zone file (fully qualified),
+     * otherwise BIND9 silently appends the domain name itself, producing
+     * `ns1.example.com.example.com` — a classic DNS bug.
      */
     private static function fqdn(string $host): string
     {
@@ -741,14 +781,17 @@ final class DnsRecord
     }
 
     /**
-     * แปลงค่าให้อยู่ในรูปที่ zone file ต้องการตามชนิดของเรกคอร์ด
+     * Convert a value into the shape a zone file needs, based on the record's type
      *
-     * · **CNAME/MX** ต้องเป็น FQDN เหมือน NS ไม่งั้น BIND9 ต่อชื่อโดเมนให้เองซ้ำ
-     * · **TXT** ต้องอยู่ในเครื่องหมายคำพูดเสมอ — ค่าที่มีช่องว่าง (SPF, DKIM และ
-     *   ACME challenge token) ถ้าไม่ห่อไว้ BIND9 จะอ่านเป็นหลายสตริงแยกกันหรือ
-     *   ปฏิเสธทั้ง zone · เดิมปล่อยให้ผู้ใช้ใส่ `"` มาเองซึ่งเป็นกับดัก: คนที่วาง
-     *   ค่า SPF ตามที่ผู้ให้บริการเมลบอกมา (ไม่มีคำพูด) จะได้ zone ที่ใช้ไม่ได้
-     * · ชนิดอื่น (A/AAAA/CAA) ปล่อยตามเดิม
+     * · **CNAME/MX** must be an FQDN like NS, otherwise BIND9 appends the domain name
+     *   itself again
+     * · **TXT** must always be in quotes — a value containing whitespace (SPF, DKIM,
+     *   and ACME challenge tokens) gets read by BIND9 as multiple separate strings, or
+     *   rejects the whole zone, if it isn't wrapped · this used to leave it to the
+     *   user to supply their own `"`, which was a trap: someone pasting an SPF value
+     *   exactly as their mail provider gave it to them (with no quotes) would end up
+     *   with a zone that doesn't work
+     * · other types (A/AAAA/CAA) are passed through unchanged
      */
     private static function zoneValue(string $type, string $value): string
     {
@@ -757,7 +800,7 @@ final class DnsRecord
         }
 
         if ($type !== 'TXT') {
-            // ชนิดที่เก็บค่าทั้งบรรทัด (SRV, CAA, TLSA, ...) เขียนออกไปตามที่เก็บไว้เป๊ะ ๆ
+            // Types that store the whole line (SRV, CAA, TLSA, ...) are written out exactly as stored.
             return $value;
         }
 
@@ -765,27 +808,33 @@ final class DnsRecord
     }
 
     /**
-     * ห่อค่า TXT เป็น character-string ตามที่ RFC 1035 §3.3.14 กำหนด — **ก้อนละไม่เกิน 255 ไบต์**
+     * Wrap a TXT value into character-strings per RFC 1035 §3.3.14 — **no more than
+     * 255 bytes per chunk**
      *
-     * ## บั๊กจริงที่ข้อนี้แก้ (เจอบนเซิร์ฟเวอร์จริง 2026-08-14)
+     * ## A real bug this fixes (found on a real server, 2026-08-14)
      *
-     * กุญแจ DKIM ขนาด 2048 บิตยาวราว 400 ตัวอักษร · ระบบตั้งใจรองรับอยู่แล้ว
-     * ({@see VALUE_MAX} = 4096 และ {@see zoneRdata()} ต่อสตริงที่ถูกตัดมาแล้วกลับเป็น
-     * ค่าเดียวเพื่อไม่ให้กุญแจขาดกลาง) แต่ตอน**เขียนกลับ**ออกไปห่อเป็นคำพูดก้อนเดียว
-     * ซึ่ง BIND ปฏิเสธทั้งไฟล์ด้วยข้อความที่ไม่บอกใบ้อะไรเลย:
+     * A 2048-bit DKIM key runs about 400 characters long · the system was already
+     * designed to support this ({@see VALUE_MAX} = 4096, and {@see zoneRdata()} joins
+     * already-split strings back into a single value so the key never comes out
+     * truncated), but at **write time**, it was wrapped back out as a single quoted
+     * chunk, which BIND rejects the entire file over with a message that gives no hint
+     * at all what's wrong:
      *
      * ```
      * dns_rdata_fromtext: /etc/bind/zones/<domain>.zone:22: syntax error
      * ```
      *
-     * ผลคือทั้งโซนคืนค่าเดิม — เรกคอร์ดที่ไม่เกี่ยวข้องทุกตัวของโดเมนนั้นค้างอยู่กับ
-     * ค่าเก่า ทั้งที่หน้าจอบอกว่าบันทึกแล้ว · การตัดเป็นก้อนตอนเขียนคือการแก้ที่ถูกที่
-     * เพราะ resolver ต่อทุกก้อนกลับเป็นค่าเดียวให้เองอยู่แล้ว ค่าที่ปลายทางได้รับ
-     * จึงเท่าเดิมเป๊ะ ๆ ไม่ว่าจะถูกตัดกี่ก้อน
+     * The result was that the whole zone reverted — every unrelated record for that
+     * domain stayed stuck on its old value, while the screen reported the save as
+     * successful · splitting into chunks at write time is the correct fix, because the
+     * resolver already joins every chunk back into a single value on its own, so the
+     * value the destination actually receives comes out exactly the same regardless of
+     * how many chunks it was split into.
      *
-     * ตัดจาก**ไบต์ดิบก่อน escape** ไม่ใช่หลัง — `\"` ยาวสองไบต์ในไฟล์แต่นับเป็นไบต์เดียว
-     * บนสาย การตัดหลัง escape จึงทั้งได้ก้อนที่ยาวเกินจริงและมีโอกาสผ่ากลาง escape
-     * sequence จนคำพูดปิดผิดที่
+     * Split from **the raw bytes before escaping**, not after — `\"` is two bytes in
+     * the file but counts as a single byte on the wire, so splitting after escaping
+     * would both produce chunks that are longer than intended and risk splitting right
+     * through an escape sequence, closing a quote in the wrong place.
      */
     private static function txtCharacterStrings(string $value): string
     {
@@ -796,7 +845,7 @@ final class DnsRecord
         }
 
         $quoted = array_map(
-            // คำพูดที่อยู่กลางค่าต้อง escape ไม่งั้นมันปิดสตริงก่อนเวลา
+            // A quote appearing in the middle of a value must be escaped, otherwise it closes the string early
             static fn (string $chunk): string => '"' . str_replace(['\\', '"'], ['\\\\', '\\"'], $chunk) . '"',
             str_split($raw, self::TXT_STRING_MAX),
         );
@@ -805,15 +854,18 @@ final class DnsRecord
     }
 
     /**
-     * ค่า TXT ในรูปไบต์จริงบนสาย — ถอดคำพูดออกถ้าค่าที่เก็บไว้ใส่มาแล้ว
+     * A TXT value as the actual bytes on the wire — strips quotes if the stored value already has them
      *
-     * ค่าที่เก็บในฐานข้อมูลมาได้สองแบบ: ไม่มีคำพูดเลย (ฟอร์มเพิ่มเรกคอร์ด และ
-     * {@see zoneRdata()} ที่ถอดให้แล้ว) หรือมีคำพูดติดมา (ผู้ใช้วางค่าตามที่ผู้ให้บริการ
-     * เมลให้มาทั้งก้อน) · ทั้งสองแบบต้องได้ไบต์ชุดเดียวกันก่อนตัด ไม่งั้นค่าที่มีคำพูด
-     * ติดมาจะถูกนับความยาวเกินจริงแล้วตัดผิดตำแหน่ง
+     * A value stored in the database can arrive in two shapes: with no quotes at all
+     * (the add-record form, and {@see zoneRdata()} which already stripped them), or
+     * with quotes already attached (a user pasting a value exactly as their mail
+     * provider handed it to them) · both must resolve to the same set of bytes before
+     * splitting, otherwise a value that already has quotes attached would have its
+     * length overcounted and get split in the wrong place.
      *
-     * คำพูดต้องครบทุกโทเคนถึงจะถือว่าเป็นการห่อ — ค่าอย่าง `"quoted" ไม่ห่อ` แปลว่า
-     * คำพูดเป็นส่วนหนึ่งของข้อความเอง ต้อง escape ไม่ใช่ถอดทิ้ง
+     * Every single token must be quoted for this to count as "already wrapped" — a
+     * value like `"quoted" not wrapped` means the quote is part of the text itself,
+     * and must be escaped, not stripped.
      */
     private static function txtRawBytes(string $value): string
     {
@@ -833,10 +885,11 @@ final class DnsRecord
     }
 
     /**
-     * แปลงอีเมลผู้ดูแลเป็นฟอร์แมต RNAME ของ SOA (จุดแทน @ ตาม RFC 1035 §3.3.13)
+     * Convert an admin email into the SOA's RNAME format (a dot in place of @, per RFC 1035 §3.3.13)
      *
-     * จุดที่มีอยู่แล้วใน local-part (เช่น "first.last@example.com") ต้อง escape ด้วย \.
-     * ก่อนแทน @ ไม่งั้น BIND9 จะอ่านผิดว่าเป็นส่วนของโดเมนแทนที่จะเป็นส่วนของชื่อผู้ใช้
+     * A dot already present in the local part (e.g. "first.last@example.com") must be
+     * escaped with \. before replacing @, otherwise BIND9 misreads it as part of the
+     * domain rather than part of the username.
      */
     private static function soaRname(string $soaEmail, string $domain): string
     {
@@ -845,7 +898,7 @@ final class DnsRecord
         }
 
         if (!str_contains($soaEmail, '@')) {
-            // รับรูปแบบที่เป็น RNAME อยู่แล้ว (จุดแทน @ มาตั้งแต่ต้น) โดยไม่แตะอะไรเพิ่ม
+            // Already in RNAME shape (dot in place of @ from the start) — pass through unchanged.
             return self::fqdn($soaEmail);
         }
 

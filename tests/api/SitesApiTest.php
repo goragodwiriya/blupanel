@@ -387,7 +387,7 @@ test('เพิ่ม DNS record ตรวจค่าตามชนิดจ�
     assertSame(422, $wrong->status, 'ค่าที่ไม่ตรงชนิดต้องถูกปฏิเสธ');
     assertSame(ApiProblem::ValidationError->value, $wrong->errorCode(), 'ต้องเป็นรหัส VALIDATION_ERROR');
     assertTrue(
-        str_contains((string) ($wrong->json['error']['message'] ?? ''), 'A หรือ AAAA'),
+        str_contains((string) ($wrong->json['error']['message'] ?? ''), 'A or AAAA'),
         'ต้องบอกทางแก้ให้ด้วย ไม่ใช่แค่บอกว่าผิด',
     );
 

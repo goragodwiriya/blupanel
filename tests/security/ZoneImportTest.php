@@ -168,11 +168,11 @@ test('สิ่งที่แปลงกลับไม่ได้ต้อ�
 
         assertTrue($message !== '', "ต้องปฏิเสธ: {$why}");
         assertTrue(
-            str_contains($message, 'บรรทัดที่'),
+            str_contains($message, 'Line '),
             "ต้องบอกหมายเลขบรรทัดด้วย ({$why}): {$message}",
         );
         assertTrue(
-            !str_contains($message, 'บรรทัดที่ 0'),
+            !str_contains($message, 'Line 0'),
             "หมายเลขบรรทัดต้องไม่เป็นศูนย์ ({$why}): {$message}",
         );
     }
