@@ -9,11 +9,11 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * ชั้นกรองหนึ่งชั้นในเส้นทางของคำขอ
+ * One filtering layer in a request's path
  *
- * ลำดับการเรียกกำหนดไว้ตายตัวใน HttpKernel และสำคัญมาก:
- * ตรวจ rate limit ก่อนแตะฐานข้อมูลผู้ใช้ ตรวจ session ก่อนตรวจ CSRF
- * และตรวจ CSRF ก่อนตรวจ permission — สลับลำดับแล้วเปิดช่องโหว่ได้ทันที
+ * The call order is fixed in HttpKernel and matters a great deal: check the
+ * rate limit before touching the users table, check the session before
+ * checking CSRF, and check CSRF before checking the permission — swap the order and a vulnerability opens immediately
  */
 interface Middleware
 {

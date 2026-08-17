@@ -13,10 +13,12 @@ use Phpcp\Security\RateLimiter;
 use Phpcp\Security\SessionStore;
 
 /**
- * โหลด session จากคุกกี้ ตรวจอายุ และหมุน id ตามรอบ — SECURITY §2.2
+ * Loads the session from its cookie, checks its age, and rotates the id on
+ * schedule — SECURITY §2.2
  *
- * ไม่ใช้ session ของ PHP เลย ทั้งหมดเก็บใน SQLite เพื่อให้ควบคุมได้ครบ
- * ทั้งการผูก IP/User-Agent, idle timeout และการสั่งตัด session จากหน้าจัดการผู้ใช้
+ * Never uses PHP's own session mechanism — everything is stored in SQLite so
+ * it can be fully controlled: binding to IP/User-Agent, the idle timeout, and
+ * being able to destroy a session from the user-management page
  */
 final class SessionMiddleware implements Middleware
 {
@@ -51,13 +53,13 @@ final class SessionMiddleware implements Middleware
 
         $response = $next($request);
 
-        // ส่งคุกกี้ใหม่เมื่อหมุน id หรือเมื่อ controller เพิ่งสร้าง session (ล็อกอินสำเร็จ)
+        // Sends a new cookie when the id was rotated, or when the controller just created a session (a successful login)
         if ($rotatedTo !== null) {
             $this->setCookie($response, $ctx, $cookieName, $rotatedTo);
         } elseif ($ctx->sessionId !== '' && $ctx->sessionId !== $rawId) {
             $this->setCookie($response, $ctx, $cookieName, $ctx->sessionId);
         } elseif ($rawId !== '' && $ctx->session === null && $ctx->sessionId === '') {
-            // session ใช้ไม่ได้แล้ว (หมดอายุ/ถูกตัด) — ลบคุกกี้ทิ้งเพื่อไม่ให้ส่งซ้ำทุกครั้ง
+            // The session is no longer valid (expired/destroyed) — clears the cookie so it isn't resent on every request
             $this->clearCookie($response, $ctx, $cookieName);
         }
 
@@ -65,17 +67,19 @@ final class SessionMiddleware implements Middleware
     }
 
     /**
-     * บันทึกเมื่อ session ที่ยังไม่หมดอายุถูกปฏิเสธเพราะมาจาก IP อื่น
+     * Records when a session that hasn't expired was rejected for coming from a different IP
      *
-     * การผูก session กับ IP เป็นมาตรการกันคุกกี้ถูกขโมยตัวเดียวที่เหลืออยู่ (เลิกผูกกับ
-     * User-Agent ไปแล้วเมื่อ 2026-08-11) · เดิมมันปฏิเสธเงียบ ๆ — ผู้ใช้เห็นแค่ว่าตัวเอง
-     * หลุดออกจากระบบ และผู้ดูแลไม่เห็นอะไรเลย · คุกกี้ที่ถูกขโมยไปทดลองใช้จึงเป็น
-     * เหตุการณ์ที่ระบบ**จับได้แล้วแต่ไม่บอกใคร** ซึ่งเสียของที่สุดในบรรดาความล้มเหลว
-     * ทุกแบบ
+     * Binding the session to an IP is now the one remaining measure against a
+     * stolen cookie (binding to the User-Agent was removed on 2026-08-11) ·
+     * it used to reject silently — the user just saw themselves get signed
+     * out, and an admin saw nothing at all · a stolen cookie being tried out
+     * was therefore an event the system **had already caught but told nobody
+     * about**, the most wasted outcome of any kind of detection
      *
-     * **จำกัดอัตราการบันทึก** เพราะ `audit_log` เป็น hash chain ที่ลบไม่ได้ · คุกกี้
-     * ที่ถูกขโมยแล้วยิงรัวจาก IP เดิมจะเขียนหนึ่งแถวต่อหนึ่งคำขอ ซึ่งกลายเป็นทางทำให้
-     * ตารางโตจนเป็นปัญหาเสียเอง · สามครั้งแรกพอบอกเรื่องแล้ว
+     * **Rate-limits its own logging**, because `audit_log` is a hash chain
+     * that can't be deleted from · a stolen cookie fired repeatedly from the
+     * same IP would write one row per request, which would become its own
+     * problem by growing the table out of control · the first three are enough to tell the story
      */
     private function noteRejection(Ctx $ctx, Request $request, SessionStore $store, string $rawId): void
     {
@@ -88,7 +92,7 @@ final class SessionMiddleware implements Middleware
         try {
             $bucket = 'session-reject:' . SessionStore::hashId($rawId);
 
-            // 3 ครั้งแรกรัวได้ แล้วเติมกลับชั่วโมงละครั้ง
+            // The first 3 can fire in a burst, then it refills once per hour
             if (!(new RateLimiter($ctx->app->db()))->allow($bucket, 3.0, 1 / 3600)) {
                 return;
             }
@@ -105,26 +109,27 @@ final class SessionMiddleware implements Middleware
                 (string) ($rejection['username'] ?? ''),
                 'warn',
                 [
-                    // ที่อยู่เดิมคือของเจ้าของตัวจริง ที่อยู่ใหม่คือของคนที่ถือคุกกี้อยู่ตอนนี้
+                    // The expected address is the real owner's, the seen address is whoever is holding the cookie right now
                     'expected_ip' => (string) ($rejection['expected_ip'] ?? ''),
                     'seen_ip' => (string) ($rejection['seen_ip'] ?? ''),
                     'path' => $request->path,
                 ],
             );
         } catch (\Throwable) {
-            // เขียน audit ไม่ได้ต้องไม่ทำให้คำขอล้ม — session ถูกปฏิเสธไปแล้วอยู่ดี
+            // Failing to write the audit entry must never fail the request — the session was already rejected regardless
         }
     }
 
     /**
-     * บันทึกเมื่อคุกกี้ก้อนเดิมถูกใช้จากเบราว์เซอร์ที่ต่างไป
+     * Records when the same cookie was used from a different browser
      *
-     * ตั้งแต่เลิกผูก session กับ User-Agent (2026-08-11) การเปลี่ยน UA ไม่ตัด session
-     * อีกแล้ว — แต่ยัง**ต้องเห็น**ว่ามันเกิดขึ้น เพราะเป็นสัญญาณเดียวที่เหลืออยู่ว่า
-     * คุกกี้อาจถูกนำไปใช้ต่อที่อื่น · ผู้ดูแลตรวจย้อนหลังได้จาก audit log
+     * Since the session stopped being bound to the User-Agent (2026-08-11), a
+     * UA change no longer destroys the session — but it still **needs to be
+     * visible** that it happened, since it's the one remaining signal that a
+     * cookie may have gone on to be used somewhere else · an admin can look back at the audit log
      *
-     * อัปเดตค่าที่เก็บไว้ด้วย เพื่อให้บันทึกครั้งเดียวต่อการเปลี่ยนหนึ่งครั้ง
-     * ไม่ใช่ทุกคำขอหลังจากนั้น (หน้าเดียวยิงหลายคำขอพร้อมกันเป็นเรื่องปกติของ SPA)
+     * Also updates the stored value, so this is recorded once per change,
+     * not on every request afterward (one page firing several requests at once is normal for the SPA)
      *
      * @param array<string,mixed> $session
      */
@@ -153,15 +158,15 @@ final class SessionMiddleware implements Middleware
                 ['ip' => $request->ip],
             );
         } catch (\Throwable) {
-            // เขียน audit ไม่ได้ต้องไม่ทำให้คำขอที่ถูกต้องล้ม — เหตุการณ์นี้เป็นข้อมูล
-            // ประกอบ ไม่ใช่ด่านความปลอดภัย
+            // Failing to write the audit entry must never fail a legitimate
+            // request — this event is supporting information, not a security gate
         }
     }
 
     private function setCookie(Response $response, Ctx $ctx, string $name, string $value): void
     {
         $response->withCookie($name, $value, [
-            'expires' => 0,                 // คุกกี้แบบ session ตายเมื่อปิดเบราว์เซอร์
+            'expires' => 0,                 // A session-style cookie dies when the browser closes
             'path' => '/',
             'secure' => $ctx->app->config->bool('panel.cookie_secure'),
             'httponly' => true,

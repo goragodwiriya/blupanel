@@ -10,18 +10,20 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * บังคับให้ล็อกอินก่อนเข้าเส้นทางที่ต้องใช้สิทธิ์
+ * Requires sign-in before entering a route that needs a permission
  *
- * เส้นทางที่ permission เป็น null คือเส้นทางสาธารณะ (หน้าล็อกอิน) นอกนั้นต้องล็อกอินหมด
- * ค่าเริ่มต้นจึงเป็น "ต้องล็อกอิน" — ลืมกำหนด permission แล้วเส้นทางจะถูกปิด ไม่ใช่เปิด
+ * A route whose permission is null is a public route (the login page) — every
+ * other route requires sign-in · the default is therefore "sign-in
+ * required" — forgetting to set a permission closes a route, never opens one
  */
 final class Authenticate implements Middleware
 {
     /**
-     * เส้นทางที่เข้าได้ระหว่างรอยืนยัน 2FA
+     * Routes reachable while waiting for 2FA to be confirmed
      *
-     * ฝั่ง API ต้องมี `GET /api/v2/session` ด้วย เพราะ SPA เรียกมันเป็นอย่างแรกเสมอ
-     * ตอนเปิดแอป — ถ้าถูกปิดกั้น หน้าเว็บจะไม่มีทางรู้ว่าตัวเองค้างอยู่ที่ขั้นยืนยัน 2FA
+     * The API side must also include `GET /api/v2/session`, since the SPA
+     * always calls it first when the app opens — if it were blocked, the web
+     * page would have no way to find out it's stuck at the 2FA step
      */
     private const TWO_FACTOR_PATHS = [
         '/api/v2/session',
@@ -29,11 +31,12 @@ final class Authenticate implements Middleware
     ];
 
     /**
-     * เส้นทางที่เข้าได้ตอนถูกบังคับให้เปลี่ยนรหัสผ่าน
+     * Routes reachable while a password change is being forced
      *
-     * `/api/v2/me` **ไม่อยู่ในรายการนี้โดยเจตนา** — ข้อมูลผู้ใช้ที่ SPA ต้องใช้ตอนนั้น
-     * มีอยู่ใน `GET /api/v2/session` ครบแล้ว การเปิด /me เพิ่มจึงได้แค่ทำให้ขอบเขต
-     * ของการบังคับกว้างน้อยลงโดยไม่ได้อะไรกลับมา
+     * `/api/v2/me` is **deliberately not in this list** — the user data the
+     * SPA needs at that point is already fully present in `GET
+     * /api/v2/session`, so opening /me too would only narrow the
+     * enforcement's scope without gaining anything in return
      */
     private const PASSWORD_PATHS = [
         '/api/v2/session',
@@ -44,52 +47,54 @@ final class Authenticate implements Middleware
     {
         $route = $ctx->route;
 
-        // 404 หรือเส้นทางสาธารณะ — shell ของ SPA กับ `GET /api/v2/session`
+        // A 404 or a public route — the SPA's shell and `GET /api/v2/session`
         //
-        // ไม่ต้องเด้งคนที่ล็อกอินแล้วออกจากหน้าล็อกอินที่นี่อีก: ทุกหน้าเป็น shell
-        // ไฟล์เดียวกัน เส้นทางย่อยตัดสินฝั่งเบราว์เซอร์ · ด่านนั้นอยู่ที่
-        // `PhpcpAuth.guard()` ของ SPA ซึ่งเรียงลำดับเงื่อนไขให้ตรงกับที่นี่พอดี
+        // No need to bounce an already-signed-in user away from the login
+        // page here either: every page is the same single shell file, the
+        // sub-route decides on the browser side · that check lives in the
+        // SPA's `PhpcpAuth.guard()`, which orders its conditions to match this exactly
         if ($route === null || $route->permission === null) {
             return $next($request);
         }
 
         if ($ctx->session === null) {
-            return $this->unauthenticated($request);
+            return $this->unauthenticated($request, $ctx);
         }
 
-        // ผ่านรหัสผ่านแล้วแต่ยังไม่ยืนยัน 2FA — เข้าได้เฉพาะหน้ายืนยัน
+        // Password verified but 2FA not yet confirmed — only the verification page is reachable
         if ($ctx->awaiting2fa() && !in_array($request->path, self::TWO_FACTOR_PATHS, true)) {
             if ($request->isApiV2()) {
-                return ApiProblem::TwoFactorRequired->response('ต้องยืนยันรหัส 2FA ก่อนใช้งาน');
+                return ApiProblem::TwoFactorRequired->response($ctx->app->t('Two-factor verification is required before continuing'));
             }
 
-            return Response::json(['ok' => false, 'error' => 'ต้องยืนยันรหัส 2FA ก่อน'], 401);
+            return Response::json(['ok' => false, 'error' => $ctx->app->t('Two-factor verification is required before continuing')], 401);
         }
 
-        // บังคับเปลี่ยนรหัสผ่านครั้งแรก (รหัสที่ระบบสุ่มให้ตอนติดตั้ง)
+        // Forces the first password change (the one the system randomly generated during setup)
         if ($ctx->mustChangePassword() && !in_array($request->path, self::PASSWORD_PATHS, true)) {
             if ($request->isApiV2()) {
-                return ApiProblem::PasswordChangeRequired->response('ต้องเปลี่ยนรหัสผ่านก่อนใช้งาน');
+                return ApiProblem::PasswordChangeRequired->response($ctx->app->t('A password change is required before continuing'));
             }
 
-            return Response::json(['ok' => false, 'error' => 'ต้องเปลี่ยนรหัสผ่านก่อนใช้งาน'], 403);
+            return Response::json(['ok' => false, 'error' => $ctx->app->t('A password change is required before continuing')], 403);
         }
 
         return $next($request);
     }
 
     /**
-     * ไม่มีเซสชัน — ตอบ 401 เสมอ ไม่เด้งไปหน้าไหน
+     * No session — always answers 401, never redirects anywhere
      *
-     * ทุกเส้นทางที่ต้องใช้สิทธิ์คือ `/api/v2/*` แล้วทั้งหมด · การเด้ง 302 ใส่คำขอ
-     * ที่ยิงด้วย fetch ทำให้ฝั่ง SPA เห็น "สำเร็จพร้อม HTML" แทนที่จะเห็นว่าไม่ได้
-     * ล็อกอิน แล้วพังในที่ที่ไกลจากต้นเหตุ · การพากลับหน้าเดิมหลังล็อกอินเป็นงาน
-     * ของ router ฝั่งเบราว์เซอร์ ซึ่งรู้จัก URL ปัจจุบันดีกว่าฝั่งเซิร์ฟเวอร์อยู่แล้ว
+     * Every route that requires a permission is already `/api/v2/*` · a 302
+     * redirect on a request fired with fetch would make the SPA see "success
+     * with HTML" instead of seeing that it isn't signed in, then fail
+     * somewhere far from the actual cause · returning to the same page after
+     * signing in is the browser-side router's job, which already knows the current URL better than the server does
      */
-    private function unauthenticated(Request $request): Response
+    private function unauthenticated(Request $request, Ctx $ctx): Response
     {
         return $request->isApiV2()
-            ? ApiProblem::Unauthenticated->response('กรุณาเข้าสู่ระบบ')
-            : Response::json(['ok' => false, 'error' => 'กรุณาเข้าสู่ระบบ'], 401);
+            ? ApiProblem::Unauthenticated->response($ctx->app->t('Please sign in'))
+            : Response::json(['ok' => false, 'error' => $ctx->app->t('Please sign in')], 401);
     }
 }

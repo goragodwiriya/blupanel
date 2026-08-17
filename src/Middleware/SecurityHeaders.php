@@ -9,12 +9,13 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * Header ความปลอดภัย — SECURITY §2.3
+ * Security headers — SECURITY §2.3
  *
- * CSP ไม่มี unsafe-inline และไม่มี unsafe-eval เลย ซึ่งเป็นเหตุผลที่ทั้งระบบ
- * ต้องเลิกใช้ onclick= แบบ inline และเลิกใช้ Tailwind CDN ที่คอมไพล์ CSS ในเบราว์เซอร์
+ * The CSP has no unsafe-inline and no unsafe-eval at all, which is why the
+ * whole system had to stop using inline onclick= and stop using the
+ * Tailwind CDN that compiles CSS in the browser
  *
- * ทำงานเป็นชั้นนอกสุดเพื่อให้ header ติดไปกับทุกคำตอบ รวมถึงหน้า error และ 404
+ * Runs as the outermost layer so the headers attach to every response, including error pages and 404s
  */
 final class SecurityHeaders implements Middleware
 {
@@ -27,14 +28,16 @@ final class SecurityHeaders implements Middleware
             "script-src 'self' 'nonce-{$ctx->nonce}'",
             "style-src 'self'",
             "img-src 'self' data:",
-            // เสียง/วิดีโอในตัวจัดการไฟล์เล่นจาก `data:` ที่ประกอบในเบราว์เซอร์จากเนื้อไฟล์
-            // ที่ `GET /files/download` ส่งมา — ไม่ได้ชี้กลับไปที่ URL ของเซิร์ฟเวอร์
+            // Audio/video in the file manager plays from a `data:` URI
+            // assembled in the browser from the file content that `GET
+            // /files/download` sends — it never points back at a server URL
             //
-            // จำเป็นต้องเป็น `data:` ไม่ใช่ URL ตรง เพราะ endpoint ดาวน์โหลดส่ง
-            // `application/octet-stream` + `attachment` เสมอโดยตั้งใจ (กัน stored XSS
-            // จากไฟล์ .html ของผู้ใช้) ซึ่งเบราว์เซอร์เล่นเป็นสื่อไม่ได้
+            // Has to be `data:`, not a direct URL, because the download
+            // endpoint always deliberately sends `application/octet-stream` +
+            // `attachment` (prevents stored XSS from a user's .html file),
+            // which the browser can't play as media
             //
-            // ไม่มีบรรทัดนี้ media-src จะตกไปใช้ `default-src 'none'` แล้วถูกบล็อกเงียบ ๆ
+            // Without this line, media-src falls back to `default-src 'none'` and gets blocked silently
             "media-src 'self' data:",
             "font-src 'self'",
             "connect-src 'self'",
@@ -56,12 +59,12 @@ final class SecurityHeaders implements Middleware
                 'geolocation=(), camera=(), microphone=(), payment=(), usb=(), interest-cohort=()',
             );
 
-        // HSTS ส่งเฉพาะตอนที่มาทาง HTTPS จริง — ส่งตอน HTTP จะไม่มีผลและทำให้ dev ใช้งานลำบาก
+        // HSTS is only sent when the request genuinely arrived over HTTPS — sending it over HTTP has no effect and makes local dev harder
         if ($request->isSecure()) {
             $response->withHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
         }
 
-        // หน้าของ panel มีข้อมูลอ่อนไหว ห้าม proxy หรือเบราว์เซอร์เก็บแคชไว้
+        // The panel's pages hold sensitive data — never allowed to be cached by a proxy or the browser
         if (!str_starts_with($request->path, '/assets/')) {
             $response
                 ->withHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private')

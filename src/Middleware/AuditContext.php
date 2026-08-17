@@ -9,10 +9,11 @@ use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 
 /**
- * ผูก request id เข้ากับทุกสิ่งที่เกิดขึ้นในคำขอนี้ และบันทึกคำขอที่เปลี่ยนแปลงข้อมูล
+ * Binds a request id to everything that happens during this request, and logs requests that change data
  *
- * request id ทำให้ตามรอยได้ว่า audit log หลายบรรทัดมาจากการกดปุ่มครั้งเดียวกัน
- * ซึ่งจำเป็นตอนสืบหาสาเหตุย้อนหลัง เพราะหนึ่งการกระทำอาจเรียก capability หลายตัว
+ * The request id makes it possible to trace multiple audit log lines back to
+ * the same button click — necessary when investigating a cause after the
+ * fact, since a single action can call several capabilities
  */
 final class AuditContext implements Middleware
 {
@@ -22,11 +23,11 @@ final class AuditContext implements Middleware
 
         $response = $next($request);
 
-        // ส่ง request id กลับไปด้วยเพื่อให้ผู้ใช้แจ้งปัญหาแล้วอ้างอิงได้ตรงจุด
+        // Sends the request id back too, so a user reporting a problem can reference it precisely
         $response->withHeader('X-Request-Id', $request->requestId);
 
         if ($request->isMutating() && $ctx->isAuthenticated()) {
-            $ctx->app->logger()->info('คำขอที่เปลี่ยนแปลงข้อมูล', [
+            $ctx->app->logger()->info('Data-changing request', [
                 'request_id' => $request->requestId,
                 'method' => $request->method,
                 'path' => $request->path,

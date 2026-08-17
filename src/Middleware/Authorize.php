@@ -12,13 +12,14 @@ use Phpcp\Kernel\Response;
 use Phpcp\Security\Permissions;
 
 /**
- * ตรวจ permission ของเส้นทาง — ชั้นที่ 1 ของการตรวจสองชั้น
+ * Checks a route's permission — layer 1 of a two-layer check
  *
- * ชั้นที่ 2 อยู่ที่ agent (Dispatcher) ซึ่งตรวจซ้ำอีกรอบ
- * ที่ต้องมีสองชั้นเพราะชั้นนี้กันคนเปิด URL ตรง ๆ ส่วนชั้นนั้นกันกรณีที่ชั้นนี้มีบั๊ก
+ * Layer 2 lives at the agent (the Dispatcher), which checks again · two
+ * layers are needed because this one prevents someone from opening the URL
+ * directly, while that one covers the case where this layer has a bug
  *
- * ผลลัพธ์ที่ต้องการตาม PROMPT.md: ผู้ดูแลเว็บไซต์เปิด /server/services ตรง ๆ ต้องได้ 403
- * ไม่ใช่แค่มองไม่เห็นเมนู
+ * The result PROMPT.md requires: a website admin opening /server/services
+ * directly must get 403, not just fail to see the menu item
  */
 final class Authorize implements Middleware
 {
@@ -43,18 +44,20 @@ final class Authorize implements Middleware
         );
 
         if ($request->isApiV2()) {
-            return ApiProblem::Forbidden->response('คุณไม่มีสิทธิ์เข้าถึงส่วนนี้');
+            return ApiProblem::Forbidden->response($ctx->app->t('You do not have permission to access this section'));
         }
 
         if ($request->wantsJson()) {
-            return Response::json(['ok' => false, 'error' => 'คุณไม่มีสิทธิ์เข้าถึงส่วนนี้'], 403);
+            return Response::json(['ok' => false, 'error' => $ctx->app->t('You do not have permission to access this section')], 403);
         }
 
         return ErrorPage::response(
             403,
-            'ไม่มีสิทธิ์เข้าถึง',
-            'บัญชี "'.$ctx->displayName().'" ('
-                .Permissions::roleLabel($ctx->role()).') ไม่มีสิทธิ์เข้าถึงหน้านี้',
+            $ctx->app->t('Access denied'),
+            $ctx->app->t('Account "{name}" ({role}) does not have permission to access this page', [
+                'name' => $ctx->displayName(),
+                'role' => $ctx->app->t(Permissions::roleLabel($ctx->role())),
+            ]),
         );
     }
 }

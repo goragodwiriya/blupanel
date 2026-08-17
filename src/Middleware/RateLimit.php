@@ -12,22 +12,24 @@ use Phpcp\Kernel\Response;
 use Phpcp\Security\RateLimiter;
 
 /**
- * จำกัดอัตราคำขอ — SECURITY §2.1
+ * Rate-limits requests — SECURITY §2.1
  *
- * อยู่ก่อน Session โดยเจตนา: การยิงคำขอรัว ๆ ต้องถูกตัดตั้งแต่ก่อนที่ระบบ
- * จะไปแตะฐานข้อมูลผู้ใช้หรือคำนวณ Argon2id ซึ่งกินทรัพยากรมาก
+ * Deliberately placed before Session: a burst of requests must be cut off
+ * before the system ever touches the users table or computes Argon2id, both of which are expensive
  *
- * แยกโควตาของหน้าล็อกอินออกจากหน้าอื่น เพราะเป็นเป้าของการเดารหัสผ่าน
+ * The login page's quota is kept separate from every other page, since it's the target of password guessing
  */
 final class RateLimit implements Middleware
 {
     /**
-     * เส้นทางที่ใช้เดารหัสผ่านได้ — โควตาแยกและเข้มกว่าเส้นทางทั่วไปมาก
+     * Routes that can be used to guess a password — a separate, much stricter quota than ordinary routes
      *
-     * เหลือสองเส้นทางหลัง UI แบบ HTML ถูกลบ · ตอนที่มีสอง frontend รายการนี้ต้องมี
-     * ทั้ง `/login` และ `/api/v2/session` ไม่งั้นการย้ายไป SPA จะ**ลด**การป้องกันลง
-     * เงียบ ๆ โดยที่ไม่มีใครตั้งใจ — ปล่อยให้เดารหัสผ่านด้วยโควตาของคำขอทั่วไป
-     * (120 ครั้งรัว) แทนที่จะเป็น 5 · บทเรียนนั้นยังใช้ได้กับ frontend ตัวถัดไป
+     * Down to two routes after the HTML-based UI was removed · back when
+     * there were two frontends, this list had to include both `/login` and
+     * `/api/v2/session`, or moving to the SPA would **weaken** the
+     * protection silently, with nobody intending it — leaving password
+     * guessing to run on the ordinary-request quota (a burst of 120) instead
+     * of 5 · that lesson still applies to whatever frontend comes next
      */
     private const LOGIN_PATHS = ['/api/v2/session', '/api/v2/session/2fa'];
 
@@ -63,7 +65,7 @@ final class RateLimit implements Middleware
      */
     public function handle(Request $request, Ctx $ctx, callable $next): Response
     {
-        // ไฟล์ static ไม่ต้องนับ ไม่อย่างนั้นการโหลดหน้าเดียวก็กินโควตาหมดแล้ว
+        // Static files don't count — otherwise loading a single page would already exhaust the quota
         if (str_starts_with($request->path, '/assets/')) {
             return $next($request);
         }
@@ -72,19 +74,19 @@ final class RateLimit implements Middleware
         $isLogin = $request->isPost() && in_array($request->path, self::LOGIN_PATHS, true);
 
         if ($isLogin) {
-            // 5 ครั้งรัว แล้วเติมกลับ 1 ครั้งต่อ 60 วินาที
+            // A burst of 5, then refills at 1 per 60 seconds
             $bucket = 'login:'.$request->ip;
             if (!$limiter->allow($bucket, self::LOGIN_BURST, self::LOGIN_REFILL_PER_SECOND)) {
-                return $this->tooMany($request, $limiter->retryAfter($bucket, self::LOGIN_REFILL_PER_SECOND));
+                return $this->tooMany($request, $ctx, $limiter->retryAfter($bucket, self::LOGIN_REFILL_PER_SECOND));
             }
 
             return $next($request);
         }
 
-        // คำขอทั่วไป: 120 ครั้งรัว เติมกลับ 2 ครั้งต่อวินาที เหลือเฟือสำหรับการใช้งานปกติ
+        // Ordinary requests: a burst of 120, refilling at 2 per second — plenty for normal use
         $bucket = 'req:'.$request->ip;
         if (!$limiter->allow($bucket, 120.0, 2.0)) {
-            return $this->tooMany($request, $limiter->retryAfter($bucket, 2.0));
+            return $this->tooMany($request, $ctx, $limiter->retryAfter($bucket, 2.0));
         }
 
         return $next($request);
@@ -94,16 +96,16 @@ final class RateLimit implements Middleware
      * @param Request $request
      * @param int $retryAfter
      */
-    private function tooMany(Request $request, int $retryAfter): Response
+    private function tooMany(Request $request, Ctx $ctx, int $retryAfter): Response
     {
         $message = $retryAfter > 0
-            ? "มีคำขอมากเกินไป กรุณารออีก {$retryAfter} วินาที"
-            : 'มีคำขอมากเกินไป กรุณารอสักครู่';
+            ? $ctx->app->t('Too many requests — please wait {seconds} seconds', ['seconds' => $retryAfter])
+            : $ctx->app->t('Too many requests — please wait a moment');
 
         $response = match (true) {
             $request->isApiV2() => ApiProblem::RateLimited->response($message),
             $request->wantsJson() => Response::json(['ok' => false, 'error' => $message], 429),
-            default => ErrorPage::response(429, 'คำขอมากเกินไป', $message),
+            default => ErrorPage::response(429, $ctx->app->t('Too many requests'), $message),
         };
 
         return $retryAfter > 0
