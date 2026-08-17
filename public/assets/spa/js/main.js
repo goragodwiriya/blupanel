@@ -75,6 +75,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     '/user': { template: 'user.html', title: '{LNG_User}', permission: 'user.view' },
     // The create form is a separate file from the table — one template, one job
     '/user-create': { template: 'user-create.html', title: '{LNG_Add user}', permission: 'customer.manage' },
+    '/sqlite': { template: 'sqlite.html', title: '{LNG_SQLite Manager}', permission: 'sqlite.manage' },
     '/settings': { template: 'settings.html', title: '{LNG_Settings}', permission: 'settings.view' }
   };
 

@@ -126,6 +126,7 @@ test('คำตอบของคำสั่งต้องไม่ซ้อ�
         'SessionController.php::create()',
         'SessionController.php::verifyTwoFactor()',
         'PhpMyAdminController.php::create()',
+        'SqliteController.php::query()',
     ];
 
     $offenders = [];

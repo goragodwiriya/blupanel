@@ -61,6 +61,9 @@ tags:
     description: งานอัตโนมัติต่อเว็บไซต์
   - name: backups
     description: ข้อมูลสำรองและการกู้คืน
+  - name: sqlite
+    description: ตัวจัดการและตรวจสอบข้อมูล SQLite ของระบบ
+
 
 paths:
   /session:
@@ -4793,6 +4796,323 @@ paths:
         "500":
           description: "ปลายทางใช้ไม่ได้ — ข้อความบอกว่าต้องแก้อะไร (เช่นคำสั่ง ssh-keyscan ที่ต้องรัน)"
           $ref: "#/components/responses/Error"
+
+  /sqlite/info:
+    get:
+      tags: [sqlite]
+      summary: ข้อมูลเบื้องต้นของฐานข้อมูล SQLite ของแผงควบคุม
+      description: |
+        อ่านข้อมูลทั่วไปเกี่ยวกับฐานข้อมูล SQLite เช่น path, ขนาดไฟล์, journal mode, WAL size, page count, encoding
+      responses:
+        "200":
+          description: ข้อมูลฐานข้อมูล SQLite
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /sqlite/tables:
+    get:
+      tags: [sqlite]
+      summary: รายการตารางทั้งหมดในฐานข้อมูล SQLite
+      responses:
+        "200":
+          description: รายการตารางพร้อมจำนวนแถว
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        row_count: { type: integer }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /sqlite/views:
+    get:
+      tags: [sqlite]
+      summary: รายการ Views ทั้งหมดในฐานข้อมูล SQLite
+      responses:
+        "200":
+          description: รายการ views
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items: { type: string }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /sqlite/indexes:
+    get:
+      tags: [sqlite]
+      summary: รายการ Indexes ทั้งหมดในฐานข้อมูล SQLite
+      responses:
+        "200":
+          description: รายการ indexes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        table: { type: string }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /sqlite/triggers:
+    get:
+      tags: [sqlite]
+      summary: รายการ Triggers ทั้งหมดในฐานข้อมูล SQLite
+      responses:
+        "200":
+          description: รายการ triggers
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        table: { type: string }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /sqlite/search:
+    get:
+      tags: [sqlite]
+      summary: ค้นหาข้อความข้ามทุกตารางในฐานข้อมูล SQLite
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+          description: ข้อความที่ต้องการค้นหา
+      responses:
+        "200":
+          description: ผลการค้นหาแยกตามตาราง
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        table: { type: string, description: ตารางที่พบข้อความ }
+                        row: { type: object, description: แถวข้อมูลที่ตรงกับคำค้น }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /sqlite/query:
+    post:
+      tags: [sqlite]
+      summary: รันคำสั่ง SQL (เฉพาะ SELECT, PRAGMA, EXPLAIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sql]
+              properties:
+                sql: { type: string, description: "คำสั่ง SQL อ่านอย่างเดียว" }
+      responses:
+        "200":
+          description: ผลลัพธ์ของคำสั่ง SQL
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      columns:
+                        type: array
+                        description: ตัวบอกคอลัมน์สำหรับสร้างหัวตารางแบบ dynamic ของ TableManager
+                        items:
+                          type: object
+                          properties:
+                            field: { type: string }
+                            label: { type: string }
+                            cellClass: { type: string }
+                            sort: { type: string }
+                      rows: { type: array, items: { type: object } }
+                      row_count: { type: integer }
+                      truncated: { type: boolean }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /sqlite/tables/{table}:
+    parameters:
+      - name: table
+        in: path
+        required: true
+        schema: { type: string }
+        description: ชื่อตาราง
+    get:
+      tags: [sqlite]
+      summary: ดู Structure/Schema ของตารางที่ระบุ
+      responses:
+        "200":
+          description: รายละเอียดคอลัมน์ ดรรชนี และ DDL CREATE TABLE
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /sqlite/tables/{table}/rows:
+    parameters:
+      - name: table
+        in: path
+        required: true
+        schema: { type: string }
+        description: ชื่อตาราง
+      - { $ref: "#/components/parameters/Page" }
+      - { $ref: "#/components/parameters/PerPage" }
+      - name: sort
+        in: query
+        schema: { type: string }
+        description: ชื่อคอลัมน์ที่ต้องการเรียง
+      - name: order
+        in: query
+        schema: { type: string, enum: [ASC, DESC] }
+        description: ทิศทางการเรียง
+    get:
+      tags: [sqlite]
+      summary: ดึงข้อมูลแถวของตารางแบบแบ่งหน้า
+      responses:
+        "200":
+          description: รายการแถวและข้อมูล pagination
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items: { type: object }
+                  columns:
+                    type: array
+                    description: ตัวบอกคอลัมน์ของตารางนั้น สำหรับสร้างหัวตารางแบบ dynamic ของ TableManager
+                    items:
+                      type: object
+                      properties:
+                        field: { type: string }
+                        label: { type: string }
+                        cellClass: { type: string }
+                        sort: { type: string, description: ชื่อฟิลด์ที่ใช้เรียง (ใส่ใน data-sort ของหัวตาราง) }
+                  meta: { $ref: "#/components/schemas/PageMeta" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /sqlite/tables/{table}/count:
+    parameters:
+      - name: table
+        in: path
+        required: true
+        schema: { type: string }
+        description: ชื่อตาราง
+    get:
+      tags: [sqlite]
+      summary: นับจำนวนแถวรวมในตาราง
+      responses:
+        "200":
+          description: จำนวนแถว
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      table: { type: string }
+                      row_count: { type: integer }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /sqlite/tables/{table}/export:
+    parameters:
+      - name: table
+        in: path
+        required: true
+        schema: { type: string }
+        description: ชื่อตาราง
+      - name: format
+        in: query
+        schema: { type: string, enum: [json, csv], default: json }
+        description: รูปแบบไฟล์ที่จะส่งออก
+    get:
+      tags: [sqlite]
+      summary: ส่งออกข้อมูลตารางเป็น JSON หรือ CSV
+      responses:
+        "200":
+          description: ข้อมูลตารางที่ส่งออก
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean, const: true }
+                  data: { type: object }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
 
 components:
   parameters:

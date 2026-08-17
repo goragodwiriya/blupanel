@@ -718,6 +718,3 @@ textarea.config-file-editor {
   border-radius: var(--phpcp-radius);
 }
 /* ป้ายบอกสิทธิ์ในตาราง — "แก้ได้" ต้องเด่นกว่า "ดูได้อย่างเดียว" อย่างชัดเจน */
-[data-table="configFiles"] .pill-ok {
-  font-weight: 600;
-}

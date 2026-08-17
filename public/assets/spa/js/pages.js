@@ -28,7 +28,7 @@
 (function() {
   'use strict';
 
-  const t = (text) => window.Now.translate(text);
+  const t = (text, params) => window.Now.translate(text, params);
 
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -395,5 +395,328 @@
       stream.close();
       stopAutoRefresh();
     };
+  };
+
+  // ===========================================================================
+  // SQLite Manager — the one page that stays scripted
+  // ===========================================================================
+  // Everything about a SQLite table is dynamic: which table is picked, what
+  // columns it has, what a query returns. So the rows and query tables are
+  // TableManager tables with dynamic columns — the backend ships column
+  // descriptors with every response (`{field, label, cellClass}`) and
+  // TableManager builds the headers itself. This page only decides which
+  // endpoint feeds the rows table (its data-source is rewritten per selected
+  // table; paging and sorting are then TableManager's own server-side
+  // round-trips) and pushes data into the other tables with setData().
+  window.pageSqlite = function(root) {
+    let tablesData = [];
+    let currentTable = '';
+    let structureLoaded = false;
+
+    // --- Elements ------------------------------------------------------------
+    const listEl = root.querySelector('[data-sqlite-table-list]');
+    const filterEl = root.querySelector('[data-sqlite-table-filter]');
+
+    const statusTableEl = root.querySelector('[data-sqlite-status-table]');
+    const statusMetaEl = root.querySelector('[data-sqlite-status-meta]');
+    const statusPageEl = root.querySelector('[data-sqlite-status-page]');
+
+    const schemaSqlEl = root.querySelector('[data-sqlite-schema-sql]');
+
+    const queryInput = root.querySelector('#sqlite-query-input');
+    const runQueryBtn = root.querySelector('[data-sqlite-run-query]');
+    const clearQueryBtn = root.querySelector('[data-sqlite-clear-query]');
+    const queryResultsEl = root.querySelector('[data-sqlite-query-results]');
+    const queryMetaEl = root.querySelector('[data-sqlite-query-meta]');
+    const queryStatusEl = root.querySelector('[data-sqlite-query-status]');
+
+    const searchInput = root.querySelector('#sqlite-search-input');
+    const runSearchBtn = root.querySelector('[data-sqlite-run-search]');
+    const searchResultsEl = root.querySelector('[data-sqlite-search-results]');
+    const searchCountEl = root.querySelector('[data-sqlite-search-count]');
+    const searchBodyEl = root.querySelector('[data-sqlite-search-body]');
+
+    /**
+     * A table's TableManager state — registered on demand, since the dynamic
+     * observer may not have run yet when the page script starts
+     */
+    const tableState = (name) => {
+      const element = root.querySelector('table[data-table="' + name + '"]');
+      if (!element) return null;
+      if (!window.TableManager.state.tables.has(name)) window.TableManager.initTable(element);
+      return window.TableManager.state.tables.get(name);
+    };
+
+    // --- Lazy-load the structure tab the first time it is opened -------------
+    root.querySelectorAll('[data-component="tabs"]').forEach((tabsEl) => {
+      tabsEl.addEventListener('tabs:tabchange', (event) => {
+        if (event.detail && event.detail.tabId === 'structure' && !structureLoaded) {
+          structureLoaded = true;
+          loadStructure();
+        }
+      });
+    });
+
+    // --- Toolbar refresh -------------------------------------------------------
+    // The framework's emit action already refreshes the db-info bar above;
+    // the table list is this page's own state, so it reloads here
+    const refreshBtn = root.querySelector('[data-sqlite-refresh]');
+    if (refreshBtn) refreshBtn.addEventListener('click', () => loadTables());
+
+    // --- Table list ----------------------------------------------------------
+    async function loadTables() {
+      try {
+        tablesData = (await window.PhpcpApi.get('/sqlite/tables')) || [];
+        renderTableList(tablesData);
+        if (tablesData.length > 0) selectTable(tablesData[0].name);
+      } catch (error) {
+        if (listEl) listEl.replaceChildren(el('li', 'comment', error.message || 'Error loading tables'));
+      }
+    }
+
+    function renderTableList(tables) {
+      if (!listEl) return;
+
+      if (tables.length === 0) {
+        listEl.replaceChildren(el('li', 'comment', t('No tables found')));
+        return;
+      }
+
+      const fragment = document.createDocumentFragment();
+      tables.forEach((table) => {
+        const li = el('li', table.name === currentTable ? 'is-active' : '');
+        li.appendChild(el('span', 'mono', table.name));
+        li.appendChild(el('span', 'sqm-rows', String(table.row_count || 0)));
+        li.addEventListener('click', () => selectTable(table.name));
+        fragment.appendChild(li);
+      });
+      listEl.replaceChildren(fragment);
+    }
+
+    if (filterEl) {
+      filterEl.addEventListener('input', () => {
+        const term = filterEl.value.toLowerCase().trim();
+        renderTableList(tablesData.filter((table) => table.name.toLowerCase().includes(term)));
+      });
+    }
+
+    // --- Selected table: schema + rows ----------------------------------------
+    function selectTable(tableName) {
+      currentTable = tableName;
+      if (statusTableEl) statusTableEl.textContent = tableName;
+      renderTableList(tablesData);
+
+      const rowsTable = tableState('sqliteRows');
+      if (rowsTable) {
+        // The rows table has no fixed data-source — it points at whichever
+        // table is selected. Sorting and paging from here on are
+        // TableManager's own requests back to this endpoint.
+        rowsTable.element.dataset.source = '/api/v2/sqlite/tables/' + encodeURIComponent(tableName) + '/rows';
+        rowsTable.sortState = {};
+        rowsTable.config.params.page = 1;
+        window.TableManager.loadTableData('sqliteRows', {force: true});
+      }
+
+      loadSchema(tableName);
+    }
+
+    async function loadSchema(tableName) {
+      try {
+        const schema = (await window.PhpcpApi.get('/sqlite/tables/' + encodeURIComponent(tableName))) || {};
+
+        if (statusMetaEl) {
+          statusMetaEl.textContent = (schema.columns || []).length + ' ' + t('columns')
+            + ' · ' + (schema.row_count || 0) + ' ' + t('rows');
+        }
+
+        // Field names match the thead in sqlite.html (pk · notnull · dflt)
+        window.TableManager.setData('sqliteSchema', (schema.columns || []).map((col) => ({
+          cid: col.cid,
+          name: col.name,
+          type: col.type || '',
+          pk: col.primary_key ? t('Yes') : '—',
+          notnull: col.notnull ? t('Yes') : '—',
+          dflt: col.default_value === null || col.default_value === undefined ? 'NULL' : col.default_value
+        })));
+
+        if (schemaSqlEl) schemaSqlEl.textContent = schema.sql || '';
+      } catch (error) {
+        if (statusMetaEl) statusMetaEl.textContent = '';
+        if (schemaSqlEl) schemaSqlEl.textContent = '';
+        window.PhpcpUi.error(error);
+      }
+    }
+
+    // --- Status bar follows every rows-table render ---------------------------
+    // EventManager hands its listener the whole context — the payload is in `.data`
+    const onRowsRender = (context) => {
+      const data = (context && context.data) || {};
+      if (!statusPageEl || data.tableId !== 'sqliteRows') return;
+
+      const params = window.TableManager.state.tables.get('sqliteRows');
+      const current = params ? params.config.params : {};
+
+      statusPageEl.textContent = t('Page {page} of {pages}', {
+        page: current.page || 1,
+        pages: current.totalPages || 1
+      }) + ' · ' + (current.total || 0) + ' ' + t('rows');
+    };
+
+    window.EventManager.on('table:render', onRowsRender);
+
+    // --- Export ---------------------------------------------------------------
+    root.querySelectorAll('[data-sqlite-export]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        if (!currentTable) return;
+        const format = button.dataset.sqliteExport;
+        try {
+          const data = await window.PhpcpApi.get('/sqlite/tables/' + encodeURIComponent(currentTable) + '/export', {format: format});
+          const content = format === 'csv' ? data.content : JSON.stringify(data.rows, null, 2);
+          const blob = new Blob([content], {type: format === 'csv' ? 'text/csv' : 'application/json'});
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = currentTable + '.' + format;
+          link.click();
+          URL.revokeObjectURL(url);
+        } catch (error) {
+          window.PhpcpUi.error(error);
+        }
+      });
+    });
+
+    // --- SQL console ----------------------------------------------------------
+    if (runQueryBtn) {
+      runQueryBtn.addEventListener('click', async () => {
+        const sql = queryInput ? queryInput.value.trim() : '';
+        if (!sql) {
+          window.PhpcpUi.error(t('SQL query is required'));
+          return;
+        }
+
+        runQueryBtn.disabled = true;
+        const started = performance.now();
+
+        try {
+          const data = (await window.PhpcpApi.post('/sqlite/query', {sql: sql})) || {};
+          const elapsed = Math.round(performance.now() - started);
+
+          if (queryResultsEl) queryResultsEl.hidden = false;
+          if (queryStatusEl) queryStatusEl.textContent = t('Query executed successfully');
+          if (queryMetaEl) {
+            queryMetaEl.textContent = (data.row_count || 0) + ' ' + t('rows') + ' · ' + elapsed + ' ms'
+              + (data.truncated ? ' · ' + t('truncated') : '');
+          }
+
+          // Columns arrive as TableManager descriptors straight from the
+          // backend — the dynamic headers rebuild themselves per query
+          window.TableManager.setData('sqliteQuery', {
+            data: data.rows || [],
+            columns: data.columns || [],
+            meta: {total: (data.rows || []).length}
+          });
+        } catch (error) {
+          if (queryResultsEl) queryResultsEl.hidden = false;
+          if (queryStatusEl) queryStatusEl.textContent = t('Query failed');
+          if (queryMetaEl) queryMetaEl.textContent = '';
+          window.PhpcpUi.error(error);
+        } finally {
+          runQueryBtn.disabled = false;
+        }
+      });
+    }
+
+    if (clearQueryBtn) {
+      clearQueryBtn.addEventListener('click', () => {
+        if (queryInput) queryInput.value = '';
+        if (queryResultsEl) queryResultsEl.hidden = true;
+      });
+    }
+
+    root.querySelectorAll('[data-sqlite-query-preset]').forEach((link) => {
+      link.addEventListener('click', (event) => {
+        event.preventDefault();
+        if (queryInput) queryInput.value = link.dataset.sqliteQueryPreset;
+      });
+    });
+
+    // --- Global search ---------------------------------------------------------
+    // Deliberately a plain tbody, not a data table: every match comes from a
+    // different table, so there is no shared column set to build headers from
+    function runSearch() {
+      const term = searchInput ? searchInput.value.trim() : '';
+      if (term.length < 2) {
+        window.PhpcpUi.error(t('Search term must be at least 2 characters'));
+        return;
+      }
+
+      runSearchBtn.disabled = true;
+
+      window.PhpcpApi.get('/sqlite/search', {q: term}).then((matches) => {
+        matches = matches || [];
+
+        if (searchResultsEl) searchResultsEl.hidden = false;
+        if (searchCountEl) searchCountEl.textContent = matches.length + ' ' + t('matches');
+
+        if (matches.length === 0) {
+          const empty = el('tr');
+          empty.appendChild(el('td', 'comment', t('No data available')));
+          searchBodyEl.replaceChildren(empty);
+          return;
+        }
+
+        const fragment = document.createDocumentFragment();
+        matches.forEach((match) => {
+          const tr = document.createElement('tr');
+          const label = el('td', '', '');
+          label.appendChild(pill(match.table, 'muted'));
+          const data = el('td', '', '');
+          const pre = el('pre', 'sqm-sql mono');
+          pre.textContent = JSON.stringify(match.row, null, 2);
+          data.appendChild(pre);
+          tr.appendChild(label);
+          tr.appendChild(data);
+          fragment.appendChild(tr);
+        });
+        searchBodyEl.replaceChildren(fragment);
+      }).catch((error) => {
+        if (searchResultsEl) searchResultsEl.hidden = false;
+        const failed = el('tr');
+        failed.appendChild(el('td', 'comment', error.message));
+        searchBodyEl.replaceChildren(failed);
+      }).finally(() => {
+        runSearchBtn.disabled = false;
+      });
+    }
+
+    if (runSearchBtn) runSearchBtn.addEventListener('click', runSearch);
+    if (searchInput) searchInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') runSearch();
+    });
+
+    // --- Indexes & triggers ------------------------------------------------------
+    async function loadStructure() {
+      try {
+        const [indexes, triggers] = await Promise.all([
+          window.PhpcpApi.get('/sqlite/indexes'),
+          window.PhpcpApi.get('/sqlite/triggers')
+        ]);
+
+        // Field names match the theads in sqlite.html (tbl · uniq)
+        window.TableManager.setData('sqliteIndexes', (indexes || []).map((idx) => ({
+          name: idx.name,
+          tbl: idx.table || '—',
+          uniq: idx.unique ? t('Yes') : '—'
+        })));
+
+        window.TableManager.setData('sqliteTriggers', (triggers || []).map((name) => ({name: name})));
+      } catch (error) {
+        window.PhpcpUi.error(error);
+      }
+    }
+
+    loadTables();
+
+    return () => window.EventManager.off('table:render', onRowsRender);
   };
 })();

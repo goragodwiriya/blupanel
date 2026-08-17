@@ -1,0 +1,183 @@
+<div class="sqm" data-script="pageSqlite">
+  <header class="sqm-toolbar">
+    <div class="sqm-toolbar-row">
+      <a class="btn icon-arrow-left sqm-back" href="/app" data-route="/" data-i18n>Panel</a>
+      <span class="sqm-dbinfo form-control icon-database" data-component="api" data-endpoint="/api/v2/sqlite/info" data-refresh-event="phpcp:reload">
+        <span class="mono" data-text="data.file">—</span>
+        <span>·</span>
+        <span data-text="data.file_size | bytes">—</span>
+        <span>·</span>
+        <span data-text="data.total_tables">0</span>
+        <span data-i18n>tables</span>
+        <span>·</span>
+        <span class="mono" data-text="data.journal_mode">—</span>
+      </span>
+      <button type="button" class="btn icon-refresh" data-action="click.prevent:emit" data-emit-event="phpcp:reload" data-tip="Refresh" data-sqlite-refresh></button>
+      <span class="sqm-actions">
+        <button type="button" class="btn icon-export" data-sqlite-export="json" data-i18n>Export JSON</button>
+        <button type="button" class="btn icon-export" data-sqlite-export="csv" data-i18n>Export CSV</button>
+      </span>
+    </div>
+  </header>
+
+  <div class="sqm-body">
+    <aside class="sqm-side" aria-label="Tables">
+      <div class="sqm-side-filter">
+        <span class="form-control icon-search">
+          <input type="search" data-sqlite-table-filter placeholder="{LNG_Search}..." />
+        </span>
+      </div>
+      <ul class="sqm-list" data-sqlite-table-list>
+        <li class="comment" data-i18n>Loading tables...</li>
+      </ul>
+    </aside>
+
+    <section class="sqm-pane" tabindex="0">
+      <div data-component="tabs" data-default-tab="data" data-hash="false">
+        <div class="tab-buttons" role="tablist">
+          <button type="button" class="tab-button icon-listview" data-tab="data" role="tab" data-i18n>Data Rows</button>
+          <button type="button" class="tab-button icon-list" data-tab="schema" role="tab" data-i18n>Schema Definition</button>
+          <button type="button" class="tab-button icon-code" data-tab="query" role="tab" data-i18n>SQL Query Console</button>
+          <button type="button" class="tab-button icon-search" data-tab="search" role="tab" data-i18n>Global Search</button>
+          <button type="button" class="tab-button icon-info" data-tab="structure" role="tab" data-i18n>Indexes & Triggers</button>
+        </div>
+        <div class="tab-content">
+
+          <!-- ข้อมูลในตาราง — หัวตารางสร้างจาก columns ที่ API ส่งมา -->
+          <div class="tab-pane" data-tab="data" role="tabpanel">
+            <div class="tablebody">
+              <table class="table border fullwidth"
+                     data-table="sqliteRows"
+                     data-dynamic-columns="true"
+                     data-page-size="50">
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- โครงสร้างตาราง -->
+          <div class="tab-pane" data-tab="schema" role="tabpanel" hidden>
+            <div class="tablebody">
+              <table class="table border fullwidth" data-table="sqliteSchema">
+                <thead>
+                  <tr>
+                    <th data-field="cid" class="center" data-cell-class="center mono" data-i18n>CID</th>
+                    <th data-field="name" data-cell-class="mono" data-i18n>{LNG_Name}</th>
+                    <th data-field="type" data-cell-class="mono" data-i18n>{LNG_Type}</th>
+                    <th data-field="pk" class="center" data-cell-class="center" data-i18n>Primary Key</th>
+                    <th data-field="notnull" class="center" data-cell-class="center" data-i18n>Not Null</th>
+                    <th data-field="dflt" data-cell-class="mono" data-i18n>Default Value</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <h2 data-i18n>CREATE TABLE Statement</h2>
+            <pre class="sqm-sql mono" data-sqlite-schema-sql></pre>
+          </div>
+
+          <!-- คอนโซล SQL — ผลลัพธ์ก็เป็น dynamic columns เช่นกัน -->
+          <div class="tab-pane" data-tab="query" role="tabpanel" hidden>
+            <div class="info" data-i18n>Read-Only SQL Console. Accepts SELECT, PRAGMA, EXPLAIN statements. Write operations (INSERT, UPDATE, DELETE, DROP) are strictly prevented.</div>
+            <div>
+              <label for="sqlite-query-input" data-i18n>SQL Query</label>
+              <textarea id="sqlite-query-input" class="form-control mono" rows="5" placeholder="SELECT * FROM users LIMIT 20;"></textarea>
+            </div>
+            <div class="flex middle justify-between">
+              <span class="sqm-actions">
+                <button type="button" class="btn btn-primary icon-play" data-sqlite-run-query data-i18n>Execute Query</button>
+                <button type="button" class="btn icon-delete" data-sqlite-clear-query data-i18n>Clear</button>
+              </span>
+              <span class="comment">
+                <span data-i18n>Quick Templates</span>:
+                <a href="#" class="mono" data-sqlite-query-preset="SELECT * FROM users LIMIT 25;">users</a> |
+                <a href="#" class="mono" data-sqlite-query-preset="SELECT * FROM sites LIMIT 25;">sites</a> |
+                <a href="#" class="mono" data-sqlite-query-preset="PRAGMA compile_options;">compile_options</a> |
+                <a href="#" class="mono" data-sqlite-query-preset="PRAGMA database_list;">database_list</a>
+              </span>
+            </div>
+            <div data-sqlite-query-results hidden>
+              <div class="flex middle justify-between">
+                <strong data-sqlite-query-status data-i18n>Results</strong>
+                <span class="comment" data-sqlite-query-meta></span>
+              </div>
+              <div class="tablebody">
+                <table class="table border fullwidth" data-table="sqliteQuery" data-dynamic-columns="true">
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- ค้นหาทั่วทั้งฐานข้อมูล -->
+          <div class="tab-pane" data-tab="search" role="tabpanel" hidden>
+            <div>
+              <label for="sqlite-search-input" data-i18n>Search Term across all tables</label>
+              <div class="flex">
+                <input type="search" id="sqlite-search-input" class="form-control" placeholder="{LNG_Search}..." />
+                <button type="button" class="btn btn-primary icon-search" data-sqlite-run-search data-i18n>Search</button>
+              </div>
+            </div>
+            <div data-sqlite-search-results hidden>
+              <div class="flex middle justify-between">
+                <strong data-sqlite-search-count>0</strong>
+              </div>
+              <div class="tablebody">
+                <table class="table border fullwidth">
+                  <thead>
+                    <tr>
+                      <th data-i18n>{LNG_Table}</th>
+                      <th data-i18n>Matching Record Data</th>
+                    </tr>
+                  </thead>
+                  <tbody data-sqlite-search-body></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- ดัชนีและทริกเกอร์ -->
+          <div class="tab-pane" data-tab="structure" role="tabpanel" hidden>
+            <div class="ggrid">
+              <section class="block6">
+                <h2 class="icon-list" data-i18n>Indexes Summary</h2>
+                <div class="tablebody">
+                  <table class="table border fullwidth" data-table="sqliteIndexes">
+                    <thead>
+                      <tr>
+                        <th data-field="name" data-cell-class="mono" data-i18n>{LNG_Name}</th>
+                        <th data-field="tbl" data-cell-class="mono" data-i18n>{LNG_Table}</th>
+                        <th data-field="uniq" class="center" data-cell-class="center" data-i18n>Unique</th>
+                      </tr>
+                    </thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+              </section>
+              <section class="block6">
+                <h2 class="icon-cog" data-i18n>Triggers Summary</h2>
+                <div class="tablebody">
+                  <table class="table border fullwidth" data-table="sqliteTriggers">
+                    <thead>
+                      <tr>
+                        <th data-field="name" data-cell-class="mono" data-i18n>{LNG_Name}</th>
+                      </tr>
+                    </thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <footer class="sqm-status">
+    <span class="mono" data-sqlite-status-table>—</span>
+    <span data-sqlite-status-meta></span>
+    <span class="sqm-status-right" data-sqlite-status-page></span>
+  </footer>
+</div>

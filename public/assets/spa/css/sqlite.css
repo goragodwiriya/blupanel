@@ -1,0 +1,140 @@
+/* ตัวจัดการฐานข้อมูล SQLite เต็มจอ — คู่กับ templates/sqlite.html และ pageSqlite ใน js/pages.js
+ *
+ * โครงตาม filemanager.css: เต็ม viewport ไม่มีการเลื่อนระดับหน้า และใช้ตัวแปรสี
+ * --color-* ของ Now.js ทั้งหมด ไม่ตั้งสีดิบเอง เพื่อเปลี่ยนธีมตาม panel ได้
+ *
+ * ห้ามใส่ style ลง HTML — CSP ของ panel เป็น style-src 'self' ไม่มี 'unsafe-inline'
+ */
+/* --------------------------------------------------------------------------
+   โครงหน้าจอ — toolbar / body / status
+   -------------------------------------------------------------------------- */
+.sqm {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  background: var(--color-background);
+  color: var(--color-text);
+  font-size: 0.9rem;
+}
+.sqm-toolbar {
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.sqm-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  flex-wrap: wrap;
+}
+/* สรุปฐานข้อมูลบนแถบเครื่องมือ — path ยาวได้ จึงให้ย่อด้วย ellipsis */
+body .sqm-dbinfo {
+  color: var(--color-text-muted);
+  align-items: center;
+  gap: 10px;
+  padding-right: 10px;
+}
+.sqm-actions {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+/* --------------------------------------------------------------------------
+   แผงซ้าย — รายการตาราง
+   -------------------------------------------------------------------------- */
+.sqm-body {
+  display: grid;
+  grid-template-columns: 16rem 1fr;
+  min-height: 0;
+}
+.sqm-side {
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface-alt, var(--color-surface));
+  overflow: auto;
+  padding: 0.5rem 0;
+}
+.sqm-side-filter {
+  padding: 0 0.5rem 0.5rem;
+}
+.sqm-side-filter .form-control {
+  width: 100%;
+}
+.sqm-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.sqm-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.75rem;
+  cursor: pointer;
+}
+.sqm-list li:hover {
+  background: var(--color-surface-hover);
+}
+.sqm-list li.is-active {
+  background: var(--color-surface-hover);
+  font-weight: 600;
+}
+.sqm-list li .sqm-rows {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+/* --------------------------------------------------------------------------
+   แผงขวา — ข้อมูลและเครื่องมือ
+   -------------------------------------------------------------------------- */
+.sqm-pane {
+  overflow: auto;
+  padding: 0.75rem;
+  min-width: 0;
+}
+.sqm-pane > [data-component="tabs"] {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--phpcp-radius, 6px);
+}
+.sqm-pane .tab-content {
+  padding: 0.75rem;
+}
+.sqm-pane .tab-pane {
+  flex-direction: column;
+  gap: 10px;
+}
+.sqm-pane .tablebody {
+  overflow: auto;
+  max-height: calc(100vh - 18rem);
+}
+/* คำสั่ง CREATE TABLE — โค้ดเลื่อนแนวนอนดู ไม่ตัดบรรทัด */
+.sqm-sql {
+  margin: 0;
+  padding: 0.85rem 1rem;
+  max-height: 24rem;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--phpcp-radius, 6px);
+  background: var(--color-surface-hover);
+  white-space: pre;
+  tab-size: 4;
+}
+/* ค่า NULL ในตาราง — เตือนสายตาว่าเป็นการขาดค่า ไม่ใช่ข้อความว่าง */
+.sqm-null {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+/* แถบสถานะล่าง */
+.sqm-status {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+  padding: 0.35rem 0.75rem;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+.sqm-status-right {
+  margin-left: auto;
+}

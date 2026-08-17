@@ -35,6 +35,7 @@ use Phpcp\Http\V2\PhpVersionsController;
 use Phpcp\Http\V2\ScheduledJobsController;
 use Phpcp\Http\V2\SessionController;
 use Phpcp\Http\V2\SitesController;
+use Phpcp\Http\V2\SqliteController;
 use Phpcp\Http\SpaController;
 
 /**
@@ -433,5 +434,21 @@ final class Routes
         // --- Which accounts get backed up automatically (item B3) ---
         $router->add(new Route('GET', '/api/v2/backup-targets', BackupTargetsController::class, 'index', 'backup.offsite', 'api.v2.backup_targets.index'));
         $router->add(new Route('PATCH', '/api/v2/backup-targets/{id}', BackupTargetsController::class, 'update', 'backup.offsite', 'api.v2.backup_targets.update'));
+
+        // --- SQLite database manager ---
+        // All routes require sqlite.manage — only superadmin and sysadmin hold this
+        $router->add(new Route('GET', '/api/v2/sqlite/info', SqliteController::class, 'info', 'sqlite.manage', 'api.v2.sqlite.info'));
+        $router->add(new Route('GET', '/api/v2/sqlite/tables', SqliteController::class, 'tables', 'sqlite.manage', 'api.v2.sqlite.tables'));
+        $router->add(new Route('GET', '/api/v2/sqlite/views', SqliteController::class, 'views', 'sqlite.manage', 'api.v2.sqlite.views'));
+        $router->add(new Route('GET', '/api/v2/sqlite/indexes', SqliteController::class, 'indexes', 'sqlite.manage', 'api.v2.sqlite.indexes'));
+        $router->add(new Route('GET', '/api/v2/sqlite/triggers', SqliteController::class, 'triggers', 'sqlite.manage', 'api.v2.sqlite.triggers'));
+        // Cross-table search and custom query — "search" and "query" before {table}
+        $router->add(new Route('GET', '/api/v2/sqlite/search', SqliteController::class, 'search', 'sqlite.manage', 'api.v2.sqlite.search'));
+        $router->add(new Route('POST', '/api/v2/sqlite/query', SqliteController::class, 'query', 'sqlite.manage', 'api.v2.sqlite.query'));
+        // Table-specific routes
+        $router->add(new Route('GET', '/api/v2/sqlite/tables/{table}', SqliteController::class, 'tableSchema', 'sqlite.manage', 'api.v2.sqlite.table_schema'));
+        $router->add(new Route('GET', '/api/v2/sqlite/tables/{table}/rows', SqliteController::class, 'browse', 'sqlite.manage', 'api.v2.sqlite.table_browse'));
+        $router->add(new Route('GET', '/api/v2/sqlite/tables/{table}/count', SqliteController::class, 'rowCount', 'sqlite.manage', 'api.v2.sqlite.table_count'));
+        $router->add(new Route('GET', '/api/v2/sqlite/tables/{table}/export', SqliteController::class, 'export', 'sqlite.manage', 'api.v2.sqlite.table_export'));
     }
 }

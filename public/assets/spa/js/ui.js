@@ -56,6 +56,10 @@
         {key: 'logs', label: 'Logs', url: '/logs', icon: 'icon-list', permission: 'log.view'},
         // Since phase M, admins and customers share the same resource (`/api/v2/users`), so only one menu item is left
         {key: 'users', label: 'Users', url: '/users', icon: 'icon-users', permission: 'user.view'},
+        // Opens in its own tab like the file manager — the database browser
+        // fills the whole screen (table list + data grid + status bar), and
+        // inspecting data often means switching back to a panel page too
+        {key: 'sqlite', label: 'SQLite Manager', url: '/sqlite', icon: 'icon-database', permission: 'sqlite.manage', newTab: true},
         {key: 'settings', label: 'Settings', url: '/settings', icon: 'icon-cog', permission: 'settings.view'}
       ]
     }

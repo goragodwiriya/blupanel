@@ -108,7 +108,10 @@ final class Permissions
             'user.manage' => 'Manage panel users',
             'settings.view' => 'View server settings',
             'settings.manage' => 'Edit server settings',
-            'audit.view' => 'View the audit log'
+            'audit.view' => 'View the audit log',
+
+            // SQLite database manager
+            'sqlite.manage' => 'Manage and inspect the panel database',
         ];
     }
 
@@ -138,7 +141,8 @@ final class Permissions
                 'settings.view',
                 'audit.view',
                 'backup.offsite',
-                'dns.manage'
+                'dns.manage',
+                'sqlite.manage'
             ],
 
             /*
