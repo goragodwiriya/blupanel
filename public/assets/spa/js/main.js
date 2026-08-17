@@ -1,31 +1,35 @@
 /**
- * จุดเริ่มของ SPA — PLAN-V2 เฟส C1 ข้อ 2 และ 5
+ * The SPA's starting point — PLAN-V2 phase C1, items 2 and 5
  *
- * ลำดับการเริ่มระบบมีเหตุผลกำกับทุกขั้น อย่าสลับ:
+ * The startup order has a reason behind every step — never reorder it:
  *
- *   1. ผูกด่านสิทธิ์เข้ากับ router  ต้องก่อน Now.init เพราะ RouterManager.init()
- *                                  พาไปหน้าแรกทันทีที่มันเริ่มทำงาน
- *   2. ถาม GET /api/v2/session      ต้องก่อนเช่นกัน ด่านในข้อ 1 จะได้มีสถานะจริงให้ตัดสิน
- *                                  ไม่ใช่เดาว่า "ยังไม่ล็อกอิน" แล้วเด้งคนที่ล็อกอินอยู่ออก
- *   3. Now.init(...)                เริ่ม manager ทั้งหมดแล้วเรนเดอร์หน้าแรก
+ *   1. Bind the permission gate to the router  Must come before Now.init,
+ *                                              since RouterManager.init() navigates to the first page the moment it starts
+ *   2. Ask GET /api/v2/session                  Must also come first, so the
+ *                                              gate in step 1 has a genuine
+ *                                              status to decide from, instead
+ *                                              of guessing "not signed in
+ *                                              yet" and bouncing someone who's already signed in
+ *   3. Now.init(...)                            Starts every manager, then renders the first page
  */
 document.addEventListener('DOMContentLoaded', async () => {
-  // สองค่านี้ **ต่างกันโดยตั้งใจ** และห้ามรวมเป็นค่าเดียว:
-  //   ROUTE_BASE  URL ที่ผู้ใช้เห็นบนแถบที่อยู่ — ต้องไม่ตรงกับไดเรกทอรีจริงบนดิสก์
-  //               ไม่งั้น mod_dir ของ Apache จะจัดการเองก่อนถึง FallbackResource
-  //   ASSET_BASE  ที่เก็บไฟล์จริง อยู่ใต้ /assets/ ซึ่งเป็นที่ของไฟล์นิ่งอยู่แล้ว
+  // These two values are **deliberately different** and must never be merged into one:
+  //   ROUTE_BASE  the URL the user sees in the address bar — must never match
+  //               a real directory on disk, or Apache's own mod_dir would
+  //               handle it before it ever reaches FallbackResource
+  //   ASSET_BASE  where the real files live, under /assets/, which is already where static files belong
   const ROUTE_BASE = '/app';
   const ASSET_BASE = '/assets/spa';
 
   /**
-   * ตารางเส้นทางของหน้าจอ
+   * The screen route table
    *
-   * `permission` เป็นฟิลด์ของโปรเจกต์นี้เอง ไม่ใช่ของ Now.js — `PhpcpAuth.guard` อ่านมัน
-   * ผ่าน `to.route.permission` · ค่าต้องตรงกับ permission ที่เส้นทาง API ของหน้านั้นใช้
-   * เพื่อไม่ให้เกิดหน้าที่เปิดได้แต่ทุกคำขอในหน้าถูกปฏิเสธ
+   * `permission` is this project's own field, not Now.js's — `PhpcpAuth.guard`
+   * reads it via `to.route.permission` · the value must match the permission
+   * the page's own API routes use, so a page never ends up openable while every request inside it gets rejected
    *
-   * เส้นทางเป็นชื่อระดับเดียวคั่นด้วยขีดตาม FRAMEWORK_GUIDE — หน้ารายละเอียดใช้
-   * query string (`/site?id=5`) ไม่ใช่ path ซ้อน
+   * Routes are single-level names separated by dashes, per FRAMEWORK_GUIDE —
+   * a detail page uses a query string (`/site?id=5`), never a nested path
    */
   const routes = {
     '/': { template: 'dashboard.html', title: '{LNG_Dashboard}', permission: 'dashboard.view' },
@@ -44,18 +48,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     '/certificates': { template: 'certificates.html', title: '{LNG_SSL Certificates}', permission: 'ssl.view' },
     '/php-versions': { template: 'php-versions.html', title: '{LNG_PHP}', permission: 'php.view' },
     '/databases': { template: 'databases.html', title: '{LNG_Databases}', permission: 'db.view' },
-    // ตัวจัดการไฟล์เป็นหน้าเต็มจอที่เปิดในแท็บของตัวเอง (เมนูใน ui.js ตั้ง target=_blank)
-    // จึงไม่มีเมนูข้างและแถบบนในเทมเพลตของมัน — เหมือน login.html ที่ไม่มี chrome เช่นกัน
+    // The file manager is a full-screen page that opens in its own tab (the
+    // menu in ui.js sets target=_blank), so its template has no sidebar or
+    // topbar — same as login.html, which also has no chrome
     '/filemanager': { template: 'filemanager.html', title: '{LNG_File Manager}', permission: 'file.view' },
     '/cron-jobs': { template: 'cron-jobs.html', title: '{LNG_Cron Jobs}', permission: 'cron.view' },
     '/mailboxes': { template: 'mailboxes.html', title: '{LNG_Mailboxes}', permission: 'mail.view' },
-    // คิวเป็นของทั้งเครื่อง มีที่อยู่ของลูกค้าทุกรายปนกัน — ด่านอยู่ที่เส้นทาง
-    // ไม่ใช่ซ่อนการ์ดในหน้าอื่น เพราะคอมโพเนนต์ที่ถูกซ่อนยังยิงคำขอออกไปจริง
+    // The queue belongs to the whole machine and mixes every customer's
+    // addresses together — the gate lives at the route level, never as a
+    // hidden card on another page, since a hidden component still genuinely fires its request
     '/mail-queue': { template: 'mail-queue.html', title: '{LNG_Mail queue}', permission: 'settings.manage' },
     '/cron-job': { template: 'cron-job.html', title: '{LNG_Cron Jobs}', permission: 'cron.view' },
     '/backups': { template: 'backups.html', title: '{LNG_Backups}', permission: 'backup.view' },
-    // ฟอร์มปลายทางมีสิบกว่าช่อง จึงเป็นหน้าของตัวเองแทน Modal ตาม FRAMEWORK_GUIDE
-    // ไฟล์เดียวทำทั้งเพิ่ม (id=0) และแก้ไข
+    // The destination form has a dozen or so fields, so it's its own page
+    // instead of a Modal, per FRAMEWORK_GUIDE — one file handles both create (id=0) and edit
     '/backup-destination': { template: 'backup-destination.html', title: '{LNG_Offsite destination}', permission: 'backup.offsite' },
 
     // --- SERVER ---
@@ -67,7 +73,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     '/logs': { template: 'logs.html', title: '{LNG_Logs}', permission: 'log.view' },
     '/users': { template: 'users.html', title: '{LNG_Users}', permission: 'user.view' },
     '/user': { template: 'user.html', title: '{LNG_User}', permission: 'user.view' },
-    // ฟอร์มสร้างแยกไฟล์ออกจากตาราง — หนึ่งเทมเพลตทำหน้าที่เดียว
+    // The create form is a separate file from the table — one template, one job
     '/user-create': { template: 'user-create.html', title: '{LNG_Add user}', permission: 'customer.manage' },
     '/settings': { template: 'settings.html', title: '{LNG_Settings}', permission: 'settings.view' }
   };
@@ -77,15 +83,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     await window.PhpcpAuth.refresh();
   } catch (error) {
-    // ถามสถานะไม่ได้ = เซิร์ฟเวอร์มีปัญหาระดับที่หน้าเว็บทำอะไรต่อไม่ได้เลย
-    // บอกตรง ๆ ดีกว่าปล่อยให้แอปเริ่มแล้วพังเป็นชิ้น ๆ ในที่ที่หาสาเหตุยากกว่า
+    // Unable to ask for status = the server has a problem serious enough
+    // that the web page can't do anything further at all · stating this
+    // directly is better than letting the app start and then fail in
+    // pieces, somewhere harder to diagnose · plain English here, not
+    // translated — Now.js hasn't been initialized yet at this point, so no translation catalog is loaded
     document.getElementById('main').textContent =
-      'ติดต่อเซิร์ฟเวอร์ไม่ได้ กรุณาลองใหม่อีกครั้ง (' + (error && error.message ? error.message : 'ไม่ทราบสาเหตุ') + ')';
+      'Cannot reach the server, please try again (' + (error && error.message ? error.message : 'unknown cause') + ')';
     return;
   }
 
   await window.Now.init({
-    // production = ใช้ไฟล์ bundle ที่ commit ไว้ ไม่ไล่โหลดไฟล์ core ทีละตัว
+    // production = uses the committed bundle files, doesn't load each core file one by one
     environment: 'production',
 
     paths: {
@@ -96,10 +105,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       translations: ASSET_BASE + '/lang'
     },
 
-    // การตัดสินใจ N7 — ไม่เปิด eval เด็ดขาด CSP ของ panel ไม่มี 'unsafe-eval'
+    // Decision N7 — eval is never enabled, the panel's CSP has no 'unsafe-eval'
     allowEval: false,
 
-    // ระบบยืนยันตัวตนของเฟรมเวิร์กปิดไว้ — เหตุผลเต็มอยู่หัวไฟล์ js/auth.js
+    // The framework's own authentication system is disabled — the full reason is at the top of js/auth.js
     auth: { enabled: false },
 
     security: {
@@ -108,14 +117,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         tokenName: '_token',
         headerName: 'X-CSRF-Token',
         metaName: 'csrf-token',
-        // `GET /api/v2/session` คือแหล่ง token เดียวของระบบ · รูปคำตอบตรงกับที่
-        // SecurityManager คาดไว้พอดี (body.data.csrf_token) จึงใช้ได้โดยไม่ต้องแปลงอะไร
+        // `GET /api/v2/session` is the system's one source of the token ·
+        // the response shape matches exactly what SecurityManager expects (body.data.csrf_token), so it works with no conversion needed
         tokenUrl: '/api/v2/session'
       }
     },
 
-    // ข้อความต้นทางในเทมเพลตเป็นภาษาอังกฤษและเป็นคีย์แปลไปในตัว ภาษาเริ่มต้นจึงเป็น
-    // อังกฤษ — ไทยมาจาก lang/th.json ซึ่งเป็นคลังคำเดียวที่ฝั่งเซิร์ฟเวอร์อ่านด้วย
+    // The source text in the templates is English and doubles as the
+    // translation key, so the default locale is English — Thai comes from
+    // lang/th.json, the same single catalogue the server side also reads
     i18n: {
       enabled: true,
       defaultLocale: 'en',
@@ -123,8 +133,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       storageKey: 'phpcp_lang'
     },
 
-    // ธีมสว่าง/มืดเก็บที่เครื่องผู้ใช้ · ปิดการดึง config จาก API เพราะ panel
-    // ไม่มี endpoint นั้นและไม่ควรมี — ค่าที่ต้องรู้ทั้งหมดมากับ /session แล้ว
+    // Light/dark theme is stored on the user's own machine · fetching config
+    // from the API is disabled, since the panel has no such endpoint and
+    // shouldn't — every value that needs to be known already arrives with /session
     config: {
       enabled: true,
       defaultTheme: 'light',
@@ -136,7 +147,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       enabled: true,
       mode: 'history',
       base: ROUTE_BASE,
-      // ปิด auth ของ router เพราะมันผูกกับ AuthManager · ด่านจริงคือ beforeEach ข้างบน
+      // The router's own auth is disabled, since it's bound to AuthManager · the real gate is beforeEach above
       auth: { enabled: false },
       notFound: {
         behavior: 'render',

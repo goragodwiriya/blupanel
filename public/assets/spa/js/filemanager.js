@@ -1,38 +1,41 @@
 /**
- * ตัวจัดการไฟล์เต็มจอ — คู่กับ templates/filemanager.html และ css/filemanager.css
+ * The full-screen file manager — paired with templates/filemanager.html and css/filemanager.css
  *
- * **ทำไมหน้านี้ถึงเป็น JS จริง ไม่ใช่การประกาศด้วยแอตทริบิวต์เหมือนหน้าอื่น:**
- * ทุกหน้าที่เหลือของ panel คือ "ตารางข้อมูล + ฟอร์ม" ซึ่ง TableManager/FormManager
- * ทำได้ครบ · หน้านี้คือ "ตัวจัดการไฟล์" ซึ่งพฤติกรรมทั้งชุดไม่มีทางประกาศได้เลย:
- * เลือกหลายรายการด้วย Shift/Ctrl · คลิกขวา · ลากไฟล์มาวาง · คลิปบอร์ดข้ามโฟลเดอร์ ·
- * คีย์ลัด · สลับมุมมองไอคอน · ตัวแก้ไขและตัวอย่างไฟล์ในกล่องซ้อน
+ * **Why this page is genuine JS, not declared with attributes like every other page:**
+ * every other remaining page in the panel is "a data table + a form," which
+ * TableManager/FormManager can fully handle · this page is "a file manager,"
+ * whose entire set of behaviors can never be declared at all: multi-select
+ * with Shift/Ctrl · right-click · drag-and-drop · a clipboard that crosses
+ * folders · keyboard shortcuts · switching to icon view · an editor and file preview in a nested box
  *
- * **กฎความปลอดภัยของไฟล์นี้ (เหมือน ui.js):** ชื่อไฟล์และเส้นทางเป็นค่าที่ผู้ใช้
- * ตั้งเองบนดิสก์ — สร้าง DOM ด้วย `createElement` + `textContent` เท่านั้น
- * **ห้าม `innerHTML` แม้แต่จุดเดียวในไฟล์นี้** และห้ามเขียน `element.style.x = ...`
- * เพราะ CSP เป็น `style-src 'self'` ไม่มี `unsafe-inline`
+ * **This file's security rule (same as ui.js):** a filename and path are
+ * values the user set themselves on disk — the DOM is only ever built with
+ * `createElement` + `textContent` · **not a single `innerHTML` anywhere in
+ * this file**, and never write `element.style.x = ...`, since the CSP is `style-src 'self'` with no `unsafe-inline`
  *
- * **ทุกคำสั่งวิ่งผ่าน `/api/v2/files/*` ซึ่งส่งต่อให้ agent เสมอ** — ไฟล์ถูกแตะใน
- * สิทธิ์ของเจ้าของเว็บผ่าน `Executor::asUser()` และถูกบันทึก audit ทุกครั้ง
- * หน้านี้ไม่มีทางลัดไปยัง filesystem และไม่มีระบบล็อกอินของตัวเอง
+ * **Every command travels through `/api/v2/files/*`, which always forwards
+ * to the agent** — a file is touched under the website owner's own
+ * privileges via `Executor::asUser()`, and every one is recorded to the
+ * audit log · this page has no shortcut to the filesystem and no login system of its own
  */
 (function () {
   'use strict';
 
   /**
-   * แปลข้อความ พร้อมส่งค่าแทนที่ให้ตัวแปลเอง
+   * Translates text, passing substitution values to the translator itself
    *
-   * **ห้ามใช้ `.replace('{count}', n)` กับผลลัพธ์** — `I18nManager.interpolate()`
-   * กิน `{...}` ทุกตัวในข้อความไปแล้วตั้งแต่ตอนแปล คีย์ `'{count} items'` ที่ไม่ได้
-   * ส่ง params มาด้วยจึงกลายเป็น "count รายการ" (วงเล็บหาย เหลือแต่ชื่อตัวแปร)
-   * แล้ว replace ทีหลังก็ไม่เจออะไรให้แทน · เจอจากการทดสอบบนเบราว์เซอร์จริง
+   * **Never call `.replace('{count}', n)` on the result** —
+   * `I18nManager.interpolate()` already consumes every `{...}` in the text
+   * during translation, so a key like `'{count} items'` called without
+   * params becomes "count items" (the braces are gone, only the variable
+   * name is left), and a later replace finds nothing left to substitute · found through testing in a real browser
    */
   const t = (text, params) => (window.Now && window.Now.translate
     ? window.Now.translate(text, params || {})
     : text);
   const fmt = () => window.formatters || {};
 
-  /** ไอคอนตามชนิดเชิงความหมายที่ `FileCatalog::kind()` ส่งมา */
+  /** Icons by the semantic kind `FileCatalog::kind()` sends */
   const KIND_ICON = {
     folder: 'icon-folder',
     image: 'icon-image',
@@ -48,14 +51,16 @@
   };
 
   /**
-   * ชนิดสื่อสำหรับ "ดูตัวอย่าง" — allowlist ไม่ใช่การเดาจาก Content-Type ของเซิร์ฟเวอร์
+   * Media types for "preview" — an allowlist, never a guess from the server's own Content-Type
    *
-   * `GET /files/download` ส่ง `application/octet-stream` เสมอโดยตั้งใจ (กัน stored XSS
-   * จากไฟล์ .html ของผู้ใช้) เบราว์เซอร์จึงเล่นไฟล์จาก URL นั้นตรง ๆ ไม่ได้ ·
-   * หน้านี้ดึงไบต์มาแล้วประกอบเป็น `data:` ที่ฝั่งเบราว์เซอร์เอง โดยยอมรับเฉพาะ
-   * นามสกุลในรายการนี้ — ชนิดที่ไม่รู้จักถูกเสนอให้ดาวน์โหลดแทน ไม่ใช่เดาชนิดให้
+   * `GET /files/download` always deliberately sends
+   * `application/octet-stream` (prevents stored XSS from a user's .html
+   * file), so the browser can't play a file directly from that URL at all ·
+   * this page fetches the bytes and assembles a `data:` URI on the browser
+   * side itself, only ever accepting an extension in this list — an
+   * unrecognized type is offered for download instead, never guessed at
    *
-   * SVG อยู่ในรายการได้เพราะแสดงผ่าน `<img>` ซึ่งตามสเปกแล้วรันสคริปต์ข้างในไม่ได้
+   * SVG can be in this list because it's shown via `<img>`, which per spec can never run a script inside it
    */
   const PREVIEW_TYPES = {
     png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
@@ -66,15 +71,16 @@
   };
 
   /*
-   * นามสกุลที่กด "แตกไฟล์" ได้ — ต้องตรงกับ `FileUnzip::kindOf()` ฝั่งเซิร์ฟเวอร์
+   * Extensions "extract" can be clicked for — must match the server side's `FileUnzip::kindOf()`
    *
-   * `gz` ครอบทั้ง `.tar.gz` และ `.sql.gz` เพราะ `extensionOf()` คืนส่วนหลังจุดสุดท้าย
-   * · ฝั่งเซิร์ฟเวอร์เป็นคนแยกว่าอันไหนเป็น tar อันไหนเป็นไฟล์เดี่ยว (เรียงลำดับสำคัญ
-   * ที่นั่น) ที่นี่แค่ตัดสินว่าจะแสดงเมนูไหม
+   * `gz` covers both `.tar.gz` and `.sql.gz`, since `extensionOf()` returns
+   * only what's after the last dot · the server side is what tells apart
+   * which is a tar and which is a single file (the order matters there) —
+   * here it only decides whether to show the menu item
    */
   const ARCHIVE_EXTENSIONS = ['zip', 'gz', 'tgz', 'tar'];
 
-  /** คำสั่งที่ต้องมีสิทธิ์ `file.manage` — ปุ่มและรายการเมนูของมันถูกซ่อนเมื่อไม่มีสิทธิ์ */
+  /** Commands that require the `file.manage` permission — their buttons and menu items are hidden without it */
   const WRITE_COMMANDS = ['mkdir', 'touch', 'upload', 'rename', 'cut', 'paste', 'zip', 'unzip', 'chmod', 'delete'];
 
   function el(tag, className, text) {
@@ -96,12 +102,13 @@
   }
 
   /**
-   * คำสั่งที่เปลี่ยนแปลงข้อมูลทุกตัววิ่งผ่านที่นี่ที่เดียว
+   * Every data-changing command travels through this one place
    *
-   * ใช้ `http.request` ตรง ๆ ไม่ใช่ `PhpcpApi.post/del` เพราะ **`http.delete()` ของ
-   * เฟรมเวิร์กตีความพารามิเตอร์ที่สองเป็น options ไม่ใช่ body** — `PhpcpApi.del()`
-   * จึงส่ง body ไม่ออก และคำสั่งลบจะกลายเป็นคำขอที่ไม่มีรายการอะไรติดไปเลย
-   * · เส้นทางนี้ยังได้ CSRF, การลองใหม่เมื่อ 419 และตัวแปลง envelope ครบเหมือนกัน
+   * Uses `http.request` directly, not `PhpcpApi.post/del`, because **the
+   * framework's `http.delete()` interprets the second parameter as options,
+   * not a body** — `PhpcpApi.del()` therefore can never send a body out at
+   * all, and a delete command would turn into a request with no item list
+   * attached whatsoever · this path still gets CSRF, the 419 retry, and the envelope converter, all the same
    */
   async function send(method, path, body) {
     const response = await window.http.request(window.PhpcpApi.base + path, {
@@ -112,7 +119,7 @@
     return window.PhpcpApi.unwrap(response);
   }
 
-  /** URL ของ endpoint ดาวน์โหลด — ใช้ทั้งกับปุ่มดาวน์โหลดและการดึงไบต์มาทำตัวอย่าง */
+  /** The download endpoint's URL — used by both the download button and fetching bytes for a preview */
   function downloadUrl(root, path) {
     return window.PhpcpApi.base + '/files/download?root=' + encodeURIComponent(root)
       + '&path=' + encodeURIComponent(path);
@@ -169,18 +176,18 @@
     };
 
     // -----------------------------------------------------------------------
-    // ตัวช่วยเล็ก ๆ
+    // Small helpers
     // -----------------------------------------------------------------------
     const selectedEntries = () => state.shown.filter((entry) => state.selected.has(entry.path));
 
     const fail = (error) => window.PhpcpUi.error(error);
 
     /**
-     * เส้นทางบนแถบที่อยู่ต้องตรงกับสิ่งที่เห็นเสมอ
+     * The path in the address bar must always match what's being shown
      *
-     * ใช้ `history.replaceState` ไม่ใช่ `RouterManager.navigate` เพราะการนำทางของ
-     * router จะเรนเดอร์เทมเพลตใหม่ทั้งหน้า — สถานะที่ผู้ใช้สร้างไว้ (สิ่งที่เลือก
-     * คลิปบอร์ด แถบโฟลเดอร์ที่กางอยู่) จะหายทุกครั้งที่เปลี่ยนโฟลเดอร์
+     * Uses `history.replaceState`, not `RouterManager.navigate`, because the
+     * router's own navigation would re-render the entire page's template —
+     * the state the user built up (what's selected, the clipboard, which folders are expanded) would be lost every time the folder changes
      */
     function syncUrl() {
       const url = new URL(window.location.href);
@@ -191,7 +198,7 @@
     }
 
     // -----------------------------------------------------------------------
-    // การโหลดข้อมูล
+    // Loading data
     // -----------------------------------------------------------------------
     async function loadScopes() {
       const result = await window.PhpcpApi.getFull('/files/roots');
@@ -232,8 +239,9 @@
         state.entries = Array.isArray(result.data) ? result.data : [];
         state.meta = result.meta || {};
 
-        // เส้นทางนำทางมาเฉพาะกับคำตอบของการ**เปิดโฟลเดอร์** — ผลการค้นหาข้ามโฟลเดอร์
-        // จึงไม่มีให้ · เก็บอันล่าสุดไว้ เพราะ "ตอนนี้อยู่ที่ไหน" ไม่ได้เปลี่ยนไปตามการค้นหา
+        // Breadcrumbs only arrive with an **opening-a-folder** response — a
+        // search that crosses folders never has any · the last one is kept,
+        // since "where we currently are" doesn't change just because of a search
         if (Array.isArray(state.meta.breadcrumb)) {
             state.crumbs = state.meta.breadcrumb;
         }
@@ -253,7 +261,7 @@
       syncUrl();
     }
 
-    /** โหลดโครงโฟลเดอร์ของขอบเขตปัจจุบันสองชั้นแรก */
+    /** Loads the current scope's folder tree, the first two levels deep */
     async function loadTree() {
       state.nodes.clear();
 
@@ -268,7 +276,7 @@
       renderTree();
     }
 
-    /** เก็บโหนดลง Map แบบแบน — ลูกที่ติดมากับคำตอบถูกเก็บแยกไปในคีย์ของตัวเอง */
+    /** Stores nodes in a flat Map — children that come attached to the response are stored under their own key separately */
     function storeNodes(path, nodes) {
       state.nodes.set(path, nodes.map((node) => ({
         name: node.name,
@@ -299,7 +307,7 @@
     }
 
     // -----------------------------------------------------------------------
-    // การนำทาง
+    // Navigation
     // -----------------------------------------------------------------------
     function goTo(path) {
       state.path = path;
@@ -307,7 +315,7 @@
       state.query = '';
       refs.search.value = '';
 
-      // เปิดกิ่งของโฟลเดอร์ที่กำลังไปให้เห็นในแถบซ้ายด้วย
+      // Also expands the destination folder's branch, so it shows in the left panel too
       let walked = '';
       state.expanded.add('');
       path.split('/').filter(Boolean).forEach((segment) => {
@@ -327,7 +335,7 @@
     }
 
     // -----------------------------------------------------------------------
-    // การวาดหน้าจอ
+    // Rendering
     // -----------------------------------------------------------------------
     function renderCrumbs() {
       refs.crumbs.textContent = '';
@@ -391,7 +399,7 @@
       return list;
     }
 
-    /** เรียงตามคอลัมน์ที่เลือก โดยโฟลเดอร์ขึ้นก่อนไฟล์เสมอ */
+    /** Sorts by the selected column, with folders always coming before files */
     function sortEntries() {
       const field = state.sort.field;
       const direction = state.sort.desc ? -1 : 1;
@@ -425,11 +433,12 @@
     }
 
     /**
-     * ทาสีการเลือกใหม่โดย**ไม่สร้าง DOM ใหม่**
+     * Repaints the selection **without rebuilding the DOM**
      *
-     * จำเป็นจริง ๆ ไม่ใช่แค่เรื่องความเร็ว: ถ้าวาดรายการใหม่ทุกครั้งที่คลิก แถวที่ถูก
-     * คลิกครั้งแรกจะถูกแทนที่ก่อนคลิกครั้งที่สองจะมาถึง เบราว์เซอร์จึงไม่นับเป็น
-     * `dblclick` เลย — ดับเบิลคลิกเพื่อเปิดโฟลเดอร์จะไม่ทำงานทั้งหน้า
+     * Genuinely necessary, not just about speed: if the list were redrawn on
+     * every click, the row from the first click would be replaced before the
+     * second click ever arrived, so the browser would never count it as a
+     * `dblclick` at all — double-clicking to open a folder would stop working across the entire page
      */
     function paintSelection() {
       state.rows.forEach((node, index) => {
@@ -563,7 +572,7 @@
       });
     }
 
-    /** เลือกตามปุ่มที่กดค้าง — เหมือนตัวจัดการไฟล์ของระบบปฏิบัติการ */
+    /** Selects according to which key is held down — same as the operating system's own file manager */
     function selectAt(index, event) {
       const entry = state.shown[index];
 
@@ -628,10 +637,10 @@
     }
 
     /**
-     * เปิด/ปิดปุ่มตามสิ่งที่เลือกอยู่
+     * Enables/disables buttons based on what's currently selected
      *
-     * `data-fm-need` บอกเงื่อนไขของแต่ละปุ่มไว้ในเทมเพลต — ตรรกะจึงอยู่ที่เดียว
-     * และการเพิ่มปุ่มใหม่ไม่ต้องมาแก้ฟังก์ชันนี้
+     * `data-fm-need` states each button's condition right in the template —
+     * so the logic lives in one place, and adding a new button never needs to touch this function
      */
     function renderCommands() {
       const chosen = selectedEntries();
@@ -640,8 +649,8 @@
       refs.commands.querySelectorAll('[data-fm-do]').forEach((node) => {
         const need = node.dataset.fmNeed;
 
-        // ปุ่มที่เปลี่ยนแปลงไฟล์ถูก**ซ่อน** ไม่ใช่แค่ปิดใช้งาน เมื่อไม่มีสิทธิ์
-        // file.manage — แถวปุ่มที่กดไม่ได้ครึ่งแถวไม่ได้บอกอะไรผู้ใช้นอกจากความสับสน
+        // A button that changes files is **hidden**, not just disabled, when
+        // the file.manage permission is missing — a toolbar half full of unclickable buttons tells the user nothing but confusion
         if (WRITE_COMMANDS.indexOf(node.dataset.fmDo) !== -1) {
           node.hidden = !state.canWrite;
         }
@@ -657,7 +666,7 @@
     }
 
     // -----------------------------------------------------------------------
-    // การเปิดรายการ
+    // Opening an item
     // -----------------------------------------------------------------------
     function open(entry) {
       if (entry.type === 'dir') {
@@ -679,8 +688,8 @@
     }
 
     function download(entry) {
-      // ลิงก์ชั่วคราวแทน window.open — endpoint ส่ง Content-Disposition: attachment
-      // อยู่แล้ว เบราว์เซอร์จึงบันทึกไฟล์ให้โดยไม่เปิดแท็บเปล่าค้างไว้
+      // A temporary link instead of window.open — the endpoint already sends
+      // Content-Disposition: attachment, so the browser saves the file without leaving a blank tab open
       const link = el('a');
 
       link.href = downloadUrl(state.root, entry.path);
@@ -692,7 +701,7 @@
     }
 
     // -----------------------------------------------------------------------
-    // กล่องซ้อน
+    // The modal
     // -----------------------------------------------------------------------
     function openModal(title, build, buttons) {
       refs.modalTitle.textContent = title;
@@ -723,7 +732,7 @@
       refs.modalFoot.textContent = '';
     }
 
-    /** กล่องกรอกค่าเดียว — ใช้กับสร้างโฟลเดอร์ สร้างไฟล์ เปลี่ยนชื่อ และตั้งชื่อไฟล์บีบอัด */
+    /** A single-value input modal — used for creating a folder, creating a file, renaming, and naming a compressed archive */
     function askText(title, label, value, onSubmit) {
       let input = null;
 
@@ -746,7 +755,7 @@
         onClick: () => submit()
       }]);
 
-      // เลือกเฉพาะส่วนชื่อ ไม่รวมนามสกุล — คนเปลี่ยนชื่อไฟล์แทบไม่เคยอยากเปลี่ยนนามสกุล
+      // Selects only the name part, not the extension — someone renaming a file almost never wants to change the extension too
       const dot = String(value || '').lastIndexOf('.');
       if (dot > 0) input.setSelectionRange(0, dot);
 
@@ -760,7 +769,7 @@
     }
 
     // -----------------------------------------------------------------------
-    // ตัวแก้ไขข้อความ
+    // The text editor
     // -----------------------------------------------------------------------
     async function openEditor(entry) {
       let file;
@@ -804,7 +813,7 @@
     }
 
     // -----------------------------------------------------------------------
-    // ตัวอย่างไฟล์ — ดึงไบต์มาแล้วประกอบเป็น data: ในเบราว์เซอร์
+    // File preview — fetches the bytes and assembles a data: URI in the browser
     // -----------------------------------------------------------------------
     async function openPreview(entry) {
       const mime = PREVIEW_TYPES[extensionOf(entry.name)];
@@ -851,7 +860,7 @@
     }
 
     // -----------------------------------------------------------------------
-    // คุณสมบัติ
+    // Properties
     // -----------------------------------------------------------------------
     async function showInfo(entry) {
       let info;
@@ -891,9 +900,9 @@
     }
 
     // -----------------------------------------------------------------------
-    // คำสั่งที่เปลี่ยนแปลงไฟล์
+    // Commands that change files
     // -----------------------------------------------------------------------
-    /** เรียกคำสั่ง แจ้งผล แล้วโหลดรายการใหม่ — คืน true เมื่อสำเร็จจริงเท่านั้น */
+    /** Calls a command, reports the result, then reloads the list — returns true only on genuine success */
     async function run(work, message) {
       try {
         await work();
@@ -958,8 +967,10 @@
     function paste() {
       if (!state.clipboard) return;
 
-      // ข้ามขอบเขตยังทำไม่ได้ — API รับ `root` เดียวต่อคำสั่ง และการคัดลอกข้ามขอบเขต
-      // แปลว่าข้ามสิทธิ์ของเจ้าของไฟล์ด้วย ซึ่งต้องออกแบบแยกไม่ใช่แถมมากับปุ่มวาง
+      // Crossing scopes still can't be done — the API accepts a single
+      // `root` per command, and copying across scopes would also mean
+      // crossing the file owner's own privileges, which needs its own
+      // separate design, not something tacked onto the paste button
       if (state.clipboard.root !== state.root) {
         window.NotificationManager.error(t('Paste works inside the same scope only'));
 
@@ -1064,7 +1075,7 @@
       const chosen = selectedEntries();
       if (chosen.length === 0) return;
 
-      // ลบถาวร ไม่มีถังขยะ — ต้องบอกให้ชัดก่อน ไม่ใช่ให้ผู้ใช้ค้นพบเอาเองทีหลัง
+      // A permanent delete, no trash bin — this must be stated clearly up front, not something the user discovers for themselves afterward
       const ok = await window.PhpcpUi.confirm({
         type: 'danger',
         title: t('Delete'),
@@ -1099,15 +1110,17 @@
     }
 
     /**
-     * ตัวเลือกไฟล์สำหรับปุ่ม "อัปโหลด" — สร้างเองและ**ไม่ใส่ลง DOM**
+     * The file picker for the "upload" button — built by hand and **never inserted into the DOM**
      *
-     * เขียนไว้ในเทมเพลตไม่ได้: `TextElementFactory` ของ Now.js แปลง
-     * `<input type="file">` ทุกตัวในหน้าเป็นวิดเจ็ตของตัวเอง (`div.file-display`)
-     * ซึ่งมองเห็นได้ แม้ input เดิมจะมีแอตทริบิวต์ `hidden` — ผลคือคำว่า "Choose file"
-     * ลอยค้างอยู่ท้ายหน้าตลอดเวลา · เจอจากการดูภาพหน้าจอของระบบจริง ไม่มีอะไรใน console ฟ้อง
+     * Can't be written in the template: Now.js's own `TextElementFactory`
+     * converts every `<input type="file">` on the page into its own widget
+     * (`div.file-display`), which stays visible even when the original input
+     * carries a `hidden` attribute — the result was the words "Choose file"
+     * floating at the bottom of the page permanently · found by looking at
+     * screenshots of the real system, nothing in the console ever flagged it
      *
-     * element ที่ไม่ได้อยู่ใน DOM ยังเปิดหน้าต่างเลือกไฟล์ได้ตามปกติ เมื่อ `click()`
-     * ถูกเรียกจากการกดของผู้ใช้จริง
+     * An element that isn't in the DOM still opens the file-picker dialog
+     * normally when `click()` is called from a genuine user gesture
      */
     let picker = null;
 
@@ -1126,7 +1139,7 @@
     }
 
     // -----------------------------------------------------------------------
-    // ตารางคำสั่ง — ชื่อใน `data-fm-do` ตรงกับคีย์ที่นี่
+    // The command table — a name in `data-fm-do` matches a key here
     // -----------------------------------------------------------------------
     const commands = {
       mkdir: makeDirectory,
@@ -1147,7 +1160,7 @@
     };
 
     // -----------------------------------------------------------------------
-    // เมนูคลิกขวา
+    // The right-click menu
     // -----------------------------------------------------------------------
     function openContextMenu(x, y, entry) {
       refs.context.textContent = '';
@@ -1204,8 +1217,8 @@
         refs.context.appendChild(line);
       });
 
-      // ตำแหน่งส่งผ่าน custom property — CSP ห้าม inline style แต่ setProperty
-      // เป็นการเซ็ตผ่าน CSSOM ซึ่งไม่ใช่แอตทริบิวต์ style จึงไม่ถูกบล็อก
+      // Position is passed via a custom property — the CSP forbids inline
+      // style, but setProperty sets it through the CSSOM, which isn't the style attribute, so it isn't blocked
       refs.context.hidden = false;
 
       const box = refs.context.getBoundingClientRect();
@@ -1221,7 +1234,7 @@
     }
 
     // -----------------------------------------------------------------------
-    // การผูกเหตุการณ์
+    // Binding events
     // -----------------------------------------------------------------------
     page.querySelectorAll('[data-tip]').forEach((node) => {
       const tip = t(node.dataset.tip);
@@ -1261,7 +1274,7 @@
       searchTimer = window.setTimeout(() => {
         const term = refs.search.value.trim();
 
-        // ต่ำกว่าสองตัวอักษรคือกลับไปดูโฟลเดอร์ตามปกติ — เท่ากับเกณฑ์ที่ agent บังคับ
+        // Fewer than two characters goes back to viewing the folder normally — matches the threshold the agent enforces
         state.query = term.length >= 2 ? term : '';
         state.page = 1;
         loadList();
@@ -1301,7 +1314,7 @@
       paintSelection();
     });
 
-    // --- คีย์ลัด ---
+    // --- Keyboard shortcuts ---
     const onKeyDown = (event) => {
       if (!refs.modal.hidden) {
         if (event.key === 'Escape') closeModal();
@@ -1352,12 +1365,12 @@
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('click', onDocumentClick);
 
-    // --- ลากไฟล์มาวาง ---
+    // --- Drag and drop ---
     let dragDepth = 0;
 
     const onDragEnter = (event) => {
       if (!state.canWrite) return;
-      // ลากรายการภายในหน้าเอง (ไม่ใช่ไฟล์จากเครื่อง) ไม่ต้องขึ้นชั้นวาง
+      // Dragging an item within the page itself (not a file from the machine) never needs the drop overlay
       if (Array.prototype.indexOf.call(event.dataTransfer.types || [], 'Files') === -1) return;
 
       dragDepth++;
@@ -1388,7 +1401,7 @@
     page.addEventListener('drop', onDrop);
 
     // -----------------------------------------------------------------------
-    // เริ่มทำงาน
+    // Startup
     // -----------------------------------------------------------------------
     (async function start() {
       try {

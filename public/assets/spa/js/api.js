@@ -1,32 +1,34 @@
 /**
- * ตัวเชื่อม REST API v2 ของ phpcp เข้ากับ Now.js — PLAN-V2 เฟส C1 ข้อ 3
+ * Adapts phpcp's REST API v2 to Now.js — PLAN-V2 phase C1, item 3
  *
- * ปัญหาที่ไฟล์นี้แก้: สองฝั่งพูดคนละสำเนียง และทั้งคู่เปลี่ยนไม่ได้
+ * The problem this file solves: the two sides speak different dialects, and neither can be changed
  *
  *   phpcp v2 (PLAN-V2 §4.2)   { ok, data, meta:{page, per_page, total, total_pages} }
  *                             { ok:false, error:{code, message, fields} }
  *   Now.js                    { success, message, data, meta:{page, pageSize, total, totalPages}, errors }
  *
- *   คำขอ: TableManager ส่ง page / pageSize / search / sort="ชื่อ asc"
- *         phpcp รับ        page / per_page / q    / sort="-ชื่อ"
+ *   Requests: TableManager sends page / pageSize / search / sort="name asc"
+ *             phpcp accepts    page / per_page / q    / sort="-name"
  *
- * ทางเลือกที่ **ไม่** เลือก และเหตุผล:
- *   - แก้ฝั่ง PHP ให้รับชื่อพารามิเตอร์สองแบบ — ได้สองชื่อต่อหนึ่งความหมายตลอดไป
- *     ขัดกับ §4.5 ที่เป็นสัญญาผูกมัด และ OpenAPI จะเลิกเป็นความจริงทั้งฉบับ
- *   - แก้ไฟล์ dist ของ Now.js — ทำให้ SHA256SUMS ไร้ความหมายและอัปเดตเวอร์ชันไม่ได้อีก
+ * Options **not** chosen, and why:
+ *   - Change the PHP side to accept both parameter names — that means two
+ *     names for one meaning forever, which conflicts with §4.5's binding
+ *     contract, and the OpenAPI spec would stop being fully true
+ *   - Edit Now.js's dist files — that makes SHA256SUMS meaningless and updating the version impossible afterward
  *
- * จึงแปลงที่ **จุดเดียวตรงกลาง** และเป็นจุดที่ประกาศไว้ในแผนอยู่แล้ว · ทุกอย่างใต้ไฟล์นี้
- * (TableManager, FormManager, ApiComponent, ResponseHandler) จึงทำงานตามค่าเริ่มต้นของมัน
- * โดยไม่ต้องรู้เลยว่าเซิร์ฟเวอร์พูดอีกสำเนียง
+ * So the conversion happens at **one single point in the middle**, and it's
+ * the exact point already declared in the plan · everything downstream of
+ * this file (TableManager, FormManager, ApiComponent, ResponseHandler) works
+ * on its own defaults, with no idea the server speaks a different dialect at all
  *
- * **ขอบเขต:** แปลงเฉพาะ URL ที่ขึ้นต้นด้วย /api/v2 เท่านั้น คำขออื่นปล่อยผ่านตามเดิม
+ * **Scope:** only converts URLs starting with /api/v2 — every other request passes through unchanged
  */
 (function () {
   'use strict';
 
   const BASE = '/api/v2';
 
-  /** true เมื่อ URL นี้เป็นของ REST API v2 (รับได้ทั้ง path ล้วนและ URL เต็ม) */
+  /** true when this URL belongs to REST API v2 (accepts both a bare path and a full URL) */
   function isV2(url) {
     if (typeof url !== 'string') return false;
     const path = url.startsWith('http') ? new URL(url, window.location.origin).pathname : url;
@@ -34,15 +36,18 @@
   }
 
   /**
-   * ชื่อพารามิเตอร์ของ Now.js → ชื่อของ phpcp (§4.5)
+   * Now.js's parameter names → phpcp's names (§4.5)
    *
-   * `sort` ต่างที่สุด: Now.js ส่ง "ชื่อ asc,อื่น desc" แต่ phpcp เรียงได้ทีละคอลัมน์
-   * และใช้ `-` นำหน้าแทน desc · เอาเฉพาะคอลัมน์แรกเพราะนั่นคือสิ่งที่ backend ทำได้จริง
-   * ทิ้งไปเงียบ ๆ ดีกว่าส่งค่าที่ backend จะปัดตกทั้งก้อนแล้วเรียงผิดจากที่ผู้ใช้กด
+   * `sort` differs the most: Now.js sends "name asc,other desc," but phpcp
+   * only sorts by one column at a time and uses a leading `-` for desc
+   * instead · only the first column is kept, since that's what the backend
+   * can actually do — dropping the rest silently is better than sending a
+   * value the backend would reject entirely, sorting differently from what the user clicked
    */
   function toV2Params(params) {
-    // ApiService ยอมรับ params ได้หลายรูป (string, URLSearchParams, object) — แปลงเฉพาะ
-    // object ธรรมดาเท่านั้น รูปอื่นแปลว่าผู้เรียกประกอบ query เองแล้ว ปล่อยผ่านตามเดิม
+    // ApiService accepts params in several shapes (string, URLSearchParams,
+    // object) — only a plain object is converted here; any other shape means
+    // the caller already assembled the query themselves, so it passes through unchanged
     if (!params || typeof params !== 'object' || params instanceof URLSearchParams) {
       return params;
     }
@@ -66,7 +71,7 @@
           out.sort = (direction || '').toLowerCase() === 'desc' ? '-' + field : field;
           break;
         }
-        // total/totalPages เป็นค่าที่ TableManager เก็บไว้เอง ไม่ใช่ตัวกรอง — ไม่ต้องส่งกลับ
+        // total/totalPages are values TableManager keeps for itself, not filters — never sent back
         case 'total':
         case 'totalPages':
           break;
@@ -79,19 +84,19 @@
   }
 
   /**
-   * meta ของ phpcp → meta ของ Now.js
+   * phpcp's meta → Now.js's meta
    *
-   * **เพิ่มคีย์ ไม่ใช่แทนที่** — meta ของ v2 ไม่ได้มีแค่การแบ่งหน้า หลาย endpoint
-   * ใส่ข้อมูลที่หน้าจอต้องใช้ไว้ที่นี่ (`keys` ของหน้าตั้งค่า, `levels` ของ log,
-   * `score` ของการสแกนความปลอดภัย) ถ้าคืนเฉพาะสี่คีย์ของการแบ่งหน้า ข้อมูลพวกนั้น
-   * จะหายไปเงียบ ๆ และหน้าจอจะว่างโดยไม่มี error ให้เห็น
+   * **Adds keys, never replaces** — v2's meta isn't only pagination, many
+   * endpoints put data the screen needs right here (the settings page's
+   * `keys`, a log's `levels`, a security scan's `score`) · returning only
+   * the four pagination keys would make that data disappear silently, leaving the screen blank with no error to see
    */
   function toNowMeta(meta) {
     const pageSize = Number(meta.per_page ?? meta.pageSize ?? 0) || 0;
     const total = Number(meta.total ?? 0) || 0;
     const out = Object.assign({}, meta);
 
-    // เติมชื่อที่ TableManager รู้จักเฉพาะเมื่อคำตอบเป็นแบบแบ่งหน้าจริง ๆ
+    // Only fills in the names TableManager recognizes when the response is genuinely paginated
     if ('per_page' in meta || 'total_pages' in meta) {
       out.page = Number(meta.page ?? 1) || 1;
       out.pageSize = pageSize;
@@ -103,21 +108,22 @@
   }
 
   /**
-   * body ของ v2 → body ที่ Now.js เข้าใจ
+   * v2's body → the body Now.js understands
    *
-   * เก็บ `error.code` ไว้ในชื่อ `code` ด้วย เพราะหน้าจอบางหน้าต้องแยกแยะสาเหตุจริง ๆ
-   * (เช่น QUOTA_EXCEEDED ต้องพาไปหน้าโควตา ไม่ใช่แค่ขึ้น toast แดง)
+   * Also kept under the name `code` from `error.code`, since some screens
+   * genuinely need to tell the cause apart (QUOTA_EXCEEDED, for example, must go to the quota page, not just pop a red toast)
    */
   function toNowBody(body, status) {
     if (!body || typeof body !== 'object') return body;
-    if (!('ok' in body)) return body;   // ไม่ใช่ envelope ของ v2 — ปล่อยตามเดิม
+    if (!('ok' in body)) return body;   // Not a v2 envelope — passed through unchanged
 
     if (body.ok === true) {
-      // แยกสามคีย์ของ envelope ออก แล้ว **ส่งคีย์ที่เหลือขึ้นไประดับบนสุดตามเดิม**
+      // Splits off the envelope's three keys, then **sends the rest up to the top level unchanged as before**
       //
-      // คำตอบของคำสั่งไม่มี `data` เลย (กฎ "คำตอบหนึ่งทำหน้าที่เดียว") ค่าที่ผู้เรียก
-      // ต้องใช้จึงอยู่ระดับ body · ถ้าห่อทุกอย่างลง `data` เฟรมเวิร์กจะแกะได้ชั้นใน
-      // แล้ว `actions` กับ `message` ที่อยู่ชั้นนอกจะหายไป
+      // A command's response has no `data` at all (the "one response, one
+      // job" rule) — the values a caller needs therefore live at the body
+      // level · wrapping everything in `data` would let the framework unwrap
+      // the inner layer, and `actions`/`message` sitting at the outer level would disappear
       const rest = {};
 
       Object.keys(body).forEach((key) => {
@@ -126,8 +132,8 @@
 
       const out = Object.assign({ success: true }, rest);
 
-      // คำตอบแบบอ่านเท่านั้นที่มี `data` — คำตอบแบบสั่งงานต้องไม่มี ไม่งั้น
-      // `response.data.data ?? response.data` ของเฟรมเวิร์กจะเลือกชั้นในเสมอ
+      // Only a read-only response has `data` — a command response must
+      // never have one, or the framework's `response.data.data ?? response.data` would always pick the inner layer
       if (body.data !== undefined) {
         out.data = body.data;
       }
@@ -136,7 +142,7 @@
         out.meta = toNowMeta(body.meta);
       }
 
-      // ข้อความสำเร็จที่ capability ส่งกลับมาในชั้น data — FormManager ใช้ขึ้น toast
+      // The success message a capability sent back at the data level — FormManager uses this to raise a toast
       if (out.message === undefined && body.data && typeof body.data === 'object'
           && typeof body.data.message === 'string') {
         out.message = body.data.message;
@@ -150,23 +156,25 @@
     return {
       success: false,
       code: error.code || 'INTERNAL_ERROR',
-      message: error.message || 'เกิดข้อผิดพลาด (' + status + ')',
+      message: error.message || (window.Now && window.Now.translate
+        ? window.Now.translate('An error occurred ({status})', { status })
+        : 'An error occurred (' + status + ')'),
       errors: error.fields || {},
       data: null
     };
   }
 
   /**
-   * สิ่งที่ต้องทำเมื่อได้รหัสข้อผิดพลาดแต่ละแบบ — PLAN-V2 §4.4 และหมายเหตุส่งมอบเฟส B
+   * What to do for each error code — PLAN-V2 §4.4, and the phase B handoff notes
    *
-   * ทำที่นี่ที่เดียวเพื่อให้ทุกหน้าจอมีพฤติกรรมเหมือนกันโดยไม่ต้องเขียนซ้ำ
-   * (ยกเว้น 419 ที่ต้องลองใหม่ ซึ่งจัดการใน patch ของ request ด้านล่าง)
+   * Done in this one place so every screen behaves the same way with no
+   * duplicated code (except 419, which needs a retry, handled in the request patch below)
    */
   function reactToError(status, body) {
     const code = body && body.code;
 
     if (status === 401 && code !== 'TWO_FACTOR_REQUIRED') {
-      // เซสชันหมดอายุระหว่างใช้งาน — พากลับหน้าล็อกอินโดยจำปลายทางไว้
+      // The session expired mid-use — sends the user back to login, remembering where they were headed
       if (window.PhpcpAuth) window.PhpcpAuth.onSessionLost();
       return;
     }
@@ -177,28 +185,29 @@
   }
 
   // ---------------------------------------------------------------------------
-  // จุดต่อที่ 1 — ชื่อพารามิเตอร์ของคำขอ GET
+  // Splice point 1 — a GET request's parameter names
   //
-  // ต้องต่อที่ ApiService.buildUrlWithParams เพราะ ApiService ประกอบ query string
-  // เสร็จแล้วจึงเรียก HttpClient ทำให้ request interceptor ของ HttpClient มองไม่เห็น
-  // พารามิเตอร์อีกต่อไป (มันได้รับแค่ config ไม่ได้รับ url)
+  // Has to be spliced at ApiService.buildUrlWithParams, because ApiService
+  // assembles the query string before calling HttpClient — by then,
+  // HttpClient's own request interceptor can no longer see the parameters
+  // (it only receives the config, not the url)
   // ---------------------------------------------------------------------------
   const buildUrl = window.ApiService.buildUrlWithParams.bind(window.ApiService);
 
   window.ApiService.buildUrlWithParams = function (url, params) {
     if (!isV2(url)) return buildUrl(url, params);
 
-    // ApiService ส่ง params มาได้ทั้ง object เดี่ยวและ array ของ object (กรณีมี options.params)
+    // ApiService sends params as either a single object or an array of objects (when options.params is used)
     const mapped = Array.isArray(params) ? params.map(toV2Params) : toV2Params(params);
 
     return buildUrl(url, mapped);
   };
 
   // ---------------------------------------------------------------------------
-  // จุดต่อที่ 2 — รูปร่างของคำตอบ
+  // Splice point 2 — the response's shape
   //
-  // ครอบทั้งสองเส้นทางที่เฟรมเวิร์กใช้จริง: HttpClient (ApiService, TableManager,
-  // FormManager) และ simpleFetch (ตัวสำรองที่บาง manager เรียกตรง)
+  // Covers both paths the framework genuinely uses: HttpClient (ApiService,
+  // TableManager, FormManager) and simpleFetch (the fallback some managers call directly)
   // ---------------------------------------------------------------------------
   window.http.addResponseInterceptor(
     (response) => adaptResponse(response),
@@ -226,12 +235,13 @@
   };
 
   // ---------------------------------------------------------------------------
-  // จุดต่อที่ 3 — 419 CSRF_INVALID: ขอ token ใหม่แล้วลองใหม่หนึ่งครั้ง (§4.4)
+  // Splice point 3 — 419 CSRF_INVALID: request a fresh token and retry once (§4.4)
   //
-  // ทำที่ระดับ HttpClient.request เพราะเป็นจุดเดียวที่ทั้ง ApiService และการเรียก
-  // http.* ตรง ๆ ผ่านเหมือนกันหมด · ลองใหม่ **ครั้งเดียว** เท่านั้น — ถ้าครั้งที่สอง
-  // ยัง 419 อีก แปลว่าเซสชันหมดอายุจริง ไม่ใช่แค่ token เก่า การวนซ้ำจะกลายเป็น
-  // การยิงคำสั่งที่เปลี่ยนข้อมูลซ้ำโดยที่ผู้ใช้ไม่ได้สั่ง
+  // Done at the HttpClient.request level, since that's the one place both
+  // ApiService and a direct http.* call pass through the same way · retries
+  // **exactly once** — if the second attempt still gets 419, the session has
+  // genuinely expired, not just an old token, and retrying further would
+  // turn into resending a data-changing command the user never asked for again
   // ---------------------------------------------------------------------------
   const rawRequest = window.http.request.bind(window.http);
 
@@ -239,8 +249,8 @@
     const response = await rawRequest(url, options);
 
     if (response && response.status === 419 && isV2(url) && !options.__csrfRetried) {
-      // token ใหม่มากับ header ของคำตอบ 419 อยู่แล้ว (CsrfProtection::withFreshToken)
-      // HttpClient เก็บให้เองตอนอ่าน header — เรียกซ้ำจึงได้ token ที่ถูกต้องทันที
+      // The fresh token already arrives in the 419 response's header
+      // (CsrfProtection::withFreshToken) — HttpClient stores it itself when reading the header, so a retry gets the right token immediately
       const fresh = response.headers && response.headers['x-csrf-token'];
       if (fresh) window.http.setCsrfToken(fresh);
 
@@ -251,13 +261,13 @@
   };
 
   // ---------------------------------------------------------------------------
-  // ตัวช่วยเรียก API แบบตรง ๆ สำหรับกรณีที่ data-attribute ทำแทนไม่ได้
-  // (ปุ่มที่ต้องถามยืนยันสามระดับ, การ poll สถานะ, การอ่านค่ามาเติมกราฟ)
+  // A direct API-calling helper for cases a data-attribute can't cover
+  // (a button needing a three-level confirmation, polling status, reading a value to fill a graph)
   // ---------------------------------------------------------------------------
   const Api = {
     base: BASE,
 
-    /** ประกอบ path ของ v2 จากชิ้นส่วน โดย encode ทุกชิ้นให้เอง */
+    /** Assembles a v2 path from its pieces, encoding each one itself */
     url(...parts) {
       return BASE + '/' + parts.map((p) => encodeURIComponent(String(p))).join('/');
     },
@@ -268,11 +278,12 @@
     },
 
     /**
-     * เหมือน get แต่คืน `meta` มาด้วย
+     * Like get, but also returns `meta`
      *
-     * หลาย endpoint ใส่ข้อมูลที่หน้าจอต้องใช้ไว้ใน meta ไม่ใช่ data — เช่นรายการคีย์
-     * ที่แก้ได้ของหน้าตั้งค่า, ระดับ log ที่กรองได้, และคะแนนรวมของการสแกนความปลอดภัย
-     * (เพราะ data เป็น array ของรายการตรวจ) · §4.2 อนุญาตไว้แล้วว่า meta มีได้เมื่อจำเป็น
+     * Many endpoints put data the screen needs into meta rather than data —
+     * the settings page's list of editable keys, a log's filterable levels,
+     * and a security scan's overall score (since data is an array of check
+     * items) · §4.2 already permits meta to hold whatever's necessary
      */
     async getFull(path, params) {
       const response = await window.ApiService.get(BASE + path, params || {}, { cache: false });
@@ -293,29 +304,33 @@
     del(path, body) { return Api.send('delete', path, body); },
 
     /**
-     * คืน data เมื่อสำเร็จ · โยน Error ที่พก code/fields ไปด้วยเมื่อไม่สำเร็จ
+     * Returns data on success · throws an Error carrying code/fields along with it on failure
      *
-     * 204 ไม่มี body — ถือว่าสำเร็จและคืน object ว่าง ไม่ใช่ error
+     * 204 has no body — treated as success, returning an empty object, never an error
      */
     unwrap(response) {
       const body = response && response.data;
 
       if (response && response.status === 204) return {};
 
-      // **ซองของ API ตัวนี้คือ `{ok: true, data, meta}`** ตามที่ ApiController เขียนไว้
-      // ไม่ใช่ `{success: true}` · โค้ดเดิมตรวจแต่ `success` จึงโยน error ให้ทุกคำตอบ
-      // ที่สำเร็จ แล้วผู้เรียกที่ดักไว้เงียบ ๆ ก็แสดงผลว่างเปล่าโดยไม่มีอะไรฟ้อง
-      // (คะแนนความปลอดภัยกับแถบวัดในหน้า Security หายไปทั้งคู่เพราะเรื่องนี้)
+      // **This API's envelope is `{ok: true, data, meta}`**, as
+      // ApiController writes it — never `{success: true}` · the old code
+      // only checked `success`, so it threw an error for every successful
+      // response, and a caller that caught it silently would just render
+      // empty with nothing flagging the cause (this is why both the
+      // security score and the meter bar on the Security page disappeared)
       //
-      // ยังรับ `success` ต่อไปเพื่อไม่ให้ endpoint เก่าหรือของนอกระบบพังตาม
+      // Still accepts `success` too, so an older or external endpoint doesn't break along with it
       if (body && (body.ok === true || body.success === true)) {
-        // คำตอบแบบ "ทำสำเร็จ" ไม่มีคีย์ `data` — ค่าที่ผู้เรียกต้องใช้อยู่ระดับบนสุด
-        // ร่วมกับ `message` (ดู ApiController::done) · คืน body ทั้งก้อนในกรณีนั้น
-        // ไม่ใช่ undefined ซึ่งจะทำให้ `result.url` / `result.message` พังทันที
+        // A "succeeded" response has no `data` key at all — the value a
+        // caller needs lives at the top level alongside `message` (see
+        // ApiController::done) · returns the whole body in that case,
+        // never undefined, which would immediately break `result.url` / `result.message`
         return body.data !== undefined ? body.data : body;
       }
 
-      const error = new Error((body && body.message) || (response && response.statusText) || 'คำขอล้มเหลว');
+      const error = new Error((body && body.message) || (response && response.statusText)
+        || (window.Now && window.Now.translate ? window.Now.translate('The request failed') : 'The request failed'));
       error.code = (body && body.code) || 'INTERNAL_ERROR';
       error.status = response ? response.status : 0;
       error.fields = (body && body.errors) || {};

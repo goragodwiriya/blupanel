@@ -1,18 +1,21 @@
 /**
- * เซสชันและสิทธิ์ฝั่งหน้าเว็บ — PLAN-V2 เฟส C1 ข้อ 4
+ * The web page's session and permissions — PLAN-V2 phase C1, item 4
  *
- * **ไม่ใช้ AuthManager ของ Now.js โดยตั้งใจ** (ต่อยอดจากการตัดสินใจ N6):
- * AuthManager ออกแบบมาสำหรับ token ที่ JS ถืออยู่ — มันเก็บผู้ใช้ลง localStorage,
- * ต่ออายุ token เอง และคาดหวังคำตอบรูป {success, token, user} · phpcp ไม่มี token
- * ให้ JS เลยแม้แต่ตัวเดียว ความจริงทั้งหมดอยู่ที่คุกกี้ HttpOnly + ตารางเซสชันบนเซิร์ฟเวอร์
- * การยัด AuthManager เข้ามาจะได้สำเนาสถานะชุดที่สองที่ไม่มีวันตรงกับของจริง
+ * **Deliberately doesn't use Now.js's own AuthManager** (building on decision
+ * N6): AuthManager is designed for a token JS itself holds — it stores the
+ * user in localStorage, renews the token itself, and expects a response
+ * shaped {success, token, user} · phpcp gives JS no token at all, not even
+ * one — the entire truth lives in the HttpOnly cookie plus the session table
+ * on the server · forcing AuthManager in would just create a second copy of state that could never match the real one
  *
- * แทนที่ด้วยของที่เล็กกว่าและตรงกับระบบ: เรียก `GET /api/v2/session` หนึ่งครั้งตอนเปิดแอป
- * (คำขอเดียวได้ครบทั้งสถานะล็อกอิน, CSRF token, โหมด, สถานะ agent และรายการสิทธิ์)
- * แล้วให้ router ถามสถานะนั้นก่อนเข้าทุกหน้า
+ * Replaced with something smaller that matches the system: call `GET
+ * /api/v2/session` once when the app opens (one request gets the full
+ * picture — login status, CSRF token, mode, agent status, and the
+ * permission list) and let the router check that status before entering every page
  *
- * **สิทธิ์ที่เก็บไว้ที่นี่ใช้เพื่อซ่อน/แสดงเมนูเท่านั้น** — §4.4 ระบุชัดว่าการบังคับสิทธิ์จริง
- * ยังอยู่ที่ middleware และ agent เหมือนเดิม ห้ามคิดว่าซ่อนปุ่มแล้วปลอดภัย
+ * **The permissions stored here are only used to show/hide menu items** —
+ * §4.4 states plainly that real permission enforcement still lives at the
+ * middleware and the agent, exactly as before — never assume hiding a button makes anything safe
  */
 (function () {
   'use strict';
@@ -29,19 +32,21 @@
     agentAvailable: true
   };
 
-  /** เส้นทางที่เข้าได้โดยยังไม่ล็อกอิน */
+  /** Routes reachable without being signed in */
   const PUBLIC_ROUTES = ['/login', '/login-2fa'];
 
   /**
-   * เก็บ CSRF token ไว้ในทุกที่ที่เฟรมเวิร์กไปหยิบ
+   * Stores the CSRF token everywhere the framework goes to fetch it
    *
-   * มีสามที่จริง ๆ ไม่ใช่ที่เดียว: `HttpClient` เก็บในตัวมันเอง · `simpleFetch` อ่านจาก
-   * `<meta name="csrf-token">` เท่านั้น (ไม่มี state ของตัวเอง) · `SecurityManager`
-   * อ่าน meta ตอน init แล้วข้ามการยิงขอ token ใหม่ถ้าเจอ
+   * There are genuinely three places, not one: `HttpClient` stores it in
+   * itself · `simpleFetch` only reads from `<meta name="csrf-token">` (has
+   * no state of its own) · `SecurityManager` reads the meta tag at init and
+   * skips firing a request for a fresh token if it finds one
    *
-   * ตั้ง meta ตั้งแต่ตอน bootstrap จึงประหยัดคำขอไปหนึ่งครั้ง และที่สำคัญกว่าคือ
-   * ทำให้ทุกเส้นทางเห็น token **ตัวเดียวกัน** — ตอน session หมุน (ทุก 15 นาที) ถ้ามีที่ใด
-   * ที่หนึ่งถือของเก่าไว้ คำขอจากที่นั่นจะโดน 419 แบบสุ่มที่หาสาเหตุยากมาก
+   * Setting the meta tag right from bootstrap saves one request, and more
+   * importantly makes every path see the **exact same** token — when the
+   * session rotates (every 15 minutes), if any one of these held an old
+   * value, a request from there would get a random, very hard-to-diagnose 419
    */
   function setCsrfToken(token) {
     window.http.setCsrfToken(token);
@@ -63,9 +68,10 @@
     state.twoFactorPending = data.two_factor_pending === true;
     state.mustChangePassword = data.must_change_password === true;
     state.user = data.user || null;
-    // `GET /api/v2/session` ส่งสิทธิ์เป็น **map ที่มีครบทุกตัว** พร้อมค่า true/false
-    // เพื่อให้เทมเพลตเขียน `data-if="permissions['x']"` ได้ตรง ๆ (บนอาร์เรย์จะได้
-    // undefined ซึ่ง data-if ตีความว่า "แสดง")
+    // `GET /api/v2/session` sends permissions as a **map that carries every
+    // one of them**, each with a true/false value, so a template can write
+    // `data-if="permissions['x']"` directly (an array would give
+    // undefined, which data-if interprets as "show")
     state.permissions = data.permissions && typeof data.permissions === 'object'
       ? data.permissions
       : {};
@@ -83,12 +89,12 @@
   const Auth = {
     state: state,
 
-    /** อ่านสถานะแบบคัดลอก เพื่อไม่ให้ผู้เรียกแก้ของกลางโดยไม่ตั้งใจ */
+    /** Reads state as a copy, so a caller can't accidentally edit the shared state */
     snapshot() {
       return Object.assign({}, state, { user: state.user ? Object.assign({}, state.user) : null });
     },
 
-    /** ดึงสถานะจากเซิร์ฟเวอร์ — เรียกตอนเปิดแอป และทุกครั้งที่สถานะอาจเปลี่ยน */
+    /** Fetches state from the server — called when the app opens, and any time the state might have changed */
     async refresh() {
       const data = await window.PhpcpApi.get('/session');
       apply(data);
@@ -108,16 +114,17 @@
     },
 
     /**
-     * ออกจากระบบ
+     * Sign out
      *
-     * ล้างสถานะในหน้าเว็บเสมอแม้คำขอจะล้มเหลว — ผู้ใช้ที่กดออกจากระบบต้องได้ผลลัพธ์
-     * ที่คาดเดาได้เสมอ และคุกกี้ที่ยังค้างอยู่จะถูกปฏิเสธเองเมื่อเซิร์ฟเวอร์ลบเซสชันแล้ว
+     * Always clears the web page's state even if the request fails — a user
+     * who clicks sign out must always get a predictable result, and a cookie
+     * still lingering will be rejected on its own once the server has deleted the session
      */
     async logout() {
       try {
         await window.PhpcpApi.del('/session');
       } catch (e) {
-        /* ไม่ต้องทำอะไร — ล้างสถานะข้างล่างแล้วพาไปหน้าล็อกอินอยู่ดี */
+        /* Nothing to do — the state below gets cleared and the user goes back to login regardless */
       }
 
       state.authenticated = false;
@@ -133,7 +140,7 @@
       return state.permissions[permission] === true;
     },
 
-    /** true เมื่อมีสิทธิ์อย่างน้อยหนึ่งตัวในรายการ — ใช้ตัดสินว่าจะแสดงเมนูกลุ่มไหม */
+    /** true when at least one permission in the list is held — used to decide whether to show a menu group */
     canAny(permissions) {
       return permissions.some(Auth.can);
     },
@@ -149,10 +156,11 @@
     },
 
     /**
-     * เซสชันหายระหว่างใช้งาน (ได้ 401 จากคำขอใด ๆ)
+     * The session was lost mid-use (a 401 from any request)
      *
-     * จำหน้าที่ผู้ใช้อยู่ไว้ก่อนพาไปล็อกอิน เพื่อพากลับมาที่เดิมหลังล็อกอินเสร็จ —
-     * เก็บเฉพาะ path ภายในของ SPA เท่านั้น กัน open redirect แบบเดียวกับฝั่ง PHP
+     * Remembers the page the user was on before sending them to login, to
+     * return them there once signed in again — only ever stores an internal
+     * SPA path, guarding against an open redirect the same way the PHP side does
      */
     onSessionLost() {
       if (!state.authenticated) return;
@@ -168,7 +176,7 @@
       window.RouterManager.navigate('/login');
     },
 
-    /** ปลายทางหลังล็อกอินสำเร็จ */
+    /** The destination after a successful login */
     takeIntended() {
       const next = Auth.intended || '/';
       Auth.intended = null;
@@ -176,13 +184,16 @@
     },
 
     /**
-     * ด่านหน้าทุกเส้นทางของ router
+     * The gate every one of the router's routes passes through
      *
-     * คืน string = ให้ router เปลี่ยนไปเส้นทางนั้นแทน · คืน true = ผ่าน
+     * Returns a string = tells the router to go to that route instead ·
+     * returns true = passes through
      *
-     * ลำดับการตัดสินสำคัญ: ยืนยัน 2FA มาก่อนเปลี่ยนรหัสผ่าน และทั้งคู่มาก่อนสิทธิ์ของหน้า
-     * ให้ตรงกับลำดับใน `Middleware\Authenticate` ฝั่ง PHP — ถ้าสองฝั่งเรียงไม่เหมือนกัน
-     * ผู้ใช้จะเจอหน้าที่ขึ้นมาแล้วทุกคำขอในหน้านั้นถูกปฏิเสธ ซึ่งดูเหมือนระบบพัง
+     * The decision order matters: confirming 2FA comes before changing the
+     * password, and both come before a page's own permission, matching the
+     * order in `Middleware\Authenticate` on the PHP side exactly — if the
+     * two sides order these differently, the user would see a page come up
+     * with every request inside it rejected, which looks like the system is broken
      */
     guard(to) {
       const path = (to && to.path) || '/';
@@ -196,7 +207,7 @@
       }
 
       if (PUBLIC_ROUTES.indexOf(path) !== -1) {
-        return '/';   // ล็อกอินแล้วยังเปิดหน้าล็อกอินอีก
+        return '/';   // Already signed in but still opening the login page
       }
 
       if (state.mustChangePassword && path !== '/change-password') {

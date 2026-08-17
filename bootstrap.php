@@ -3,14 +3,14 @@
 declare(strict_types=1);
 
 /**
- * จุดเริ่มต้นร่วมของทุก entry point — public/index.php, bin/phpcp, bin/phpcp-agentd
+ * The shared starting point for every entry point — public/index.php, bin/phpcp, bin/phpcp-agentd
  *
- * ไม่มี Composer ตามการตัดสินใจ D6 จึงใช้ autoloader PSR-4 ที่เขียนเองสั้น ๆ
- * ข้อดีเพิ่มเติมคือ opcache แคชไฟล์นี้ได้ทั้งไฟล์ ไม่มีการ scan directory ตอน runtime
+ * No Composer, per decision D6, so this uses a short hand-written PSR-4
+ * autoloader · the added benefit is that opcache can cache this whole file, with no directory scan at runtime
  */
 
 if (PHP_VERSION_ID < 80100) {
-    fwrite(STDERR, 'phpcp ต้องการ PHP 8.1 ขึ้นไป (พบ ' . PHP_VERSION . ")\n");
+    fwrite(STDERR, 'phpcp requires PHP 8.1 or newer (found ' . PHP_VERSION . ")\n");
     exit(1);
 }
 
@@ -27,7 +27,7 @@ spl_autoload_register(static function (string $class): void {
     }
 });
 
-// ค่าที่ต้องบังคับเหมือนกันทุก entry point ไม่ว่า php.ini ของเครื่องจะตั้งมาอย่างไร
+// Values that must be forced the same way at every entry point, regardless of how the machine's php.ini is set
 mb_internal_encoding('UTF-8');
 date_default_timezone_set('Asia/Bangkok');
 ini_set('display_errors', '0');

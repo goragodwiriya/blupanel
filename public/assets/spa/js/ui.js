@@ -1,21 +1,23 @@
 /**
- * เปลือกของหน้าจอ — เมนูข้าง แถบบน แถบเตือนโหมด และตัวช่วยที่ทุกหน้าใช้ร่วมกัน
- * PLAN-V2 เฟส C1 ข้อ 5
+ * The screen's shell — the sidebar, topbar, mode-warning bar, and helpers every page shares
+ * PLAN-V2 phase C1, item 5
  *
- * **กฎความปลอดภัยของไฟล์นี้ (PLAN-V2 §C2–C3):** core ของ Now.js มี `innerHTML` 135 จุด
- * ข้อมูลที่ผู้ใช้หรือ OS ควบคุมได้ (ชื่อโดเมน ชื่อไฟล์ ข้อความ error) **ต้องผูกแบบ text
- * เท่านั้น** · ที่นี่ใช้ `textContent` และ `createElement` ล้วน · ค่าคงที่ของเมนูเป็นของ
- * โปรเจกต์เอง ไม่ได้มาจากเซิร์ฟเวอร์ จึงไม่มีทางเป็นพาหะของ XSS
+ * **This file's security rule (PLAN-V2 §C2–C3):** Now.js's own core has 135
+ * `innerHTML` call sites — data a user or the OS controls (a domain name, a
+ * filename, an error message) **must only ever be bound as text** · this
+ * file only ever uses `textContent` and `createElement` · the menu's own
+ * constants belong to this project, never come from the server, and so can never be an XSS carrier
  */
 (function() {
   'use strict';
 
   /**
-   * โครงเมนู — ตรงกับ `Kernel\Navigation::sections()` ฝั่ง PHP
+   * The menu's structure — matches `Kernel\Navigation::sections()` on the PHP side
    *
-   * `permission` ที่นี่ทำหน้าที่เดียวกับฝั่งนั้นคือ **ตัดรายการที่กดไปแล้วจะได้ 403 ออก**
-   * ไม่ใช่การบังคับสิทธิ์ · หมวดที่ไม่เหลือรายการจะไม่ถูกแสดงทั้งหมวด ผู้ดูแลเว็บไซต์
-   * จึงไม่เห็นแม้แต่คำว่า "SERVER" ซึ่งเป็นเกณฑ์รับงานข้อหนึ่งของเฟสนี้
+   * `permission` here does the exact same job as that side: **it removes an
+   * item that would get 403 if clicked**, it never enforces a permission ·
+   * a section left with no items isn't shown at all, so a website admin
+   * never sees even the word "SERVER" — one of this phase's own acceptance criteria
    */
   const MENU = [
     {
@@ -32,9 +34,10 @@
         {key: 'ssl', label: 'SSL Certificates', url: '/certificates', icon: 'icon-lock', permission: 'ssl.view'},
         {key: 'php', label: 'PHP', url: '/php-versions', icon: 'icon-code', permission: 'php.view'},
         {key: 'databases', label: 'Databases', url: '/databases', icon: 'icon-database', permission: 'db.view'},
-        // `newTab` เปิดตัวจัดการไฟล์เป็นแท็บของตัวเอง — หน้านั้นกินทั้งจอ (แถบโฟลเดอร์
-        // + รายการไฟล์ + แถบสถานะ) การซ้อนเมนูของ panel ไว้อีกชั้นทำให้เหลือที่แสดง
-        // ชื่อไฟล์ไม่พอ · และการทำงานกับไฟล์มักต้องสลับกลับไปดูหน้าอื่นของ panel ไปด้วย
+        // `newTab` opens the file manager in its own tab — that page fills
+        // the entire screen (folder tree + file list + status bar), and
+        // stacking the panel's own menu on top would leave too little room
+        // to show filenames · working with files also often means switching back to look at another panel page too
         {key: 'files', label: 'File Manager', url: '/filemanager', icon: 'icon-folder', permission: 'file.view', newTab: true},
         {key: 'cron', label: 'Cron Jobs', url: '/cron-jobs', icon: 'icon-clock', permission: 'cron.view'},
         {key: 'mail', label: 'Mailboxes', url: '/mailboxes', icon: 'icon-email', permission: 'mail.view'},
@@ -51,7 +54,7 @@
         {key: 'firewall', label: 'Firewall', url: '/firewall', icon: 'icon-fire', permission: 'firewall.view'},
         {key: 'ssh', label: 'SSH', url: '/ssh', icon: 'icon-keyboard', permission: 'ssh.view'},
         {key: 'logs', label: 'Logs', url: '/logs', icon: 'icon-list', permission: 'log.view'},
-        // ตั้งแต่เฟส M ผู้ดูแลกับลูกค้าอยู่ทรัพยากรเดียวกัน (`/api/v2/users`) จึงเหลือเมนูเดียว
+        // Since phase M, admins and customers share the same resource (`/api/v2/users`), so only one menu item is left
         {key: 'users', label: 'Users', url: '/users', icon: 'icon-users', permission: 'user.view'},
         {key: 'settings', label: 'Settings', url: '/settings', icon: 'icon-cog', permission: 'settings.view'}
       ]
@@ -67,7 +70,7 @@
     return node;
   }
 
-  /** หมวดที่ผู้ใช้ปัจจุบันเห็นได้จริง */
+  /** The sections the current user can genuinely see */
   function visibleSections() {
     return MENU
       .map((section) => ({
@@ -78,13 +81,13 @@
   }
 
   // ---------------------------------------------------------------------------
-  // เมนูข้าง
+  // The sidebar
   // ---------------------------------------------------------------------------
   /**
-   * เส้นทางของ SPA อยู่ใต้ `/app` แต่ router รู้จักมันในชื่อที่ไม่มี base
+   * The SPA's routes live under `/app`, but the router knows them by a name with no base
    *
-   * จึงต้องใส่ทั้งสองอย่าง: `href` เป็น URL จริงเพื่อให้เปิดแท็บใหม่/คัดลอกลิงก์ได้ถูกต้อง
-   * และ `data-route` เป็นชื่อเส้นทางเพื่อให้ router รับช่วงตอนคลิกปกติ (ไม่โหลดหน้าใหม่)
+   * So both must be set: `href` as the real URL, so opening a new tab or
+   * copying the link works correctly, and `data-route` as the route name, so the router takes over on a normal click (no page reload)
    */
   function link(node, route) {
     node.href = '/app' + (route === '/' ? '' : route);
@@ -93,12 +96,15 @@
   }
 
   window.Now.getManager('component').define('sidebar', {
-    // `sidemenu-panel` คือคลาสที่ทำให้เป็นแผงซ้ายแบบ fixed กว้าง `--menu-width`
-    // และเป็นคลาสที่กฎ `.sidemenu-close .sidemenu-panel` (ปุ่มยุบเมนู) ใช้จับ
-    // ขาดคลาสนี้แล้วเมนูจะไหลตามเนื้อหาปกติ กินความกว้างทั้งจอ และดันเนื้อหาลงไปข้างล่าง
-    // ส่วนหัวเป็นข้อความคงที่ จึงอยู่ในเทมเพลตพร้อม data-i18n ไม่ต้องสร้างจาก JS
-    // และอยู่**นอก** <nav class="sidemenu"> เพราะ nav เลื่อนได้ — ถ้าอยู่ข้างในโลโก้
-    // จะเลื่อนหายไปพร้อมเมนูเมื่อรายการยาวเกินจอ
+    // `sidemenu-panel` is the class that makes this a fixed left panel,
+    // `--menu-width` wide, and it's the class the
+    // `.sidemenu-close .sidemenu-panel` rule (the collapse button) grabs
+    // onto — without it, the menu flows like ordinary content, fills the
+    // whole screen's width, and pushes the page content down · the header
+    // is static text, so it lives in the template with data-i18n, never
+    // needing to be built from JS · and it sits **outside**
+    // `<nav class="sidemenu">`, since nav itself can scroll — if the logo
+    // were inside it, it would scroll away along with the menu once the list is longer than the screen
     template: [
       '<aside class="sidebar sidemenu-panel">',
       '  <div class="sidebar-header">',
@@ -110,8 +116,8 @@
     ].join(''),
 
     mounted() {
-      // ComponentManager **แทนที่** element เจ้าบ้านด้วย root ของเทมเพลต — this.element
-      // คือ <aside class="sidebar"> ตัวใหม่ ไม่ใช่ <aside data-component="sidebar"> เดิม
+      // ComponentManager **replaces** the host element with the template's
+      // own root — this.element is the new <aside class="sidebar">, never the original <aside data-component="sidebar">
 
       const nav = this.element.querySelector('.sidemenu');
       const list = el('ul');
@@ -129,8 +135,8 @@
           const anchor = link(el('a', item.icon), item.url);
           anchor.dataset.navKey = item.key;
 
-          // รายการที่เปิดแท็บใหม่ต้อง**ไม่มี `data-route`** — ไม่งั้น router จะดักคลิก
-          // แล้วเรนเดอร์ทับหน้าเดิมในแท็บนี้ ก่อนที่เบราว์เซอร์จะได้เปิดแท็บใหม่เลย
+          // An item that opens a new tab must have **no `data-route`** — or
+          // the router would intercept the click and render over the current tab before the browser ever gets to open the new one
           if (item.newTab) {
             delete anchor.dataset.route;
             anchor.target = '_blank';
@@ -145,22 +151,26 @@
 
       nav.appendChild(list);
 
-      // **ต้องบอก MenuManager เองหลังใส่ <ul> เสร็จ**
+      // **Must tell MenuManager itself, right after inserting the `<ul>`**
       //
-      // `createMenu()` ข้ามเมนูที่ยังไม่มี `<ul>` ("empty menu") และ MutationObserver
-      // ของมันเห็น <nav> ตอนที่ ComponentManager แทรกเข้า DOM ซึ่งเป็นจังหวะที่รายการ
-      // ยังไม่ถูกสร้าง — เมนูจึงไม่เคยถูกลงทะเบียน และไม่มีอะไรกระตุ้นให้ลองใหม่อีก
+      // `createMenu()` skips a menu that has no `<ul>` yet ("empty menu"),
+      // and its own MutationObserver sees the `<nav>` at the moment
+      // ComponentManager inserts it into the DOM — the exact moment the
+      // items don't exist yet — so the menu never gets registered, and nothing ever triggers a retry
       //
-      // อาการคือปุ่มยุบเมนูกดแล้วไม่มีอะไรเกิดขึ้น: ตัวฟังคลิกเป็น delegation ที่ระดับ
-      // document จึงทำงานปกติ แต่มันวนหาเมนูใน `state.menus` ที่ว่างเปล่า
+      // The symptom was clicking the collapse button and nothing happening:
+      // the click listener is delegated at the document level, so it fires
+      // normally, but it searches for the menu in an empty `state.menus`
       window.MenuManager.createMenu(nav);
 
-      // ทำเครื่องหมายรายการที่กำลังเปิดอยู่เอง
+      // Marks the currently open item itself
       //
-      // `MenuManager.updateActiveMenu()` **ตัด base ออกจากเส้นทางปัจจุบัน** (`/app/services`
-      // → `/services`) แล้วเทียบกับค่าใน `href` ตรง ๆ · แต่ `href` ของเราต้องเป็น URL เต็ม
-      // (`/app/services`) เพื่อให้เปิดแท็บใหม่และคัดลอกลิงก์ได้ถูกต้อง สองค่านี้จึงไม่มีวันตรงกัน
-      // · เทียบกับ `data-route` ที่เก็บชื่อเส้นทางแบบไม่มี base ไว้อยู่แล้วแทน
+      // `MenuManager.updateActiveMenu()` **strips the base off the current
+      // path** (`/app/services` → `/services`) and compares it directly
+      // against the value in `href` · but our `href` has to be the full URL
+      // (`/app/services`), so opening a new tab and copying the link both
+      // work correctly — so these two values could never match · compared
+      // against `data-route` instead, which already stores the route name with no base
       const markActive = () => {
         const here = window.RouterManager.getPath();
 
@@ -181,12 +191,13 @@
       this._offRoute = window.EventManager.on('route:changed', markActive);
 
       /*
-       * ป้ายของเมนูสร้างด้วย JS จึงไม่มี `data-i18n` ให้ตัวแปลภาษาไล่เก็บ
+       * A menu label is built with JS, so it has no `data-i18n` for the translator to pick up
        *
-       * `I18nManager.updateElements()` แปลเฉพาะ element ที่มี `data-i18n` ติดอยู่ ·
-       * เมนูข้างจึงค้างเป็นภาษาเดิมทั้งแถบตอนกดสลับภาษา ทั้งที่ทุกอย่างรอบตัวเปลี่ยนหมด
-       * — เขียนป้ายใหม่เองเมื่อได้รับสัญญาณ แทนที่จะไปแปะ data-i18n ให้ทุกป้าย
-       * (ซึ่งจะทำให้ต้องจำว่าคีย์คืออะไรอีกที่หนึ่ง)
+       * `I18nManager.updateElements()` only translates an element that
+       * carries `data-i18n` · so the sidebar would stay stuck in the old
+       * language entirely when switching languages, even though everything
+       * around it changed — rewrites the labels itself when the signal
+       * arrives, instead of attaching `data-i18n` to every label (which would mean remembering what the key is in yet another place)
        */
       const repaintLabels = () => {
         visibleSections().forEach((section) => {
@@ -218,7 +229,7 @@
   });
 
   // ---------------------------------------------------------------------------
-  // แถบบน
+  // The topbar
   // ---------------------------------------------------------------------------
   window.Now.getManager('component').define('topbar', {
     template: [
@@ -269,11 +280,12 @@
       const paintLang = () => {
         const current = window.I18nManager.state.current || 'en';
         lang.textContent = current.toUpperCase();
-        // บอกภาษาที่เลือกให้ฝั่งเซิร์ฟเวอร์รู้ด้วย — ข้อความที่ API ส่งมา (รวมถึงที่
-        // ส่งไปทางอีเมล) แปลที่นั่น ไม่ได้แปลในเบราว์เซอร์ · เก็บใน localStorage
-        // อย่างเดียวไม่พอเพราะเซิร์ฟเวอร์อ่านไม่ได้
+        // Tells the server side which language was chosen too — the text
+        // the API sends back (including what goes out by email) is
+        // translated there, never in the browser · storing it in
+        // localStorage alone isn't enough, since the server can't read it
         document.cookie = 'phpcp_lang=' + encodeURIComponent(current) + '; path=/; max-age=31536000; samesite=lax';
-        // โปรแกรมอ่านหน้าจอและตัวตัดคำของเบราว์เซอร์อ่านค่านี้ ไม่ได้อ่าน localStorage
+        // A screen reader and the browser's own word-breaking read this value, never localStorage
         document.documentElement.lang = current;
       };
       paintLang();
@@ -292,19 +304,21 @@
 
 
   // ---------------------------------------------------------------------------
-  // แถบนับถอยหลังการคืนค่าอัตโนมัติ — SSH และ firewall
+  // The automatic-rollback countdown bar — SSH and the firewall
   //
-  // **ทำไมต้องมี และทำไมต้องอยู่ทุกหน้า:** เปลี่ยนค่า sshd หรือกฎไฟร์วอลล์แล้วระบบ
-  // ตั้งเวลาคืนค่าไว้ ถ้าไม่กดยืนยันภายในเวลา ค่าจะถูกคืนเป็นเดิม · ถ้าไม่มีแถบนี้
-  // ผู้ดูแลที่ตั้งค่าถูกต้องแล้วเดินไปทำอย่างอื่นจะเสียค่าที่เพิ่งตั้งไปเงียบ ๆ
-  // โดยไม่มีอะไรบอกเลยว่าเกิดอะไรขึ้น
+  // **Why this exists, and why it must be on every page:** changing an sshd
+  // value or a firewall rule sets the system to revert it on a timer — if
+  // not confirmed within the window, the value reverts back · without this
+  // bar, an admin who set the value correctly and walked away to do
+  // something else would silently lose what they just set, with nothing at all saying what happened
   //
-  // **ตัวจับเวลาจริงอยู่ฝั่งเซิร์ฟเวอร์เสมอ** (`phpcp-scheduler` เรียก `rollback.run`
-  // ทุกนาที) — ตัวเลขที่นับถอยหลังบนจอเป็นแค่การแสดงผล ไม่ใช่สิ่งที่ตัดสินอะไร
-  // เพราะกรณีที่กลไกนี้ถูกออกแบบมารับมือคือกรณีที่เบราว์เซอร์หลุดไปแล้ว
+  // **The real timer always lives server-side** (`phpcp-scheduler` calls
+  // `rollback.run` every minute) — the number counting down on screen is
+  // only ever a display, never something that decides anything, since the
+  // case this mechanism is designed to handle is exactly the case where the browser has already been cut off
   //
-  // ถามสถานะซ้ำทุก 15 วินาที และเดินตัวเลขเองทุกวินาทีระหว่างนั้น เพื่อไม่ต้องยิงคำขอ
-  // ถี่ ๆ แค่เพื่อให้ตัวเลขขยับ
+  // Asks for status again every 15 seconds, and counts the number down
+  // itself every second in between, so it never has to fire requests just that frequently only to make the number move
   // ---------------------------------------------------------------------------
   const ROLLBACK_POLL_MS = 15000;
 
@@ -338,8 +352,8 @@
 
         bar.appendChild(el('span', 'rollback-clock', countdown(pending.remaining_seconds)));
 
-        // ปุ่มทั้งสองใช้ `apiRefresh` ของเฟรมเวิร์ก — ยืนยัน · แจ้งผล · แล้วให้แถบนี้
-        // ถามสถานะใหม่ผ่านสัญญาณ phpcp:rollback
+        // Both buttons use the framework's own `apiRefresh` — confirm ·
+        // report the result · then have this bar ask for its status again via the phpcp:rollback signal
         const confirm = el('button', 'btn btn-primary icon-shield', t('Confirm — I can still reach this server'));
         confirm.type = 'button';
         confirm.dataset.action = 'click.prevent:apiRefresh';
@@ -361,14 +375,14 @@
       };
 
       const load = async () => {
-        // ลูกค้าไม่มีสิทธิ์ security.view — ไม่ต้องถามเลย จะได้ไม่มี 403 รัวใน console
+        // A customer has no security.view permission — never asks at all, so the console never fills up with 403s
         if (!window.PhpcpAuth.can('security.view')) return;
 
         try {
           const rows = await window.PhpcpApi.get('/rollbacks');
           pending = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
         } catch (error) {
-          // ถามไม่ได้ก็ไม่ต้องเดา — ซ่อนแถบไว้ดีกว่าขึ้นตัวเลขที่ไม่จริง
+          // Unable to ask means never guessing either — hiding the bar is better than showing a number that isn't real
           pending = null;
         }
 
@@ -380,7 +394,7 @@
 
         pending.remaining_seconds -= 1;
 
-        // หมดเวลาแล้ว: scheduler กำลังจะคืนค่าให้ ถามสถานะจริงแทนการเดา
+        // Time's up: the scheduler is about to revert it — asks for the real status instead of guessing
         if (pending.remaining_seconds <= 0) {
           load();
           return;
@@ -403,16 +417,17 @@
   });
 
   // ---------------------------------------------------------------------------
-  // แถบเตือนโหมด — ปิดไม่ได้โดยตั้งใจ (PLAN-V2 เฟส C1 ข้อ 5)
+  // The mode-warning bar — deliberately not dismissible (PLAN-V2 phase C1, item 5)
   //
-  // ในโหมด sandbox/dryrun คำสั่งทุกอย่าง "สำเร็จ" โดยไม่แตะเครื่องจริงเลย ถ้าแถบนี้
-  // ปิดได้ ผู้ดูแลจะเผลอเชื่อว่าตัวเองแก้ค่าบนเซิร์ฟเวอร์ไปแล้วทั้งที่ไม่มีอะไรเกิดขึ้น
+  // In sandbox/dryrun mode, every command "succeeds" without touching the
+  // real machine at all — if this bar could be dismissed, an admin could end
+  // up believing they'd changed a value on the server when nothing actually happened
   // ---------------------------------------------------------------------------
   window.Now.getManager('component').define('mode-banner', {
     template: '<div class="mode-banner" hidden></div>',
 
     mounted() {
-      // root ของเทมเพลตแทนที่ element เจ้าบ้านไปแล้ว — this.element คือแถบนั้นเอง
+      // The template's own root has already replaced the host element — this.element is the bar itself
       const banner = this.element;
 
       const paint = (session) => {
@@ -441,26 +456,28 @@
 
 
   // ---------------------------------------------------------------------------
-  // การกระทำแบบประกาศเพิ่มอีกสองตัว — ลงทะเบียนผ่าน `registerAction` ซึ่งเป็น
-  // จุดต่อของเฟรมเวิร์กเอง ไม่ใช่การผูก event handler เองทีละปุ่ม
+  // A couple more declarative actions — registered through the framework's
+  // own `registerAction` splice point, never a hand-bound event handler per button
   //
-  // ของที่มีมาให้แล้วและใช้ตรง ๆ ได้เลย: requestApi · toggleClass · copyToClipboard
-  // · exportCsv · print — อย่าเขียนใหม่
+  // What's already provided and can be used directly: requestApi ·
+  // toggleClass · copyToClipboard · exportCsv · print — never rewrite these
   // ---------------------------------------------------------------------------
   const events = window.Now.getManager('eventsystem') || window.EventSystemManager;
 
   /**
-   * เติมค่าสำเร็จรูปลงช่องกรอก — ปุ่มตัวอย่างที่กดแล้วได้ค่าที่ถูกต้องทันที
+   * Fills a ready-made value into an input — an example button that gives a correct value immediately
    *
-   *   data-fill-target   id ของช่องที่จะเติม
-   *   data-fill-value    ค่าที่จะใส่
+   *   data-fill-target   the id of the field to fill
+   *   data-fill-value    the value to insert
    *
-   * มีไว้สำหรับค่าที่**เขียนเองถูกยาก แต่ค่าที่ใช้จริงมีไม่กี่แบบ** เช่นตารางเวลาแบบ cron
-   * (`0 3 * * *`) · ผู้ใช้ที่จำรูปแบบไม่ได้ยังกดเลือกได้ ส่วนคนที่รู้ก็พิมพ์เองได้เหมือนเดิม
-   * เพราะช่องยังเป็นข้อความอิสระ ไม่ได้ถูกแทนที่ด้วยรายการตัวเลือกตายตัว
+   * Exists for a value that's **hard to write correctly by hand, but where
+   * only a few real-world shapes are ever actually used**, like a cron
+   * schedule (`0 3 * * *`) · a user who can't remember the syntax can still
+   * click to pick one, while someone who knows it can still type it
+   * themselves as before, since the field stays free text, never replaced by a fixed list of choices
    *
-   * ยิง `input` ต่อให้ด้วย — ตัวตรวจความถูกต้องกับการผูกค่าของเฟรมเวิร์กฟังเหตุการณ์นี้
-   * การตั้ง `value` เฉย ๆ ไม่ทำให้เกิดเหตุการณ์ใด ๆ ตามมาตรฐาน DOM
+   * Also fires `input` afterward — the framework's own validator and value
+   * binding both listen for this event · just setting `value` triggers no event at all per the DOM standard
    */
   events.registerAction('fillField', (event, element) => {
     const field = document.getElementById(element.dataset.fillTarget || '');
@@ -472,20 +489,21 @@
     field.focus();
   });
 
-  /** ส่งสัญญาณให้ ApiComponent ที่ตั้ง `data-refresh-event` ไว้ดึงข้อมูลรอบใหม่ */
+  /** Emits a signal so an ApiComponent with `data-refresh-event` set fetches a fresh round of data */
   events.registerAction('emit', (event, element) => {
     window.EventManager.emit(element.dataset.emitEvent || 'phpcp:reload', {trigger: element});
   });
 
   /**
-   * เรียก API แล้วรีเฟรชสิ่งที่ต้องเปลี่ยนตาม
+   * Calls the API, then refreshes whatever needs to follow along
    *
-   * ใช้ตัว `requestApi` ของเฟรมเวิร์กทำงานจริงทั้งหมด (ยืนยันก่อน · สถานะกำลังโหลด ·
-   * แจ้งผลสำเร็จ/ล้มเหลว) แล้วต่อท้ายด้วยการรีเฟรชเท่านั้น — ไม่เขียนซ้ำสิ่งที่มีอยู่แล้ว
+   * Lets the framework's own `requestApi` do all the real work (confirm
+   * first · a loading state · report success/failure), then only appends
+   * the refresh afterward — never rewrites what already exists
    *
-   *   data-refresh-table   ชื่อ `data-table` ที่ต้องโหลดใหม่
-   *   data-emit-event      ชื่อสัญญาณสำหรับ ApiComponent (ค่าเริ่มต้น phpcp:reload)
-   *   data-go              เส้นทางที่ต้องพาไปหลังสำเร็จ (เช่นหลังลบทรัพยากรที่กำลังเปิดอยู่)
+   *   data-refresh-table   the `data-table` name to reload
+   *   data-emit-event      the signal name for ApiComponent (defaults to phpcp:reload)
+   *   data-go              the route to navigate to on success (such as after deleting the resource currently open)
    */
   events.registerAction('apiRefresh', async (event, element) => {
     const requestApi = events.state.actions.get('requestApi');
@@ -499,14 +517,16 @@
     window.EventManager.emit(element.dataset.emitEvent || 'phpcp:reload', {trigger: element});
 
     /*
-     * **ถามแถบ "รอการยืนยัน" ใหม่ทุกครั้งด้วย**
+     * **Also asks the "waiting for confirmation" bar again every time**
      *
-     * คำสั่งที่ตั้งเวลาถอนคืนไว้ (กฎไฟร์วอลล์ · ค่าตั้ง SSH · ไฟล์ตั้งค่าของบริการ)
-     * ต้องให้ผู้ใช้เห็นแถบทันที ไม่ใช่รอรอบ poll ถัดไปซึ่งห่างถึง 15 วินาที · ถ้าเขา
-     * ปิดหน้าไปก่อนจะไม่มีวันรู้เลยว่าต้องกดยืนยัน แล้วค่าที่เพิ่งตั้งจะถูกคืนกลับเงียบ ๆ
+     * A command that scheduled a rollback (a firewall rule · an SSH setting
+     * · a service's config file) must show the user the bar immediately,
+     * never waiting for the next poll round, which is as much as 15 seconds
+     * away · if they closed the page before that, they'd never find out they needed to confirm, and the value just set would revert silently
      *
-     * ยิงทุกครั้งโดยไม่ดูว่าคำสั่งนี้ตั้งเวลาไว้หรือเปล่า — `load()` ของแถบข้ามให้เอง
-     * เมื่อผู้ใช้ไม่มีสิทธิ์ และการถามเกินมาหนึ่งครั้งถูกกว่าการพลาดไปหนึ่งครั้งมาก
+     * Fires every time with no check for whether this particular command
+     * scheduled anything — the bar's own `load()` already skips itself when
+     * the user has no permission, and asking one extra time is far cheaper than missing it once
      */
     window.EventManager.emit('phpcp:rollback', {trigger: element});
 
@@ -516,19 +536,20 @@
   });
 
   /**
-   * เปิด phpMyAdmin โดยไม่ต้องพิมพ์รหัส
+   * Opens phpMyAdmin without typing a password
    *
-   * ต้องเป็นโค้ดจริงไม่ใช่ลิงก์ประกาศ เพราะเป็นสองจังหวะที่แยกกันไม่ได้: POST ที่มี
-   * CSRF token (ซึ่งเป็นตัวสร้าง session ฝั่ง phpMyAdmin) แล้วค่อยพาไปที่ URL ที่ได้
-   * · ลิงก์ `<a href>` ตรง ๆ ทำแบบนี้ไม่ได้เลยเพราะมันคือ GET ที่ไม่มี token
+   * Has to be genuine code, not a declared link, because it's two steps that
+   * can't be separated: a POST that carries the CSRF token (which is what
+   * creates the phpMyAdmin-side session), then navigating to the resulting
+   * URL · a plain `<a href>` link can never do this, since that's a GET with no token
    *
-   *   data-db   ชื่อฐานข้อมูลที่จะเปิดตรงไปหน้าโครงสร้าง (ไม่ใส่ = หน้าแรก)
+   *   data-db   the database name to open straight to its structure page (omitted = the front page)
    */
   events.registerAction('openPhpMyAdmin', async (event, element) => {
     try {
       const result = await window.PhpcpApi.post('/phpmyadmin/session', {db: element.dataset.db || ''});
 
-      // แท็บใหม่เพราะ phpMyAdmin เป็นแอปแยก ไม่ใช่หน้าใน panel
+      // A new tab, since phpMyAdmin is a separate app, not a page inside the panel
       window.open(result.url, '_blank', 'noopener');
     } catch (error) {
       window.NotificationManager.error(error.message);
@@ -536,14 +557,15 @@
   });
 
   /**
-   * ส่งไฟล์สำรองออกไปยังปลายทางนอกเครื่อง
+   * Pushes a backup file out to the offsite destination
    *
-   * **ต้องเป็นโค้ดจริง ไม่ใช่ `data-row-actions`** เพราะชื่อไฟล์เป็นของลูกค้า เขาตั้ง
-   * ชื่อเป็นอะไรก็ได้ · ค่าที่ `data-row-actions` แทนลงใน URL ไม่ถูกเข้ารหัสให้
-   * ชื่อที่มีช่องว่างหรืออักษรไทยจึงพาไปยัง URL ที่ไม่มีอยู่จริง
+   * **Has to be genuine code, not `data-row-actions`**, because the
+   * filename belongs to the customer — they can name it anything at all ·
+   * the value `data-row-actions` substitutes into a URL isn't encoded, so a
+   * name with a space or Thai characters would lead to a URL that doesn't genuinely exist
    *
-   * ไม่มีตัวเลือกปลายทางอีกแล้ว — เครื่องหนึ่งมีปลายทางได้ชุดเดียว (PLAN-BACKUP-V2
-   * §4.2) เซิร์ฟเวอร์จึงรู้คำตอบอยู่แล้วโดยไม่ต้องถาม
+   * There's no destination picker anymore — a machine can only have one
+   * destination (PLAN-BACKUP-V2 §4.2), so the server already knows the answer without having to ask
    */
   events.registerAction('pushOffsite', async (event, element) => {
     const path = '/backups/' + Number(element.dataset.backupUser)
@@ -560,16 +582,18 @@
   });
 
   /**
-   * อ่าน host key ของเครื่องปลายทางมาเติมในฟอร์ม
+   * Reads the destination machine's host key to fill into the form
    *
-   * **ต้องเป็นโค้ดจริง ไม่ใช่ `requestApi` ที่ประกาศด้วยแอตทริบิวต์**
+   * **Has to be genuine code, not a `requestApi` declared with an attribute**
    *
-   * `requestApi` ไม่เรียก `ResponseHandler.process()` เลย — มันดูแค่ว่าคำตอบมี action
-   * ชนิด `notification` ไหมเพื่อตัดสินใจว่าจะขึ้นข้อความเอง แล้วจบ · คำสั่ง `update`
-   * ที่จะเติมค่าลงช่องจึงถูกทิ้งเงียบ ๆ (ยืนยันจากซอร์สของเฟรมเวิร์ก)
+   * `requestApi` never calls `ResponseHandler.process()` at all — it only
+   * checks whether the response has an action of type `notification`, to
+   * decide whether to show a message on its own, and stops there · an
+   * `update` command meant to fill a field would therefore be dropped silently (confirmed from the framework's own source)
    *
-   * เหตุผลเดียวกับ `pushOffsite` ข้างบน: ค่าที่ต้องส่ง (host/port) มาจากช่องที่ผู้ใช้
-   * เพิ่งพิมพ์ และผลที่ได้ต้องไปลงอีกช่องหนึ่ง — สองอย่างนี้ประกาศด้วยแอตทริบิวต์ไม่ได้
+   * Same reason as `pushOffsite` above: the values that need sending
+   * (host/port) come from a field the user just typed into, and the result
+   * has to land in a different field — neither of these can be declared with an attribute
    */
   events.registerAction('readHostKey', async (event, element) => {
     const form = element.closest('form');
@@ -598,11 +622,13 @@
       }
 
       /*
-       * ลายนิ้วมือต้องค้างอยู่ให้อ่านเทียบได้ ไม่ใช่แถบที่หายไปเอง
+       * The fingerprint has to stay visible to compare against, not a bar that disappears on its own
        *
-       * ปุ่มนี้ยืนยันตัวตนของเครื่องปลายทางแทนไม่ได้ — `ssh-keyscan` เชื่อสิ่งที่
-       * ปลายสายตอบมาเหมือนการต่อครั้งแรกทุกประการ · สิ่งเดียวที่ผู้ดูแลทำได้คือ
-       * เทียบลายนิ้วมือกับที่อ่านจากคอนโซลของเครื่องนั้น ซึ่งต้องสลับหน้าจอไปดู
+       * This button can't verify the destination machine's identity for the
+       * user — `ssh-keyscan` trusts whatever the other end answers with,
+       * exactly like any first connection · the only thing an admin can
+       * genuinely do is compare the fingerprint against the one read from
+       * that machine's own console, which means switching screens to look
        */
       window.NotificationManager.success(result.message);
 
@@ -621,17 +647,20 @@
   });
 
   // ---------------------------------------------------------------------------
-  // เติมค่าจาก query string ลงในเทมเพลตก่อนเรนเดอร์ — `{id}` ในเส้นทางของ API
+  // Fills query string values into a template before rendering — `{id}` in an API route
   //
-  // **ทำไมต้องทำตั้งแต่ยังเป็นสตริง:** `ApiComponent` ยิงคำขอทันทีที่ถูก mount ซึ่งเกิด
-  // ระหว่างการประมวลผลเทมเพลต ก่อน `data-script` ของหน้าจะได้ทำงาน · ถ้ารอไปแก้ทีหลัง
-  // คำขอแรกจะออกไปพร้อม `{id}` ดิบ ๆ แล้วได้ 404
+  // **Why this has to happen while it's still a string:** `ApiComponent`
+  // fires its request the moment it's mounted, which happens during template
+  // processing, before the page's own `data-script` ever gets to run · if
+  // this waited to fix it up afterward, the first request would go out with a raw `{id}` and get a 404
   //
-  // **ทำไมต้องมีอย่างนี้เลย:** REST v2 อ้างทรัพยากรด้วย**เส้นทาง** (`/sites/{id}`) ตาม §4.1
-  // ส่วน `data-url-params` ของ Now.js เติมได้เฉพาะ query string
+  // **Why this has to exist at all:** REST v2 references a resource by its
+  // **route** (`/sites/{id}`) per §4.1, while Now.js's own `data-url-params`
+  // can only fill in a query string
   //
-  // แทนเฉพาะชื่อที่มีอยู่จริงใน query และ encode ทุกค่า — ค่าที่ไม่รู้จักถูกทิ้งไว้ตามเดิม
-  // เพื่อให้เห็นชัดว่าเทมเพลตอ้างพารามิเตอร์ที่ไม่มี ไม่ใช่กลายเป็นเส้นทางที่ดูปกติแต่ผิด
+  // Only substitutes a name that genuinely exists in the query, and encodes
+  // every value — an unrecognized name is left as-is, so it's obvious the
+  // template is referencing a parameter that doesn't exist, rather than turning into a route that looks normal but is wrong
   // ---------------------------------------------------------------------------
   const rawRender = window.RouterManager.render.bind(window.RouterManager);
 
@@ -647,19 +676,21 @@
   };
 
   // ---------------------------------------------------------------------------
-  // ตารางที่ตัวกรองของมันต้องรอโหลดตัวเลือกก่อน
+  // A table whose filter has to wait for its own options to load first
   //
-  // หน้า Logs และ File Manager มีตัวกรองเป็น <select> ที่ตัวเลือกมาจาก endpoint
-  // ของมันเอง (`/logs/sources`, `/files/roots`) · TableManager อ่านค่าตัวกรองตอนโหลด
-  // ครั้งแรกซึ่งเกิดก่อนตัวเลือกมาถึง คำขอแรกจึงออกไปโดยไม่มี `source`/`root` แล้วได้ 403
+  // The Logs and File Manager pages have a filter as a <select> whose
+  // options come from their own endpoint (`/logs/sources`, `/files/roots`) ·
+  // TableManager reads the filter's value on its first load, which happens
+  // before the options ever arrive, so the first request goes out with no `source`/`root` and gets a 403
   //
-  // ฟังสัญญาณ `api:loaded` ของ ApiComponent แล้วสั่งโหลดตารางที่ระบุใหม่หนึ่งครั้ง —
-  // เทมเพลตเขียนแค่ `data-reload-table="ชื่อตาราง"` บน element ที่ครอบ <select> ไว้
+  // Listens for ApiComponent's own `api:loaded` signal and triggers reloading
+  // the named table exactly once — the template only needs to write
+  // `data-reload-table="tableName"` on the element wrapping the <select>
   // ---------------------------------------------------------------------------
-  // ตัวกรองของตารางเปลี่ยน -> ApiComponent ที่ป้อนข้อมูลให้ตารางนั้นต้องดึงใหม่
+  // A table's filter changes -> the ApiComponent feeding that table must fetch again
   //
-  // ใช้กับตารางที่ผูกด้วย `data-attr` (ไม่ได้ยิงคำขอเอง) เท่านั้น — ตารางที่มี
-  // `data-source` โหลดใหม่ด้วยตัวเองอยู่แล้ว ไม่ต้องมีใครสั่ง
+  // Only applies to a table bound via `data-attr` (never fires its own
+  // request) — a table with `data-source` already reloads itself on its own, no one needs to trigger it
   window.EventManager.on('table:filterAction', (event) => {
     const form = document.querySelector('[data-table-filter="' + event.tableId + '"][data-emit-event]');
 
@@ -677,15 +708,17 @@
   });
 
   // ---------------------------------------------------------------------------
-  // `data-reload-table` บนฟอร์ม — โหลดตารางใหม่หลังบันทึกสำเร็จ
+  // `data-reload-table` on a form — reloads a table after a successful save
   //
-  // FormManager รีเฟรชตารางผ่าน `actions[]` ที่เซิร์ฟเวอร์ส่งกลับมา (ดู FRAMEWORK_GUIDE
-  // "Pattern 3") แต่ REST v2 ตอบเป็นข้อมูลล้วนตาม §4.2 ไม่มีคำสั่งสั่งงานหน้าจอปนมาด้วย
-  // — และไม่ควรมี เพราะนั่นคือการผูก API เข้ากับหน้าจอตัวใดตัวหนึ่ง
+  // FormManager refreshes a table via the `actions[]` the server sends back
+  // (see FRAMEWORK_GUIDE "Pattern 3"), but REST v2 answers with pure data per
+  // §4.2, with no screen-driving command mixed in at all — and it shouldn't,
+  // since that would bind the API to one specific screen
   //
-  // จึงต่อที่ `ResponseHandler.process` ซึ่งเป็นจุดที่ FormManager เรียกหลังส่งสำเร็จเสมอ
-  // และได้ context ที่มี element ของฟอร์มติดมาด้วย · ผลคือเทมเพลตเขียนแค่
-  // `data-reload-table="ชื่อตาราง"` เหมือนแอตทริบิวต์อื่นของเฟรมเวิร์ก
+  // So this splices into `ResponseHandler.process`, the one place
+  // FormManager always calls after a successful submit, and which receives a
+  // context that carries the form's own element · the result is a template
+  // only ever needing to write `data-reload-table="tableName"`, like any other framework attribute
   // ---------------------------------------------------------------------------
   const rawProcess = window.ResponseHandler.process.bind(window.ResponseHandler);
 
@@ -702,21 +735,25 @@
     }
 
     /*
-     * คำตอบที่แนบผลของการตั้งเวลาถอนคืนมาด้วย = มีอะไรรอการยืนยันอยู่ ต้องให้แถบ
-     * ขึ้นทันที · ดูจากข้อมูลในคำตอบ ไม่ใช่จากว่าใครเป็นคนยิง — ครอบทั้งฟอร์มและ
-     * ปุ่มในแถวตาราง และครอบคำสั่งใหม่ที่จะเพิ่มในอนาคตโดยไม่ต้องมาแก้ที่นี่อีก
+     * A response that attaches the result of scheduling a rollback = there's
+     * something waiting for confirmation, and the bar must come up
+     * immediately · decided from the data in the response, never from who
+     * fired the request — covers both a form and a table-row button, and
+     * covers any new command added in the future with no need to touch this again
      *
-     * สองชื่อเพราะสองชั้นตั้งชื่อต่างกัน: capability คืน `rollback_id`
-     * ส่วน controller แนบ `pending_rollback` มาให้หน้าจอนับถอยหลัง
+     * Two names, since two layers name it differently: a capability returns
+     * `rollback_id`, while the controller attaches `pending_rollback` for the screen to count down
      */
     /*
-     * **ห้ามเขียน `payload.data || payload`** — FormManager ไม่ได้ส่ง body ดิบเข้ามา
-     * แต่ส่งผลจาก `normalizeSubmitBindingPayload()` ซึ่งใส่ `data: []` ให้เสมอเมื่อ
-     * คำตอบไม่มีคีย์นั้น · อาร์เรย์ว่างเป็น truthy ใน JS การเขียนแบบนั้นจึงไปอ่าน
-     * อาร์เรย์ว่างแทนตัว payload แล้วเงื่อนไขไม่มีวันเป็นจริง (เจอจริง 2026-08-13)
+     * **Never write `payload.data || payload`** — FormManager never sends a
+     * raw body in here, it sends the result of
+     * `normalizeSubmitBindingPayload()`, which always fills in `data: []`
+     * when the response has no such key · an empty array is truthy in JS, so
+     * writing it that way would read the empty array instead of the payload, and the condition could never be true (genuinely hit this on 2026-08-13)
      *
-     * ดูทั้งระดับบนสุดและระดับ `data` ที่เป็นอ็อบเจกต์ เพราะสองเส้นทางที่เรียกเมธอดนี้
-     * ส่งรูปร่างมาไม่เหมือนกัน: ฟอร์มส่งแบบที่ถูกแปลงแล้ว ปุ่มในแถวตารางส่ง payloadOf()
+     * Checks both the top level and the `data` level when it's an object,
+     * since the two paths that call this method send different shapes: a
+     * form sends the already-converted shape, a table-row button sends payloadOf()
      */
     const body = payload && typeof payload === 'object' ? payload : {};
     const nested = body.data && !Array.isArray(body.data) && typeof body.data === 'object' ? body.data : {};
@@ -729,12 +766,12 @@
   };
 
   // ---------------------------------------------------------------------------
-  // ตัวช่วยที่หน้าจอใช้ร่วมกัน
+  // Helpers every page shares
   // ---------------------------------------------------------------------------
   const Ui = {
     menu: MENU,
 
-    /** ขนาดเป็นหน่วยที่คนอ่านออก — รับค่าเป็นไบต์ */
+    /** Size in a human-readable unit — takes a value in bytes */
     bytes(value) {
       const n = Number(value) || 0;
       const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -745,13 +782,13 @@
     },
 
     /**
-     * ยืนยันคำสั่งที่ทำลายของ — SECURITY §4 กำหนดสามระดับ
+     * Confirms a destructive command — SECURITY §4 defines three levels
      *
-     * `type` ต้องเป็น 'normal' (กดยืนยัน) | 'danger' (กดยืนยันพร้อมคำเตือนแดง)
-     * | 'critical' (ต้องพิมพ์ข้อความยืนยันให้ตรง)
+     * `type` must be 'normal' (click to confirm) | 'danger' (click to
+     * confirm with a red warning) | 'critical' (must type the confirmation text exactly)
      *
-     * ระดับ critical ใช้ `Modal` ของ Now.js แทน `prompt()` ของเบราว์เซอร์เพราะต้อง
-     * แสดงชื่อทรัพยากรให้ผู้ใช้เทียบได้ชัดว่ากำลังลบตัวไหน
+     * The critical level uses Now.js's own `Modal` instead of the browser's
+     * `prompt()`, since it needs to show the resource's name so the user can clearly compare which one is being deleted
      */
     async confirm(options) {
       const type = options.type || 'normal';
@@ -763,8 +800,8 @@
         });
       }
 
-      // ระดับสูงสุด: ต้องพิมพ์ชื่อทรัพยากรให้ตรงเป๊ะ · เทียบแบบ case-sensitive โดยตั้งใจ
-      // เพราะชื่อโดเมนและชื่อฐานข้อมูลเป็นสิ่งที่ต้องอ่านให้ตรงตัวจริง ๆ ก่อนลบ
+      // The highest level: must type the resource's name exactly · compared
+      // case-sensitively on purpose, since a domain name and a database name are things that must be read exactly right before deleting
       const answer = await window.DialogManager.prompt(options.message, '', title, {
         className: 'dialog-danger'
       });
@@ -772,7 +809,7 @@
       return typeof answer === 'string' && answer.trim() === options.expect;
     },
 
-    /** แสดงข้อผิดพลาดจาก PhpcpApi ให้เป็นข้อความเดียวที่ผู้ใช้อ่านรู้เรื่อง */
+    /** Shows an error from PhpcpApi as a single message the user can actually read */
     error(err) {
       const fields = err && err.fields ? Object.values(err.fields) : [];
       const detail = fields.length > 0 ? fields.join(' · ') : '';
