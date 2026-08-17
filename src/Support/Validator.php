@@ -7,10 +7,11 @@ namespace Phpcp\Support;
 use Phpcp\Agent\ValidationError;
 
 /**
- * ตัวตรวจ argument ที่ capability ทุกตัวใช้ร่วมกัน
+ * The argument validator every capability shares
  *
- * ทุกเมธอดโยน ValidationError พร้อมข้อความไทยที่แสดงให้ผู้ใช้เห็นได้ทันที
- * และตัดค่าที่ผิดรูปแบบทิ้งตั้งแต่ต้นทาง ไม่มีการ "พยายามแก้ให้ถูก" ซึ่งเป็นบ่อเกิดของช่องโหว่
+ * Every method throws a ValidationError with a message ready to show the
+ * user immediately, and rejects a malformed value at the source — there's no
+ * "try to fix it up," which is exactly where vulnerabilities come from
  */
 final class Validator
 {
@@ -19,13 +20,13 @@ final class Validator
     {
         $value = $args[$key] ?? null;
         if (!is_string($value) || $value === '') {
-            throw new ValidationError("ต้องระบุ {$key}");
+            throw new ValidationError("{$key} is required");
         }
         if (str_contains($value, "\0")) {
-            throw new ValidationError("{$key} มีอักขระที่ไม่อนุญาต");
+            throw new ValidationError("{$key} contains a character that isn't allowed");
         }
         if (mb_strlen($value) > $max) {
-            throw new ValidationError("{$key} ยาวเกิน {$max} ตัวอักษร");
+            throw new ValidationError("{$key} is longer than {$max} characters");
         }
 
         return $value;
@@ -46,22 +47,24 @@ final class Validator
     {
         $value = $args[$key] ?? null;
         if (!is_int($value) && !(is_string($value) && preg_match('/^-?\d+$/', $value) === 1)) {
-            throw new ValidationError("{$key} ต้องเป็นตัวเลข");
+            throw new ValidationError("{$key} must be a number");
         }
         $int = (int) $value;
         if ($int < $min || $int > $max) {
-            throw new ValidationError("{$key} ต้องอยู่ระหว่าง {$min} ถึง {$max}");
+            throw new ValidationError("{$key} must be between {$min} and {$max}");
         }
 
         return $int;
     }
 
     /**
-     * ค่าตัวเลขที่ "ไม่ได้ส่งมา" ต่างจาก "ส่งมาเป็น 0" — ใช้กับคำสั่งที่แก้ค่าบางส่วน
+     * A numeric value that's "not sent at all" is different from "sent as 0"
+     * — used for commands that update a value partially
      *
-     * ต้องมีแยกจาก optionalInt() เพราะ optionalInt() บังคับให้ค่าเริ่มต้นเป็น int
-     * การส่ง null เข้าไปเป็นค่าเริ่มต้นตายด้วย TypeError ทันทีที่ถูกเรียก — เป็นบั๊กจริง
-     * ใน customer.quota_update ที่ไม่มีใครเจอมาก่อนเพราะไม่มีใครเรียก capability ตัวนั้นเลย
+     * Has to be separate from optionalInt() because optionalInt() forces the
+     * default value to be an int — passing null in as the default died with a
+     * TypeError immediately on call, a real bug in customer.quota_update that
+     * nobody had ever hit because nobody had ever called that capability
      *
      * @param array<string,mixed> $args
      */
@@ -101,20 +104,23 @@ final class Validator
     {
         $value = $args[$key] ?? null;
         if (!is_string($value) || !in_array($value, $allowed, true)) {
-            throw new ValidationError("{$key} ต้องเป็นค่าใดค่าหนึ่งใน: ".implode(', ', $allowed));
+            throw new ValidationError("{$key} must be one of: ".implode(', ', $allowed));
         }
 
         return $value;
     }
 
     /**
-     * ค่าบูลีนจากฟอร์มหรือ JSON
+     * A boolean value from a form or JSON
      *
-     * ต้องรับหลายรูปแบบเพราะผู้เรียกมาจากคนละทาง: JSON ส่ง `true` จริง ๆ ส่วนฟอร์ม HTML
-     * ส่ง `"1"` หรือ `"on"` และ query string ส่ง `"true"` เป็นข้อความ
+     * Has to accept several shapes because callers come from different
+     * places: JSON sends a genuine `true`, an HTML form sends `"1"` or
+     * `"on"`, and a query string sends `"true"` as text
      *
-     * **ค่าที่ไม่รู้จักถือเป็น false ไม่ใช่โยน error** — ต่างจาก enum โดยเจตนา เพราะ
-     * checkbox ที่ไม่ถูกติ๊กจะ**ไม่ถูกส่งมาเลย** การบังคับให้ส่งค่าจึงทำให้ฟอร์มปกติพัง
+     * **An unrecognized value is treated as false, never thrown as an
+     * error** — deliberately different from enum, because a checkbox that's
+     * left unchecked is **never sent at all** — requiring a value to always
+     * be sent would break every ordinary form
      *
      * @param array<string,mixed> $args
      */
@@ -124,10 +130,11 @@ final class Validator
     }
 
     /**
-     * เหมือน {@see requireEnum} แต่ยอมให้ไม่ส่งมา แล้วใช้ค่าเริ่มต้นแทน
+     * Like {@see requireEnum} but allows the value to be left out, falling back to a default
      *
-     * ค่าที่ส่งมาแต่ไม่อยู่ในรายการยังถูกปฏิเสธเหมือนเดิม — "ไม่ส่ง" กับ "ส่งค่าผิด"
-     * เป็นคนละเรื่อง อย่างหลังคือความผิดพลาดของผู้เรียกที่ต้องบอกให้รู้
+     * A value that's sent but isn't in the list is still rejected the same
+     * as before — "not sent" and "sent something wrong" are different
+     * things, and the latter is the caller's mistake, which must be reported
      *
      * @param array<string,mixed> $args
      * @param list<string> $allowed
@@ -151,19 +158,19 @@ final class Validator
     {
         $value = $args[$key] ?? null;
         if (!is_array($value)) {
-            throw new ValidationError("{$key} ต้องเป็นรายการ");
+            throw new ValidationError("{$key} must be a list");
         }
         if (count($value) > $maxItems) {
-            throw new ValidationError("{$key} มีรายการเกิน {$maxItems} รายการ");
+            throw new ValidationError("{$key} has more than {$maxItems} items");
         }
 
         $out = [];
         foreach ($value as $item) {
             if (!is_string($item) || $item === '' || str_contains($item, "\0")) {
-                throw new ValidationError("{$key} มีรายการที่ไม่ถูกต้อง");
+                throw new ValidationError("{$key} has an invalid item");
             }
             if (mb_strlen($item) > $maxLength) {
-                throw new ValidationError("{$key} มีรายการที่ยาวเกินกำหนด");
+                throw new ValidationError("{$key} has an item that's too long");
             }
             $out[] = $item;
         }
@@ -186,31 +193,32 @@ final class Validator
         return $value;
     }
 
-    /** ชื่อโดเมนตาม RFC 1123 — ใช้ก่อนเอาไปประกอบชื่อไฟล์ vhost เสมอ */
+    /** A domain name per RFC 1123 — always used before assembling it into a vhost filename */
     public static function domain(string $value): string
     {
         $value = strtolower(trim($value));
         if (mb_strlen($value) > 253) {
-            throw new ValidationError('ชื่อโดเมนยาวเกินกำหนด');
+            throw new ValidationError('The domain name is too long');
         }
 
         return self::pattern(
             $value,
             '/^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/',
-            'รูปแบบชื่อโดเมนไม่ถูกต้อง'
+            'Invalid domain name format'
         );
     }
 
     /**
-     * ชื่อโดเมนที่อาจเป็น wildcard (`*.example.com`) — PLAN-V2 เฟส E7
+     * A domain name that may be a wildcard (`*.example.com`) — PLAN-V2 phase E7
      *
-     * `*` ไม่ใช่อักขระของชื่อโฮสต์ตาม RFC 1123 จึงผ่าน {@see domain()} ไม่ได้ ·
-     * แยกเป็นเมธอดของตัวเองแทนการผ่อนกฎของ `domain()` เพราะจุดที่รับ wildcard ได้
-     * มีน้อยมาก (ใบรับรองกับ ServerAlias) ส่วนที่เหลือ — โดยเฉพาะที่เอาไปประกอบ
-     * **ชื่อไฟล์ vhost** — ต้องไม่มีทางได้ `*` เข้าไป
+     * `*` isn't a valid hostname character per RFC 1123, so it can't pass
+     * {@see domain()} · this is its own method instead of loosening `domain()`'s
+     * rule, because there are very few places that can accept a wildcard
+     * (certificates and ServerAlias) — everywhere else, especially anywhere
+     * that assembles a **vhost filename**, must never be able to get a `*` into it
      *
-     * รองรับเฉพาะ `*.` นำหน้าหนึ่งระดับตามที่ Let's Encrypt ออกให้ · `*.*.example.com`
-     * หรือ `www.*.example.com` ไม่มีอยู่จริงในระบบใบรับรอง
+     * Only supports a single leading `*.`, matching what Let's Encrypt
+     * issues · `*.*.example.com` or `www.*.example.com` don't actually exist in the certificate system
      */
     public static function wildcardDomain(string $value): string
     {
@@ -228,7 +236,7 @@ final class Validator
     public static function ipAddress(string $value): string
     {
         if (filter_var($value, FILTER_VALIDATE_IP) === false) {
-            throw new ValidationError('รูปแบบ IP ไม่ถูกต้อง');
+            throw new ValidationError('Invalid IP format');
         }
 
         return $value;
@@ -241,19 +249,19 @@ final class Validator
     public static function port(int $value): int
     {
         if ($value < 1 || $value > 65535) {
-            throw new ValidationError('หมายเลขพอร์ตต้องอยู่ระหว่าง 1 ถึง 65535');
+            throw new ValidationError('The port number must be between 1 and 65535');
         }
 
         return $value;
     }
 
-    /** ชื่อ identifier ของฐานข้อมูล/ผู้ใช้ — เข้มกว่าที่ MariaDB ยอมรับโดยตั้งใจ */
+    /** A database/user identifier name — deliberately stricter than what MariaDB itself accepts */
     public static function identifier(string $value): string
     {
         return self::pattern(
             $value,
             '/^[a-zA-Z][a-zA-Z0-9_]{0,31}$/',
-            'ชื่อต้องขึ้นต้นด้วยตัวอักษร ตามด้วยตัวอักษร ตัวเลข หรือ _ ยาวไม่เกิน 32 ตัว'
+            'The name must start with a letter, followed by letters, numbers, or _, up to 32 characters long'
         );
     }
 
@@ -262,48 +270,51 @@ final class Validator
      */
     public static function phpVersion(string $value): string
     {
-        return self::pattern($value, '/^\d\.\d{1,2}$/', 'รูปแบบเวอร์ชัน PHP ไม่ถูกต้อง');
+        return self::pattern($value, '/^\d\.\d{1,2}$/', 'Invalid PHP version format');
     }
 
     /**
-     * เส้นทางสัมบูรณ์ที่เอาไปใส่ในไฟล์ config ของเว็บเซิร์ฟเวอร์ได้อย่างปลอดภัย
+     * An absolute path safe to put into a web server config file
      *
-     * ตรวจแค่รูปแบบเท่านั้น — การจำกัดว่าเส้นทางนี้อยู่ในขอบเขตที่ยอมให้ใช้หรือไม่
-     * ต้องทำแยกด้วย absolutePathWithin() เพราะขอบเขตมาจากไฟล์ config
+     * Only checks the shape — restricting whether this path is actually
+     * within an allowed boundary is a separate concern handled by
+     * absolutePathWithin(), since the boundary comes from a config file
      *
-     * ห้ามมี `..` เพราะเส้นทางถูกนำไปประกอบเป็น DocumentRoot และ open_basedir
-     * ห้ามมีอักขระที่ทำให้ตีความ directive ผิด (ช่องว่างท้าย, บรรทัดใหม่, quote)
+     * Never allows `..`, since the path gets assembled into DocumentRoot and
+     * open_basedir · never allows a character that could make a directive be
+     * misinterpreted (trailing whitespace, newline, quote)
      */
     public static function absolutePath(string $value): string
     {
-        // ต้องตรวจก่อน trim — trim() ตัด \0 กับ \n ท้ายสตริงทิ้งให้เอง
-        // ค่าที่แนบ null byte มาท้ายเส้นทางจึงจะรอดไปได้ถ้าตรวจทีหลัง
+        // Must check before trim() — trim() strips a trailing \0 or \n on its
+        // own, so a value with a null byte attached to the end of the path
+        // would slip through if checked afterward
         if (preg_match('/[\x00-\x1f\x7f"\'\\\\]/', $value) === 1) {
-            throw new ValidationError('เส้นทางมีอักขระที่ใช้ในไฟล์ตั้งค่าไม่ได้');
+            throw new ValidationError('The path contains a character that cannot be used in a config file');
         }
 
         $value = rtrim(trim($value), '/');
 
         if ($value === '' || !str_starts_with($value, '/')) {
-            throw new ValidationError('เส้นทางต้องเป็นเส้นทางสัมบูรณ์ที่ขึ้นต้นด้วย /');
+            throw new ValidationError('The path must be an absolute path starting with /');
         }
 
         if (mb_strlen($value) > 4096) {
-            throw new ValidationError('เส้นทางยาวเกินกำหนด');
+            throw new ValidationError('The path is too long');
         }
 
         if (in_array('..', explode('/', $value), true)) {
-            throw new ValidationError('เส้นทางต้องไม่มี ..');
+            throw new ValidationError('The path must not contain ..');
         }
 
         return $value;
     }
 
     /**
-     * เส้นทางสัมบูรณ์ที่ต้องอยู่ภายในขอบเขตใดขอบเขตหนึ่งที่กำหนด
+     * An absolute path that must fall within one of the given boundaries
      *
-     * เทียบแบบมีเครื่องหมาย / ปิดท้ายเสมอ มิฉะนั้น /srv/phpcp-evil จะผ่าน
-     * ในขณะที่ขอบเขตคือ /srv/phpcp
+     * Always compared with a trailing / marker, otherwise /srv/phpcp-evil
+     * would pass while the boundary is /srv/phpcp
      *
      * @param list<string> $allowedRoots
      */
@@ -319,48 +330,49 @@ final class Validator
         }
 
         throw new ValidationError(
-            'เส้นทาง '.$path.' อยู่นอกขอบเขตที่ยอมให้ใช้ — '.
-            'เพิ่มโฟลเดอร์แม่เข้าไปใน sites.pointer_roots ของไฟล์ config ก่อน'
+            'The path '.$path.' is outside the allowed boundary — '.
+            'add the parent folder to sites.pointer_roots in the config file first'
         );
     }
 
     /**
-     * ชื่อโฟลเดอร์ย่อยใต้ pointer root — ไม่ขึ้นต้นด้วย / และไม่มี ..
+     * A subfolder name under a pointer root — must not start with / and must not contain ..
      *
-     * ใช้กับฟอร์ม Domain Pointer ที่ให้กรอกแค่ปลายทาง เช่น my-project หรือ shop/public
+     * Used with the Domain Pointer form, which only asks for the destination, e.g. my-project or shop/public
      */
     public static function relativePath(string $value): string
     {
         if (preg_match('/[\x00-\x1f\x7f"\'\\\\]/', $value) === 1) {
-            throw new ValidationError('เส้นทางมีอักขระที่ใช้ในไฟล์ตั้งค่าไม่ได้');
+            throw new ValidationError('The path contains a character that cannot be used in a config file');
         }
 
         $value = trim($value);
         $value = trim($value, '/');
 
         if ($value === '') {
-            throw new ValidationError('ต้องระบุชื่อโฟลเดอร์ปลายทาง');
+            throw new ValidationError('A destination folder name is required');
         }
 
         if (mb_strlen($value) > 4096) {
-            throw new ValidationError('เส้นทางยาวเกินกำหนด');
+            throw new ValidationError('The path is too long');
         }
 
         if (in_array('..', explode('/', $value), true) || in_array('.', explode('/', $value), true)) {
-            throw new ValidationError('เส้นทางต้องไม่มี . หรือ ..');
+            throw new ValidationError('The path must not contain . or ..');
         }
 
         return $value;
     }
 
     /**
-     * แปลงค่าจากฟอร์ม Domain Pointer เป็นเส้นทางสัมบูรณ์ที่ปลอดภัย
+     * Converts a Domain Pointer form value into a safe absolute path
      *
-     * รับได้ทั้ง path เต็ม (/mnt/.../shop) และชื่อโฟลเดอร์ย่อย (shop)
-     * เมื่อเป็นชื่อย่อยจะต่อกับ pointer root ที่เลือก หรือตัวเดียวที่มีใน config
+     * Accepts either a full path (/mnt/.../shop) or a subfolder name (shop)
+     * — a subfolder name gets joined with the selected pointer root, or the
+     * only one present in the config
      *
-     * @param list<string> $allowedRoots จาก Config::docrootRoots()
-     * @param list<string> $pointerRoots จาก sites.pointer_roots
+     * @param list<string> $allowedRoots from Config::docrootRoots()
+     * @param list<string> $pointerRoots from sites.pointer_roots
      */
     public static function resolvePointerDocroot(
         string $value,
@@ -389,20 +401,20 @@ final class Validator
 
         if ($roots === []) {
             throw new ValidationError(
-                'ยังไม่ได้ตั้ง sites.pointer_roots — กรอกชื่อโฟลเดอร์อย่างเดียวไม่ได้'
+                'sites.pointer_roots has not been configured — a folder name alone is not enough'
             );
         }
 
         $pointerRoot = rtrim(trim($pointerRoot), '/');
         if ($pointerRoot !== '') {
             if (!in_array($pointerRoot, $roots, true)) {
-                throw new ValidationError('โฟลเดอร์แม่ที่เลือกไม่อยู่ใน sites.pointer_roots');
+                throw new ValidationError('The selected parent folder is not in sites.pointer_roots');
             }
             $base = $pointerRoot;
         } elseif (count($roots) === 1) {
             $base = $roots[0];
         } else {
-            throw new ValidationError('มีหลายโฟลเดอร์แม่ — ต้องระบุว่าชี้จากโฟลเดอร์ไหน');
+            throw new ValidationError('There are multiple parent folders — which one to point from must be specified');
         }
 
         return self::absolutePathWithin($base.'/'.$relative, $allowedRoots);

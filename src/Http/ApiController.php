@@ -350,7 +350,7 @@ abstract class ApiController extends Controller
      */
     protected function failFromAgent(AgentException $e): Response
     {
-        return ApiProblem::fromAgentException($e)->response($e->getMessage());
+        return ApiProblem::fromAgentException($e)->response($this->t($e->getMessage()));
     }
 
     /**
