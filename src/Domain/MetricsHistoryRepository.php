@@ -145,7 +145,7 @@ final class MetricsHistoryRepository
             // Total samples across the whole interval — can't practically be zero, but never divide by it if it is
             $weight = array_sum(array_map(static fn(array $r): int => max(1, (int) $r['samples']), $group));
 
-            $average = function (string $column) use ($group): float {
+            $average = function (string $column) use ($group, $weight): float {
                 $total = 0.0;
 
                 foreach ($group as $row) {
