@@ -4,28 +4,31 @@
 declare(strict_types=1);
 
 /**
- * ยิงทุก endpoint ของ REST API v2 ใส่เซิร์ฟเวอร์ที่รันอยู่จริง
+ * Fires every REST API v2 endpoint at a genuinely running server
  *
- * **ทำไมต้องมีตัวนี้ทั้งที่มีเทสต์ 334 เคสอยู่แล้ว**
+ * **Why this exists when there are already 334 test cases**
  *
- * เทสต์ contract สร้าง `Request` ขึ้นมาในโปรเซสเดียวกัน ไม่ได้เดินผ่าน PHP-FPM, Apache,
- * middleware ของเว็บเซิร์ฟเวอร์ หรือ session จริง · ความต่างเล็ก ๆ ระหว่างตัวจำลอง
- * กับของจริงจึงซ่อนบั๊กทั้งชั้นได้ และเคยเกิดขึ้นแล้ว:
+ * The contract tests build a `Request` in the same process — they never
+ * travel through PHP-FPM, Apache, the web server's own middleware, or a
+ * genuine session · a small difference between the simulation and the real
+ * thing can hide an entire layer's worth of bugs, and it has happened before:
  *
- *   `Request::make()` วาง Content-Type เป็น `HTTP_CONTENT_TYPE` แต่ PHP-FPM ส่งมาเป็น
- *   `CONTENT_TYPE` ตาม RFC 3875 → **ทุก endpoint อ่าน JSON body ไม่ได้เลยบนเครื่องจริง**
- *   ขณะที่เทสต์ผ่าน 333/333 · ไปเจอตอนกดปุ่มบนเซิร์ฟเวอร์จริงเท่านั้น
+ *   `Request::make()` sets Content-Type as `HTTP_CONTENT_TYPE`, but PHP-FPM
+ *   sends it as `CONTENT_TYPE` per RFC 3875 → **every endpoint was completely
+ *   unable to read a JSON body on the real machine**, while the tests passed
+ *   333/333 · only found by clicking a button on the real server
  *
- * ตัวนี้จึงเป็นด่านสุดท้ายก่อนเชื่อว่า API ใช้งานได้ — โดยเฉพาะก่อนเริ่มเขียน SPA
- * ซึ่งจะคุยกับ API ด้วย JSON ล้วนและไม่มีทางรู้ว่าปัญหาอยู่ชั้นไหน
+ * This is therefore the last gate before trusting that the API genuinely
+ * works — especially before starting to write the SPA, which talks to the
+ * API purely in JSON and would have no way to tell which layer the problem is in
  *
- * **ความปลอดภัย:** ไม่สร้างหรือลบข้อมูลจริงเลย
- *   - เส้นทางที่มีพารามิเตอร์ → ใส่ id ที่ไม่มีอยู่จริง ให้ตอบ 404
- *   - เส้นทางที่เปลี่ยนแปลงข้อมูลและไม่มีพารามิเตอร์ → ส่ง body ว่าง ให้ตกที่ 422
- *   - เส้นทางที่ทำลาย session ของตัวเอง (ออกจากระบบ) → ข้าม
- * สิ่งที่ตรวจคือ "คำขอเดินทางถึงตัวควบคุมและตอบตามสัญญาไหม" ไม่ใช่ผลลัพธ์ทางธุรกิจ
+ * **Safety:** never creates or deletes real data
+ *   - A route with a parameter → filled with an id that doesn't exist, expecting a 404
+ *   - A data-changing route with no parameter → sent an empty body, expecting a 422
+ *   - A route that destroys its own session (logout) → skipped
+ * What's checked is "did the request reach the controller and answer per the contract," never a business outcome
  *
- * ใช้งาน:
+ * Usage:
  *   bin/phpcp-smoke --url=https://127.0.0.1:8443 --user=demo --password=xxx
  *   bin/phpcp-smoke --url=... --user=... --password-file=/path/to/file
  */
@@ -35,25 +38,26 @@ require __DIR__.'/../bootstrap.php';
 use Phpcp\Http\ApiProblem;
 use Phpcp\Kernel\Routes;
 
-/** id ที่ตั้งใจให้ไม่มีอยู่จริง — ใช้แทนพารามิเตอร์ทุกตัวเพื่อให้ตอบ 404 โดยไม่แตะข้อมูล */
+/** An id deliberately chosen not to exist — substituted for every parameter so a route answers 404 without touching data */
 const MISSING_ID = '999999';
 
 /**
- * เส้นทางที่ต้องข้าม พร้อมเหตุผล
+ * Routes that must be skipped, with the reason why
  *
- * ข้ามให้น้อยที่สุด — ทุกบรรทัดที่นี่คือจุดที่ตัวตรวจนี้มองไม่เห็น
+ * Kept to as few as possible — every line here is a spot this checker can't see into
  */
 const SKIP = [
-    'DELETE /api/v2/session' => 'ออกจากระบบ จะทำให้คำขอที่เหลือทั้งหมดล้มตาม',
-    'POST /api/v2/session' => 'ล็อกอินซ้ำจะชนกับ rate limit ของเส้นทางล็อกอิน',
-    'POST /api/v2/session/2fa' => 'เหตุผลเดียวกับล็อกอิน',
+    'DELETE /api/v2/session' => 'Logs out, which would cause every remaining request to fail along with it',
+    'POST /api/v2/session' => 'Logging in again would collide with the rate limit on the login route',
+    'POST /api/v2/session/2fa' => 'Same reason as login',
 ];
 
 /**
- * เส้นทางที่ส่งข้อมูลต่อเนื่องไม่รู้จบ (Server-Sent Events)
+ * Routes that send data continuously with no end (Server-Sent Events)
  *
- * ตรวจแบบเดียวกับเส้นทางอื่นไม่ได้ เพราะการเชื่อมต่อไม่มีวันปิดเอง — ต้องตั้งเวลาสั้น ๆ
- * แล้วดูว่าเริ่มส่งด้วยชนิดที่ถูกต้องหรือยัง (ไม่ใช่ JSON โดยตั้งใจ)
+ * Can't be checked the same way as other routes, since the connection never
+ * closes on its own — a short timeout is set instead, and the check is only
+ * whether it started sending with the right type (deliberately not JSON)
  *
  * @var array<string,string>
  */
@@ -68,22 +72,22 @@ $username = (string) ($options['user'] ?? '');
 $password = readPassword($options);
 
 if ($username === '' || $password === '') {
-    fwrite(STDERR, "ต้องระบุ --user และ --password (หรือ --password-file)\n");
+    fwrite(STDERR, "--user and --password (or --password-file) are required\n");
     exit(2);
 }
 
 $client = new SmokeClient($base);
 
 line('');
-line("ยิง REST API v2 ใส่ {$base}");
+line("Firing REST API v2 at {$base}");
 line(str_repeat('─', 62));
 
 if (!$client->login($username, $password)) {
-    fwrite(STDERR, "  ✘ ล็อกอินไม่สำเร็จ — ตรวจชื่อผู้ใช้และรหัสผ่าน\n");
+    fwrite(STDERR, "  ✘ Login failed — check the username and password\n");
     exit(1);
 }
 
-line("  ✔ ล็อกอินสำเร็จในนาม {$username}");
+line("  ✔ Signed in as {$username}");
 line('');
 
 $results = [];
@@ -109,7 +113,7 @@ foreach (Routes::build()->routes() as $route) {
         $results[] = [
             'route' => $key,
             'status' => $response['status'],
-            'skip' => $response['status'] === 429 ? 'ถูกจำกัดอัตรา — ยังไม่ได้ตรวจจริง' : null,
+            'skip' => $response['status'] === 429 ? 'Rate-limited — not genuinely checked yet' : null,
             'problems' => $response['status'] === 429 ? [] : inspectStream($response, STREAMING[$key]),
         ];
 
@@ -121,14 +125,14 @@ foreach (Routes::build()->routes() as $route) {
     $results[] = [
         'route' => $key,
         'status' => $response['status'],
-        'skip' => $response['status'] === 429 ? 'ถูกจำกัดอัตรา — ยังไม่ได้ตรวจจริง' : null,
+        'skip' => $response['status'] === 429 ? 'Rate-limited — not genuinely checked yet' : null,
         'problems' => $response['status'] === 429 ? [] : inspect($route->method, $url, $response),
     ];
 }
 
 report($results);
 
-// ถือว่าไม่ผ่านเมื่อมีปัญหา **หรือ** เมื่อยังมีเส้นทางที่ไม่เคยถูกตรวจจริง
+// Counted as failed when there's a problem **or** when a route was never genuinely checked at all
 $incomplete = array_filter(
     $results,
     static fn (array $r): bool => $r['problems'] !== [] || $r['status'] === 429,
@@ -139,27 +143,27 @@ exit($incomplete === [] ? 0 : 1);
 // ---------------------------------------------------------------------------
 
 /**
- * ตรวจคำตอบหนึ่งครั้งว่าตรงสัญญาของ §4.2 หรือไม่
+ * Checks whether a single response matches §4.2's contract
  *
  * @param array{status:int,body:string,contentType:string} $response
- * @return list<string> รายการปัญหา — ว่างเปล่า = ผ่าน
+ * @return list<string> the list of problems — empty = passes
  */
 function inspect(string $method, string $url, array $response): array
 {
     $problems = [];
 
-    // 500 คือสิ่งที่ตัวตรวจนี้มีไว้จับเป็นอันดับแรก — แปลว่าคำขอไปตายกลางทาง
+    // 500 is the first thing this checker exists to catch — it means the request died partway through
     if ($response['status'] >= 500) {
-        $problems[] = "ตอบ {$response['status']} — คำขอล้มกลางทาง";
+        $problems[] = "Answered {$response['status']} — the request failed partway through";
     }
 
     if (!str_contains(strtolower($response['contentType']), 'application/json')) {
-        $problems[] = 'ไม่ได้ตอบเป็น JSON แต่เป็น '.($response['contentType'] ?: 'ไม่ระบุชนิด');
+        $problems[] = 'Did not answer as JSON, answered as '.($response['contentType'] ?: 'an unspecified type');
 
-        return $problems;   // ตรวจรูปร่างต่อไม่ได้ถ้าไม่ใช่ JSON
+        return $problems;   // Can't check the shape any further if it isn't JSON
     }
 
-    // 204 ไม่มี body ตามมาตรฐาน
+    // 204 has no body, per the standard
     if ($response['status'] === 204) {
         return $problems;
     }
@@ -167,24 +171,24 @@ function inspect(string $method, string $url, array $response): array
     $decoded = json_decode($response['body'], true);
 
     if (!is_array($decoded)) {
-        $problems[] = 'body ไม่ใช่ JSON ที่แปลงได้';
+        $problems[] = 'The body is not decodable JSON';
 
         return $problems;
     }
 
     if (!array_key_exists('ok', $decoded)) {
-        $problems[] = 'ไม่มีฟิลด์ ok ตามสัญญา §4.2';
+        $problems[] = 'Missing the ok field required by §4.2';
     }
 
     if (($decoded['ok'] ?? true) === false) {
         $code = (string) (($decoded['error'] ?? [])['code'] ?? '');
 
         if (ApiProblem::tryFrom($code) === null) {
-            $problems[] = "ใช้รหัสข้อผิดพลาดนอก enum: {$code}";
+            $problems[] = "Uses an error code outside the enum: {$code}";
         }
 
         if ((string) (($decoded['error'] ?? [])['message'] ?? '') === '') {
-            $problems[] = 'ข้อผิดพลาดไม่มีข้อความอธิบาย';
+            $problems[] = 'The error has no explanatory message';
         }
     }
 
@@ -192,10 +196,11 @@ function inspect(string $method, string $url, array $response): array
 }
 
 /**
- * เส้นทางแบบ stream ผ่านก็ต่อเมื่อเริ่มส่งด้วยชนิดที่ถูกต้อง
+ * A streaming route passes only if it started sending with the correct type
  *
- * curl จะจบด้วย timeout เสมอ (สถานะ 0) เพราะฝั่งเซิร์ฟเวอร์ไม่ปิดการเชื่อมต่อ —
- * สิ่งที่พิสูจน์ได้คือ header เดินทางมาถึงและถูกต้อง ซึ่งแปลว่า routing กับสิทธิ์ผ่านแล้ว
+ * curl always ends in a timeout (status 0), since the server side never
+ * closes the connection — what can genuinely be proven is that the header
+ * arrived and was correct, which means routing and permissions already passed
  *
  * @param array{status:int,body:string,contentType:string} $response
  * @return list<string>
@@ -203,15 +208,15 @@ function inspect(string $method, string $url, array $response): array
 function inspectStream(array $response, string $expected): array
 {
     if ($response['status'] >= 500) {
-        return ["ตอบ {$response['status']} — คำขอล้มกลางทาง"];
+        return ["Answered {$response['status']} — the request failed partway through"];
     }
 
     if ($response['contentType'] === '' && $response['status'] === 0) {
-        return ['ไม่ได้เริ่มส่งข้อมูลเลยภายในเวลาที่กำหนด'];
+        return ['Never started sending data at all within the time given'];
     }
 
     if (!str_contains(strtolower($response['contentType']), $expected)) {
-        return ["ต้องเริ่มส่งด้วย {$expected} แต่ได้ ".($response['contentType'] ?: 'ไม่ระบุชนิด')];
+        return ["Must start sending as {$expected} but got ".($response['contentType'] ?: 'an unspecified type')];
     }
 
     return [];
@@ -226,7 +231,7 @@ function report(array $results): void
     foreach ($results as $r) {
         if ($r['skip'] !== null) {
             $skipped++;
-            line(sprintf('  ‒ %-52s ข้าม: %s', $r['route'], $r['skip']));
+            line(sprintf('  ‒ %-52s skipped: %s', $r['route'], $r['skip']));
 
             continue;
         }
@@ -254,18 +259,19 @@ function report(array $results): void
 
     line('');
     line(sprintf(
-        ' ตรวจ %d เส้นทาง · ผ่าน %d · ไม่ผ่าน %d · ข้าม %d',
+        ' Checked %d routes · passed %d · failed %d · skipped %d',
         $checked,
         $checked - $failed,
         $failed,
         $skipped,
     ));
 
-    // ถ้ามีเส้นทางที่ถูกจำกัดอัตรา ผลลัพธ์ยังไม่สมบูรณ์ — ต้องบอกให้ชัด ไม่ใช่ปล่อยให้
-    // ตัวเลข "ผ่าน" ดูสวยทั้งที่ endpoint เหล่านั้นไม่เคยถูกเรียกถึงตัวควบคุมเลย
+    // If any route was rate-limited, the result isn't complete — this must
+    // be stated clearly, not left to make the "passed" number look good
+    // while those endpoints were never genuinely reached at the controller at all
     if ($throttled > 0) {
         line('');
-        line(sprintf(' ⚠ %d เส้นทางถูกจำกัดอัตรา — ยังพิสูจน์ไม่ได้ ให้รอสักครู่แล้วรันซ้ำ', $throttled));
+        line(sprintf(' ⚠ %d routes were rate-limited — not yet proven, wait a moment and run again', $throttled));
     }
 
     line('');
@@ -294,7 +300,7 @@ function parseArguments(array $argv): array
 }
 
 /**
- * รหัสผ่านจากไฟล์ดีกว่าจากบรรทัดคำสั่ง เพราะ argv โผล่ใน `ps` ให้ผู้ใช้อื่นบนเครื่องเห็นได้
+ * A password from a file is better than from the command line, since argv shows up in `ps` for other users on the machine to see
  *
  * @param array<string,string> $options
  */
@@ -310,10 +316,10 @@ function readPassword(array $options): string
 }
 
 /**
- * ตัวยิงคำขอที่เก็บ cookie และ CSRF token ให้เหมือนเบราว์เซอร์
+ * A request firer that stores cookies and the CSRF token, the same way a browser does
  *
- * ใช้ curl ของ PHP โดยตรง ไม่ผ่าน Client ของ agent — ตั้งใจให้เดินเส้นทางเดียวกับ
- * ผู้ใช้จริงทุกประการ รวมถึงชั้น TLS และ Apache
+ * Uses PHP's own curl directly, never the agent's Client — deliberately
+ * travels the exact same path a real user would, including the TLS and Apache layers
  */
 final class SmokeClient
 {
@@ -362,8 +368,8 @@ final class SmokeClient
             $headers[] = 'X-CSRF-Token: '.$this->csrf;
         }
 
-        // เส้นทางที่เปลี่ยนแปลงข้อมูลต้องมี body เป็น JSON เสมอ แม้จะเป็นวัตถุว่าง —
-        // เพื่อให้เดินผ่านตัวแปลง body จริง ซึ่งเป็นชั้นที่เคยพังทั้งชั้นมาแล้ว
+        // A data-changing route must always have a JSON body, even an empty
+        // object — so it genuinely travels through the body converter, the exact layer that has broken entirely before
         if ($method !== 'GET' && $method !== 'HEAD') {
             $headers[] = 'Content-Type: application/json';
             curl_setopt($handle, CURLOPT_POSTFIELDS, json_encode($body ?? [], JSON_UNESCAPED_UNICODE));
@@ -376,8 +382,8 @@ final class SmokeClient
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_COOKIEFILE => $this->cookieFile,
             CURLOPT_COOKIEJAR => $this->cookieFile,
-            // ใบรับรองของ panel เป็นแบบเซ็นเองตอนติดตั้ง — ตัวตรวจนี้ยิงไปที่ 127.0.0.1
-            // จึงไม่ได้พึ่ง TLS เป็นตัวยืนยันตัวตนอยู่แล้ว
+            // The panel's certificate is self-signed at install time — this
+            // checker fires at 127.0.0.1, so it was never relying on TLS for identity verification anyway
             CURLOPT_SSL_VERIFYPEER => false,
             CURLOPT_SSL_VERIFYHOST => 0,
             CURLOPT_TIMEOUT => $timeout,
@@ -394,13 +400,14 @@ final class SmokeClient
         $rawHeaders = substr($raw, 0, $headerSize);
         $responseBody = substr($raw, $headerSize);
 
-        // token ใหม่มากับทุกคำตอบของ v2 — ต้องเก็บไว้ใช้กับคำขอถัดไป
+        // A fresh token arrives with every v2 response — must be stored for the next request
         if (preg_match('/^x-csrf-token:\s*(\S+)/im', $rawHeaders, $matches) === 1) {
             $this->csrf = $matches[1];
         }
 
-        // ตัวจำกัดอัตราคืนเวลาที่ควรรอมาให้ — รอแล้วลองใหม่หนึ่งครั้ง เพื่อให้การรันตัวตรวจ
-        // ที่ยิงหลายสิบคำขอรวดเดียวไม่กลายเป็นการรายงานผลที่ไม่สมบูรณ์
+        // The rate limiter returns how long to wait — waits, then retries
+        // once, so running this checker (which fires dozens of requests at
+        // once) doesn't turn into an incomplete report
         if ($status === 429 && $retry) {
             preg_match('/^retry-after:\s*(\d+)/im', $rawHeaders, $wait);
             sleep(min(30, max(1, (int) ($wait[1] ?? 2))));

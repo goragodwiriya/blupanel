@@ -4,25 +4,26 @@
 declare(strict_types=1);
 
 /**
- * phpcp-acme-hook — ตอบโจทย์ DNS-01 ของ Let's Encrypt ด้วย BIND9 ในเครื่อง (PLAN-V2 เฟส E7)
+ * phpcp-acme-hook — answers Let's Encrypt's DNS-01 challenge using the machine's own BIND9 (PLAN-V2 phase E7)
  *
- * ถูกเรียกโดย certbot ไม่ใช่โดยคน ผ่าน `--manual-auth-hook` และ `--manual-cleanup-hook`
- * · certbot ส่งค่ามาทาง **environment variable** ไม่ใช่อาร์กิวเมนต์:
+ * Called by certbot, never by a person, via `--manual-auth-hook` and
+ * `--manual-cleanup-hook` · certbot passes values through **environment variables**, never arguments:
  *
- *   CERTBOT_DOMAIN      โดเมนที่กำลังพิสูจน์ (ไม่มี `*.` นำหน้าแม้จะขอ wildcard)
- *   CERTBOT_VALIDATION  ค่าที่ต้องใส่ใน TXT ของ `_acme-challenge.<CERTBOT_DOMAIN>`
+ *   CERTBOT_DOMAIN      the domain currently being proven (never has a leading `*.`, even for a wildcard request)
+ *   CERTBOT_VALIDATION  the value that must go into the TXT record at `_acme-challenge.<CERTBOT_DOMAIN>`
  *
- * **ทำไมต้องเป็น DNS-01:** ใบรับรอง wildcard (`*.example.com`) ออกด้วย HTTP-01 ไม่ได้เลย
- * — Let's Encrypt บังคับ DNS-01 อย่างเดียว เพราะการพิสูจน์ว่าคุมไฟล์บนเว็บได้
- * ไม่ได้พิสูจน์ว่าคุมทั้งโดเมน
+ * **Why this has to be DNS-01:** a wildcard certificate (`*.example.com`) can
+ * never be issued with HTTP-01 at all — Let's Encrypt requires DNS-01 only,
+ * since proving control of a file on the website never proves control of the whole domain
  *
- * **ทำไมไม่ใช้ plugin `certbot-dns-rfc2136`:** ต้องตั้ง TSIG key แล้วเก็บกุญแจนั้นไว้ให้
- * certbot อ่าน ซึ่งเพิ่มความลับอีกชุดที่ต้องดูแล · เครื่องนี้เป็นเจ้าของ zone file อยู่แล้ว
- * (ดู `BindZoneManager`) การเขียนเรกคอร์ดตรง ๆ จึงตรงไปตรงมากว่าและใช้กลไกเดิมทั้งหมด
+ * **Why not use the `certbot-dns-rfc2136` plugin:** it requires setting up a
+ * TSIG key and keeping that key somewhere certbot can read it, which adds
+ * another secret to maintain · this machine already owns the zone file (see
+ * `BindZoneManager`), so writing the record directly is more straightforward and reuses the existing mechanism entirely
  *
- * ใช้:
- *   phpcp-acme-hook auth      เพิ่ม TXT แล้วรอจนตรวจเจอจริง
- *   phpcp-acme-hook cleanup   ลบ TXT ที่เพิ่มไว้
+ * Usage:
+ *   phpcp-acme-hook auth      Adds the TXT record and waits until it's genuinely detected
+ *   phpcp-acme-hook cleanup   Removes the TXT record that was added
  */
 
 if (PHP_VERSION_ID < 80200) {
@@ -45,7 +46,7 @@ if (PHP_VERSION_ID < 80200) {
         exit($code);
     }
 
-    fwrite(STDERR, "phpcp-acme-hook ต้องการ PHP 8.2 ขึ้นไป\n");
+    fwrite(STDERR, "phpcp-acme-hook requires PHP 8.2 or newer\n");
     exit(1);
 }
 
@@ -57,7 +58,7 @@ use Phpcp\Kernel\App;
 
 if (PHP_SAPI !== 'cli') {
     http_response_code(403);
-    exit("phpcp-acme-hook ใช้ได้จากบรรทัดคำสั่งเท่านั้น\n");
+    exit("phpcp-acme-hook can only be used from the command line\n");
 }
 
 try {
@@ -66,12 +67,12 @@ try {
     $validation = trim((string) getenv('CERTBOT_VALIDATION'));
 
     if (!in_array($action, ['auth', 'cleanup'], true)) {
-        fwrite(STDERR, "ใช้: phpcp-acme-hook auth|cleanup  (รับค่าจาก CERTBOT_DOMAIN/CERTBOT_VALIDATION)\n");
+        fwrite(STDERR, "Usage: phpcp-acme-hook auth|cleanup  (reads values from CERTBOT_DOMAIN/CERTBOT_VALIDATION)\n");
         exit(2);
     }
 
     if ($domain === '') {
-        fwrite(STDERR, "ไม่พบ CERTBOT_DOMAIN — โปรแกรมนี้ถูกเรียกโดย certbot เท่านั้น\n");
+        fwrite(STDERR, "CERTBOT_DOMAIN not found — this program is only ever called by certbot\n");
         exit(2);
     }
 
@@ -79,14 +80,15 @@ try {
     $challenge = new AcmeDnsChallenge($app->db(), $app->config, new RealExecutor());
 
     if ($action === 'auth') {
-        // ต้อง**รอจนตรวจเจอจริง**ก่อนคืนค่า — certbot ถือว่า hook ที่จบแล้วแปลว่า
-        // เรกคอร์ดพร้อมใช้ แล้วจะให้ Let's Encrypt มาถามทันที · ถ้าคืนเร็วเกินไป
-        // จะได้ error "DNS problem: NXDOMAIN" ซึ่งชี้ไปที่ค่าที่ตั้งผิด ทั้งที่จริง ๆ
-        // แค่ยังมาไม่ทัน
+        // Must **wait until it's genuinely detected** before returning —
+        // certbot treats a finished hook as meaning the record is ready to
+        // use, and immediately asks Let's Encrypt to check · returning too
+        // soon gets a "DNS problem: NXDOMAIN" error that points at a
+        // misconfigured value, when really it just hasn't propagated yet
         $result = $challenge->publish($domain, $validation);
 
         printf(
-            "เพิ่ม TXT _acme-challenge.%s แล้ว (serial %d) — ตรวจเจอหลัง %d วินาที\n",
+            "Added TXT _acme-challenge.%s (serial %d) — detected after %d seconds\n",
             $result['domain'],
             $result['serial'],
             $result['waited'],
@@ -97,12 +99,12 @@ try {
 
     $result = $challenge->cleanup($domain);
 
-    printf("ลบ TXT _acme-challenge.%s แล้ว (%d เรกคอร์ด)\n", $result['domain'], $result['removed']);
+    printf("Removed TXT _acme-challenge.%s (%d records)\n", $result['domain'], $result['removed']);
 
     exit(0);
 } catch (\Throwable $e) {
-    // certbot อ่าน exit code เป็นหลัก แต่ข้อความบน stderr จะโผล่ใน log ของมัน
-    // ซึ่งเป็นที่เดียวที่ผู้ดูแลจะเห็นว่าทำไมการขอใบรับรองล้มเหลว
-    fwrite(STDERR, 'phpcp-acme-hook ล้มเหลว: ' . $e->getMessage() . "\n");
+    // certbot mainly reads the exit code, but the stderr text shows up in
+    // its own log — the one place an admin will ever see why the certificate request failed
+    fwrite(STDERR, 'phpcp-acme-hook failed: ' . $e->getMessage() . "\n");
     exit(1);
 }

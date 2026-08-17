@@ -4,28 +4,30 @@
 declare(strict_types=1);
 
 /**
- * phpcp-alert — ส่งข้อความแจ้งเตือนเมื่อ systemd unit ของ panel ล้มเหลว (PLAN-V2 เฟส E6)
+ * phpcp-alert — sends a notification when one of the panel's systemd units fails (PLAN-V2 phase E6)
  *
- * ถูกเรียกโดย `OnFailure=` ของ `phpcp-agentd.service` ไม่ใช่โดยคน
+ * Called by `phpcp-agentd.service`'s own `OnFailure=`, never by a person
  *
- * **ทำไมต้องเป็นโปรแกรมแยก ไม่ใช่งานใน scheduler:** ตอน `phpcp-agentd` ตาย ไม่มีใครใน
- * ระบบส่งข้อความออกได้เลย —
+ * **Why this has to be a separate program, not a scheduler job:** when
+ * `phpcp-agentd` dies, nothing else in the system can send a notification at all —
  *
- *   · `alert.check` เป็น capability ที่รัน**ผ่าน agent** จึงเรียกไม่ได้ตั้งแต่แรก
- *   · `phpcp-scheduler` ถูก hardening ด้วย `RestrictAddressFamilies=AF_UNIX`
- *     (เปิด TCP ไม่ได้ → Telegram/webhook ตาย) และ `NoNewPrivileges=yes`
- *     (ปิด setgid ของ postdrop → เข้าคิวเมลไม่ได้)
+ *   · `alert.check` is a capability that runs **through the agent**, so it can never be called in the first place
+ *   · `phpcp-scheduler` is hardened with `RestrictAddressFamilies=AF_UNIX`
+ *     (can't open TCP → Telegram/webhook is dead) and `NoNewPrivileges=yes`
+ *     (disables postdrop's setgid → can't queue mail)
  *
- * ทั้งสองข้อจำกัดนั้นถูกต้องและห้ามผ่อนเพียงเพื่อความสะดวกของการแจ้งเตือน (§7.1 ข้อ 2)
- * · โปรแกรมนี้จึงรันเป็น root ในโปรเซสของตัวเอง ทำงานอย่างเดียวคือส่งข้อความ แล้วจบ
+ * Both of those restrictions are correct and must never be loosened just for
+ * the convenience of notifications (§7.1, item 2) · so this program runs as
+ * root in its own process, does exactly one thing — sends the message — then exits
  *
- * เจตนาที่ตั้งใจให้แคบ: **ไม่แตะระบบอะไรเลย** ไม่สั่งงาน ไม่แก้ไฟล์ ไม่รีสตาร์ตอะไร
- * — อ่านค่าตั้งกับเขียน `alert_state` เท่านั้น · โปรแกรมที่ systemd เรียกตอนระบบมีปัญหา
- * ต้องเป็นโปรแกรมที่พังยากที่สุดในระบบ ไม่ใช่โปรแกรมที่พยายามกู้สถานการณ์เอง
+ * Deliberately kept narrow: **never touches the system in any other way** —
+ * no commands, no file edits, no restarts — only reads settings and writes
+ * `alert_state` · the program systemd calls while the system is already having a problem
+ * must be the single hardest thing in the system to break, never a program that tries to recover the situation on its own
  *
- * ใช้:
- *   phpcp-alert unit-failed <ชื่อ unit>    แจ้งว่า unit นั้นล้มเหลว
- *   phpcp-alert test                       ส่งข้อความทดสอบ (ใช้ตรวจว่าติดตั้งถูกไหม)
+ * Usage:
+ *   phpcp-alert unit-failed <unit name>    Reports that unit as failed
+ *   phpcp-alert test                       Sends a test message (used to verify the install is correct)
  */
 
 if (PHP_VERSION_ID < 80200) {
@@ -49,7 +51,7 @@ if (PHP_VERSION_ID < 80200) {
     }
 
     fwrite(STDERR, sprintf(
-        "phpcp-alert ต้องการ PHP 8.2 ขึ้นไป แต่ %s เป็นเวอร์ชัน %s\n",
+        "phpcp-alert requires PHP 8.2 or newer, but %s is version %s\n",
         PHP_BINARY,
         PHP_VERSION,
     ));
@@ -65,12 +67,12 @@ use Phpcp\Kernel\App;
 
 if (PHP_SAPI !== 'cli') {
     http_response_code(403);
-    exit("phpcp-alert ใช้ได้จากบรรทัดคำสั่งเท่านั้น\n");
+    exit("phpcp-alert can only be used from the command line\n");
 }
 
 /**
- * ห้ามล้มเหลวแบบดัง — systemd เรียกโปรแกรมนี้ตอนที่ระบบมีปัญหาอยู่แล้ว
- * ถ้ามันตายด้วย fatal error จะได้ unit ที่ล้มเหลวเพิ่มมาอีกหนึ่งตัวโดยไม่ได้อะไรกลับมา
+ * Must never fail loudly — systemd calls this program while the system is already having a problem
+ * If this died with a fatal error, that would just be one more failed unit added, with nothing gained in return
  */
 try {
     $action = $argv[1] ?? '';
@@ -79,38 +81,40 @@ try {
     $app = App::boot(dirname(__DIR__));
     $db = $app->db();
 
-    // รันเป็น root จึงส่งได้ทุกช่องทาง รวมถึงอีเมลที่ต้องเรียก sendmail ผ่าน Executor
+    // Runs as root, so it can send through every channel, including email, which has to call sendmail via Executor
     $notifier = new Notifier($db, new RealExecutor());
 
     if ($action === 'test') {
         $channels = $notifier->activeChannels();
 
         if ($channels === []) {
-            fwrite(STDERR, "ยังไม่มีช่องทางแจ้งเตือนที่ตั้งค่าครบ — ตั้งที่หน้า \"ตั้งค่า\" ของ panel ก่อน\n");
+            fwrite(STDERR, "No notification channel is fully configured yet — set one up on the panel's \"Settings\" page first\n");
             exit(1);
         }
 
         $sent = $notifier->send(
             'alert',
-            'ทดสอบการแจ้งเตือนเมื่อบริการล้มเหลว',
-            "ถ้าคุณได้รับข้อความนี้ แปลว่า phpcp-alert ทำงานได้\n"
-            . 'ระบบจะใช้เส้นทางนี้แจ้งเมื่อ phpcp-agentd ล้มเหลว ซึ่งเป็นจังหวะที่ช่องทางอื่นทั้งหมดใช้ไม่ได้',
+            'Testing the service-failure notification',
+            "If you received this message, phpcp-alert is working\n"
+            . 'The system uses this path to notify when phpcp-agentd fails, which is exactly the moment every other channel stops working',
             'ok',
         );
 
-        printf("ช่องทางที่ใช้งานได้: %s\nผลการส่ง: %s\n", implode(', ', $channels), $sent ? 'สำเร็จ' : 'ล้มเหลว');
+        printf("Working channels: %s\nSend result: %s\n", implode(', ', $channels), $sent ? 'success' : 'failed');
         exit($sent ? 0 : 1);
     }
 
     /*
-     * fail2ban ในโหมด "แจ้งเตือนแต่ไม่แบน" เรียกคำสั่งนี้แทนการสั่ง firewall
+     * fail2ban in "notify but don't ban" mode calls this command instead of issuing a firewall command
      *
-     * **ทำไมต้องเป็นโปรแกรมนี้** — fail2ban รันเป็น root แต่เรียก capability ของ agent
-     * ไม่ได้ (ไม่รู้จัก socket และไม่ควรรู้จัก) · โปรแกรมนี้ทำสิ่งที่ต้องการพอดี:
-     * ส่งข้อความแล้วจบ ไม่แตะระบบอะไรเลย ซึ่งเป็นเจตนาเดิมของมันอยู่แล้ว
+     * **Why this program specifically** — fail2ban runs as root but can't
+     * call an agent capability (doesn't know the socket, and shouldn't) ·
+     * this program does exactly what's needed: sends a message, then stops
+     * — never touching the system in any other way, which was already its intent from the start
      *
-     * ผู้ดูแลเป็นคนตัดสินใจเองว่าจะแบนหรือไม่ ข้อความจึงต้องมีคำสั่งแบนติดไปด้วย
-     * — คนที่เพิ่งอ่านการแจ้งเตือนตอนตีสองไม่ควรต้องไปเปิดคู่มือหาไวยากรณ์
+     * The admin is the one who decides whether to ban or not, so the message
+     * must carry the ban command along with it — someone reading a
+     * notification at 2am shouldn't have to go dig through a manual for the syntax
      */
     if ($action === 'jail-hit') {
         $jail = trim((string) ($argv[2] ?? ''));
@@ -118,12 +122,13 @@ try {
         $failures = (int) ($argv[4] ?? 0);
 
         if ($jail === '' || filter_var($ip, FILTER_VALIDATE_IP) === false) {
-            fwrite(STDERR, "ใช้: phpcp-alert jail-hit <jail> <ip> [จำนวนครั้ง]\n");
+            fwrite(STDERR, "Usage: phpcp-alert jail-hit <jail> <ip> [failure count]\n");
             exit(2);
         }
 
-        // กันสแปมด้วยกลไกเดียวกับเกณฑ์อื่น — IP ที่ยิงต่อเนื่องจะชนเกณฑ์ซ้ำ ๆ
-        // ถ้าไม่กันไว้ การแจ้งเตือนจะกลายเป็นสิ่งที่คนปิดทิ้งภายในคืนเดียว
+        // Guards against spam with the same mechanism as every other
+        // threshold — an IP hitting repeatedly would trip the threshold
+        // again and again · without this, the notification becomes something turned off within a single night
         $decision = (new AlertRules($db))->evaluate('jail:' . $jail . ':' . $ip, 'warning', (float) $failures);
 
         if (!$decision['notify']) {
@@ -132,34 +137,35 @@ try {
 
         $sent = $notifier->send(
             'security',
-            sprintf('พบการโจมตีจาก %s', $ip),
+            sprintf('Attack detected from %s', $ip),
             sprintf(
-                "jail: %s\nที่อยู่: %s\nจำนวนครั้งที่เข้าเกณฑ์: %d\nเครื่อง: %s\n\n"
-                . "**ยังไม่มีการแบน** — jail นี้ตั้งเป็นโหมดแจ้งเตือนอย่างเดียว\n\n"
-                . "ถ้าต้องการแบนเดี๋ยวนี้:\n"
+                "jail: %s\nAddress: %s\nFailures that crossed the threshold: %d\nMachine: %s\n\n"
+                . "**Not yet banned** — this jail is set to notify-only mode\n\n"
+                . "To ban right now:\n"
                 . "  sudo fail2ban-client set %s banip %s\n\n"
-                . 'ถ้านี่เป็นผู้ใช้จริง (เช่นทั้งองค์กรออกเน็ตผ่าน IP เดียว) '
-                . 'ให้ใส่ที่อยู่นี้ในช่อง "ที่อยู่ที่ห้ามแบนเด็ดขาด" ในหน้าความปลอดภัย',
+                . 'If this is a genuine user (such as a whole organization sharing one outbound IP), '
+                . 'add this address to the "addresses that must never be banned" field on the Security page',
                 $jail,
                 $ip,
                 $failures,
-                gethostname() ?: 'ไม่ทราบชื่อ',
+                gethostname() ?: 'unknown hostname',
                 $jail,
                 $ip,
             ),
             'warning',
         );
 
-        exit($sent ? 0 : 0);   // ส่งไม่ได้ก็ไม่ใช่ความล้มเหลวของ fail2ban
+        exit($sent ? 0 : 0);   // A failed send is never fail2ban's own failure
     }
 
     if ($action !== 'unit-failed' || $unit === '') {
-        fwrite(STDERR, "ใช้: phpcp-alert unit-failed <ชื่อ unit>  |  phpcp-alert jail-hit <jail> <ip> [ครั้ง]  |  phpcp-alert test\n");
+        fwrite(STDERR, "Usage: phpcp-alert unit-failed <unit name>  |  phpcp-alert jail-hit <jail> <ip> [count]  |  phpcp-alert test\n");
         exit(2);
     }
 
-    // ใช้กลไกกันสแปมตัวเดียวกับเกณฑ์อื่น — unit ที่ restart วนซ้ำ ๆ (Restart=on-failure)
-    // จะเรียกโปรแกรมนี้ทุกรอบที่ล้ม ถ้าไม่กันไว้จะได้ข้อความเป็นสิบฉบับในไม่กี่นาที
+    // Uses the same anti-spam mechanism as every other threshold — a unit
+    // stuck in a restart loop (Restart=on-failure) would call this program
+    // on every single failure, and without this, that becomes dozens of messages within a few minutes
     $decision = (new AlertRules($db))->evaluate('unit:' . $unit, 'critical', 0.0);
 
     if (!$decision['notify']) {
@@ -167,26 +173,26 @@ try {
     }
 
     $body = $unit === 'phpcp-agentd.service'
-        ? "phpcp-agentd ล้มเหลว — **คำสั่งทุกอย่างของ panel หยุดทำงานทั้งหมด**\n\n"
-          . "ที่กระทบทันที:\n"
-          . "  · หน้าเว็บสั่งงานอะไรไม่ได้เลย\n"
-          . "  · กลไกคืนค่าอัตโนมัติของ firewall/SSH ไม่มีใครกระตุ้น — ถ้ากำลังแก้ค้างไว้ อาจถูกล็อกออกจากเครื่องถาวร\n"
-          . "  · งานตามเวลาทุกงานล้มเหลว รวมถึงการสำรองข้อมูลและการต่ออายุใบรับรอง\n\n"
-          . "ตรวจด้วย: sudo systemctl status phpcp-agentd\n"
-          . 'แก้ด้วย: sudo systemctl restart phpcp-agentd'
+        ? "phpcp-agentd failed — **every one of the panel's commands has stopped working**\n\n"
+          . "Immediate impact:\n"
+          . "  · The web page can't issue any command at all\n"
+          . "  · The firewall/SSH automatic rollback mechanism has nothing to trigger it — if a change was left pending, you may be locked out of the machine permanently\n"
+          . "  · Every scheduled job is failing, including backups and certificate renewal\n\n"
+          . "Check with: sudo systemctl status phpcp-agentd\n"
+          . 'Fix with: sudo systemctl restart phpcp-agentd'
         : sprintf(
-            "systemd unit %s ล้มเหลวบนเครื่อง %s\n\nตรวจด้วย: sudo systemctl status %s",
+            "systemd unit %s failed on machine %s\n\nCheck with: sudo systemctl status %s",
             $unit,
-            gethostname() ?: 'ไม่ทราบชื่อ',
+            gethostname() ?: 'unknown hostname',
             $unit,
         );
 
-    $notifier->send('alert', sprintf('บริการ %s ล้มเหลว', $unit), $body, 'danger');
+    $notifier->send('alert', sprintf('Service %s failed', $unit), $body, 'danger');
 
     exit(0);
 } catch (\Throwable $e) {
-    // เขียนลง stderr เท่านั้น — journalctl เก็บให้แล้ว และการเขียนไฟล์ log เองอาจล้มซ้ำ
-    // ถ้าปัญหาต้นทางคือดิสก์เต็ม ซึ่งเป็นหนึ่งในเหตุที่ทำให้ unit ล้มตั้งแต่แรก
-    fwrite(STDERR, 'phpcp-alert ล้มเหลว: ' . $e->getMessage() . "\n");
+    // Only writes to stderr — journalctl already captures it, and writing a
+    // log file itself could fail again if the root cause is a full disk, which is one of the reasons a unit fails in the first place
+    fwrite(STDERR, 'phpcp-alert failed: ' . $e->getMessage() . "\n");
     exit(1);
 }
