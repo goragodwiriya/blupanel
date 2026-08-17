@@ -9,12 +9,13 @@ use Phpcp\Kernel\App;
 use Phpcp\Kernel\Db;
 
 /**
- * ข้อมูลตัวอย่างสำหรับโหมดทดสอบ — ARCHITECTURE §6.5
+ * Sample data for sandbox mode — ARCHITECTURE §6.5
  *
- * จุดสำคัญ: ข้อมูลนี้ไหลผ่าน repository และหน้าจอชุดเดียวกับ production ทั้งหมด
- * ไม่ใช่ mock ที่ hard-code ไว้ใน HTML แบบ prototype เดิม
- * สิ่งที่ PROMPT.md ต้องการ (ต้นแบบไทยที่ใช้งานได้เต็มรูปแบบ) กับระบบที่ใช้จริงได้
- * จึงมาจากโค้ดชุดเดียวกัน ต่างกันแค่ค่า mode
+ * The important part: this data flows through the exact same repositories
+ * and screens as production, not mock data hardcoded into HTML the way the
+ * old prototype did. What PROMPT.md asks for (a fully working Thai-market
+ * demo) and a system that's genuinely usable in production therefore come
+ * from the same code, differing only in the mode value
  */
 final class Seeder
 {
@@ -35,10 +36,11 @@ final class Seeder
             $now = time();
             $day = 86400;
 
-            // บัญชีโฮสติ้ง — ตั้งแต่ migration 0005 ลูกค้าคือแถวใน users ที่ role=webadmin
-            // ไม่ใช่ตารางแยกอีกต่อไป · ต้องสร้างก่อนเว็บไซต์ เพราะทุกเว็บต้องมีเจ้าของ
+            // Hosting accounts — since migration 0005, a customer is a row in
+            // users with role=webadmin, no longer a separate table · must be
+            // created before websites, since every website needs an owner
             //
-            // status = สิทธิ์ล็อกอิน · service_status = สถานะบริการ — สองแกนนี้ตั้งใจให้ต่างกันได้
+            // status = login privileges · service_status = the hosting service's status — these two axes are deliberately allowed to differ
             $accounts = [
                 ['customer_a', 'บริษัท ABC จำกัด', 'contact@abc.co.th', 'active', 'active', $now + 180 * $day],
                 ['customer_b', 'ร้านค้าออนไลน์ XYZ', 'owner@xyz.shop', 'active', 'active', $now + 5 * $day],
@@ -70,7 +72,7 @@ final class Seeder
                 ]);
             }
 
-            // เจ้าของเว็บแต่ละแห่ง — เว็บที่ไม่ได้อยู่ในรายการนี้เป็นของผู้ดูแลระบบ
+            // Each website's owner — a website not in this list belongs to the administrator
             $siteOwners = [
                 'example.com' => 'customer_a',
                 'blog.example.com' => 'customer_a',
@@ -104,7 +106,7 @@ final class Seeder
                 ]);
             }
 
-            // โดเมนหลัก โดเมนย่อย alias และ redirect ให้ครบทุกชนิดตาม PROMPT.md
+            // Primary domain, subdomain, alias, and redirect — every type PROMPT.md requires
             $domains = [
                 ['example.com', 'example.com', 'primary', null, null],
                 ['example.com', 'www.example.com', 'alias', null, null],
@@ -130,7 +132,7 @@ final class Seeder
                 ]);
             }
 
-            // DNS records ครบทั้ง 6 ชนิดที่ PROMPT.md กำหนด
+            // All 6 DNS record types PROMPT.md requires
             $records = [
                 ['example.com', 'A', '@', '203.0.113.10', 3600, null],
                 ['example.com', 'AAAA', '@', '2001:db8::10', 3600, null],
@@ -154,7 +156,7 @@ final class Seeder
                 ]);
             }
 
-            // ใบรับรอง — มีใบที่ใกล้หมดอายุไว้ทดสอบการเตือนโดยเฉพาะ
+            // Certificates — includes one close to expiring, specifically for testing the warning
             $certificates = [
                 ['example.com', "Let's Encrypt", 'valid', $now - 30 * $day, $now + 60 * $day, 1, null],
                 ['shop.com', "Let's Encrypt", 'valid', $now - 20 * $day, $now + 70 * $day, 1, null],
@@ -227,38 +229,41 @@ final class Seeder
             }
 
             /*
-             * **ไม่มีข้อมูลสำรองตัวอย่างอีกแล้ว** (PLAN-BACKUP-V2 ข้อ B4)
+             * **No sample backup data anymore** (PLAN-BACKUP-V2 item B4)
              *
-             * รายการไฟล์สำรองอ่านจากโฟลเดอร์จริงในบ้านของลูกค้า ไม่ใช่จากตาราง ·
-             * แถวตัวอย่างที่ไม่มีไฟล์อยู่จริงจึงไม่โผล่ที่ไหนเลย และการสร้างไฟล์ปลอม
-             * ขนาดกิกะไบต์ลงบ้านผู้ใช้เพื่อให้หน้าจอมีอะไรแสดงก็ไม่ใช่สิ่งที่ตัวสร้าง
-             * ข้อมูลตัวอย่างควรทำ — กดปุ่ม "สร้างข้อมูลสำรอง" หนึ่งครั้งได้ของจริงกว่า
+             * The backup file list is read from the real folder in the
+             * customer's home, never from a table · a sample row with no
+             * file genuinely present therefore never shows up anywhere, and
+             * writing fake gigabyte-sized files into a user's home just so
+             * the screen has something to display isn't something a sample-data
+             * generator should do — clicking "create a backup" once gets something more real
              */
 
-            // งานตามเวลาของระบบ — reset() ลบทั้งตารางไป จึงต้องเติมกลับให้ครบทุกตัว
-            // ไม่ใช่แค่ expiry.check ไม่งั้นสภาพแวดล้อมทดสอบจะไม่มี auto-rollback
-            // ซึ่งเป็นสิ่งที่ต้องทดสอบได้ในโหมด sandbox มากที่สุด
+            // The system's own scheduled jobs — reset() deletes the whole
+            // table, so every one of them must be filled back in, not just
+            // expiry.check, or the test environment would have no
+            // auto-rollback, which is exactly the thing most needing to be testable in sandbox mode
             $scheduledJobs = (new ScheduledJobRepository($db))->installDefaults();
 
             return [
-                'เว็บไซต์' => count($sites),
-                'โดเมน' => count($domains),
+                'Websites' => count($sites),
+                'Domains' => count($domains),
                 'DNS records' => count($records),
                 'SSL Certificates' => count($certificates),
-                'ฐานข้อมูล' => count($databases),
-                'งานอัตโนมัติ' => count($crons),
-                'บัญชีโฮสติ้ง' => count($accounts),
-                'งานตามเวลา' => count($scheduledJobs),
-                'ไฟล์ log' => $this->seedLogs()
+                'Databases' => count($databases),
+                'Cron jobs' => count($crons),
+                'Hosting accounts' => count($accounts),
+                'Scheduled jobs' => count($scheduledJobs),
+                'Log files' => $this->seedLogs()
             ];
         });
     }
 
     /**
-     * ลบ vhost, FPM pool และบ้านของเว็บไซต์ที่ panel สร้างไว้ในโหมด sandbox
+     * Deletes the vhosts, FPM pools, and website homes the panel created in sandbox mode
      *
-     * ลบเฉพาะไฟล์ที่ขึ้นต้นด้วย phpcp- ซึ่งเป็นของที่ panel เป็นคนเขียนเท่านั้น
-     * ไฟล์ที่ผู้ดูแลเขียนเองจะไม่ถูกแตะ
+     * Only deletes files starting with phpcp-, which are only ever files the
+     * panel itself wrote — a file an admin wrote by hand is never touched
      */
     private function removeGeneratedConfigs(): void
     {
@@ -295,10 +300,10 @@ final class Seeder
     }
 
     /**
-     * สร้างไฟล์ log ตัวอย่างใต้ prefix ของ sandbox
+     * Generates sample log files under the sandbox's prefix
      *
-     * ต้องมีของจริงให้อ่าน ไม่อย่างนั้นหน้า Logs จะทดสอบไม่ได้เลย —
-     * และเนื่องจากอยู่ใต้ prefix จึงไม่แตะ /var/log ของเครื่องแม้แต่ไฟล์เดียว
+     * Needs something genuine to read, or the Logs page could never be
+     * tested at all — and because it lives under the prefix, it never touches even one file in the machine's own /var/log
      */
     private function seedLogs(): int
     {
@@ -315,7 +320,7 @@ final class Seeder
             'curl/8.5.0'
         ];
 
-        // Access log รูปแบบ combined เหมือน Apache จริง
+        // Access log in the combined format, the same as a real Apache
         $access = [];
         for ($i = 400; $i > 0; $i--) {
             $status = match (true) {
@@ -399,7 +404,7 @@ final class Seeder
                 ][$i % 4],
             );
 
-            // auth.log — มีทั้งการเข้าที่สำเร็จและความพยายามที่ล้มเหลว
+            // auth.log — includes both successful sign-ins and failed attempts
             $auth[] = $i % 7 === 0
                 ? sprintf('%s goragod sshd[%d]: Failed password for invalid user admin from %s port %d ssh2',
                 $stamp, random_int(1000, 9999), $ips[$i % count($ips)], random_int(30000, 60000))
@@ -436,10 +441,10 @@ final class Seeder
     }
 
     /**
-     * โครง config ของ Apache ใน sandbox — ให้ `apache2 -t` ตรวจ vhost ที่ generate ได้จริง
+     * The sandbox's Apache config skeleton — lets `apache2 -t` genuinely check the generated vhosts
      *
-     * นี่คือสิ่งที่ทำให้โหมดทดสอบยังตรวจส่วนที่บั๊กบ่อยที่สุดด้วยของจริงได้
-     * โดยไม่แตะ /etc/apache2 ของเครื่องเลย (ARCHITECTURE §6.3)
+     * This is what lets sandbox mode still check the part that breaks most
+     * often, with real tooling, without touching the machine's own /etc/apache2 at all (ARCHITECTURE §6.3)
      */
     private function seedApacheTree(string $prefix): void
     {
@@ -460,26 +465,27 @@ final class Seeder
             $template->render('apache/sandbox-apache2.conf.tpl', [
                 'ROOT' => $root,
                 'MODULES' => $modules,
-                'HTTP_PORT' => 8180// พอร์ตจำลอง ไม่ได้เปิดฟังจริง แค่ให้ config ถูกต้อง
+                'HTTP_PORT' => 8180// A placeholder port, never genuinely listened on — just here to make the config valid
             ]),
         );
 
-        // ที่อยู่ของ socket ที่ vhost อ้างถึง — ไม่ต้องมี socket จริงเพราะ -t ไม่ตรวจ
+        // The socket address the vhost refers to — doesn't need to genuinely exist, since -t doesn't check it
         @mkdir($prefix.'/run/php', 0755, true);
         @mkdir($prefix.'/srv/phpcp/users', 0711, true);
         @mkdir($prefix.'/var/lib/phpcp/trash', 0750, true);
     }
 
     /**
-     * จำลองโครงสร้าง /etc/php ของเวอร์ชันที่ "ติดตั้งไว้" ใน sandbox
+     * Simulates the /etc/php structure for the versions "installed" in the sandbox
      *
-     * จำเป็นเพราะ sandbox แมป /etc/php ไปที่ prefix ถ้าไม่สร้างไว้ หน้าภาพรวมเซิร์ฟเวอร์
-     * จะรายงานว่าไม่มี PHP ติดตั้งเลย ซึ่งขัดกับรายการ PHP-FPM ที่แสดงว่าทำงานอยู่ —
-     * สภาพแวดล้อมทดสอบต้องสอดคล้องกันเองทั้งหมด ไม่ใช่จริงครึ่งปลอมครึ่ง
+     * Needed because the sandbox maps /etc/php to the prefix — without
+     * generating this, the server overview page would report no PHP
+     * installed at all, contradicting the PHP-FPM list showing it as
+     * running — the test environment has to be internally consistent throughout, not half-real, half-fake
      */
     private function seedPhpTree(string $prefix): void
     {
-        // ให้ตรงกับเวอร์ชันที่ SandboxState ตั้งเป็นค่าเริ่มต้นของ PHP-FPM
+        // Matches the version SandboxState sets as PHP-FPM's default
         $common = [
             'ctype', 'curl', 'dom', 'fileinfo', 'filter', 'gd', 'iconv', 'intl', 'json',
             'mbstring', 'mysqlnd', 'opcache', 'openssl', 'pdo', 'pdo_mysql', 'phar',
@@ -491,39 +497,40 @@ final class Seeder
                 @mkdir($prefix.'/etc/php/'.$version.'/'.$subdir, 0750, true);
             }
 
-            // ไฟล์ extension ในรูปแบบเดียวกับที่ Debian/Ubuntu ใช้จริง (20-ชื่อ.ini)
-            // เพื่อให้หน้า PHP อ่านรายการ extension ได้เหมือนบนเครื่องจริง
+            // Extension files in the same shape Debian/Ubuntu genuinely uses
+            // (20-name.ini), so the PHP page reads the extension list the same way it would on a real machine
             $extensions = $version === '7.4'
-                ? array_diff($common, ['sodium', 'intl']) // เวอร์ชันเก่ามีน้อยกว่าตามจริง
+                ? array_diff($common, ['sodium', 'intl']) // The older version genuinely has fewer, matching reality
                 : $common;
 
             foreach ($extensions as $index => $extension) {
                 @file_put_contents(
                     sprintf('%s/etc/php/%s/fpm/conf.d/%02d-%s.ini', $prefix, $version, 20 + ($index % 10), $extension),
-                    "; sandbox: จำลองไฟล์เปิดใช้งาน extension\nextension={$extension}.so\n",
+                    "; sandbox: simulates the extension's enabling file\nextension={$extension}.so\n",
                 );
             }
         }
     }
 
-    /** ล้างข้อมูลตัวอย่าง แต่ไม่แตะบัญชีผู้ใช้และ audit log */
+    /** Clears sample data, but never touches user accounts or the audit log */
     public function reset(): int
     {
         $db = $this->app->db();
         $removed = 0;
 
-        // ลบไฟล์ config ที่ panel เคยสร้างไว้ด้วย ไม่อย่างนั้นจะเหลือ vhost กำพร้า
-        // ที่ชี้ไปยังเว็บไซต์ซึ่งไม่มีอยู่ในฐานข้อมูลแล้ว — สภาพแวดล้อมทดสอบต้องสอดคล้องกันเอง
+        // Also deletes config files the panel had generated, or an orphaned
+        // vhost pointing at a website no longer in the database would be
+        // left behind — the test environment has to stay internally consistent
         $this->removeGeneratedConfigs();
 
-        // เรียงจากตารางลูกไปหาตารางแม่ ถึงจะมี ON DELETE CASCADE ก็ตามลำดับไว้ชัดเจนกว่า
+        // Ordered from child tables to parent tables — even with ON DELETE CASCADE, an explicit order is clearer
         foreach (['db_grants', 'db_users', 'databases_', 'dns_records', 'domains', 'cron_jobs', 'backups', 'certificates', 'sites', 'expiry_notifications', 'scheduled_jobs'] as $table) {
             $removed += $db->run("DELETE FROM {$table}")->rowCount();
         }
 
-        // บัญชีโฮสติ้งตัวอย่างต้องลบ*หลัง* sites เสมอ — ฐานข้อมูลห้ามลบผู้ใช้ที่ยังเป็น
-        // เจ้าของเว็บอยู่ (trigger trg_users_delete_requires_no_sites) เพื่อไม่ให้เกิด
-        // เว็บไร้เจ้าของที่ยังรันอยู่บนเครื่อง
+        // Sample hosting accounts must always be deleted *after* sites — the
+        // database refuses to delete a user who's still a website's owner
+        // (trigger trg_users_delete_requires_no_sites), to prevent an ownerless website still running on the machine
         $removed += $db->run(
             "DELETE FROM users WHERE role = 'webadmin'
              AND username IN ('customer_a', 'customer_b', 'customer_c', 'customer_d')",

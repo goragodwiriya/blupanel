@@ -23,10 +23,10 @@ use Phpcp\Security\SessionStore;
 use Phpcp\Support\Fmt;
 
 /**
- * คำสั่ง phpcp — เครื่องมือกู้ระบบเมื่อหน้าเว็บเข้าไม่ได้ (ARCHITECTURE §13)
+ * The `phpcp` command — the recovery tool for when the web page can't be reached (ARCHITECTURE §13)
  *
- * ต้องมีเสมอ เพราะ panel จงใจไม่ให้จัดการบริการของตัวเองผ่าน UI
- * และเพราะรหัสผ่าน/2FA ที่หายต้องมีทางแก้ที่หน้าเครื่อง
+ * Must always exist, because the panel deliberately never lets its own
+ * service be managed through the UI, and because a lost password/2FA needs a fix reachable at the machine itself
  */
 final class Application
 {
@@ -254,7 +254,7 @@ final class Application
 
         $this->out->title('System check');
 
-        // 1. PHP extension ที่จำเป็น
+        // 1. Required PHP extensions
         $required = ['pdo_sqlite', 'sodium', 'posix', 'pcntl', 'sockets', 'openssl', 'mbstring', 'json', 'filter', 'fileinfo'];
         $missing = array_values(array_filter($required, static fn(string $e): bool => !extension_loaded($e)));
 
@@ -279,11 +279,12 @@ final class Application
             $problems++;
         }
 
-        // 3. สิทธิ์ไฟล์ config (มี secret จึงห้าม world-readable)
+        // 3. Config file permissions (holds a secret, so must never be world-readable)
         //
-        // เคสอ่านไม่ได้ต้องมาก่อน — sourceFile เป็น null ทั้งตอน "ไม่มีไฟล์" และตอน
-        // "มีไฟล์แต่สิทธิ์ไม่พอ" ถ้าไม่แยกออกมา doctor จะเงียบสนิทในกรณีหลัง
-        // ทั้งที่เป็นสาเหตุที่ทำให้ panel ทั้งตัวถอยไปทำงานในโหมด sandbox
+        // The unreadable case must be checked first — sourceFile is null both
+        // when "no file exists" and when "the file exists but permissions
+        // aren't enough." Without separating these, doctor would stay
+        // completely silent in the latter case, even though it's the reason the whole panel fell back to sandbox mode
         if ($config->sourceFile === null && Config::unreadableCandidates() !== []) {
             foreach (Config::unreadableCandidates() as $candidate) {
                 $this->out->fail(sprintf(
@@ -304,7 +305,7 @@ final class Application
             }
         }
 
-        // 4. ฐานข้อมูลและ migration
+        // 4. Database and migrations
         if (!is_file($config->paths->database())) {
             $this->out->fail('No database yet - run `phpcp setup`');
             $problems++;
@@ -322,7 +323,7 @@ final class Application
                 $this->out->ok('The database schema is up to date');
             }
 
-            // 5. ต้องมีผู้ดูแลระบบอย่างน้อยหนึ่งคน
+            // 5. At least one administrator account must exist
             $users = new UserRepository($app->db());
             if ($users->countByRole(Permissions::SUPERADMIN) < 1) {
                 $this->out->fail('No usable administrator account - run `phpcp user:create`');
@@ -331,7 +332,7 @@ final class Application
                 $this->out->ok('Administrator accounts: '.$users->countByRole(Permissions::SUPERADMIN));
             }
 
-            // 6. ความต่อเนื่องของ audit log
+            // 6. The audit log's continuity
             $chain = $app->audit()->verifyChain();
             if ($chain['ok']) {
                 $this->out->ok("audit log is continuous across {$chain['count']} entries");
@@ -340,27 +341,29 @@ final class Application
                 $problems++;
             }
 
-            // 7. ตัวจับเวลา — ตรวจแยกจากบริการอื่นเพราะมันล้มแบบเงียบสนิท
+            // 7. The timer — checked separately from other services because it fails completely silently
             //
-            // ต่างจาก agent หรือเว็บที่ล่มแล้วเห็นทันที: scheduler ที่ไม่ทำงานทำให้หน้าจอ
-            // ปกติทุกอย่าง แต่กลไกคืนค่าอัตโนมัติของ SSH/firewall หายไปเฉย ๆ
-            // ผู้ดูแลจะรู้ตัวตอนที่เปลี่ยนพอร์ต SSH ผิดแล้วไม่มีอะไรคืนค่าให้เท่านั้น
+            // Unlike the agent or the web server, which are immediately
+            // visible when they go down: a scheduler that stops running
+            // leaves the screen looking entirely normal, while SSH/firewall's
+            // automatic rollback mechanism quietly stops working — an admin
+            // only finds out when they change the SSH port incorrectly and nothing reverts it
             $problems += $this->checkScheduler($app);
 
-            // 7.1 ไฟล์ตั้งค่าของเว็บไซต์ตรงกับเว็บเซิร์ฟเวอร์ที่เลือกไว้หรือไม่
+            // 7.1 Whether each website's config file matches the selected web server
             $problems += $this->checkWebserverConfigs($app);
 
-            // 7.2 มีใครฟังพอร์ต 80 อยู่จริงไหม
+            // 7.2 Whether anything is genuinely listening on port 80
             $problems += $this->checkHttpPort();
 
-            // 7.3 http://localhost ของเครื่องพัฒนา (ถ้าเปิดไว้) ใช้งานได้จริงไหม
+            // 7.3 Whether the dev machine's http://localhost (if configured) genuinely works
             $problems += $this->checkLocalhostSite($config);
         }
 
-        // 8. ไฟล์ของ Now.js ที่ commit เข้ามาในโปรเจกต์ (การตัดสินใจ N8)
+        // 8. The Now.js files committed into the project (decision N8)
         $problems += $this->checkSpaBundle($config->paths->spa());
 
-        // 9. agent
+        // 9. The agent
         if ($app->agent()->isAvailable()) {
             $this->out->ok('agent responds');
         } else {
@@ -368,7 +371,7 @@ final class Application
             $problems++;
         }
 
-        // 10. โหมดกับสิทธิ์ต้องสอดคล้องกัน
+        // 10. Mode and permissions must be consistent with each other
         if ($config->mode->isProduction() && $config->paths->layout === 'portable') {
             $this->out->warn('production mode and the portable layout should not be used together on a real server');
         }
@@ -461,22 +464,18 @@ final class Application
     }
 
     /**
-     * ตรวจสุขภาพของ scheduler — คืนจำนวนปัญหาที่พบ
+     * Every website's vhost files must match the configured web server mode
      *
-     * เกณฑ์ "ค้างเกิน 5 นาที" มาจากคาบการทำงานจริง (ทุกนาที) บวกที่ว่างพอสำหรับงานที่ยาว
-     * อย่าง disk.usage บนเครื่องที่มีเว็บเยอะ — ถ้าค้างนานกว่านี้แปลว่าไม่ได้ทำงานจริง
-     */
-    /**
-     * ไฟล์ vhost ของทุกเว็บต้องตรงกับโหมดเว็บเซิร์ฟเวอร์ที่ตั้งไว้
+     * **The condition this detects:** the mode was changed, and the
+     * machine-level values got written (ports.conf, map), but the per-site
+     * vhosts weren't written to match — happens when the switch failed
+     * partway through, or someone edited the files by hand without running `sites:rebuild`
      *
-     * **สภาพที่ตรวจจับ:** เปลี่ยนโหมดแล้วค่าระดับเครื่องถูกเขียน (ports.conf, map)
-     * แต่ vhost รายเว็บไม่ได้ถูกเขียนตาม — เกิดได้เมื่อการสลับล้มกลางทางหรือมีคน
-     * แก้ค่าในไฟล์เองแล้วไม่ได้รัน `sites:rebuild`
+     * What an admin sees is **every customer website answering 403/404**
+     * while every panel screen still looks completely normal, with nothing
+     * flagging the cause anywhere (genuinely hit this on 2026-08-11)
      *
-     * อาการที่ผู้ดูแลเห็นคือ **เว็บลูกค้าตอบ 403/404 ทั้งเครื่อง** โดยที่ทุกหน้าจอ
-     * ของ panel ยังปกติดีทุกอย่าง ไม่มีอะไรฟ้องเลยสักจุด (เจอจริงเมื่อ 2026-08-11)
-     *
-     * @return int จำนวนปัญหาที่พบ
+     * @return int the number of problems found
      */
     private function checkWebserverConfigs(App $app): int
     {
@@ -533,17 +532,18 @@ final class Application
     }
 
     /**
-     * มีเว็บเซิร์ฟเวอร์ฟังพอร์ต 80 อยู่จริงหรือไม่
+     * Whether a web server is genuinely listening on port 80
      *
-     * **สภาพที่ตรวจจับ:** apache2 กับ nginx ขึ้นครบทั้งคู่ ไฟล์ vhost ครบทุกเว็บ
-     * แต่ไม่มีใครฟังพอร์ต 80 เลย — เกิดจากการสลับโหมดที่ทิ้ง `ports.conf` ไว้ที่
-     * 127.0.0.1:8080 ขณะที่ vhost ทั้งหมดประกาศ `*:80` (เจอจริง 2026-08-12)
+     * **The condition this detects:** apache2 and nginx are both fully up,
+     * every website's vhost file is in place, but nothing is listening on
+     * port 80 at all — caused by a mode switch that left `ports.conf` at
+     * 127.0.0.1:8080 while every vhost still declares `*:80` (genuinely hit this on 2026-08-12)
      *
-     * ทุกอย่างที่ผู้ดูแลมองเห็นดูปกติหมด: `systemctl status` เขียว · configtest ผ่าน ·
-     * หน้าจอ panel ใช้งานได้ทุกหน้า เพราะ panel ฟังพอร์ตของตัวเองแยกต่างหาก · สิ่งเดียว
-     * ที่ผิดคือทุกเว็บบนเครื่องเงียบไปพร้อมกัน
+     * Everything an admin can see looks normal: `systemctl status` is green ·
+     * configtest passes · every panel screen works, since the panel listens
+     * on its own separate port · the only thing wrong is every website on the machine going silent at once
      *
-     * @return int จำนวนปัญหาที่พบ
+     * @return int the number of problems found
      */
     private function checkHttpPort(): int
     {
@@ -565,12 +565,12 @@ final class Application
     }
 
     /**
-     * http://localhost ของเครื่องพัฒนา — ตรวจเฉพาะเครื่องที่เปิดไว้
+     * A dev machine's http://localhost — only checked on a machine that has it configured
      *
-     * เครื่องที่ให้บริการจริงไม่ตั้ง `sites.localhost_docroot` จึงไม่มีอะไรให้ตรวจ
-     * และไม่มีบรรทัดรบกวนใน doctor
+     * A real production machine never sets `sites.localhost_docroot`, so
+     * there's nothing to check and no line cluttering doctor's output
      *
-     * @return int จำนวนปัญหาที่พบ
+     * @return int the number of problems found
      */
     private function checkLocalhostSite(Config $config): int
     {
@@ -587,8 +587,9 @@ final class Application
             $problems++;
         }
 
-        // pool มาตรฐานของดิสโทร — ถ้าไม่มี ไฟล์ .php จะตอบ 503 ส่วนไฟล์ static ยังปกติ
-        // ซึ่งเป็นอาการที่หลอกที่สุด เพราะหน้าแรกที่เป็น index.html ยังเปิดได้
+        // The distro's standard pool — without it, a .php file answers 503
+        // while a static file still works fine, the most deceptive symptom
+        // possible, since the index.html homepage still opens
         $socket = '/run/php/php' . $config->localhostPhp() . '-fpm.sock';
 
         if (!file_exists($socket)) {
@@ -607,6 +608,13 @@ final class Application
         return $problems;
     }
 
+    /**
+     * Checks the scheduler's health — returns the number of problems found
+     *
+     * The "stuck for more than 5 minutes" threshold comes from the real
+     * running interval (every minute) plus enough slack for a long job like
+     * disk.usage on a machine with many websites — stuck longer than this means it genuinely isn't running
+     */
     private function checkScheduler(App $app): int
     {
         $problems = 0;
@@ -652,15 +660,17 @@ final class Application
     }
 
     /**
-     * ตรวจว่าไฟล์ Now.js ที่เสิร์ฟอยู่ตรงกับที่ commit ไว้ — การตัดสินใจ N8
+     * Checks that the served Now.js files match what was committed — decision N8
      *
-     * Now.js เป็นโค้ดจากภายนอกที่โปรเจกต์นี้ไม่ได้เขียนเอง และมันรันในหน้าเว็บของ panel
-     * ซึ่งเป็นหน้าที่คุม root ได้ · จุดนี้จึงเป็นเป้าหมายที่คุ้มค่าที่สุดสำหรับการแก้ไฟล์
-     * แบบเงียบ ๆ บนเครื่อง ไฟล์เดียวที่ถูกสลับก็เพียงพอที่จะขโมยเซสชันผู้ดูแลได้
+     * Now.js is external code this project doesn't write itself, and it runs
+     * on the panel's own web page — a page that can control root · that makes
+     * it the single most valuable target for a quiet on-machine file edit —
+     * swapping just one file would be enough to steal an admin's session
      *
-     * SHA256SUMS สร้างตอน commit และตรวจที่นี่ ไม่ใช่ตอนโหลดหน้าเว็บ — SRI ของเบราว์เซอร์
-     * ป้องกันได้แค่ตัวกลางระหว่างทาง แต่ไม่ช่วยเลยถ้าไฟล์บนดิสก์ถูกแก้ เพราะหน้า HTML
-     * ที่ประกาศค่า hash ก็อยู่บนดิสก์เดียวกันและถูกแก้พร้อมกันได้
+     * SHA256SUMS is generated at commit time and checked here, not when the
+     * web page loads — the browser's own SRI only protects against a
+     * man-in-the-middle, and does nothing at all if the file on disk itself
+     * was edited, since the HTML page that declares the hash lives on that same disk and can be edited right along with it
      */
     private function checkSpaBundle(string $spaDir): int
     {
@@ -676,7 +686,7 @@ final class Application
         $lines = file($sumsFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
 
         foreach ($lines as $line) {
-            // รูปแบบเดียวกับ sha256sum: "<hash>  <ชื่อไฟล์>"
+            // Same shape as sha256sum: "<hash>  <filename>"
             $parts = preg_split('/\s+/', trim($line), 2);
 
             if ($parts === false || count($parts) !== 2) {
@@ -708,11 +718,12 @@ final class Application
     }
 
     /**
-     * เติมงานตามเวลาที่ระบบต้องมี — เรียกทุกครั้งที่ migrate หรือ setup
+     * Fills in the scheduled jobs the system requires — called every time migrate or setup runs
      *
-     * ตั้งใจให้อยู่ตรงนี้แทนที่จะเป็นไฟล์ migration เพราะเครื่องที่ติดตั้งไปแล้ว
-     * ผ่าน migration เก่าไปหมดแล้ว งานที่เพิ่มเข้ามาทีหลัง (เช่น rollback.run ในเฟส A1)
-     * จะไม่มีวันไปถึงเครื่องเหล่านั้นเลยถ้าเขียนไว้ใน migration ตัวใดตัวหนึ่ง
+     * Deliberately lives here instead of in a migration file, because a
+     * machine that's already installed has already run through every old
+     * migration — a job added later (such as rollback.run in phase A1) would
+     * never reach those machines at all if it were written into any one specific migration
      */
     private function installScheduledJobs(App $app): void
     {
@@ -724,10 +735,11 @@ final class Application
     }
 
     /**
-     * ข้อความบอกสาเหตุที่ไม่มี config — แยก "ไม่มีไฟล์" ออกจาก "มีแต่อ่านไม่ได้"
+     * The message explaining why there's no config — separates "no file exists" from "exists but unreadable"
      *
-     * สองกรณีนี้แก้คนละวิธีสิ้นเชิง การบอกให้ "คัดลอก config.example.php" ทั้งที่
-     * ไฟล์มีอยู่แล้วจะพาผู้ดูแลไปผิดทางและอาจทับ config เดิมทิ้ง
+     * These two cases are fixed in completely different ways — telling an
+     * admin to "copy config.example.php" when the file already exists would
+     * send them down the wrong path and risk overwriting the existing config
      *
      * @return string
      */
@@ -749,13 +761,15 @@ final class Application
     }
 
     /**
-     * สร้างไฟล์ vhost ของทุกเว็บไซต์ใหม่ตามค่า `webserver` ปัจจุบัน
+     * Regenerates every website's vhost file from the current `webserver` setting
      *
-     * ต้องรันหลังเปลี่ยนค่า `webserver` ในไฟล์ตั้งค่า — ไฟล์เดิมเป็นรูปแบบของ
-     * เซิร์ฟเวอร์ตัวเก่า การแก้ค่าเฉย ๆ ไม่ทำให้อะไรเกิดขึ้นเลย
+     * Must be run after changing the `webserver` value in the config file —
+     * the existing files are still in the previous server's format, and
+     * simply changing the value makes nothing happen on its own
      *
-     * ส่งผ่าน agent เหมือนที่หน้าเว็บทำ — ชั้น CLI ไม่มีสิทธิ์เขียน /etc/apache2
-     * หรือ /etc/nginx เอง และการตรวจค่ากับ audit log ต้องอยู่ที่เดียวกันทั้งระบบ
+     * Sent through the agent, same as the web page does — the CLI layer has
+     * no permission to write /etc/apache2 or /etc/nginx itself, and value
+     * checking plus the audit log both need to live in one single place across the whole system
      *
      * @return int
      */
@@ -777,18 +791,20 @@ final class Application
 
         $this->out->ok((string) $result['message']);
 
-        // การเปลี่ยนพอร์ตที่ฟังทำตอน reload ไม่ได้ตามการออกแบบของ Apache เอง —
-        // ถ้าไม่บอกตรงนี้ ผู้ดูแลจะเจอ nginx สตาร์ตไม่ขึ้นเพราะพอร์ตชนแล้วหาสาเหตุไม่เจอ
+        // Changing the listening port can't be done with a reload, by
+        // Apache's own design — without saying so here, an admin would hit
+        // nginx failing to start over a port conflict with no clue why
         if (($result['webserver'] ?? '') === 'nginx-proxy') {
             $this->out->warn('This mode moves Apache back to 127.0.0.1:8080 - it needs one restart, not just a reload');
             $this->out->line('  sudo systemctl restart apache2 && sudo systemctl start nginx');
         }
 
-        // **บอกเสมอว่า http://localhost เปิดหรือปิด** ไม่ใช่เงียบเมื่อปิด
+        // **Always states whether http://localhost is on or off** — never silent when it's off
         //
-        // ค่านี้อยู่ในไฟล์ตั้งค่า และวิธีที่พลาดง่ายที่สุดคือใส่ผิดบล็อก (ต้องอยู่ใน
-        // `sites`) ซึ่งอ่านผ่านตาแล้วเหมือนถูกทุกอย่าง · ถ้าไม่รายงานตรงนี้ ผู้ดูแลจะ
-        // เห็นแต่ "สร้างไฟล์ใหม่แล้ว" แล้วไปเจอ 404 ที่เบราว์เซอร์โดยไม่มีเบาะแสเลย
+        // This value lives in the config file, and the easiest mistake is
+        // putting it in the wrong block (it must be inside `sites`), which
+        // reads as correct at a glance · without reporting it here, an admin
+        // would only see "created a new file" and then hit a 404 in the browser with no clue at all
         $localhost = (string) ($result['localhost'] ?? '');
 
         if ($localhost === '') {
@@ -797,8 +813,9 @@ final class Application
             $this->out->ok('http://localhost serves ' . $localhost);
         }
 
-        // agent อ่าน config.php ตอนบูตครั้งเดียว — แก้ไฟล์แล้วสั่ง rebuild เลยจะได้
-        // ผลลัพธ์ของค่าเก่าเงียบ ๆ · เทียบกับสิ่งที่ agent เห็นจริงแล้วบอกให้รีสตาร์ต
+        // The agent reads config.php once at boot — editing the file and
+        // running rebuild right away would silently get the old value's
+        // result · compares against what the agent genuinely sees and tells the admin to restart it
         if ($localhost !== $app->config->localhostDocroot()) {
             $this->out->warn(sprintf(
                 'The agent still uses the old sites.localhost_docroot (%s) - restart it and run this again',
@@ -807,8 +824,9 @@ final class Application
             $this->out->line('  sudo systemctl restart phpcp-agentd && sudo phpcp sites:rebuild');
         }
 
-        // ทางกลับก็เปลี่ยนพอร์ตที่ฟังเหมือนกัน — ports.conf เพิ่งถูกเขียนคืนให้ฟัง 80
-        // ถ้าไม่รีสตาร์ต Apache จะยังติดอยู่ที่ 8080 แล้วทั้งเครื่องเงียบต่อไปเหมือนเดิม
+        // The reverse switch also changes the listening port — ports.conf
+        // was just rewritten to listen on 80, and without a restart Apache
+        // stays stuck on 8080 with the whole machine still going silent the same way
         if (($result['webserver'] ?? '') === 'apache') {
             $this->out->warn('If you just switched back from nginx-proxy, one restart is required, not just a reload');
             $this->out->line('  sudo systemctl stop nginx && sudo systemctl restart apache2');
@@ -818,10 +836,10 @@ final class Application
     }
 
     /**
-     * เปิด/ปิดเมลของโดเมน
+     * Enables/disables mail for a domain
      *
-     * เดินผ่าน agent เหมือนที่หน้าเว็บทำ — ชั้น CLI ไม่มีสิทธิ์เขียน /etc/postfix เอง
-     * และการตรวจค่ากับ audit log ต้องอยู่ที่เดียวกันทั้งระบบ
+     * Sent through the agent, same as the web page does — the CLI layer has
+     * no permission to write /etc/postfix itself, and value checking plus the audit log both need to live in one single place across the whole system
      *
      * @param list<string> $args
      */
@@ -851,8 +869,9 @@ final class Application
 
         $quota = (int) ($this->argValue($args, '--quota') ?: 1024);
 
-        // ระบุรหัสเองได้ — ใช้ตอนย้ายกล่องมาจากที่อื่นและต้องใช้รหัสเดิม
-        // ไม่ระบุ = ระบบสุ่มให้แล้วแสดงครั้งเดียว ซึ่งเป็นทางที่ปลอดภัยกว่า
+        // A password can be specified explicitly — used when migrating a
+        // mailbox from elsewhere and the same password must be kept ·
+        // unspecified = the system generates one and shows it once, which is the safer path
         return $this->runMailCapability('mail.box_create', [
             'address' => $address,
             'quota_mb' => $quota,
@@ -875,17 +894,12 @@ final class Application
     }
 
     /**
-     * เรียก capability ของเมลแล้วรายงานผลแบบเดียวกันทุกคำสั่ง
+     * Changes the panel's own certificate from the command line
      *
-     * @param array<string,mixed> $payload
-     * @param string $secretKey คีย์ในผลลัพธ์ที่ต้องแสดงในกรอบ "ครั้งเดียวเท่านั้น"
-     */
-    /**
-     * เปลี่ยนใบรับรองของหน้าจัดการจากบรรทัดคำสั่ง
-     *
-     * **ต้องมีทางนี้เสมอ** — ใบที่ผิดทำให้เบราว์เซอร์ปฏิเสธการเชื่อมต่อทั้งหมด แล้วหน้าเว็บ
-     * ซึ่งเป็นที่เดียวที่จะแก้ได้ก็เข้าไม่ได้ไปด้วย · `--self-signed` คือทางกลับที่ใช้ได้
-     * แม้ตอนที่ทุกอย่างพังแล้ว
+     * **This path must always exist** — a broken certificate makes the
+     * browser refuse the connection entirely, taking down the one web page
+     * that could fix it along with it · `--self-signed` is the fallback that
+     * still works even once everything else is broken
      *
      * @param list<string> $args
      */
@@ -904,19 +918,22 @@ final class Application
         }
 
         /*
-         * ไม่ตั้งเวลาถอนคืนเมื่อสั่งจากบรรทัดคำสั่ง — กลไกนั้นมีไว้กันคนที่ทำงานผ่านหน้าเว็บ
-         * ถูกตัดขาดจากเครื่องตัวเอง · คนที่สั่งจากตรงนี้อยู่บนเครื่องแล้วและแก้กลับได้ทันที
-         * การคืนค่าอัตโนมัติจึงกลายเป็นความประหลาดใจที่ไม่มีประโยชน์
+         * No rollback window is set when issued from the command line — that
+         * mechanism exists to protect someone working through the web page
+         * from being cut off from the machine itself · someone issuing this
+         * from here is already on the machine and can revert it immediately —
+         * an automatic rollback would just become a surprise with no benefit
          */
         return $this->runMailCapability('panel.cert_set', ['domain' => $domain, 'window' => 0]);
     }
 
     /**
-     * คัดลอกใบที่เพิ่งต่ออายุมาให้หน้าจัดการ — certbot เรียกผ่าน deploy hook
+     * Copies a freshly renewed certificate over to the panel — certbot calls this via its deploy hook
      *
-     * อ่านจากค่าตั้งว่าตอนนี้ผูกกับโดเมนไหน แล้วทำซ้ำสิ่งที่เคยทำ · ไม่ผูกกับโดเมนไหนอยู่
-     * ก็จบเงียบ ๆ ด้วยรหัส 0 เพราะ hook ที่คืนค่าไม่เป็นศูนย์ทำให้ certbot รายงานว่าการ
-     * ต่ออายุล้มเหลวทั้งที่ใบใหม่ออกมาเรียบร้อยแล้ว
+     * Reads the config to find which domain is currently bound, then repeats
+     * what was done before · if nothing is bound to any domain, this just
+     * exits quietly with code 0, since a non-zero exit from the hook makes
+     * certbot report the renewal as failed even though the new certificate came out fine
      */
     private function panelCertSync(): int
     {
@@ -933,6 +950,12 @@ final class Application
         return $this->runMailCapability('panel.cert_set', ['domain' => $domain, 'window' => 0]);
     }
 
+    /**
+     * Calls a mail capability and reports the result the same way for every command
+     *
+     * @param array<string,mixed> $payload
+     * @param string $secretKey the key in the result that must be shown inside a "shown only once" frame
+     */
     private function runMailCapability(string $capability, array $payload, string $secretKey = ''): int
     {
         $app = App::boot();
@@ -954,7 +977,7 @@ final class Application
         return 0;
     }
 
-    /** รายชื่อโดเมนที่เปิดเมลและกล่องทั้งหมด — อ่านอย่างเดียว ไม่ต้องผ่าน agent */
+    /** The list of domains with mail enabled and all mailboxes — read-only, doesn't need the agent */
     private function mailList(): int
     {
         $app = App::boot();
@@ -978,7 +1001,7 @@ final class Application
     }
 
     /**
-     * ค่าแรกที่ไม่ใช่ตัวเลือก — ใช้กับคำสั่งที่รับอาร์กิวเมนต์เดียว
+     * The first value that isn't an option flag — used for commands that take a single argument
      *
      * @param list<string> $args
      */
@@ -1100,7 +1123,7 @@ final class Application
             $customerId = (int) $customer['id'];
             $summary = $quotaChecker->summary($customerId) ?? [];
 
-            // สองแกน: status คุมสิทธิ์ล็อกอิน · service_status คุมบริการโฮสติ้ง
+            // Two separate axes: status controls login privileges · service_status controls the hosting service
             $flags = [];
             if ($customer['status'] !== 'active') {
                 $flags[] = 'login: '.$customer['status'];
@@ -1164,8 +1187,8 @@ final class Application
 
         $password = Password::random(20);
 
-        // ส่งผ่าน agent เหมือนที่หน้าเว็บทำ — การตรวจค่าและ audit log จึงอยู่ที่เดียวกัน
-        // ไม่ใช่สองชุดที่ค่อย ๆ เพี้ยนจากกัน (PLAN-V2 A2)
+        // Sent through the agent, same as the web page does — value checking
+        // and the audit log stay in one place instead of two copies that gradually drift apart (PLAN-V2 A2)
         try {
             $result = $app->agent()->data('customer.create', [
                 'username' => $username,
@@ -1264,7 +1287,7 @@ final class Application
             return 1;
         }
 
-        // ส่งเฉพาะโควตาที่ระบุมา — ค่าที่ไม่ได้ใส่ต้องไม่ถูกแตะ
+        // Only sends the quotas that were specified — a value that wasn't given must not be touched
         $quotas = array_filter([
             'quota_domains' => $quotaDomains,
             'quota_subdomains' => $quotaSubdomains,
@@ -1464,7 +1487,7 @@ final class Application
 
         $users->setPassword((int) $user['id'], $password);
 
-        // เปลี่ยนรหัสผ่านแล้วต้องตัด session เดิมทั้งหมด
+        // Changing the password must destroy every existing session
         $removed = (new SessionStore($app->db(), $app->config))->destroyAllFor((int) $user['id']);
 
         $app->audit()->write($app->systemActor('cli.user_passwd'), 'auth.password_changed', $username, 'ok', [
@@ -1553,7 +1576,7 @@ final class Application
             return 1;
         }
 
-        // เปลี่ยนเข้าสู่ production ต้องยืนยันสองชั้น เพราะคำสั่งจะเริ่มมีผลกับเครื่องจริง
+        // Switching into production requires two confirmations, since commands start genuinely affecting the real machine
         if ($mode->isProduction()) {
             $this->out->warn('production mode makes every command affect the real server immediately');
             if (!$this->out->confirm('Switch to production mode')) {
@@ -1671,14 +1694,15 @@ final class Application
     }
 
     /**
-     * ตรวจและติดตั้งรุ่นใหม่
+     * Checks for and installs a new release
      *
-     *   phpcp self-update --check                       ตรวจอย่างเดียว ไม่เปลี่ยนอะไร
-     *   phpcp self-update --manifest=https://.../x.json  ระบุแหล่งเอง
+     *   phpcp self-update --check                       Only checks, changes nothing
+     *   phpcp self-update --manifest=https://.../x.json  Specifies the source explicitly
      *
-     * ตั้งใจให้เป็นคำสั่งบรรทัดคำสั่งอย่างเดียว ไม่มีปุ่มบนหน้าเว็บ —
-     * การเปลี่ยนโค้ดของตัว panel เองขณะที่มีคนใช้งานอยู่ควรเป็นการตัดสินใจที่ตั้งใจ
-     * และทำตอนที่ผู้ดูแลอยู่หน้าเครื่องพร้อมกู้ ไม่ใช่ปุ่มที่กดพลาดได้
+     * Deliberately a command-line-only command, with no button on the web
+     * page — changing the panel's own code while people are actively using it
+     * should be a deliberate decision, made while an admin is at the machine
+     * ready to recover, not a button that can be clicked by mistake
      *
      * @param list<string> $args
      */
@@ -1732,7 +1756,7 @@ final class Application
 
         $archive = $updater->fetch($release['url']);
 
-        // ตรวจลายเซ็นก่อนแตะไฟล์ใด ๆ บนดิสก์ ไม่ใช่หลังแตกไฟล์
+        // Verifies the signature before touching any file on disk, never after extracting it
         $updater->verify($archive, $release['signature'], $release['version'], PHPCP_VERSION);
         $this->out->ok('Signature is valid - the package is from the real publisher and was not modified in transit');
 
@@ -1815,10 +1839,11 @@ final class Application
 
         $descriptors = [0 => STDIN, 1 => STDOUT, 2 => STDERR];
 
-        // php -S มี worker เดียวเป็นค่าเริ่มต้น ซึ่งใช้กับ SSE ไม่ได้เลย:
-        // การเชื่อมต่อ /api/stream/metrics เส้นเดียวจะยึด worker ไว้จนหน้าอื่นโหลดไม่ได้ทั้งเว็บ
-        // PHP_CLI_SERVER_WORKERS สั่งให้ fork หลายตัว (ใช้ได้บน Linux เท่านั้น)
-        // บนเซิร์ฟเวอร์จริงใช้ phpcp-fpm ที่ตั้ง pm.static ไว้แล้วจึงไม่มีปัญหานี้
+        // php -S has a single worker by default, which doesn't work with SSE
+        // at all: one /api/stream/metrics connection would hold the worker
+        // hostage until every other page on the site fails to load ·
+        // PHP_CLI_SERVER_WORKERS tells it to fork several (Linux only) ·
+        // a real server uses phpcp-fpm, which already has pm.static configured, so this never comes up there
         $env = ['PHP_CLI_SERVER_WORKERS' => (string) $workers] + getenv();
 
         $process = proc_open(
@@ -1843,7 +1868,7 @@ final class Application
         return 1;
     }
 
-    /** อ่านค่าตัวเลือกแบบ --key=value หรือ --key value */
+    /** Reads an option value in the form --key=value or --key value */
     private function argValue(array $args, string $key): string
     {
         foreach ($args as $index => $arg) {

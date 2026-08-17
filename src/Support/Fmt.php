@@ -9,7 +9,7 @@ namespace Phpcp\Support;
  * is `src/Cli/Application.php`; the SPA formats everything itself client-side per Resource.php's raw-values rule
  *
  * Kept in one place so units and wording stay consistent across every command
- * (e.g. always "12 วัน 3 ชั่วโมง," never one command writing "12d 3h" instead)
+ * (e.g. always "12d 3h," never one command writing it out differently)
  */
 final class Fmt
 {
@@ -88,7 +88,14 @@ final class Fmt
         return date('Y-m-d', $timestamp);
     }
 
-    /** A date in the Thai style, Buddhist Era — CLI-only output, stays Thai for now (see the class docblock) */
+    /**
+     * A date in Thai style, Buddhist Era — currently unused (the only
+     * caller, src/Cli/Application.php, never calls this) · left as-is
+     * because this isn't translatable UI text, it's a Thai-calendar
+     * formatter by design (the +543 year offset, Thai month abbreviations);
+     * "converting" it to English would mean turning it into a different,
+     * plain Gregorian formatter, not translating this one
+     */
     public static function date(?int $timestamp, bool $withTime = false): string
     {
         if ($timestamp === null || $timestamp <= 0) {
@@ -146,16 +153,16 @@ final class Fmt
         return 'pct-'.(int) round(max(0.0, min(100.0, $percent)));
     }
 
-    /** Service status → Thai text, per PROMPT.md — CLI-only output, stays Thai for now (see the class docblock) */
+    /** Service status → a human-readable label — currently unused (the only caller never calls this) */
     public static function serviceStatus(string $status): string
     {
         return match ($status) {
-            'running' => 'ทำงานปกติ',
-            'stopped' => 'หยุดทำงาน',
-            'failed' => 'มีปัญหา',
-            'transitioning' => 'กำลังเปลี่ยนสถานะ',
-            'not_installed' => 'ยังไม่ได้ติดตั้ง',
-            default => 'ไม่ทราบสถานะ',
+            'running' => 'Running',
+            'stopped' => 'Stopped',
+            'failed' => 'Failed',
+            'transitioning' => 'Changing status',
+            'not_installed' => 'Not installed',
+            default => 'Unknown status',
         };
     }
 
@@ -172,22 +179,22 @@ final class Fmt
         };
     }
 
-    /** An audit log action name → Thai text — CLI-only output, stays Thai for now (see the class docblock) */
+    /** An audit log action name → a human-readable label — currently unused (the only caller never calls this) */
     public static function action(string $action): string
     {
         return match ($action) {
-            'auth.login' => 'เข้าสู่ระบบ',
-            'auth.logout' => 'ออกจากระบบ',
-            'auth.2fa' => 'ยืนยันตัวตนสองชั้น',
-            'auth.password_changed' => 'เปลี่ยนรหัสผ่าน',
-            'http.forbidden' => 'พยายามเข้าถึงส่วนที่ไม่มีสิทธิ์',
-            'service.restart' => 'รีสตาร์ตบริการ',
-            'service.start' => 'เริ่มบริการ',
-            'service.stop' => 'หยุดบริการ',
-            'service.reload' => 'โหลดค่าตั้งบริการใหม่',
-            'site.create' => 'สร้างเว็บไซต์',
-            'site.delete' => 'ลบเว็บไซต์',
-            'system.setup' => 'ติดตั้งระบบ',
+            'auth.login' => 'Signed in',
+            'auth.logout' => 'Signed out',
+            'auth.2fa' => 'Two-factor verification',
+            'auth.password_changed' => 'Changed password',
+            'http.forbidden' => 'Tried to access a forbidden section',
+            'service.restart' => 'Restarted a service',
+            'service.start' => 'Started a service',
+            'service.stop' => 'Stopped a service',
+            'service.reload' => 'Reloaded a service configuration',
+            'site.create' => 'Created a website',
+            'site.delete' => 'Deleted a website',
+            'system.setup' => 'Installed the system',
             default => $action,
         };
     }

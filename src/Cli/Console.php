@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Phpcp\Cli;
 
 /**
- * ตัวช่วยแสดงผลบนเทอร์มินัล — ปิดสีอัตโนมัติเมื่อ output ไม่ใช่เทอร์มินัล
- * (เช่นตอนถูก pipe เข้า log หรือรันจาก systemd)
+ * A terminal output helper — automatically turns off color when the output
+ * isn't a terminal (such as when piped into a log or run from systemd)
  */
 final class Console
 {
@@ -69,7 +69,7 @@ final class Console
         $this->line();
     }
 
-    /** อ่านค่าจากผู้ใช้ ปิดการแสดงผลได้สำหรับรหัสผ่าน */
+    /** Reads a value from the user — display can be hidden, for a password */
     public function ask(string $question, bool $hidden = false): string
     {
         fwrite(STDOUT, '  ' . $question . ': ');
