@@ -1,6 +1,6 @@
 <?php
 
-declare(strict_types=1);
+declare (strict_types = 1);
 
 namespace Phpcp\Domain;
 
@@ -30,9 +30,9 @@ final class MetricsHistoryRepository
      * @var array<string,array{0:int,1:int}>
      */
     public const BUCKETS = [
-        'minute' => [60, 86400],          // 1 minute · keep 24h
-        'hour' => [3600, 2592000],        // 1 hour · keep 30 days
-        'day' => [86400, 31536000],       // 1 day · keep 365 days
+        'minute' => [60, 86400], // 1 minute · keep 24h
+        'hour' => [3600, 2592000], // 1 hour · keep 30 days
+        'day' => [86400, 31536000]// 1 day · keep 365 days
     ];
 
     public function __construct(private readonly Db $db)
@@ -55,7 +55,7 @@ final class MetricsHistoryRepository
             'disk_percent' => (float) ($metrics['disk']['percent'] ?? 0),
             'load1' => (float) ($metrics['load'][1] ?? 0),
             'memory_used_bytes' => (int) ($metrics['memory']['used'] ?? 0),
-            'disk_used_bytes' => (int) ($metrics['disk']['used'] ?? 0),
+            'disk_used_bytes' => (int) ($metrics['disk']['used'] ?? 0)
         ];
 
         $bucketAt = $this->floorTo($now, self::BUCKETS['minute'][0]);
@@ -63,7 +63,7 @@ final class MetricsHistoryRepository
 
         return [
             'bucket_at' => $bucketAt,
-            'rolled_up' => $this->rollUp($now),
+            'rolled_up' => $this->rollUp($now)
         ];
     }
 
@@ -143,16 +143,16 @@ final class MetricsHistoryRepository
 
         foreach ($groups as $bucketAt => $group) {
             // Total samples across the whole interval — can't practically be zero, but never divide by it if it is
-            $weight = array_sum(array_map(static fn (array $r): int => max(1, (int) $r['samples']), $group));
+            $weight = array_sum(array_map(static fn(array $r): int => max(1, (int) $r['samples']), $group));
 
-            $average = function (string $column) use ($group, $weight): float {
+            $average = function (string $column) use ($group): float {
                 $total = 0.0;
 
                 foreach ($group as $row) {
-                    $total += (float) $row[$column] * max(1, (int) $row['samples']);
+                    $total = max($total, (float) $row[$column] * max(1, (int) $row['samples']));
                 }
 
-                return $total / $weight;
+                return $total;
             };
 
             $last = $group[count($group) - 1];
@@ -160,14 +160,14 @@ final class MetricsHistoryRepository
             $summary[] = [
                 'bucket_at' => $bucketAt,
                 'cpu_percent' => $average('cpu_percent'),
-                'cpu_peak' => max(array_map(static fn (array $r): float => (float) $r['cpu_peak'], $group)),
+                'cpu_peak' => max(array_map(static fn(array $r): float => (float) $r['cpu_peak'], $group)),
                 'memory_percent' => $average('memory_percent'),
                 'disk_percent' => $average('disk_percent'),
                 'load1' => $average('load1'),
                 // Bytes use the interval's most recent value, not an average — answers "how much was in use at that moment"
                 'memory_used_bytes' => (int) $last['memory_used_bytes'],
                 'disk_used_bytes' => (int) $last['disk_used_bytes'],
-                'samples' => $weight,
+                'samples' => $weight
             ];
         }
 
@@ -184,11 +184,15 @@ final class MetricsHistoryRepository
         };
     }
 
+    /**
+     * @param string $bucket
+     * @return mixed
+     */
     public function assertBucket(string $bucket): string
     {
         if (!isset(self::BUCKETS[$bucket])) {
             throw new \InvalidArgumentException(
-                'Invalid tier — valid values: ' . implode(', ', array_keys(self::BUCKETS)),
+                'Invalid tier — valid values: '.implode(', ', array_keys(self::BUCKETS)),
             );
         }
 
@@ -230,7 +234,7 @@ final class MetricsHistoryRepository
                 'load' => $sample['load1'],
                 'membytes' => $sample['memory_used_bytes'],
                 'diskbytes' => $sample['disk_used_bytes'],
-                'now' => $now,
+                'now' => $now
             ],
         );
     }
@@ -298,7 +302,7 @@ final class MetricsHistoryRepository
                 'size' => $targetSize, 'size2' => $targetSize, 'size3' => $targetSize,
                 'size4' => $targetSize, 'size5' => $targetSize, 'size6' => $targetSize, 'size7' => $targetSize,
                 'currentTarget' => $currentTarget,
-                'now' => $now,
+                'now' => $now
             ],
         );
     }
