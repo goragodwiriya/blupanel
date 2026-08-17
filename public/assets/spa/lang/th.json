@@ -47,6 +47,7 @@
     "A wildcard domain cannot point at a subpath — only the website root is usable": "โดเมน wildcard ชี้ไปยังพาธย่อยไม่ได้ — ใช้ได้เฉพาะรากของเว็บไซต์",
     "Access": "สิทธิ์",
     "Access denied": "ไม่มีสิทธิ์เข้าถึง",
+    "Access from this address is not allowed": "ไม่อนุญาตให้เข้าถึงจากที่อยู่นี้",
     "Access key": "Access key",
     "Account \"{name}\" ({role}) does not have permission to access this page": "บัญชี \"{name}\" ({role}) ไม่มีสิทธิ์เข้าถึงหน้านี้",
     "Account created": "สร้างบัญชีแล้ว",

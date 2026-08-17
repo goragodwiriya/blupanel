@@ -11,11 +11,11 @@ use Phpcp\Kernel\Response;
 use Phpcp\Kernel\Router;
 
 /**
- * ฐานของ controller ทุกตัว — รวมสิ่งที่ทุกเส้นทางต้องใช้ไว้ที่เดียว
+ * The base every controller shares — consolidates what every route needs into one place
  *
- * เหลือผู้สืบทอดสองตัวหลัง UI แบบ HTML ถูกลบ: `ApiController` (ทุกเส้นทาง `/api/v2/*`)
- * กับ `SpaController` (shell ไฟล์เดียว) · เมท็อดที่เคยมีไว้ให้หน้า HTML — `view()`,
- * `safeNext()` — ถูกลบไปพร้อมกัน ไม่มีใครเรียกอีกแล้ว
+ * Down to two subclasses after the HTML-based UI was removed: `ApiController`
+ * (every `/api/v2/*` route) and `SpaController` (the single shell file) ·
+ * the methods that used to exist for HTML pages — `view()`, `safeNext()` — were deleted along with it, nothing calls them anymore
  */
 abstract class Controller
 {

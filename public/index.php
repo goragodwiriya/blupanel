@@ -3,10 +3,10 @@
 declare(strict_types=1);
 
 /**
- * Front controller — ทางเข้าเดียวของชั้นที่ 1
+ * The front controller — layer 1's single entry point
  *
- * document root ชี้มาที่โฟลเดอร์ public/ เท่านั้น โค้ดใน src/, ไฟล์ config
- * และฐานข้อมูลจึงอยู่นอกพื้นที่ที่เว็บเซิร์ฟเวอร์เข้าถึงได้โดยตรง
+ * The document root points only at the public/ folder, so the code in src/,
+ * the config file, and the database all sit outside anywhere the web server can reach directly
  */
 
 require dirname(__DIR__) . '/bootstrap.php';
@@ -20,32 +20,32 @@ try {
     $app = App::boot();
     $request = Request::capture($app->config);
 
-    // จำกัด IP ที่เข้า panel ได้ ตรวจก่อนทุกอย่างเพราะถูกที่สุด (SECURITY §2.1)
+    // Restricts which IPs can reach the panel — checked before everything else, since it's the cheapest check (SECURITY §2.1)
     $allowlist = $app->config->list('panel.ip_allowlist');
     if ($allowlist !== [] && !ipAllowed($request->ip, $allowlist)) {
-        $app->logger()->warn('ปฏิเสธการเข้าถึงจาก IP นอกรายการที่อนุญาต', ['ip' => $request->ip]);
+        $app->logger()->warn('Rejected access from an IP outside the allowlist', ['ip' => $request->ip]);
 
-        (Response::text('ไม่อนุญาตให้เข้าถึงจากที่อยู่นี้', 403))->send();
+        (Response::text($app->t('Access from this address is not allowed'), 403))->send();
         exit;
     }
 
     (new HttpKernel($app))->handle($request)->send();
 } catch (Throwable $e) {
-    // ข้อผิดพลาดที่เกิดก่อน kernel พร้อมทำงาน (config พัง, DB เปิดไม่ได้)
-    error_log('[phpcp] bootstrap ล้มเหลว: ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+    // An error that happened before the kernel was ready (broken config, database unreachable)
+    error_log('[phpcp] bootstrap failed: ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
 
     http_response_code(500);
     header('Content-Type: text/html; charset=UTF-8');
 
-    echo '<!doctype html><html lang="th"><meta charset="utf-8"><title>ระบบยังไม่พร้อมใช้งาน</title>'
+    echo '<!doctype html><html lang="en"><meta charset="utf-8"><title>The system is not ready</title>'
         . '<body style="font-family:system-ui,sans-serif;max-width:640px;margin:3rem auto;padding:0 1rem">'
-        . '<h1 style="font-size:1.25rem">ระบบยังไม่พร้อมใช้งาน</h1>'
-        . '<p>เกิดข้อผิดพลาดระหว่างเริ่มต้นระบบ กรุณาตรวจสอบด้วยคำสั่ง <code>phpcp doctor</code> ที่หน้าเครื่อง</p>';
+        . '<h1 style="font-size:1.25rem">The system is not ready</h1>'
+        . '<p>An error occurred while starting up the system. Please check with the <code>phpcp doctor</code> command at the machine itself.</p>';
     exit;
 }
 
 /**
- * ตรวจว่า IP อยู่ในรายการที่อนุญาตหรือไม่ รองรับทั้ง IP เดี่ยวและ CIDR
+ * Checks whether an IP is in the allowlist — supports both a single IP and CIDR
  *
  * @param list<string> $allowlist
  */
