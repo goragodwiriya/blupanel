@@ -149,10 +149,10 @@ final class MetricsHistoryRepository
                 $total = 0.0;
 
                 foreach ($group as $row) {
-                    $total = max($total, (float) $row[$column] * max(1, (int) $row['samples']));
+                    $total += (float) $row[$column] * max(1, (int) $row['samples']);
                 }
 
-                return $total;
+                return $total / $weight;
             };
 
             $last = $group[count($group) - 1];
