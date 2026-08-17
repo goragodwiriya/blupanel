@@ -40,7 +40,7 @@ final class FileMkdir extends FileCapability
     public function validate(array $args): array
     {
         return self::baseArgs($args) + [
-            'name' => PathGuard::name(Validator::requireString($args, 'name'), 'ชื่อโฟลเดอร์')
+            'name' => PathGuard::name(Validator::requireString($args, 'name'), 'Folder name')
         ];
     }
 

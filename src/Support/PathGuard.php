@@ -8,42 +8,46 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\ValidationError;
 
 /**
- * ที่เดียวในระบบที่ตัดสินว่าเส้นทางไฟล์หนึ่ง ๆ ปลอดภัยหรือไม่
+ * The single place in the system that decides whether a file path is safe
  *
- * การป้องกันทำสองชั้นและต้องผ่านทั้งคู่:
+ * Protection happens in two layers, and both must pass:
  *
- *  1. ชั้นรูปแบบ (clean/join) — ทำงานตอน validate() ของ capability ก่อนแตะดิสก์
- *     ปฏิเสธ `..`, null byte, อักขระควบคุม, เส้นทางสัมบูรณ์ และชื่อที่ยาวเกินขีดจำกัดของ filesystem
+ *  1. The shape layer (clean/join) — runs during a capability's validate(),
+ *     before touching disk · rejects `..`, null bytes, control characters,
+ *     absolute paths, and names longer than the filesystem's own limit
  *
- *  2. ชั้นความจริง (resolve) — ทำงานหลังลดสิทธิ์แล้ว เทียบเส้นทางหลังคลาย symlink
- *     กับบ้านของเว็บไซต์ ชั้นนี้จำเป็นเพราะชั้นแรกมองไม่เห็น symlink ที่ชี้ออกนอกบ้าน
+ *  2. The truth layer (resolve) — runs after privileges have been dropped,
+ *     comparing the path after resolving symlinks against the website's
+ *     home · this layer is necessary because the first layer can't see a symlink that points outside the home
  *
- * ชั้นเดียวไม่พอ: ชั้นแรกอย่างเดียวโดน symlink หลอกได้ ชั้นสองอย่างเดียวก็ยอมให้ชื่อพิสดาร
- * อย่าง newline หรือ null byte ไหลลงไปถึง shell/log ได้
+ * Neither layer alone is enough: the first layer alone can be fooled by a
+ * symlink, and the second layer alone would still let a bizarre name like a
+ * newline or null byte flow down into the shell or the log
  */
 final class PathGuard
 {
-    /** ขีดจำกัดชื่อไฟล์ของ ext4/xfs คือ 255 ไบต์ ไม่ใช่ 255 ตัวอักษร */
+    /** ext4/xfs's filename limit is 255 bytes, not 255 characters */
     private const MAX_SEGMENT_BYTES = 255;
 
-    /** ความลึกสูงสุดที่ยอมรับ — กัน path ที่ยาวจนชน PATH_MAX ของเคอร์เนล */
+    /** The maximum depth accepted — guards against a path long enough to hit the kernel's PATH_MAX */
     private const MAX_DEPTH = 32;
 
     /**
-     * ตรวจและทำให้เส้นทางสัมพัทธ์อยู่ในรูปมาตรฐาน — คืน '' เมื่อหมายถึงรากของเว็บไซต์
+     * Validates and normalizes a relative path — returns '' when it means the website's root
      *
-     * รับได้ทั้ง '', '/', 'public', '/public/index.php' และคืนค่าเป็น 'public/index.php'
+     * Accepts '', '/', 'public', '/public/index.php' alike, and returns 'public/index.php'
      *
-     * @throws ValidationError เมื่อเส้นทางมีรูปแบบที่ไม่อนุญาต
+     * @throws ValidationError when the path has a disallowed shape
      */
-    public static function clean(string $path, string $label = 'เส้นทาง'): string
+    public static function clean(string $path, string $label = 'The path'): string
     {
         if (str_contains($path, "\0")) {
-            throw new ValidationError("{$label} มีอักขระที่ไม่อนุญาต");
+            throw new ValidationError("{$label} contains a character that isn't allowed");
         }
 
-        // ตัด / นำหน้าออกแล้วมองทุกอย่างเป็นเส้นทางสัมพัทธ์กับรากของเว็บไซต์เสมอ
-        // ผู้ใช้เห็น '/public' บนหน้าจอ แต่ระบบไม่เคยตีความว่าเป็นรากของเครื่อง
+        // Strips the leading / and always treats everything as relative to
+        // the website's root — the user sees '/public' on screen, but the
+        // system never interprets it as the machine's own root
         $path = trim($path);
         $path = str_replace('\\', '/', $path);
         $path = ltrim($path, '/');
@@ -58,10 +62,11 @@ final class PathGuard
                 continue;
             }
 
-            // `..` ถูกปฏิเสธ ไม่ใช่ถูกยุบทิ้ง — การยุบทิ้งทำให้ '/a/../../b' กลายเป็น '/b'
-            // ซึ่งซ่อนเจตนาของผู้เรียกและเคยเป็นบ่อเกิดช่องโหว่ traversal ในหลายระบบ
+            // `..` is rejected, never collapsed away — collapsing it would
+            // turn '/a/../../b' into '/b', which hides the caller's real
+            // intent and has been the source of traversal vulnerabilities in many systems
             if ($segment === '..') {
-                throw new ValidationError("{$label} ต้องไม่มี ..");
+                throw new ValidationError("{$label} must not contain ..");
             }
 
             self::assertSegment($segment, $label);
@@ -69,29 +74,29 @@ final class PathGuard
         }
 
         if (count($parts) > self::MAX_DEPTH) {
-            throw new ValidationError("{$label} ซ้อนลึกเกินกำหนด");
+            throw new ValidationError("{$label} is nested too deeply");
         }
 
         return implode('/', $parts);
     }
 
     /**
-     * ตรวจชื่อไฟล์หรือโฟลเดอร์เดี่ยว — ห้ามมี / อยู่ข้างใน
+     * Validates a single file or folder name — must not contain a /
      *
      * @throws ValidationError
      */
-    public static function name(string $name, string $label = 'ชื่อ'): string
+    public static function name(string $name, string $label = 'The name'): string
     {
         $name = trim($name);
 
         if ($name === '') {
-            throw new ValidationError("ต้องระบุ{$label}");
+            throw new ValidationError("{$label} is required");
         }
         if (str_contains($name, '/') || str_contains($name, '\\')) {
-            throw new ValidationError("{$label}ต้องไม่มีเครื่องหมาย /");
+            throw new ValidationError("{$label} must not contain a /");
         }
         if ($name === '.' || $name === '..') {
-            throw new ValidationError("{$label}นี้ใช้ไม่ได้");
+            throw new ValidationError("{$label} cannot be . or ..");
         }
 
         self::assertSegment($name, $label);
@@ -99,14 +104,14 @@ final class PathGuard
         return $name;
     }
 
-    /** ต่อเส้นทางสัมพัทธ์ที่ผ่าน clean() แล้วเข้ากับราก */
+    /** Joins a relative path that's already passed clean() onto a root */
     public static function join(string $root, string $relative): string
     {
         return $relative === '' ? $root : rtrim($root, '/').'/'.$relative;
     }
 
     /**
-     * เส้นทางแม่ของเส้นทางสัมพัทธ์ — คืน '' เมื่ออยู่ชั้นบนสุดแล้ว
+     * The parent path of a relative path — returns '' when already at the top level
      */
     public static function parent(string $relative): string
     {
@@ -116,32 +121,34 @@ final class PathGuard
     }
 
     /**
-     * ยืนยันว่าเส้นทางจริงหลังคลาย symlink ยังอยู่ใต้รากที่อนุญาต
+     * Confirms the real path, after resolving symlinks, is still under the allowed root
      *
-     * ต้องเรียกหลังลดสิทธิ์แล้วเท่านั้น เพราะ realpath() จะเห็นเฉพาะสิ่งที่ผู้ใช้นั้นเข้าถึงได้
+     * Must only be called after privileges have already been dropped, since
+     * realpath() only sees what that user can actually access
      *
-     * @param bool $mustExist false เมื่อเป็นปลายทางที่กำลังจะถูกสร้าง — จะตรวจไดเรกทอรีแม่แทน
-     * @throws ValidationError เมื่อเส้นทางหลุดออกนอกราก หรือไม่มีอยู่ทั้งที่ต้องมี
+     * @param bool $mustExist false when this is a destination about to be created — checks the parent directory instead
+     * @throws ValidationError when the path escapes the root, or doesn't exist when it must
      */
     public static function resolve(Executor $executor, string $root, string $target, bool $mustExist = true): string
     {
         $realRoot = $executor->realPath($root);
         if ($realRoot === null) {
-            throw new ValidationError('ไม่พบไดเรกทอรีของเว็บไซต์');
+            throw new ValidationError('The website directory was not found');
         }
 
         $real = $executor->realPath($target);
 
         if ($real === null) {
             if ($mustExist) {
-                throw new ValidationError('ไม่พบไฟล์หรือโฟลเดอร์ที่ระบุ');
+                throw new ValidationError('The specified file or folder was not found');
             }
 
-            // ปลายทางยังไม่มีจริง จึงตรวจไดเรกทอรีแม่ซึ่งต้องมีอยู่แล้วแทน
-            // แล้วประกอบเส้นทางกลับจากแม่ที่ตรวจแล้ว — ชื่อสุดท้ายผ่าน clean() มาก่อนหน้านี้แล้ว
+            // The destination doesn't exist yet, so the parent directory —
+            // which must already exist — is checked instead, then the path
+            // is reassembled from that checked parent · the final name already passed clean() earlier
             $parentReal = $executor->realPath(dirname($target));
             if ($parentReal === null) {
-                throw new ValidationError('ไม่พบโฟลเดอร์ปลายทาง');
+                throw new ValidationError('The destination folder was not found');
             }
 
             self::assertInside($realRoot, $parentReal);
@@ -154,15 +161,15 @@ final class PathGuard
         return $real;
     }
 
-    /** ตรวจว่าเส้นทางที่คลาย symlink แล้วอยู่ใต้รากจริง */
+    /** Verifies the symlink-resolved path is genuinely under the root */
     private static function assertInside(string $realRoot, string $real): void
     {
         $realRoot = rtrim($realRoot, '/');
 
-        // ต้องเทียบกับ "$realRoot/" ไม่ใช่ "$realRoot" เปล่า ๆ
-        // ไม่อย่างนั้น /srv/sites/example.com-evil จะผ่านการตรวจของ /srv/sites/example.com
+        // Must compare against "$realRoot/", never bare "$realRoot" —
+        // otherwise /srv/sites/example.com-evil would pass the check for /srv/sites/example.com
         if ($real !== $realRoot && !str_starts_with($real, $realRoot.'/')) {
-            throw new ValidationError('เส้นทางอยู่นอกขอบเขตของเว็บไซต์');
+            throw new ValidationError('The path is outside the website boundary');
         }
     }
 
@@ -170,16 +177,16 @@ final class PathGuard
     private static function assertSegment(string $segment, string $label): void
     {
         if (strlen($segment) > self::MAX_SEGMENT_BYTES) {
-            throw new ValidationError("{$label}ยาวเกิน ".self::MAX_SEGMENT_BYTES.' ไบต์');
+            throw new ValidationError("{$label} is longer than ".self::MAX_SEGMENT_BYTES.' bytes');
         }
 
-        // อักขระควบคุมทำให้ชื่อไฟล์ปลอมตัวใน log และ terminal ได้ จึงห้ามทั้งช่วง
+        // A control character lets a filename disguise itself in a log or terminal, so the whole range is disallowed
         if (preg_match('/[\x00-\x1f\x7f]/', $segment) === 1) {
-            throw new ValidationError("{$label}มีอักขระควบคุมที่ไม่อนุญาต");
+            throw new ValidationError("{$label} contains a disallowed control character");
         }
 
         if (!mb_check_encoding($segment, 'UTF-8')) {
-            throw new ValidationError("{$label}ไม่ใช่ข้อความ UTF-8 ที่ถูกต้อง");
+            throw new ValidationError("{$label} is not valid UTF-8 text");
         }
     }
 }

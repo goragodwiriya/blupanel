@@ -49,7 +49,7 @@ final class FileUpload extends FileCapability
 
         // basename before validating: some browsers send the user's full local
         // path, and an attacker might send '../../etc/cron.d/x' directly
-        $name = PathGuard::name(basename(Validator::requireString($args, 'name', 255)), 'ชื่อไฟล์');
+        $name = PathGuard::name(basename(Validator::requireString($args, 'name', 255)), 'Filename');
 
         $encoded = $args['content'] ?? '';
         if (!is_string($encoded)) {

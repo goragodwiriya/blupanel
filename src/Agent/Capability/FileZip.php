@@ -43,7 +43,7 @@ final class FileZip extends FileCapability
     {
         $items = [];
         foreach (Validator::requireStringList($args, 'items', self::MAX_ITEMS, 4096) as $item) {
-            $relative = PathGuard::clean($item, 'เส้นทางที่จะบีบอัด');
+            $relative = PathGuard::clean($item, 'Path to compress');
             if ($relative === '') {
                 throw new ValidationError('Select a file or folder to compress first');
             }
@@ -55,7 +55,7 @@ final class FileZip extends FileCapability
             throw new ValidationError('Select a file or folder to compress first');
         }
 
-        $name = PathGuard::name(Validator::requireString($args, 'archive', 200), 'ชื่อไฟล์บีบอัด');
+        $name = PathGuard::name(Validator::requireString($args, 'archive', 200), 'Archive filename');
         if (!str_ends_with(mb_strtolower($name), '.zip')) {
             $name .= '.zip';
         }

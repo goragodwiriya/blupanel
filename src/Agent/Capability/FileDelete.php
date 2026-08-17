@@ -51,7 +51,7 @@ final class FileDelete extends FileCapability
     {
         $items = [];
         foreach (Validator::requireStringList($args, 'items', self::MAX_ITEMS, 4096) as $item) {
-            $relative = PathGuard::clean($item, 'เส้นทางที่จะลบ');
+            $relative = PathGuard::clean($item, 'Path to delete');
 
             if ($relative === '') {
                 throw new ValidationError('Cannot delete the scope root');

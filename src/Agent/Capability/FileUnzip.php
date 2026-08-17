@@ -83,7 +83,7 @@ final class FileUnzip extends FileCapability
         return $base + [
             // Empty means extract into the same folder the archive itself is in
             'destination' => Validator::optionalString($args, 'destination') !== ''
-                ? PathGuard::name((string) $args['destination'], 'ชื่อโฟลเดอร์ปลายทาง')
+                ? PathGuard::name((string) $args['destination'], 'Destination folder name')
                 : ''
         ];
     }

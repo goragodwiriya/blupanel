@@ -47,7 +47,7 @@ final class FileMove extends FileCapability
 
         $clean = [];
         foreach ($sources as $source) {
-            $relative = PathGuard::clean($source, 'เส้นทางต้นทาง');
+            $relative = PathGuard::clean($source, 'Source path');
             if ($relative === '') {
                 throw new ValidationError('Cannot move or copy the scope root');
             }
@@ -66,10 +66,10 @@ final class FileMove extends FileCapability
                 'Invalid file scope key',
             ),
             'items' => $clean,
-            'destination' => PathGuard::clean(Validator::optionalString($args, 'destination', max: 4096), 'โฟลเดอร์ปลายทาง'),
+            'destination' => PathGuard::clean(Validator::optionalString($args, 'destination', max: 4096), 'Destination folder'),
             // Rename = move one item while giving it a new name, only ever usable for a single item
             'rename' => isset($args['rename']) && $args['rename'] !== ''
-                ? PathGuard::name((string) $args['rename'], 'ชื่อใหม่')
+                ? PathGuard::name((string) $args['rename'], 'New name')
                 : '',
             'copy' => self::flag($args, 'copy'),
             'overwrite' => self::flag($args, 'overwrite')
