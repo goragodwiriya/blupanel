@@ -1,47 +1,54 @@
-// ค่าตั้งเพิ่มเติมของ BIND9 — ไฟล์นี้เป็นของผู้ดูแลเครื่อง
+// Additional BIND9 settings — this file belongs to the machine's admin
 //
-// panel ไม่เขียนทับไฟล์นี้เลย · แก้จากหน้าโดเมนใน panel หรือแก้ไฟล์นี้ตรง ๆ ก็ได้
+// The panel never overwrites this file · edit it from the panel's domain
+// page, or edit this file directly, either works
 //
-// ไฟล์นี้อยู่ในไดเรกทอรีของ BIND ไม่ใช่ใต้ /etc/phpcp แบบไฟล์ส่วนเสริมของบริการอื่น
-// เพราะ named ทิ้งสิทธิ์ root ทันทีที่สตาร์ตแล้วอ่านไฟล์ใต้ /etc/phpcp ไม่ได้เลย
+// This file lives in BIND's own directory, never under /etc/phpcp the way
+// another service's custom file does, because named drops its root
+// privileges the moment it starts and can never read a file under /etc/phpcp at all
 //
 // -----------------------------------------------------------------------------
-// ข้อที่ต่างจากไฟล์ส่วนเสริมของบริการอื่น — อ่านก่อนเขียน
+// What's different from another service's custom file — read before writing
 // -----------------------------------------------------------------------------
-// 1. **อย่าลบไฟล์นี้ทิ้ง ให้ลบเนื้อหาข้างในแทน**
-//    named.conf.local มีบรรทัด include ชี้มาที่ไฟล์นี้ และ `include` ของ BIND
-//    **ไม่ทนไฟล์หาย** — ไม่มี include_try แบบ Dovecot หรือ IncludeOptional แบบ Apache
-//    ไฟล์หายเมื่อไร named จะไม่สตาร์ตในการรีสตาร์ตครั้งถัดไป (ที่กำลังรันอยู่ไม่เป็นไร
-//    เพราะอ่านค่าไปแล้ว) ซึ่งมักไปโผล่ตอนรีบูตโดยไม่มีใครเฝ้า · ไฟล์ว่างปลอดภัยดี
+// 1. **Never delete this file — delete its content instead**
+//    named.conf.local has an include line pointing at this file, and BIND's
+//    own `include` **doesn't tolerate a missing file** — there's no
+//    include_try like Dovecot has, or IncludeOptional like Apache has · the
+//    moment this file is missing, named won't start on its next restart (the
+//    one currently running is fine, since it already read the value) — this
+//    usually turns up during a reboot with nobody watching · an empty file is safe
 //
-// 2. **ค่าที่เขียนทีหลังไม่ได้ชนะค่าเดิม — มันคือข้อผิดพลาด**
-//    ต่างจาก Postfix/Dovecot/Apache ที่นิยาม "ซ้ำ" แปลว่า "ทับ" · ของ BIND การประกาศ
-//    zone ซ้ำหรือ options ซ้ำทำให้ named-checkconf ไม่ผ่านและค่าตั้งถูกคืนกลับทั้งชุด
+// 2. **A value written later doesn't win over the existing one — it's an error**
+//    Unlike Postfix/Dovecot/Apache, where "duplicate" is defined as
+//    "overwrite" · for BIND, declaring a zone twice or duplicate options
+//    makes named-checkconf fail, and the whole settings change gets reverted
 //
-// 3. `options { }` มีได้ครั้งเดียวทั้งเครื่อง และ named.conf.options ใช้ไปแล้ว
-//    ค่าอย่าง forwarders, recursion, listen-on ระดับเครื่องจึงเขียนที่นี่ไม่ได้
-//    (แต่ค่าระดับ zone เขียนได้ ดูตัวอย่างข้างล่าง)
+// 3. `options { }` can only exist once per machine, and named.conf.options
+//    already uses it — a machine-level value like forwarders, recursion, or
+//    listen-on can never be written here (but a zone-level value can, see the examples below)
 //
-// 4. zone ของโดเมนที่จัดการผ่าน panel อยู่ใน named.conf.local ซึ่ง panel เขียนทั้งไฟล์
-//    ห้ามประกาศซ้ำที่นี่ · ที่นี่มีไว้สำหรับ zone ที่ panel ไม่ได้จัดการ
+// 4. The zones for domains managed through the panel live in
+//    named.conf.local, which the panel writes as a whole file — never
+//    declare them again here · this file is for zones the panel doesn't manage
 //
-// 5. **ห้ามเขียนกุญแจลับ (TSIG) ลงไฟล์นี้ตรง ๆ**
-//    ไฟล์นี้อ่านได้ทุกคนบนเครื่องเหมือนไฟล์อื่นในไดเรกทอรีนี้ · เก็บ `key { }` ไว้ใน
-//    ไฟล์แยกที่ตั้งสิทธิ์ `chmod 640` และ `chown root:bind` แล้ว include เข้ามาจากที่นี่
+// 5. **Never write a secret key (TSIG) directly into this file**
+//    This file is readable by everyone on the machine, like every other file
+//    in this directory · keep `key { }` in a separate file set to `chmod 640`
+//    and `chown root:bind`, then include it in from here
 //
-// 6. บันทึกแล้ว `named-checkconf` ต้องผ่านก่อนถึงจะมีผล · ผ่านแล้วยังต้องกดยืนยัน
-//    ไม่งั้นระบบคืนค่าเดิมให้เอง (คืนทั้งไฟล์นี้และบรรทัด include พร้อมกัน)
+// 6. After saving, `named-checkconf` must pass before this takes effect ·
+//    even once it passes, it still needs to be confirmed, or the system reverts it back on its own (both this file and the include line together)
 // -----------------------------------------------------------------------------
 
-// ตัวอย่าง — ลบเครื่องหมาย // หน้าบรรทัดที่ต้องการใช้
+// Examples — remove the // in front of the line you want to use
 
-// กลุ่มไอพีที่ใช้ซ้ำได้ในกฎข้างล่าง — ชื่อห้ามซ้ำกับ any/none/localhost/localnets
+// A group of IPs reusable in the rules below — the name must not collide with any/none/localhost/localnets
 //acl "secondary_dns" {
 //    203.0.113.10;
 //    198.51.100.20;
 //};
 
-// ส่ง zone ให้ DNS สำรองดึงไปเก็บ (AXFR) — ตั้งเป็น zone ที่ panel ไม่ได้จัดการเท่านั้น
+// Sends a zone for a secondary DNS to fetch and keep (AXFR) — only set this on a zone the panel doesn't manage
 //zone "internal.example" {
 //    type master;
 //    file "/etc/bind/zones/internal.example.zone";
@@ -49,22 +56,22 @@
 //    notify yes;
 //};
 
-// รับ zone มาจากเครื่องอื่น (เราเป็นตัวสำรอง) — ไดเรกทอรีต้องให้ bind เขียนได้
+// Receives a zone from another machine (we're the secondary) — the directory must be writable by bind
 //zone "example.org" {
 //    type slave;
 //    masters { 203.0.113.1; };
 //    file "/var/cache/bind/example.org.zone";
 //};
 
-// ส่งคำถามของโดเมนหนึ่งไปถาม DNS ภายในแทนการไล่ถามจากรากอินเทอร์เน็ต
+// Sends queries for one domain to an internal DNS instead of walking up from the internet's root
 //zone "corp.internal" {
 //    type forward;
 //    forward only;
 //    forwarders { 10.0.0.53; };
 //};
 
-// เก็บ log ละเอียดขึ้นเวลาไล่ปัญหา — `logging` มีได้ครั้งเดียวทั้งเครื่องเช่นกัน
-// ปิดกลับเมื่อเสร็จ เพราะไฟล์โตเร็วมากบนเครื่องที่มีคำถามเข้าเยอะ
+// Keeps a more detailed log while troubleshooting — `logging` can also only exist once per machine
+// Turn it back off when done, since the file grows very fast on a machine with many incoming queries
 //logging {
 //    channel query_log {
 //        file "/var/log/named/query.log" versions 3 size 20m;

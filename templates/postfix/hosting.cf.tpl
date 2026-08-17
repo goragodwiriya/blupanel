@@ -1,37 +1,38 @@
 # ---------------------------------------------------------------------------
-# รับเมลเข้ากล่องจริง — PLAN-MAIL เฟส M1
+# Accepts mail into real mailboxes — PLAN-MAIL phase M1
 #
-# ส่วนนี้จะมีอยู่ก็ต่อเมื่อมีโดเมนที่เปิดเมลอย่างน้อยหนึ่งโดเมนเท่านั้น
+# This section only exists when at least one domain has mail enabled
 # ---------------------------------------------------------------------------
 
-# โดเมนที่รับเมลให้ ต้องอยู่ใน virtual_mailbox_domains **ไม่ใช่** mydestination —
-# สองค่านี้ใส่โดเมนเดียวกันพร้อมกันไม่ได้ Postfix จะฟ้องแล้วไม่รับเมลของโดเมนนั้นเลย
+# A domain being accepted for must be in virtual_mailbox_domains, **never**
+# mydestination — these two can never both list the same domain, Postfix refuses and stops accepting mail for that domain entirely
 virtual_mailbox_domains = hash:/etc/postfix/vdomains
 virtual_mailbox_maps = hash:/etc/postfix/vmailbox
 virtual_alias_maps = hash:/etc/postfix/valias
 
-# ส่งต่อให้ Dovecot เขียนลงกล่อง ไม่ให้ Postfix เขียนไฟล์เอง — Dovecot เป็นคนเดียว
-# ที่รู้เรื่องโควตา, ดัชนีของ IMAP และการสร้างโฟลเดอร์มาตรฐาน
+# Forwards to Dovecot to write into the mailbox, never lets Postfix write the
+# file itself — Dovecot is the only one that knows about quotas, IMAP indexes, and creating the standard folders
 virtual_transport = lmtp:unix:private/dovecot-lmtp
 
-# ให้ Dovecot เป็นคนตอบว่ารหัสผ่านถูกไหม — จะได้มีที่เก็บรหัสผ่านที่เดียวทั้งระบบ
+# Lets Dovecot answer whether a password is correct — so there's one single place the whole system stores passwords
 smtpd_sasl_type = dovecot
 smtpd_sasl_path = private/auth
 smtpd_sasl_auth_enable = yes
-# ปิดการล็อกอินแบบไม่เข้ารหัส — รหัสผ่านเมลห้ามวิ่งเป็นข้อความเปล่า
+# Disables unencrypted login — a mail password must never travel as plain text
 smtpd_tls_auth_only = yes
 
-# **บรรทัดนี้คือสิ่งที่กันไม่ให้เป็น open relay**
+# **This line is what prevents becoming an open relay**
 #
-# อ่านจากซ้ายไปขวา หยุดที่กฎแรกที่ตรง: เครื่องนี้เอง → คนที่ล็อกอินแล้ว → ปฏิเสธ
-# `reject_unauth_destination` ปิดท้ายเสมอ แปลว่าเมลที่ปลายทางไม่ใช่โดเมนของเรา
-# และผู้ส่งไม่ได้ล็อกอิน จะถูกปฏิเสธทันที
+# Read left to right, stopping at the first rule that matches: this machine
+# itself → someone already authenticated → refuse · `reject_unauth_destination`
+# always closes the list, meaning mail whose destination isn't one of our own
+# domains, from a sender who isn't authenticated, gets refused immediately
 smtpd_relay_restrictions =
     permit_mynetworks
     permit_sasl_authenticated
     reject_unauth_destination
 
-# กันผู้ส่งปลอมที่พบบ่อย ก่อนถึงขั้นตอนรับเนื้อเมล
+# Blocks the most common forged senders, before ever reaching the step of accepting the mail's content
 smtpd_helo_required = yes
 smtpd_recipient_restrictions =
     permit_mynetworks

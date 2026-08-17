@@ -1,60 +1,66 @@
 [Unit]
-Description=PHP Control Panel — privileged agent (ชั้นที่ 2)
+Description=PHP Control Panel — privileged agent (layer 2)
 Documentation=file://{{INSTALL_DIR}}/docs/ARCHITECTURE.md
 After=network.target
 Before=phpcp-web.service
 
-# แจ้งเตือนเมื่อ agent เข้าสถานะ failed — จุดเดียวที่ทำได้จริง (PLAN-V2 เฟส E6)
+# Notifies when the agent enters the failed state — the one place this can genuinely be done (PLAN-V2 phase E6)
 #
-# ตอน agent ตาย ไม่มีใครในระบบส่งข้อความออกได้เลย: `alert.check` เป็น capability
-# ที่รันผ่าน agent เอง ส่วน phpcp-scheduler ถูกล็อกไว้ที่ AF_UNIX (ยิง Telegram ไม่ได้)
-# และ NoNewPrivileges (เข้าคิวเมลไม่ได้) · systemd จึงเป็นสิ่งเดียวที่ยังเห็นเหตุการณ์นี้
+# When the agent dies, nothing else in the system can send a notification at
+# all: `alert.check` is a capability that itself runs through the agent, and
+# phpcp-scheduler is locked down to AF_UNIX (can't fire Telegram) and
+# NoNewPrivileges (can't queue mail) · systemd is therefore the one thing that still sees this event
 #
-# ทำงานร่วมกับ Restart=always ข้างล่างพอดี: crash แล้วสตาร์ตกลับได้เอง = ไม่เข้าสถานะ
-# failed = ไม่ปลุกใคร · ต่อเมื่อ restart วนจนชน StartLimitBurst ถึงจะ failed จริง
-# ซึ่งคือกรณีที่ต้องมีคนเข้ามาดู
+# Works together with Restart=always below exactly right: a crash that
+# restarts itself = never enters the failed state = never wakes anyone up ·
+# only once restarts loop enough to hit StartLimitBurst does it genuinely become failed, which is the case that needs someone to look
 OnFailure=phpcp-alert@%n.service
 
 [Service]
 Type=simple
-# -d pcre.jit=0 จำเป็นเพราะ MemoryDenyWriteExecute=yes ข้างล่างห้ามขอหน่วยความจำที่
-# เขียนและรันได้พร้อมกัน ซึ่งเป็นสิ่งที่ PCRE JIT ต้องใช้ — ถ้าไม่ปิดไว้ PHP จะพ่น
-# warning "Allocation of JIT memory failed" ทุกครั้งที่ preg_match ทำงาน (ทุก request
-# ที่เข้า Agent\Protocol) จน journal เต็มไปด้วยข้อความเดียวซ้ำ ๆ จนหา error จริงไม่เจอ
-# ปิด JIT ตรงนี้ดีกว่าผ่อน MemoryDenyWriteExecute เพราะ regex ของ agent สั้นและไม่ใช่คอขวด
+# -d pcre.jit=0 is required because MemoryDenyWriteExecute=yes below forbids
+# requesting memory that's both writable and executable at once, which is
+# exactly what PCRE JIT needs — without disabling it, PHP spews a "Allocation
+# of JIT memory failed" warning every single time preg_match runs (every
+# request that reaches Agent\Protocol), filling the journal with the same
+# repeated message until the real error can't be found at all · disabling
+# JIT here is better than loosening MemoryDenyWriteExecute, since the agent's own regexes are short and never the bottleneck
 ExecStart={{PHP_BIN}} -d pcre.jit=0 {{INSTALL_DIR}}/bin/phpcp-agentd
 Restart=always
 RestartSec=2
 TimeoutStopSec=10
 
-# Group=phpcp ทำให้ /run/phpcp เป็น root:phpcp 0750 ตาม ARCHITECTURE §13
-# ถ้าปล่อยเป็น root:root ชั้นที่ 1 จะเข้าไปหา agent.sock ไม่ได้เลย
+# Group=phpcp makes /run/phpcp root:phpcp 0750, per ARCHITECTURE §13
+# Leaving it as root:root would make layer 1 completely unable to reach agent.sock
 Group={{PANEL_GROUP}}
 RuntimeDirectory=phpcp
 RuntimeDirectoryMode=0750
-# ห้ามลบบรรทัดนี้ — ทั้งสามบริการใช้ RuntimeDirectory=phpcp ร่วมกัน
-# ค่าเริ่มต้นของ systemd คือลบ /run/phpcp ทิ้งเมื่อบริการหยุด ซึ่งแปลว่าการรีสตาร์ต
-# บริการใดบริการหนึ่งจะลบ socket ของอีกสองตัวไปด้วย (agent.sock, panel-fpm.sock)
-# ผลคือ panel ตอบ 503 หรือ "ติดต่อ agent ไม่ได้" ทั้งที่ทุกบริการยังขึ้น active อยู่
+# Never delete this line — all three services share RuntimeDirectory=phpcp
+# systemd's own default is to delete /run/phpcp when a service stops, which
+# means restarting any one of the three services would delete the other two's
+# sockets along with it (agent.sock, panel-fpm.sock) — the result is the
+# panel answering 503 or "cannot reach the agent" while every service still shows active
 RuntimeDirectoryPreserve=yes
 
 # ---------------------------------------------------------------------------
-# agent ต้องเป็น root เพราะเป็นชั้นเดียวที่ทำงานสิทธิ์สูงได้
-# แต่ตัด capability ที่ไม่จำเป็นทิ้งทั้งหมด — ต่อให้ agent ถูกยึด
-# ก็โหลด kernel module, แก้ sysctl หรือแตะ /home ของผู้ใช้ไม่ได้
+# The agent must be root, since it's the one layer that runs with elevated privileges
+# But every capability not genuinely needed is dropped entirely — even if the
+# agent were fully compromised, it still couldn't load a kernel module, edit sysctl, or touch a user's /home
 # ---------------------------------------------------------------------------
 NoNewPrivileges=yes
-# ProtectHome=no + InaccessiblePaths=/root — ไม่ใช่การผ่อนความปลอดภัย แต่เป็นการเล็งให้ตรง
+# ProtectHome=no + InaccessiblePaths=/root — not loosening security, aiming it correctly instead
 #
-# `ProtectHome=yes` ทำให้ /home, /root และ /run/user **ว่างเปล่า**ในมุมมองของบริการนี้ ·
-# ตั้งแต่บ้านของลูกค้าย้ายมาอยู่ที่ /home ตัว agent จึงสร้างหรือแตะบ้านใครไม่ได้เลย
-# — `site.create` ล้มด้วย "สร้างไดเรกทอรีไม่สำเร็จ: /home/<ผู้ใช้>" ทุกครั้ง
+# `ProtectHome=yes` makes /home, /root, and /run/user appear **empty** from
+# this service's point of view · ever since customer homes moved to /home,
+# the agent could never create or touch anyone's home at all —
+# `site.create` failed with "could not create the directory: /home/<user>" every single time
 #
-# `ReadWritePaths=/home` **ปลดล็อกไม่ได้** — ทดสอบบนเครื่องจริงแล้ว (2026-08-14) systemd
-# ซ่อน /home ตั้งแต่ตอนสร้าง mount namespace ก่อนที่ ReadWritePaths จะมีผล
+# `ReadWritePaths=/home` **can't unlock this** — confirmed by testing on a
+# real machine (2026-08-14): systemd hides /home while building the mount namespace, before ReadWritePaths ever takes effect
 #
-# จึงปิด ProtectHome แล้วกัน /root ตรง ๆ แทน ซึ่งเป็นสิ่งเดียวในสามอย่างนั้นที่ panel
-# ไม่มีเหตุต้องแตะเลย · /home เป็นเนื้องานของ panel โดยตรง การกันมันคือการกันไม่ให้ทำงาน
+# So ProtectHome is disabled and /root is blocked directly instead — the one
+# of those three paths the panel genuinely never has a reason to touch ·
+# /home is the panel's own core work, blocking it would mean blocking the panel from working at all
 ProtectHome=no
 InaccessiblePaths=/root
 ProtectKernelTunables=yes
@@ -68,27 +74,29 @@ RestrictRealtime=yes
 RestrictSUIDSGID=no
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
-# AF_NETLINK จำเป็น — sendmail/Postfix เรียก getifaddrs() ผ่าน netlink
-# ถ้าไม่มีจะได้ fatal: inet_addr_local[getifaddrs]: Address family not supported by protocol
+# AF_NETLINK is required — sendmail/Postfix calls getifaddrs() through netlink
+# Without it: fatal: inet_addr_local[getifaddrs]: Address family not supported by protocol
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 SystemCallArchitectures=native
 SystemCallFilter=@system-service @privileged
-# CAP_NET_ADMIN จำเป็นสำหรับ ufw — ทั้งอ่านสถานะและแก้กฎล้วนคุยกับ netfilter ของเคอร์เนล
-# ถ้าไม่มี `ufw status` จะได้ "Could not fetch rule set generation id: Permission denied"
-# แล้วหน้า Firewall จะรายงานว่าปิดอยู่ทั้งที่เปิดอยู่จริง (readable=false)
+# CAP_NET_ADMIN is required for ufw — both reading status and editing rules
+# talk to the kernel's netfilter entirely · without it, `ufw status` answers
+# "Could not fetch rule set generation id: Permission denied," and the
+# Firewall page reports it as off even though it's genuinely on (readable=false)
 #
-# CAP_NET_BIND_SERVICE จำเป็นสำหรับ `nginx -t` — การตรวจ config ของ nginx **เปิด
-# listening socket จริง** ไม่ได้ตรวจแค่ไวยากรณ์ ถ้าไม่มี capability นี้จะได้
-# "bind() to 0.0.0.0:80 failed (13: Permission denied)" ทั้งที่บรรทัดก่อนหน้า
-# บอกว่า "syntax is ok" แล้ว ผลคือทุกการเขียน config ถูก rollback ทิ้งโดยที่
-# ไฟล์ไม่มีอะไรผิดเลย (เจอจริงตอนกดเปลี่ยนเว็บเซิร์ฟเวอร์จากหน้าจอ 2026-08-11)
+# CAP_NET_BIND_SERVICE is required for `nginx -t` — checking nginx's config
+# **genuinely opens a listening socket**, it never only checks syntax ·
+# without this capability, it answers "bind() to 0.0.0.0:80 failed (13:
+# Permission denied)" even though the line right before it already said
+# "syntax is ok" — the result is every config write getting rolled back with
+# nothing wrong in the file at all (genuinely hit this while switching web servers from the screen, 2026-08-11)
 CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_SETUID CAP_SETGID CAP_KILL CAP_SYS_ADMIN CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-# ต้องเป็น ambient ด้วย ไม่ใช่แค่อยู่ใน bounding set — NoNewPrivileges=yes ทำให้
-# capability ไม่ตกทอดไปยังโปรเซสลูกเอง ซึ่ง ufw/iptables/nginx เป็นโปรเซสลูกทั้งหมด
+# Must also be ambient, not just in the bounding set — NoNewPrivileges=yes
+# means a capability doesn't pass down to a child process on its own, and ufw/iptables/nginx are all child processes
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 
-# หมายเหตุ: RestrictSUIDSGID ต้องเป็น no เพราะ agent ต้อง setuid ลงเป็นเจ้าของเว็บไซต์
-# ก่อนแตะไฟล์ผู้ใช้ (ARCHITECTURE §4.4) ซึ่งเป็นการลดสิทธิ์ ไม่ใช่เพิ่ม
+# Note: RestrictSUIDSGID must be no, since the agent has to setuid down to a
+# website's owner before touching a user's file (ARCHITECTURE §4.4), which lowers privilege, never raises it
 
 [Install]
 WantedBy=multi-user.target

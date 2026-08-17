@@ -495,10 +495,10 @@ test('ไฟล์ตั้งต้นของ BIND ต้องเตือ�
 
     assertSame([], $active, 'ไฟล์ตั้งต้นต้องไม่มีคำสั่งที่ทำงานจริงสักบรรทัด');
 
-    assertTrue(str_contains($content, 'อย่าลบไฟล์นี้ทิ้ง'), 'ต้องเตือนว่าลบไฟล์แล้ว named ไม่สตาร์ต');
-    assertTrue(str_contains($content, 'ข้อผิดพลาด'), 'ต้องบอกว่าค่าซ้ำเป็นข้อผิดพลาด ไม่ใช่การทับค่า');
+    assertTrue(str_contains($content, 'Never delete this file'), 'ต้องเตือนว่าลบไฟล์แล้ว named ไม่สตาร์ต');
+    assertTrue(str_contains($content, "it's an error"), 'ต้องบอกว่าค่าซ้ำเป็นข้อผิดพลาด ไม่ใช่การทับค่า');
     assertTrue(str_contains($content, 'options'), 'ต้องบอกว่า options เขียนที่นี่ไม่ได้');
-    assertTrue(str_contains($content, 'ยืนยัน'), 'ต้องบอกว่าไม่กดยืนยันแล้วระบบคืนค่าเดิม');
+    assertTrue(str_contains($content, 'confirmed'), 'ต้องบอกว่าไม่กดยืนยันแล้วระบบคืนค่าเดิม');
 
     /*
      * ไฟล์นี้อยู่ในไดเรกทอรีของ BIND และถูกเขียนด้วยสิทธิ์ 0644 เหมือนไฟล์อื่นที่ panel
