@@ -5,25 +5,27 @@ declare(strict_types=1);
 namespace Phpcp\Support;
 
 /**
- * แปลข้อความที่ระบบส่งออกไปให้คน — **ใช้คลังคำเดียวกับหน้าเว็บ**
+ * Translates the text the system sends out to people — **using the same catalogue as the web page**
  *
- * `public/assets/spa/lang/th.json` คือคลังคำเดียวของทั้งโปรเจกต์ · ฝั่งเบราว์เซอร์
- * ใช้มันแปลข้อความในเทมเพลตอยู่แล้ว ที่นี่อ่านไฟล์เดียวกัน จึงไม่มีคลังคำสองชุด
- * ให้หลุดจากกัน — เพิ่มคำแปลครั้งเดียวได้ทั้งหน้าเว็บ อีเมล และคำสั่งบรรทัดคำสั่ง
+ * `public/assets/spa/lang/th.json` is the whole project's single catalogue ·
+ * the browser side already uses it to translate template text, and this
+ * class reads that exact same file, so there are never two catalogues that
+ * can drift apart from each other — adding one translation covers the web page, email, and CLI commands all at once
  *
- * **คีย์คือข้อความภาษาอังกฤษ** ตามกติกาของ Now.js (`noTranslateEnglish`) — โค้ด PHP
- * จึงเขียนข้อความเป็นอังกฤษเสมอ แล้วภาษาอื่นมาจากคลังคำ · คีย์ที่ยังไม่มีคำแปลจะคืน
- * ตัวมันเอง ซึ่งอ่านรู้เรื่องเพราะเป็นประโยคอังกฤษเต็ม ไม่ใช่รหัสอย่าง `err.not_found`
+ * **The key is the English text itself**, following Now.js's own rule
+ * (`noTranslateEnglish`) — so PHP code always writes its text in English, and
+ * every other language comes from the catalogue · a key with no translation
+ * yet returns itself, which reads fine since it's a complete English sentence, not a code like `err.not_found`
  *
- * ค่าที่แทรกใช้รูป `{name}` เหมือนฝั่ง Now.js ทุกประการ เพื่อให้ข้อความเดียวกันย้าย
- * ไปมาระหว่างสองฝั่งได้โดยไม่ต้องเขียนใหม่
+ * Interpolated values use the exact same `{name}` form as the Now.js side,
+ * so the same piece of text can move between the two sides without being rewritten
  */
 final class Translator
 {
     /** @var array<string,string> */
     private array $catalogue;
 
-    /** @var array<string,self> ตัวที่โหลดแล้ว — คลังคำอ่านซ้ำทุกคำขอไม่มีประโยชน์ */
+    /** @var array<string,self> already-loaded instances — re-reading the catalogue on every request has no benefit */
     private static array $loaded = [];
 
     /**
@@ -35,10 +37,10 @@ final class Translator
     }
 
     /**
-     * อ่านคลังคำของภาษาที่ระบุจากไดเรกทอรีของ SPA
+     * Reads the given locale's catalogue from the SPA's own directory
      *
-     * ภาษาอังกฤษไม่มีคลังคำโดยตั้งใจ — ข้อความในโค้ดเป็นอังกฤษอยู่แล้ว การอ่าน
-     * `en.json` (ซึ่งว่าง) จึงเป็นงานเปล่า ๆ ทุกคำขอ
+     * English deliberately has no catalogue — the text in the code is
+     * already English, so reading an `en.json` (which would be empty) would just be pointless work on every request
      */
     public static function load(string $locale, string $langDir): self
     {
@@ -68,7 +70,7 @@ final class Translator
     }
 
     /**
-     * @param array<string,string|int|float> $params ค่าที่แทนที่ `{ชื่อ}` ในข้อความ
+     * @param array<string,string|int|float> $params values that replace `{name}` in the text
      */
     public function get(string $key, array $params = []): string
     {
@@ -87,7 +89,7 @@ final class Translator
         return strtr($text, $replace);
     }
 
-    /** มีคำแปลของคีย์นี้จริงไหม — ใช้ในเทสต์ที่กันคำแปลตกหล่น */
+    /** Does a translation genuinely exist for this key? — used in tests that guard against a missing translation */
     public function has(string $key): bool
     {
         return isset($this->catalogue[$key]);

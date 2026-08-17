@@ -8,26 +8,27 @@ use Phpcp\Agent\ExecutionFailed;
 use Phpcp\Agent\Executor\Executor;
 
 /**
- * หาไฟล์โปรแกรมตัวแรกที่มีอยู่จริงจากรายการเส้นทางที่ยอมรับได้
+ * Finds the first program file that genuinely exists from a list of accepted paths
  *
- * **ทำไมต้องมี:** เครื่องมือเดียวกันอยู่คนละที่ตาม distro — `named-checkzone` อยู่
- * `/usr/bin` บน Debian/Ubuntu แต่ `/usr/sbin` บน RHEL · การฮาร์ดโค้ดที่เดียวทำให้
- * ทุกการเรียกล้มทั้งหมดบน distro อีกฝั่ง (เจอจริงในเฟส E3 — ดู PLAN-V2 §6)
+ * **Why this exists:** the same tool lives in a different place depending on
+ * the distro — `named-checkzone` is at `/usr/bin` on Debian/Ubuntu but
+ * `/usr/sbin` on RHEL · hardcoding one path made every call fail entirely on the other distro (genuinely hit this in phase E3 — see PLAN-V2 §6)
  *
- * **ห้ามเรียกโปรแกรมด้วยชื่อล้วนแล้วให้ระบบหาใน `PATH` เอง** — agent รันเป็น root
- * การพึ่ง `PATH` เปิดช่องให้ยัดโปรแกรมปลอมไว้ในไดเรกทอรีที่มาก่อนแล้วได้สิทธิ์ root ทันที
- * คลาสนี้จึงรับเฉพาะเส้นทางเต็มที่ระบุไว้ล่วงหน้า ไม่มีการค้นหาแบบเปิด
+ * **Never call a program by bare name and let the system search `PATH`
+ * itself** — the agent runs as root, so relying on `PATH` would let a fake
+ * program planted in a directory that comes first gain root immediately ·
+ * this class therefore only accepts full paths specified in advance, with no open-ended search
  *
- * `tests/security/BinaryPathTest.php` ตรึงไว้ว่าทุกค่าคงที่ที่ driver ใช้ต้องชี้ไปยังไฟล์
- * ที่มีอยู่จริงบนเครื่องที่รันเทสต์ (เมื่อโปรแกรมนั้นติดตั้งอยู่)
+ * `tests/security/BinaryPathTest.php` pins down that every constant a driver
+ * uses must point to a file that genuinely exists on the machine running the tests (when that program is installed)
  */
 final class BinaryPath
 {
     /**
-     * @param list<string> $candidates เส้นทางเต็มที่ยอมรับได้ เรียงตามลำดับที่ควรลอง
-     * @param string $package ชื่อแพ็กเกจที่ต้องติดตั้งถ้าไม่เจอ — ใส่ในข้อความให้ผู้ดูแลทำตามได้
+     * @param list<string> $candidates full paths accepted, in the order they should be tried
+     * @param string $package the package name to install if none is found — put in the message so the admin can act on it
      *
-     * @throws ExecutionFailed เมื่อไม่พบสักตัว
+     * @throws ExecutionFailed when none of them are found
      */
     public static function resolve(Executor $executor, array $candidates, string $package): string
     {
@@ -38,8 +39,8 @@ final class BinaryPath
         }
 
         throw new ExecutionFailed(sprintf(
-            "ไม่พบโปรแกรมที่ต้องใช้ (หาที่ %s)\n\nติดตั้งด้วย `apt install %s` แล้วลองใหม่",
-            implode(' และ ', $candidates),
+            "The required program was not found (looked for %s)\n\nInstall it with `apt install %s` and try again",
+            implode(' and ', $candidates),
             $package,
         ));
     }
