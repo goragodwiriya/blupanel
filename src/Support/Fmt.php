@@ -5,14 +5,15 @@ declare (strict_types = 1);
 namespace Phpcp\Support;
 
 /**
- * จัดรูปแบบตัวเลขและเวลาให้เป็นภาษาไทย — ใช้ในเทมเพลตทุกหน้า
+ * Formats numbers and time for the CLI's own output — the only caller left
+ * is `src/Cli/Application.php`; the SPA formats everything itself client-side per Resource.php's raw-values rule
  *
- * รวมไว้ที่เดียวเพื่อให้หน่วยและคำเรียกตรงกันทั้งระบบ
- * (เช่น "12 วัน 3 ชั่วโมง" ไม่ใช่บางหน้าเขียน "12d 3h")
+ * Kept in one place so units and wording stay consistent across every command
+ * (e.g. always "12 วัน 3 ชั่วโมง," never one command writing "12d 3h" instead)
  */
 final class Fmt
 {
-    /** ขนาดข้อมูลแบบฐาน 1024 */
+    /** A data size in base 1024 */
     public static function bytes(int | float $bytes, int $decimals = 1): string
     {
         if ($bytes <= 0) {
@@ -27,10 +28,11 @@ final class Fmt
     }
 
     /**
-     * ระยะเวลาเป็นข้อความ เช่น "12d 3h"
+     * A duration as text, e.g. "12d 3h"
      *
-     * เป็นภาษาอังกฤษเพราะผู้เรียกมีแต่ CLI ซึ่งออกทางเทอร์มินัลของเครื่องปลายทาง
-     * ที่วางสระ/วรรณยุกต์ไทยไม่ได้ (เหตุผลเดียวกับที่ install.sh เป็นอังกฤษทั้งไฟล์)
+     * English, because the only caller is the CLI, which outputs to the
+     * destination machine's own terminal — one that can't render Thai vowel
+     * and tone marks (same reason install.sh is entirely in English)
      */
     public static function duration(int $seconds): string
     {
@@ -53,7 +55,7 @@ final class Fmt
         return "{$minutes}m";
     }
 
-    /** เวลาแบบสัมพัทธ์ เช่น "3 minutes ago" — เป็นอังกฤษด้วยเหตุผลเดียวกับ duration() */
+    /** A relative time, e.g. "3 minutes ago" — English for the same reason as duration() */
     public static function ago(?int $timestamp): string
     {
         if ($timestamp === null || $timestamp <= 0) {
@@ -78,13 +80,15 @@ final class Fmt
             return intdiv($diff, 86400).' days ago';
         }
 
-        // ไม่เรียก self::date() ตรงนี้ — มันคืนชื่อเดือนไทยแบบ พ.ศ. ซึ่งจะทำให้
-        // ผลของ ago() กลับไปเป็นไทยเฉพาะรายการที่เก่ากว่า 30 วัน คือเคสที่หลุด
-        // ตาการทดสอบง่ายที่สุด เพราะเครื่องที่เพิ่งติดตั้งยังไม่มีข้อมูลเก่าขนาดนั้น
+        // Doesn't call self::date() here — it returns a Thai month name in
+        // the Buddhist Era, which would make ago()'s output flip back to
+        // Thai only for items older than 30 days — exactly the case most
+        // likely to slip past casual testing, since a freshly installed
+        // machine has no data that old yet
         return date('Y-m-d', $timestamp);
     }
 
-    /** วันที่แบบไทย พ.ศ. */
+    /** A date in the Thai style, Buddhist Era — CLI-only output, stays Thai for now (see the class docblock) */
     public static function date(?int $timestamp, bool $withTime = false): string
     {
         if ($timestamp === null || $timestamp <= 0) {
@@ -123,7 +127,7 @@ final class Fmt
         return number_format($value, $decimals).'%';
     }
 
-    /** เลือกระดับสีของแถบวัดตามเปอร์เซ็นต์ที่ใช้ไป */
+    /** Picks the meter bar's color level from the percentage used */
     public static function levelOf(float $percent): string
     {
         return match (true) {
@@ -134,15 +138,15 @@ final class Fmt
     }
 
     /**
-     * คลาสความยาวของแถบ .meter — CSP ห้าม style="width:NN%" ความยาวจึงต้อง
-     * มาจากคลาสที่มีอยู่แล้วใน app.css (.pct-0 ถึง .pct-100)
+     * The .meter bar's length class — the CSP forbids style="width:NN%", so
+     * the length must come from a class that already exists in app.css (.pct-0 through .pct-100)
      */
     public static function meterClass(float $percent): string
     {
         return 'pct-'.(int) round(max(0.0, min(100.0, $percent)));
     }
 
-    /** สถานะบริการ → ข้อความไทยตามที่ PROMPT.md กำหนด */
+    /** Service status → Thai text, per PROMPT.md — CLI-only output, stays Thai for now (see the class docblock) */
     public static function serviceStatus(string $status): string
     {
         return match ($status) {
@@ -155,7 +159,7 @@ final class Fmt
         };
     }
 
-    /** สถานะบริการ → คลาส badge */
+    /** Service status → badge class */
     public static function serviceTone(string $status): string
     {
         return match ($status) {
@@ -168,7 +172,7 @@ final class Fmt
         };
     }
 
-    /** ชื่อการกระทำใน audit log → ข้อความไทย */
+    /** An audit log action name → Thai text — CLI-only output, stays Thai for now (see the class docblock) */
     public static function action(string $action): string
     {
         return match ($action) {
@@ -201,7 +205,7 @@ final class Fmt
         };
     }
 
-    /** อักษรย่อสำหรับ avatar */
+    /** Initials for an avatar */
     public static function initials(string $name): string
     {
         $name = trim($name);
