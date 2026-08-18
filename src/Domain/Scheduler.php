@@ -25,6 +25,58 @@ final class Scheduler
     /** Can look back at most 1 day — a machine that was down overnight shouldn't run a daily job multiple times in a row once it's back */
     public const CATCH_UP_SECONDS = 86400;
 
+    /**
+     * The lock file shared by every kind of run — a scheduled round and a manual
+     * "run now" click must never execute the same job on top of each other
+     *
+     * Lives next to scheduler.lock (which only guards round-vs-round) because a
+     * round and a manual run are started by different processes with different
+     * privileges: the scheduler may run as the panel user or as root depending
+     * on the installation, while a manual run always comes from the web tier.
+     * `fopen('c')` creates or opens for writing when permitted; when the file
+     * already exists without write permission for this process (created first
+     * by a differently-privileged one), it falls back to read-only — `flock`
+     * works on a read-only descriptor just the same, so the lock still holds.
+     */
+    public const LOCK_RUNS = '/jobs.lock';
+
+    /**
+     * Acquires the runs lock, non-blocking — the caller decides how to say "busy"
+     *
+     * @return resource|null an open lock handle to keep until the run finishes, or null when something is already running
+     */
+    public static function acquireRunsLock(string $runDir): mixed
+    {
+        $file = rtrim($runDir, '/') . self::LOCK_RUNS;
+
+        $lock = @fopen($file, 'c');
+
+        if ($lock === false) {
+            $lock = @fopen($file, 'r');
+        }
+
+        if ($lock === false) {
+            return null;
+        }
+
+        if (!flock($lock, LOCK_EX | LOCK_NB)) {
+            fclose($lock);
+
+            return null;
+        }
+
+        return $lock;
+    }
+
+    /** Releases a handle from {@see acquireRunsLock()} — null is allowed so callers need no branch of their own */
+    public static function releaseRunsLock(mixed $lock): void
+    {
+        if (is_resource($lock)) {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+        }
+    }
+
     /** @param \Closure(string,array<string,mixed>):array<string,mixed> $dispatch */
     public function __construct(
         private readonly Db $db,

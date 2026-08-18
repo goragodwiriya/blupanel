@@ -140,7 +140,21 @@ try {
     // --- Forcing a single job to run --------------------------------------
     $forced = $option($argv, '--run');
     if ($forced !== null && $forced !== '') {
-        $result = $scheduler->runNow($forced);
+        // The same shared lock a scheduled round holds — a forced run on top of
+        // a round in flight would execute the same capability twice at once
+        $config->paths->ensureDirectories();
+        $runsLock = Scheduler::acquireRunsLock($config->paths->run);
+
+        if ($runsLock === null) {
+            fwrite(STDERR, "Another round or manual run is still in progress\n");
+            exit(1);
+        }
+
+        try {
+            $result = $scheduler->runNow($forced);
+        } finally {
+            Scheduler::releaseRunsLock($runsLock);
+        }
 
         printf("%s: %s (%s)\n", $result['name'], $result['status'], $result['message']);
 
@@ -165,6 +179,20 @@ try {
 
     if (!flock($lock, LOCK_EX | LOCK_NB)) {
         // Not an error — the previous round is still running, this one steps back quietly
+        exit(0);
+    }
+
+    /*
+     * A second, shared lock — `Scheduler::acquireRunsLock` — held for exactly as
+     * long as the round, so a manual "run now" from the web page (which takes
+     * only this one) can never execute a job on top of a round in flight ·
+     * always acquired after scheduler.lock, never before, so the two can never
+     * deadlock against each other
+     */
+    $runsLock = Scheduler::acquireRunsLock($config->paths->run);
+
+    if ($runsLock === null) {
+        // A manual run is in progress — this round steps back and the next tick catches up
         exit(0);
     }
 
@@ -194,6 +222,7 @@ try {
 
     $results = $scheduler->runDue();
 
+    Scheduler::releaseRunsLock($runsLock);
     flock($lock, LOCK_UN);
     fclose($lock);
 

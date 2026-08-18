@@ -292,6 +292,78 @@ test('unit ของตัวจับเวลาต้องถูกป้อ
     }
 });
 
+test('runNow สั่งงานทันทีแม้ยังไม่ถึงเวลา และบันทึกผลเหมือนรอบปกติ', static function (): void {
+    $db = migratedDb();
+    $jobs = new ScheduledJobRepository($db);
+    $jobs->installDefaults();
+
+    $called = [];
+    $scheduler = new Scheduler($db, static function (string $capability, array $args) use (&$called): array {
+        $called[] = $capability;
+
+        return ['message' => 'เรียบร้อย'];
+    });
+
+    // webserver.rescan ตั้งไว้ชั่วโมงละครั้งที่นาที :20 — ยืนเวลาที่นาที :07
+    // ซึ่งรอบปกติจะไม่รันแน่นอน
+    $result = $scheduler->runNow('webserver.rescan');
+
+    assertTrue(in_array('webserver.rescan', $called, true), 'runNow ต้องสั่งงานทันทีไม่ดูตารางเวลา');
+    assertSame('ok', $result['status'], 'ผลลัพธ์ต้องรายงานเป็น ok');
+
+    $row = $jobs->find('webserver.rescan');
+    assertSame('ok', $row['last_status'], 'ต้องบันทึกผลการรันด้วยมือเหมือนรอบปกติ');
+    assertTrue($row['last_run_at'] !== null, 'ต้องบันทึกเวลาที่รันไว้');
+
+    // ชื่อที่ไม่มีอยู่ต้องรายงานเป็นข้อผิดพลาด ไม่ใช่ทำเงียบ
+    $missing = $scheduler->runNow('job.never.exists');
+    assertSame('error', $missing['status'], 'ชื่องานที่ไม่มีต้องรายงานว่าผิดพลาด');
+});
+
+test('lock ร่วมกันต้องกันการรันซ้อน และปล่อยให้รันใหม่ได้หลังปล่อยแล้ว', static function (): void {
+    $dir = sys_get_temp_dir() . '/phpcp-lock-' . bin2hex(random_bytes(4));
+    mkdir($dir);
+
+    try {
+        $first = Scheduler::acquireRunsLock($dir);
+        assertTrue(is_resource($first), 'การขอ lock ครั้งแรกต้องสำเร็จ');
+
+        // ครั้งที่สองขณะยังถืออยู่ต้องได้ null — นี่คือสิ่งกันรอบของตัวจับเวลา
+        // กับปุ่มรันด้วยมือบนหน้าเว็บไม่ให้สั่ง capability เดียวกันซ้อนกัน
+        assertSame(null, Scheduler::acquireRunsLock($dir), 'ขอซ้อนขณะถืออยู่ต้องถูกปฏิเสธ');
+
+        Scheduler::releaseRunsLock($first);
+        assertTrue(is_resource(Scheduler::acquireRunsLock($dir)), 'ปล่อยแล้วต้องขอใหม่ได้');
+
+        // null ต้องไม่ทำให้ release ตาย — controller เขียน finally ได้ไม่ต้องแยกทาง
+        Scheduler::releaseRunsLock(null);
+    } finally {
+        @unlink($dir . Scheduler::LOCK_RUNS);
+        @rmdir($dir);
+    }
+});
+
+test('lock ที่สร้างโดยกระบวนการอื่นและไม่มีสิทธิ์เขียน ยังต้อง lock ได้ผ่าน read-only', static function (): void {
+    // บนเครื่องจริง scheduler อาจรันเป็น root หรือเป็น user ของชั้นเว็บ แล้วแต่ตอนติดตั้ง
+    // ไฟล์ lock จึงอาจค้างเป็นของอีกฝ่ายโดยเราเปิดเขียนไม่ได้ — flock ใช้กับ
+    // descriptor แบบอ่านอย่างเดียวได้เหมือนกัน กลไกนี้จึงต้องถูกทดสอบไว้จริง
+    $dir = sys_get_temp_dir() . '/phpcp-lock-ro-' . bin2hex(random_bytes(4));
+    mkdir($dir);
+    $file = $dir . Scheduler::LOCK_RUNS;
+    touch($file);
+    chmod($file, 0444);
+
+    try {
+        $lock = Scheduler::acquireRunsLock($dir);
+        assertTrue(is_resource($lock), 'ไฟล์ 0444 ต้องยัง lock ได้ผ่าน read-only descriptor');
+        Scheduler::releaseRunsLock($lock);
+    } finally {
+        @chmod($file, 0644);
+        @unlink($file);
+        @rmdir($dir);
+    }
+});
+
 test('ตัวจับเวลามีไฟล์ unit และตัวรันครบ', static function (): void {
     // เกณฑ์รับงานของเฟส A1 คือ "ทำงานเองได้จริง" ซึ่งต้องมีทั้งสามชิ้นนี้พร้อมกัน
     foreach ([

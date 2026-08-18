@@ -36,6 +36,7 @@
     "A schedule must be specified": "ต้องระบุตารางเวลา",
     "A schedule must have 5 fields, e.g. \"0 3 * * *\"": "ตารางเวลาต้องมี 5 ฟิลด์ เช่น \"0 3 * * *\"",
     "A schedule with this name already exists": "มีตารางเวลาชื่อนี้อยู่แล้ว",
+    "A scheduled round or another manual run is still in progress — try again in a moment": "มีรอบของตัวจับเวลาหรือการรันด้วยมือครั้งก่อนกำลังทำอยู่ ลองใหม่อีกครู่",
     "A secret key must be specified": "ต้องระบุ secret key",
     "A self-signed certificate cannot be renewed — issue a new one instead with the Install SSL button": "ใบรับรองที่เซ็นเองต่ออายุไม่ได้ — สร้างใบใหม่แทนด้วยปุ่มติดตั้ง SSL",
     "A subdomain name can only contain letters, numbers, or hyphens": "ชื่อโดเมนย่อยต้องเป็นตัวอักษร ตัวเลข หรือขีดกลางเท่านั้น",
@@ -639,6 +640,7 @@
     "No more than 20 destinations are allowed per entry": "ปลายทางได้ไม่เกิน 20 ที่อยู่ต่อหนึ่งรายการ",
     "No owner, so no quota is considered": "ไม่มีเจ้าของ จึงไม่คิดโควตา",
     "No rule specified to delete": "ไม่ได้ระบุกฎที่จะลบ",
+    "No scheduled job named {name}": "ไม่มีงานตามเวลาชื่อ {name}",
     "No sender address is set yet — fill it in on the settings page first": "ยังไม่ได้ตั้งที่อยู่ผู้ส่ง — กรอกในหน้าการตั้งค่าก่อน",
     "No sign-in is waiting for verification": "ไม่มีการเข้าสู่ระบบที่รอยืนยัน",
     "No uploaded file was received": "ไม่พบไฟล์ที่อัปโหลด",
@@ -814,8 +816,10 @@
     "Rule deleted — confirm it before the automatic rollback runs out": "ลบกฎแล้ว — ต้องกดยืนยันก่อนหมดเวลาคืนค่าอัตโนมัติ",
     "Rules": "กฎ",
     "Run a full backup round now?": "เดินรอบสำรองทั้งเครื่องเดี๋ยวนี้หรือไม่",
+    "Run job now": "สั่งรันงานนี้เดี๋ยวนี้",
     "Run now": "เดินรอบเดี๋ยวนี้",
     "Run this command on the service?": "สั่งคำสั่งนี้กับบริการ?",
+    "Run this job now, ignoring its schedule? The run is real — the result is recorded and audited the same way as a scheduled run.": "สั่งงานนี้รันเดี๋ยวนี้โดยไม่รอตารางเวลา? การรันเป็นจริงทุกประการ — ผลลัพธ์ถูกบันทึกและ audit เหมือนการรันตามเวลาปกติ",
     "Runs": "ทำงาน",
     "SERVER": "เซิร์ฟเวอร์",
     "SFTP": "SFTP",
@@ -1085,6 +1089,7 @@
     "This file type cannot be edited through the file manager": "ไฟล์ชนิดนี้แก้ไขผ่านตัวจัดการไฟล์ไม่ได้",
     "This file type cannot be opened in the text editor": "ไฟล์ชนิดนี้เปิดในตัวแก้ไขข้อความไม่ได้",
     "This folder is empty": "โฟลเดอร์นี้ว่างเปล่า",
+    "This job is disabled, so it cannot be run manually": "งานนี้ถูกปิดไว้ จึงสั่งรันด้วยมือไม่ได้",
     "This machine has no gzip command, so this file type cannot be decompressed": "เครื่องนี้ไม่มีคำสั่ง gzip จึงคลายไฟล์ชนิดนี้ไม่ได้",
     "This machine has no offsite destination configured yet — configure one before pushing files": "เครื่องนี้ยังไม่ได้ตั้งปลายทางนอกเครื่อง — ตั้งก่อนแล้วค่อยส่งไฟล์ออก",
     "This machine has no tar command, so this file type cannot be extracted": "เครื่องนี้ไม่มีคำสั่ง tar จึงแตกไฟล์ชนิดนี้ไม่ได้",
@@ -1355,5 +1360,7 @@
     "Query failed": "รันคำสั่งไม่สำเร็จ",
     "truncated": "ถูกตัดผลลัพธ์",
     "matches": "รายการที่ตรง",
-    "Quick Templates": "ตัวอย่างคำสั่ง"
+    "Quick Templates": "ตัวอย่างคำสั่ง",
+    "{name} failed: {message}": "{name} ล้มเหลว: {message}",
+    "{name} finished: {status} ({ms} ms)": "{name} เสร็จแล้ว: {status} ({ms} ms)"
 }

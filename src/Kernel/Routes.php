@@ -211,6 +211,10 @@ final class Routes
 
         // The scheduler's heartbeat — read-only (Phase A1 item 7, left pending for Phase C)
         $router->add(new Route('GET', '/api/v2/scheduled-jobs', ScheduledJobsController::class, 'index', 'settings.view', 'api.v2.scheduled_jobs'));
+        // Run one job immediately — the web-page twin of `phpcp-scheduler --run`,
+        // through the same Scheduler::runNow() and the same shared lock, so the
+        // button can never execute a job on top of a scheduled round in flight
+        $router->add(new Route('POST', '/api/v2/scheduled-jobs/{name}/run', ScheduledJobsController::class, 'run', 'settings.manage', 'api.v2.scheduled_jobs.run'));
 
         // Outstanding alert thresholds — read-only (Phase E6)
         $router->add(new Route('GET', '/api/v2/alerts', AlertsController::class, 'index', 'settings.view', 'api.v2.alerts'));

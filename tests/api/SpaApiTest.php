@@ -150,6 +150,59 @@ test('งานตามเวลาบอกได้ว่าตัวจั�
     assertTrue(is_bool($response->json['meta']['stale'] ?? null), 'ต้องบอกได้ว่าตัวจับเวลาค้างหรือไม่');
 });
 
+test('ปุ่มรันเดี๋ยวนี้: ลูกค้าต้องได้ 403 ก่อนถึงชั้นอื่น', static function (): void {
+    $harness = spaLogin('spaweb', 'Spa-Web-Pass-22');
+
+    $response = $harness->request('POST', '/api/v2/scheduled-jobs/webserver.rescan/run');
+
+    assertSame(403, $response->status, 'การสั่งงานของระบบเป็นสิทธิ์ settings.manage');
+    assertSame(ApiProblem::Forbidden->value, $response->errorCode(), 'ต้องเป็น FORBIDDEN');
+});
+
+test('ปุ่มรันเดี๋ยวนี้: ชื่องานที่ไม่มีต้องได้ 404 ก่อนสั่งอะไรออกไป', static function (): void {
+    $harness = spaLogin('spaadmin', 'Spa-Admin-Pass-11');
+
+    $response = $harness->request('POST', '/api/v2/scheduled-jobs/job.never.exists/run');
+
+    assertSame(404, $response->status, 'ชื่องานที่ไม่มีต้องเป็น 404');
+    assertSame(ApiProblem::NotFound->value, $response->errorCode(), 'ต้องเป็น NOT_FOUND');
+});
+
+test('ปุ่มรันเดี๋ยวนี้: งานที่ปิดไว้ต้องถูกปฏิเสธ ไม่ใช่รันให้เงียบ ๆ', static function (): void {
+    $harness = spaLogin('spaadmin', 'Spa-Admin-Pass-11');
+
+    $jobs = new Phpcp\Domain\ScheduledJobRepository($harness->app->db());
+    $jobs->installDefaults();
+    $jobs->setEnabled('disk.usage', false);
+
+    $response = $harness->request('POST', '/api/v2/scheduled-jobs/disk.usage/run');
+
+    assertSame(409, $response->status, 'งานที่ปิดไว้คือการตัดสินใจที่ทำนอกหน้าเว็บ ปุ่มต้องไม่เป็นประตูหลัง');
+    assertSame(ApiProblem::Conflict->value, $response->errorCode(), 'ต้องเป็น CONFLICT');
+});
+
+test('ปุ่มรันเดี๋ยวนี้: งานที่มีจริงต้องผ่านสิทธิ์ไปถึงชั้น agent เสมอ', static function (): void {
+    $harness = spaLogin('spaadmin', 'Spa-Admin-Pass-11');
+
+    (new Phpcp\Domain\ScheduledJobRepository($harness->app->db()))->installDefaults();
+
+    // ในสภาพแวดล้อมทดสอบไม่มี agent — งานรันแล้วล้มที่ชั้น transport
+    // ปลายทางต้องรายงานผลล้มเหลวของงาน (500) ไม่ใช่ 403/404
+    // ซึ่งพิสูจน์ว่าคำขอผ่านทุกชั้นตรวจไปถึงการสั่งงานจริง
+    $response = $harness->request('POST', '/api/v2/scheduled-jobs/metrics.record/run');
+
+    assertSame(500, $response->status, 'งานรันแล้วล้ม (ไม่มี agent) ต้องรายงานเป็น EXECUTION_FAILED');
+    assertSame(ApiProblem::ExecutionFailed->value, $response->errorCode(), 'ต้องเป็น EXECUTION_FAILED');
+
+    // ผลล้มเหลวต้องถูกบันทึกลงแถวของงานเหมือนรอบปกติ — ไม่ใช่หายเงียบ
+    $row = $harness->app->db()->first(
+        'SELECT last_status, last_error FROM scheduled_jobs WHERE name = :name',
+        ['name' => 'metrics.record'],
+    );
+    assertSame('error', $row['last_status'], 'การรันด้วยมือต้องบันทึกผลเข้าแถวงาน');
+    assertTrue(trim((string) $row['last_error']) !== '', 'ต้องเก็บสาเหตุไว้ให้อ่าน');
+});
+
 test('ไฟล์ของ Now.js ตรงกับ SHA256SUMS ที่ commit ไว้', static function (): void {
     // การตัดสินใจ N8 — ถ้าไฟล์ dist ถูกอัปเดตโดยไม่อัปเดต checksum เทสต์นี้จะจับได้
     // ก่อนขึ้นเซิร์ฟเวอร์ ซึ่งเป็นจังหวะเดียวที่ยังแก้ได้ง่าย

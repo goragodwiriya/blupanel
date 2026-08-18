@@ -2422,6 +2422,7 @@ paths:
                         capability: { type: string }
                         schedule: { type: string }
                         enabled: { type: boolean }
+                        can_run: { type: boolean }
                         last_run_at: { type: integer, nullable: true }
                         last_status: { type: string }
                         last_error: { type: string }
@@ -2433,6 +2434,37 @@ paths:
                       stale_after: { type: integer }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+
+  /scheduled-jobs/{name}/run:
+    post:
+      tags: [server]
+      summary: สั่งงานเดียวรันทันที ไม่รอตารางเวลา
+      description: |
+        ปุ่ม "รันเดี๋ยวนี้" บนหน้าตั้งค่า — คู่เว็บของ `phpcp-scheduler --run`
+        ใช้ `Scheduler::runNow()` ตัวเดียวกันและถือ lock ร่วมกับรอบของตัวจับเวลา
+        จึงกดทับรอบที่กำลังรันอยู่ไม่ได้
+
+        งานถูกสั่งผ่าน agent เหมือนเดิมและบันทึก audit ในชื่อผู้ดูแลที่กด
+        (ต่างจาก actor `scheduler`) · สิ่งที่ยังทำผ่านหน้าเว็บไม่ได้คือเปิด/ปิดงาน
+        เพราะนั่นคือการอ่อนกลไกป้องกันของระบบตัวเอง
+
+        งานที่ปิดไว้ถูกปฏิเสธ (409) — การปิดเป็นการตัดสินใจที่ทำนอกหน้าเว็บ
+        ปุ่มที่รันงานปิดได้คือประตูหลังของการตัดสินใจนั้น
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+          description: ชื่องานในตาราง scheduled_jobs เช่น webserver.rescan
+      responses:
+        "200":
+          description: งานรันแล้ว (ผลลัพธ์จริงอยู่ในข้อความ — ok หรือ skipped)
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
 
   /alerts:
     get:

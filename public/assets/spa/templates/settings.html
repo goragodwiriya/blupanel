@@ -333,7 +333,17 @@
       <div class="content-body">
         <h2 class="icon-tools" data-i18n>Scheduled jobs</h2>
         <div class="tablebody">
-          <table class="table border fullwidth" data-table="scheduledJobs" data-source="/api/v2/scheduled-jobs" data-page-size="50">
+          <table class="table border fullwidth" data-table="scheduledJobs" data-source="/api/v2/scheduled-jobs" data-page-size="50"
+                 data-row-actions='{
+                   "run": {
+                     "title": "Run job now",
+                     "className": "btn icon-play",
+                     "method": "post",
+                     "url": "/api/v2/scheduled-jobs/{name}/run",
+                     "condition": "${can_run}",
+                     "confirm": "Run this job now, ignoring its schedule? The run is real — the result is recorded and audited the same way as a scheduled run."
+                   }
+                 }'>
             <thead>
               <tr>
                 <th data-field="name" data-i18n>{LNG_Name}</th>
