@@ -4,6 +4,8 @@ declare (strict_types = 1);
 
 namespace Phpcp\Domain;
 
+use Phpcp\Security\Permissions;
+
 /**
  * The file manager's rules: what can be edited, how large it can be, and how it's displayed
  *
@@ -68,10 +70,14 @@ final class FileCatalog
     }
 
     /** Whether this file can be opened in the text editor */
-    public static function isEditable(string $name, int $size): bool
+    public static function isEditable(string $name, int $size, ?string $role = null): bool
     {
         if ($size > self::MAX_EDIT_BYTES) {
             return false;
+        }
+
+        if ($role !== null && in_array($role, [Permissions::SUPERADMIN, Permissions::SYSADMIN], true)) {
+            return true;
         }
 
         $lower = mb_strtolower($name);

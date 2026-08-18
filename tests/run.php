@@ -1,6 +1,6 @@
 <?php
 
-declare(strict_types=1);
+declare (strict_types = 1);
 
 /**
  * ตัวรันเทสต์ขนาดเล็ก — ไม่มี PHPUnit เพราะโปรเจกต์ไม่มี Composer (ARCHITECTURE D6)
@@ -10,7 +10,7 @@ declare(strict_types=1);
  * เทสต์ความปลอดภัยทั้งหมดรันในโหมด dryrun/sandbox ได้ จึงใส่ใน CI ที่ไม่มีสิทธิ์ root ได้
  */
 
-require dirname(__DIR__) . '/bootstrap.php';
+require dirname(__DIR__).'/bootstrap.php';
 
 final class TestRunner
 {
@@ -19,6 +19,10 @@ final class TestRunner
 
     public static int $assertions = 0;
 
+    /**
+     * @param string $name
+     * @param $fn
+     */
     public static string $currentGroup = '';
 }
 
@@ -32,6 +36,10 @@ function test(string $name, callable $fn): void
     TestRunner::$tests[] = ['group' => TestRunner::$currentGroup, 'name' => $name, 'fn' => $fn];
 }
 
+/**
+ * @param bool $condition
+ * @param string $message
+ */
 function assertTrue(bool $condition, string $message): void
 {
     TestRunner::$assertions++;
@@ -41,11 +49,25 @@ function assertTrue(bool $condition, string $message): void
     }
 }
 
+/**
+ * @param bool $condition
+ * @param string $message
+ */
+function assertFalse(bool $condition, string $message): void
+{
+    assertTrue(!$condition, $message);
+}
+
+/**
+ * @param mixed $expected
+ * @param mixed $actual
+ * @param string $message
+ */
 function assertSame(mixed $expected, mixed $actual, string $message): void
 {
     assertTrue(
         $expected === $actual,
-        $message . sprintf(' (คาดว่า %s ได้ %s)', var_export($expected, true), var_export($actual, true)),
+        $message.sprintf(' (คาดว่า %s ได้ %s)', var_export($expected, true), var_export($actual, true)),
     );
 }
 
@@ -58,16 +80,16 @@ function assertSame(mixed $expected, mixed $actual, string $message): void
  */
 function migratedDb(): \Phpcp\Kernel\Db
 {
-    $file = sys_get_temp_dir() . '/phpcp-test-' . getmypid() . '-' . bin2hex(random_bytes(4)) . '.db';
+    $file = sys_get_temp_dir().'/phpcp-test-'.getmypid().'-'.bin2hex(random_bytes(4)).'.db';
 
     register_shutdown_function(static function () use ($file): void {
-        foreach ([$file, $file . '-wal', $file . '-shm'] as $path) {
+        foreach ([$file, $file.'-wal', $file.'-shm'] as $path) {
             @unlink($path);
         }
     });
 
     $db = new \Phpcp\Kernel\Db($file);
-    $db->migrate(PHPCP_ROOT . '/db/migrations');
+    $db->migrate(PHPCP_ROOT.'/db/migrations');
 
     return $db;
 }
@@ -84,19 +106,19 @@ function assertRejects(string $exceptionClass, callable $fn, string $message): v
             return;
         }
 
-        throw new RuntimeException($message . ' — ปฏิเสธด้วย ' . $e::class . ' แทนที่จะเป็น ' . $exceptionClass);
+        throw new RuntimeException($message.' — ปฏิเสธด้วย '.$e::class.' แทนที่จะเป็น '.$exceptionClass);
     }
 
-    throw new RuntimeException($message . ' — ไม่ถูกปฏิเสธเลย');
+    throw new RuntimeException($message.' — ไม่ถูกปฏิเสธเลย');
 }
 
 // --- โหลดไฟล์เทสต์ ---------------------------------------------------------
 
 $filter = $argv[1] ?? '';
 $files = array_merge(
-    glob(__DIR__ . '/security/*.php') ?: [],
+    glob(__DIR__.'/security/*.php') ?: [],
     // เทสต์ contract ของ REST API — แยกไดเรกทอรีตาม PLAN-V2 §3.2 แต่รันด้วยตัวรันเดียวกัน
-    glob(__DIR__ . '/api/*.php') ?: [],
+    glob(__DIR__.'/api/*.php') ?: [],
 );
 sort($files);
 

@@ -86,7 +86,7 @@ final class FileTree extends FileCapability
             $nodes = self::walk($executor, $target, $relative, $depth, $budget);
 
             return ['nodes' => $nodes, 'truncated' => $budget <= 0];
-        });
+        }, actor: $context->actor);
 
         return [
             'root' => $scope->key,
@@ -171,6 +171,10 @@ final class FileTree extends FileCapability
         ));
     }
 
+    /**
+     * @param Executor $executor
+     * @param string $absolute
+     */
     private static function hasSubdirectory(Executor $executor, string $absolute): bool
     {
         return self::directories($executor, $absolute) !== [];

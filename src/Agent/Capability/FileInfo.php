@@ -66,7 +66,7 @@ final class FileInfo extends FileCapability
         $relative = $args['path'];
         $name = basename($relative);
 
-        $result = $this->withPath($executor, $scope, $relative, static function (string $root, string $target) use ($executor, $relative, $name): array {
+        $result = $this->withPath($executor, $scope, $relative, static function (string $root, string $target) use ($executor, $relative, $name, $context): array {
             $info = $executor->stat($target);
             if ($info === null) {
                 throw new ValidationError('The specified file or folder was not found');
@@ -74,7 +74,7 @@ final class FileInfo extends FileCapability
 
             $described = self::describe($name, $relative, $info);
             $described['kind'] = $info['type'] === 'dir' ? 'folder' : FileCatalog::kind($name);
-            $described['editable'] = $info['type'] === 'file' && FileCatalog::isEditable($name, $info['size']);
+            $described['editable'] = $info['type'] === 'file' && FileCatalog::isEditable($name, $info['size'], $context->actor->role);
             $described['syntax'] = FileCatalog::syntax($name);
             $described['parent'] = PathGuard::parent($relative);
 
@@ -92,7 +92,7 @@ final class FileInfo extends FileCapability
             }
 
             return $described;
-        });
+        }, actor: $context->actor);
 
         return [
             'root' => $scope->key,

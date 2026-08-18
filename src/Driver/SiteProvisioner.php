@@ -8,6 +8,7 @@ use Phpcp\Agent\ExecutionFailed;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Domain\Site;
 use Phpcp\Driver\Php\FpmManager;
+use Phpcp\Driver\WebServer\CustomConfig;
 use Phpcp\Driver\WebServer\WebServerDriver;
 
 /**
@@ -78,6 +79,14 @@ final class SiteProvisioner
 
         foreach ([$site->docroot(), $site->logDir(), $site->tmpDir(), $site->backupDir()] as $dir) {
             $executor->makeDirectory($executor->path($dir), 0750);
+        }
+
+        // The generated vhost includes an `IncludeOptional` for the site's admin config directory.
+        // Creating the site while that directory is still absent makes Apache reject the entire config
+        // as soon as configtest runs, even though no custom config has been written yet.
+        foreach (['apache', 'nginx'] as $service) {
+            $dir = CustomConfig::siteDirectory($service, $site->domain);
+            $executor->makeDirectory($executor->path($dir), 0755);
         }
 
         // Domain Pointer — the docroot points at a folder that already has code in it
@@ -170,6 +179,11 @@ final class SiteProvisioner
         return $targets;
     }
 
+    /**
+     * @param Executor $executor
+     * @param Site $site
+     * @return null
+     */
     public function setOwnership(Executor $executor, Site $site): void
     {
         if ($this->sharedOwner) {

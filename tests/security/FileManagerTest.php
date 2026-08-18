@@ -16,10 +16,10 @@ declare (strict_types = 1);
  */
 
 use Phpcp\Agent\Capability\FileChmod;
-use Phpcp\Agent\Capability\FileDelete;
 use Phpcp\Agent\Executor\RealExecutor;
 use Phpcp\Agent\ValidationError;
 use Phpcp\Domain\FileCatalog;
+use Phpcp\Security\Permissions;
 use Phpcp\Support\PathGuard;
 
 group('FileManager — ตัวจัดการไฟล์ต้องออกนอกโฟลเดอร์ของเว็บไซต์ไม่ได้');
@@ -128,6 +128,13 @@ test('PathGuard::name ยอมรับเฉพาะชื่อชั้น�
             'ชื่อไฟล์ต้องมีชั้นเดียวเท่านั้น: '.$payload,
         );
     }
+});
+
+test('เจ้าหน้าที่ระบบสามารถเปิดและแก้ไขไฟล์ text ทุกรูปแบบได้โดยไม่จำกัด extension', static function (): void {
+    assertTrue(FileCatalog::isEditable('custom.conf', 512, Permissions::SUPERADMIN), 'superadmin ต้องไม่ถูกจำกัดด้วย extension ทั่วไป');
+    assertTrue(FileCatalog::isEditable('notes.bin', 512, Permissions::SYSADMIN), 'sysadmin ต้องไม่ถูกจำกัดด้วย extension ทั่วไป');
+    assertFalse(FileCatalog::isEditable('notes.bin', 512, Permissions::WEBADMIN), 'webadmin ยังคงใช้กฎปกติ');
+    assertFalse(FileCatalog::isEditable('big.bin', FileCatalog::MAX_EDIT_BYTES + 1, Permissions::SUPERADMIN), 'ขนาดไฟล์เกิน 5 MB ต้องยังถูกปฏิเสธ');
 });
 
 test('PathGuard::resolve จับ symlink ที่ชี้ออกนอกโฟลเดอร์ของเว็บไซต์', static function (): void {
@@ -343,7 +350,7 @@ test('search ปฏิเสธคำค้นที่สั้นเกิน�
         assertRejects(
             ValidationError::class,
             static fn() => $capability->validate(['root' => 'sites', 'path' => '', 'q' => $query]),
-            'ต้องปฏิเสธคำค้น: ' . var_export($query, true),
+            'ต้องปฏิเสธคำค้น: '.var_export($query, true),
         );
     }
 
@@ -411,12 +418,12 @@ test('บันทึกไฟล์ต้องไม่เปลี่ยน�
      *
      * ตรวจซอร์สเพราะพฤติกรรมนี้ต้องใช้ root จริงถึงจะทดสอบได้ — ตัดคอมเมนต์ออกก่อน
      */
-    $source = (string) file_get_contents(PHPCP_ROOT . '/src/Agent/Capability/FileWrite.php');
+    $source = (string) file_get_contents(PHPCP_ROOT.'/src/Agent/Capability/FileWrite.php');
     $code = implode("\n", array_filter(
         explode("\n", $source),
-        static fn (string $l): bool => !str_starts_with(ltrim($l), '*')
-            && !str_starts_with(ltrim($l), '//')
-            && !str_starts_with(ltrim($l), '/*'),
+        static fn(string $l): bool => !str_starts_with(ltrim($l), '*')
+        && !str_starts_with(ltrim($l), '//')
+        && !str_starts_with(ltrim($l), '/*'),
     ));
 
     assertTrue(str_contains($code, 'restoreOwner'), 'ต้องคืนเจ้าของไฟล์หลังเขียน');
@@ -470,7 +477,7 @@ test('ขอบเขตไฟล์ของเว็บไซต์ layout cpa
         'owner_user_id' => $ownerId,
         'docroot_override' => '',
         'created_at' => $now,
-        'updated_at' => $now,
+        'updated_at' => $now
     ]);
 
     $actor = new Phpcp\Agent\Actor(
@@ -485,12 +492,12 @@ test('ขอบเขตไฟล์ของเว็บไซต์ layout cpa
     $docrootKey = 'site-'.$siteId.'-docroot';
     assertTrue(
         isset($scopes[$docrootKey]),
-        "ต้องมี scope {$docrootKey} ชี้ไปไฟล์เว็บจริง — ได้ scope: " . implode(', ', array_keys($scopes)),
+        "ต้องมี scope {$docrootKey} ชี้ไปไฟล์เว็บจริง — ได้ scope: ".implode(', ', array_keys($scopes)),
     );
 
     assertTrue(
         str_ends_with($scopes[$docrootKey]->root, '/filescopeowner/public_html'),
-        'scope ไฟล์เว็บต้องชี้ไป public_html จริง ไม่ใช่ state dir — ได้ ' . $scopes[$docrootKey]->root,
+        'scope ไฟล์เว็บต้องชี้ไป public_html จริง ไม่ใช่ state dir — ได้ '.$scopes[$docrootKey]->root,
     );
 
     $stateKey = 'site-'.$siteId;
@@ -528,7 +535,7 @@ test('layout phpcp ไม่ต้องมี scope ไฟล์เว็บซ
         'owner_user_id' => $ownerId,
         'docroot_override' => '',
         'created_at' => $now,
-        'updated_at' => $now,
+        'updated_at' => $now
     ]);
 
     $actor = new Phpcp\Agent\Actor(
@@ -567,7 +574,7 @@ test('เว็บไซต์ที่ตั้ง docroot_override (Domain Poi
         'owner_user_id' => $ownerId,
         'docroot_override' => $override,
         'created_at' => $now,
-        'updated_at' => $now,
+        'updated_at' => $now
     ]);
 
     $actor = new Phpcp\Agent\Actor($ownerId, 'pointerowner', Phpcp\Security\Permissions::WEBADMIN, '127.0.0.1', 'test');
@@ -605,7 +612,7 @@ test('FileRootsList (agent) กรอง scope ที่ไม่มีโฟล
         'owner_user_id' => $ownerId,
         'docroot_override' => '',
         'created_at' => $now,
-        'updated_at' => $now,
+        'updated_at' => $now
     ]);
 
     $tempUsersDir = sys_get_temp_dir().'/phpcp-rootslist-test-'.getmypid();

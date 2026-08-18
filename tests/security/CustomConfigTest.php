@@ -1,6 +1,6 @@
 <?php
 
-declare(strict_types=1);
+declare (strict_types = 1);
 
 /**
  * ไฟล์ตั้งค่าเพิ่มเติมที่ผู้ดูแลเขียนเอง — ขอบเขตอำนาจที่ห้ามหลุด
@@ -13,9 +13,16 @@ declare(strict_types=1);
  *   3. ผ่านตัวตรวจแล้วยังต้องถอนคืนได้ — configtest ไม่ได้ตอบว่าเว็บยังใช้งานได้
  */
 
+use Phpcp\Agent\Executor\SandboxExecutor;
 use Phpcp\Agent\ValidationError;
-use Phpcp\Driver\Template;
 use Phpcp\Domain\ConfigFileCatalog;
+use Phpcp\Domain\Site;
+use Phpcp\Domain\SiteLayout;
+use Phpcp\Domain\UserAccount;
+use Phpcp\Driver\Php\FpmManager;
+use Phpcp\Driver\SiteProvisioner;
+use Phpcp\Driver\Template;
+use Phpcp\Driver\WebServer\ApacheDriver;
 use Phpcp\Driver\WebServer\CustomConfig;
 
 group('CustomConfig — ไฟล์ตั้งค่าที่ผู้ดูแลเขียนเอง');
@@ -40,7 +47,7 @@ test('เส้นทางไฟล์ต้องประกอบจาก�
     $path = CustomConfig::sitePath('apache', 'example.com');
 
     assertSame('/etc/phpcp/custom/apache/example.com/custom.conf', $path, 'เส้นทางต้องอยู่ใต้รากที่กำหนด');
-    assertTrue(str_starts_with($path, CustomConfig::ROOT . '/'), 'ต้องอยู่ใต้ราก /etc/phpcp/custom เสมอ');
+    assertTrue(str_starts_with($path, CustomConfig::ROOT.'/'), 'ต้องอยู่ใต้ราก /etc/phpcp/custom เสมอ');
 });
 
 test('ชนิดเว็บเซิร์ฟเวอร์ต้องอยู่ในรายการที่รู้จัก', static function (): void {
@@ -97,15 +104,42 @@ test('เนื้อไฟล์ที่ใหญ่เกินไปหร�
     assertSame('', CustomConfig::assertContent("\n\n"), 'ค่าว่างต้องยังเป็นค่าว่าง ไม่ใช่บรรทัดเปล่า');
 });
 
+test('การสร้างเว็บต้องเตรียมไดเรกทอรีไฟล์ตั้งค่าเพิ่มเติมให้พร้อมใช้งาน', static function (): void {
+    $root = sys_get_temp_dir().'/phpcp-customdirs-'.getmypid();
+    @mkdir($root, 0755, true);
+
+    $site = new Site(
+        id: 7,
+        domain: 'example.com',
+        owner: new UserAccount(1, 'demo', SiteLayout::Cpanel, 'example.com'),
+        phpVersion: '8.4',
+    );
+
+    $executor = new SandboxExecutor($root);
+    $templates = new Template(PHPCP_ROOT.'/templates');
+    $provisioner = new SiteProvisioner(new ApacheDriver($templates), new FpmManager($templates), false);
+
+    $provisioner->createDirectories($executor, $site);
+
+    assertTrue(
+        $executor->exists($executor->path(CustomConfig::siteDirectory('apache', $site->domain))),
+        'apache custom dir ต้องถูกสร้างทันที แม้ยังไม่มีไฟล์ custom.conf',
+    );
+    assertTrue(
+        $executor->exists($executor->path(CustomConfig::siteDirectory('nginx', $site->domain))),
+        'nginx custom dir ต้องถูกสร้างทันที แม้ยังไม่มีไฟล์ custom.conf',
+    );
+});
+
 test('vhost ที่ระบบสร้างต้องอ่านไฟล์ของผู้ดูแลเป็นอันสุดท้าย', static function (): void {
     /*
      * **ลำดับคือทั้งหมดของคุณสมบัตินี้** — ถ้าไฟล์ของผู้ดูแลถูกอ่านก่อนค่าเริ่มต้น
      * ค่าที่เขียนจะถูกทับทันทีและไม่มีอะไรบอกว่าทำไมมันไม่มีผล
      *
      * ตรวจจากเนื้อไฟล์ที่เรนเดอร์จริง ไม่ใช่จากเทมเพลต — ตัวแปรที่ไม่ถูกส่งเข้ามาจะ
-     * เหลือเป็น `{{CUSTOM_DIR}}` ค้างอยู่ ซึ่งเทสต์ที่อ่านเทมเพลตดิบ ๆ จับไม่ได้
+     * เหลือเป็น `{{CUSTOM_DIR}}` ค้างอยู่ ซึ่งเทสต์ที่อ่านเทมเพลตดิบ ๆ จจับไม่ได้
      */
-    $templates = new Template(PHPCP_ROOT . '/templates');
+    $templates = new Template(PHPCP_ROOT.'/templates');
 
     $apache = $templates->render('apache/vhost-body.conf.tpl', [
         'PROBE_DENY' => new Phpcp\Driver\SafeBlock(Phpcp\Driver\WebServer\ProbeBlocklist::apache()),
@@ -113,7 +147,7 @@ test('vhost ที่ระบบสร้างต้องอ่านไฟ�
         'FPM_SOCKET' => '/run/phpcp/example.com-8.4.sock',
         'ERROR_LOG' => '/var/log/phpcp/example.com-error.log',
         'ACCESS_LOG' => '/var/log/phpcp/example.com-access.log',
-        'CUSTOM_DIR' => '/etc/phpcp/custom/apache/example.com',
+        'CUSTOM_DIR' => '/etc/phpcp/custom/apache/example.com'
     ]);
 
     assertTrue(
@@ -135,7 +169,7 @@ test('vhost ที่ระบบสร้างต้องอ่านไฟ�
         'ERROR_LOG' => '/var/log/phpcp/example.com-error.log',
         'ACCESS_LOG' => '/var/log/phpcp/example.com-access.log',
         'UPLOAD_LIMIT' => 64,
-        'CUSTOM_DIR' => '/etc/phpcp/custom/nginx/example.com',
+        'CUSTOM_DIR' => '/etc/phpcp/custom/nginx/example.com'
     ]);
 
     /*
@@ -161,7 +195,7 @@ test('การเขียนต้องผ่านตัวตรวจข�
     $code = (string) preg_replace(
         '~/\*.*?\*/|//[^\n]*~s',
         '',
-        (string) file_get_contents(PHPCP_ROOT . '/src/Agent/Capability/SiteCustomConfig.php'),
+        (string) file_get_contents(PHPCP_ROOT.'/src/Agent/Capability/SiteCustomConfig.php'),
     );
 
     assertTrue(str_contains($code, 'new ConfigTransaction'), 'ต้องเขียนผ่าน ConfigTransaction เพื่อให้คืนค่าเดิมได้');
@@ -185,12 +219,12 @@ test('ทะเบียนไฟล์ต้องแยก "แก้ได้
      */
     $files = ConfigFileCatalog::forSite(7, 'example.com', 'apache', [
         '/etc/phpcp/vhosts.d/example.com.conf',
-        '/etc/phpcp/vhosts.d/example.com-ssl.conf',
+        '/etc/phpcp/vhosts.d/example.com-ssl.conf'
     ]);
 
     $writable = array_values(array_filter(
         $files,
-        static fn (array $f): bool => $f['kind'] === ConfigFileCatalog::KIND_WRITABLE,
+        static fn(array $f): bool => $f['kind'] === ConfigFileCatalog::KIND_WRITABLE,
     ));
 
     assertSame(1, count($writable), 'ต้องมีไฟล์ที่แก้ได้ไฟล์เดียวเท่านั้น');
@@ -235,7 +269,7 @@ test('คีย์ที่ไม่อยู่ในทะเบียนต�
             $rejected = true;
         }
 
-        assertTrue($rejected, "รูปแบบคีย์ที่ผิดต้องถูกปฏิเสธ: " . substr($bad, 0, 20));
+        assertTrue($rejected, "รูปแบบคีย์ที่ผิดต้องถูกปฏิเสธ: ".substr($bad, 0, 20));
     }
 
     assertTrue(ConfigFileCatalog::find($files, 'site.7.custom') !== null, 'คีย์ที่ถูกต้องต้องหาเจอ');
@@ -249,7 +283,7 @@ test('ตัวเขียนต้องปฏิเสธคีย์ขอ�
     $code = (string) preg_replace(
         '~/\*.*?\*/|//[^\n]*~s',
         '',
-        (string) file_get_contents(PHPCP_ROOT . '/src/Agent/Capability/SiteCustomConfig.php'),
+        (string) file_get_contents(PHPCP_ROOT.'/src/Agent/Capability/SiteCustomConfig.php'),
     );
 
     assertTrue(str_contains($code, 'ConfigFileCatalog::find('), 'ตัวเขียนต้องค้นทะเบียนเอง');
@@ -267,7 +301,7 @@ test('ไฟล์ตั้งต้นต้องอธิบายได้�
      * คำอธิบายอยู่ในไฟล์เพราะเป็นที่ที่ผู้ดูแลระบบคาดว่าจะเจอ และติดไปกับไฟล์เสมอ
      * ไม่ว่าจะเปิดจากหน้าเว็บหรือ `cat` ผ่าน SSH
      */
-    $templates = new Template(PHPCP_ROOT . '/templates');
+    $templates = new Template(PHPCP_ROOT.'/templates');
     $seed = new CustomConfig();
 
     foreach (['apache' => '<VirtualHost>', 'nginx' => 'server { }'] as $server => $context) {
@@ -280,7 +314,7 @@ test('ไฟล์ตั้งต้นต้องอธิบายได้�
         // ทุกบรรทัดต้องเป็นคอมเมนต์หรือบรรทัดว่าง — ไม่มีคำสั่งที่ทำงานจริงเลย
         $active = array_values(array_filter(
             preg_split('/\R/', $content) ?: [],
-            static fn (string $line): bool => trim($line) !== '' && !str_starts_with(trim($line), '#'),
+            static fn(string $line): bool => trim($line) !== '' && !str_starts_with(trim($line), '#'),
         ));
 
         assertSame([], $active, "ไฟล์ตั้งต้นของ {$server} ต้องไม่มีคำสั่งที่ทำงานจริง");
@@ -298,7 +332,7 @@ test('ตัวเขียนต้องไม่เติมหัวไฟ�
     $code = (string) preg_replace(
         '~/\*.*?\*/|//[^\n]*~s',
         '',
-        (string) file_get_contents(PHPCP_ROOT . '/src/Agent/Capability/SiteCustomConfig.php'),
+        (string) file_get_contents(PHPCP_ROOT.'/src/Agent/Capability/SiteCustomConfig.php'),
     );
 
     assertTrue(
@@ -317,7 +351,7 @@ test('ระบบเมล — ทะเบียนแยกไฟล์ที
 
     $writable = array_values(array_filter(
         $files,
-        static fn (array $f): bool => $f['kind'] === ConfigFileCatalog::KIND_WRITABLE,
+        static fn(array $f): bool => $f['kind'] === ConfigFileCatalog::KIND_WRITABLE,
     ));
 
     assertSame(2, count($writable), 'ต้องแก้ได้สองไฟล์: ของ Postfix กับของ Dovecot');
@@ -349,7 +383,7 @@ test('เมล — ไฟล์ของผู้ดูแลต้องถู
      *   Dovecot  `!include_try` ซึ่ง **ไม่ล้มเมื่อไฟล์ยังไม่มี** ต่างจาก `!include`
      *            ที่จะทำให้ Dovecot สตาร์ตไม่ขึ้นทั้งตัวบนเครื่องที่ยังไม่เคยเขียนค่าเพิ่ม
      */
-    $templates = new Template(PHPCP_ROOT . '/templates');
+    $templates = new Template(PHPCP_ROOT.'/templates');
 
     $main = $templates->render('postfix/main.cf.tpl', [
         'HOSTNAME' => 'mail.example.com',
@@ -361,7 +395,7 @@ test('เมล — ไฟล์ของผู้ดูแลต้องถู
         'MYDESTINATION' => 'localhost, $myhostname',
         'HOSTING_SECTION' => new Phpcp\Driver\SafeBlock('virtual_mailbox_domains = hash:/etc/postfix/vdomains'),
         'CUSTOM_SECTION' => new Phpcp\Driver\SafeBlock('message_size_limit = 99'),
-        'GENERATED_AT' => '2026-01-01 00:00:00',
+        'GENERATED_AT' => '2026-01-01 00:00:00'
     ]);
 
     assertTrue(!str_contains($main, '{{'), 'main.cf ต้องไม่มีตัวแปรค้าง');
@@ -381,7 +415,7 @@ test('เมล — ไฟล์ของผู้ดูแลต้องถู
         'CUSTOM_DIR' => '/etc/phpcp/custom/dovecot',
         'TLS_CERT' => '/x.pem',
         'TLS_KEY' => '/x.key',
-        'GENERATED_AT' => '2026-01-01 00:00:00',
+        'GENERATED_AT' => '2026-01-01 00:00:00'
     ]);
 
     assertTrue(
@@ -410,7 +444,7 @@ test('เมล — ตัวเขียนต้องคืนไฟล์ข
     $code = (string) preg_replace(
         '~/\*.*?\*/|//[^\n]*~s',
         '',
-        (string) file_get_contents(PHPCP_ROOT . '/src/Agent/Capability/MailCustomConfig.php'),
+        (string) file_get_contents(PHPCP_ROOT.'/src/Agent/Capability/MailCustomConfig.php'),
     );
 
     assertTrue(str_contains($code, '$transaction->rollback();'), 'ต้องคืนไฟล์ของผู้ดูแลเมื่อ sync ล้ม');

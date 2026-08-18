@@ -4,6 +4,7 @@ declare (strict_types = 1);
 
 namespace Phpcp\Agent\Capability;
 
+use Phpcp\Agent\Actor;
 use Phpcp\Agent\Capability;
 use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
@@ -152,7 +153,7 @@ abstract class FileCapability implements Capability
      * @param callable(callable(string,bool=):string,string):array<string,mixed> $work
      * @return array<string,mixed>
      */
-    protected function withSite(Executor $executor, FileScope $scope, callable $work): array
+    protected function withSite(Executor $executor, FileScope $scope, callable $work, ?Actor $actor = null): array
     {
         $root = $this->root($executor, $scope);
         $mutating = $this->isMutating();
@@ -160,21 +161,21 @@ abstract class FileCapability implements Capability
         // A website scope drops to that site owner's privileges before touching any file.
         // A server scope runs under the agent's own privileges, since system
         // files don't belong to any one user — so it's only ever open to a server admin.
-        return $executor->asUser($scope->systemUser, static function () use ($executor, $root, $work, $mutating) {
+        return $executor->asUser($scope->systemUser, static function () use ($executor, $root, $work, $mutating, $actor) {
             $realRoot = $executor->realPath($root);
             if ($realRoot === null) {
                 throw new ValidationError('This directory does not exist on the machine yet');
             }
 
-            $resolve = static function (string $relative, bool $mustExist = true) use ($executor, $root, $mutating): string {
+            $resolve = static function (string $relative, bool $mustExist = true) use ($executor, $root, $mutating, $actor): string {
                 $real = PathGuard::resolve($executor, $root, PathGuard::join($root, $relative), $mustExist);
 
                 // The control panel's own files can't be touched — neither read nor written.
                 // Blocks both unrecoverably breaking itself, and reading panel.db, which holds password hashes.
-                FileRoots::assertReadable($real);
+                FileRoots::assertReadable($real, $actor);
 
                 if ($mutating) {
-                    FileRoots::assertWritable($real);
+                    FileRoots::assertWritable($real, $actor);
                 }
 
                 return $real;
@@ -197,12 +198,14 @@ abstract class FileCapability implements Capability
         string $relative,
         callable $work,
         bool $mustExist = true,
+        ?Actor $actor = null,
     ): array {
         return $this->withSite(
             $executor,
             $scope,
             static fn(callable $resolve, string $realRoot): array
             => $work($realRoot, $resolve($relative, $mustExist)),
+            $actor,
         );
     }
 
@@ -221,9 +224,45 @@ abstract class FileCapability implements Capability
             'size' => $info['size'],
             'mode' => sprintf('%04o', $info['mode']),
             'mtime' => $info['mtime'],
-            'owner' => $info['uid'],
-            'group' => $info['gid'],
+            'owner' => self::resolveUserName((int) ($info['uid'] ?? -1)),
+            'group' => self::resolveGroupName((int) ($info['gid'] ?? -1)),
             'link' => $info['link']
         ];
+    }
+
+    /**
+     * @param int $id
+     */
+    private static function resolveUserName(int $id): string
+    {
+        if ($id < 0) {
+            return '?';
+        }
+
+        if (!function_exists('posix_getpwuid')) {
+            return (string) $id;
+        }
+
+        $info = @posix_getpwuid($id);
+
+        return is_array($info) && isset($info['name']) ? (string) $info['name'] : (string) $id;
+    }
+
+    /**
+     * @param int $id
+     */
+    private static function resolveGroupName(int $id): string
+    {
+        if ($id < 0) {
+            return '?';
+        }
+
+        if (!function_exists('posix_getgrgid')) {
+            return (string) $id;
+        }
+
+        $info = @posix_getgrgid($id);
+
+        return is_array($info) && isset($info['name']) ? (string) $info['name'] : (string) $id;
     }
 }

@@ -76,7 +76,7 @@ final class FileWrite extends FileCapability
         $content = $args['content'];
         $create = $args['create'];
 
-        if (!FileCatalog::isEditable($name, strlen($content))) {
+        if (!FileCatalog::isEditable($name, strlen($content), $context->actor->role)) {
             throw new ValidationError('This file type cannot be edited through the file manager');
         }
 
@@ -140,6 +140,7 @@ final class FileWrite extends FileCapability
                 return ['size' => strlen($content), 'mode' => sprintf('%04o', $mode)];
             },
             mustExist: false,
+            actor: $context->actor,
         );
 
         return [

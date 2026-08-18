@@ -72,7 +72,7 @@ final class FileDownload extends FileCapability
             // 0 = as much as fits in one frame · a larger value gets clamped
             // down, never rejected, since a caller asking for too much hasn't
             // done anything wrong, they just don't know the protocol's ceiling
-            'length' => Validator::optionalInt($args, 'length', 0, 0),
+            'length' => Validator::optionalInt($args, 'length', 0, 0)
         ];
     }
 
@@ -126,7 +126,7 @@ final class FileDownload extends FileCapability
             }
 
             return ['content' => base64_encode($chunk), 'size' => $size, 'bytes' => strlen($chunk)];
-        });
+        }, actor: $context->actor);
 
         $end = $offset + $result['bytes'];
 

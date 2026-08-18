@@ -83,7 +83,7 @@ final class FileSearch extends FileCapability
         $relative = $args['path'];
         $query = $args['q'];
 
-        $result = $this->withPath($executor, $scope, $relative, static function (string $root, string $target) use ($executor, $relative, $query): array {
+        $result = $this->withPath($executor, $scope, $relative, static function (string $root, string $target) use ($executor, $relative, $query, $context): array {
             $info = $executor->stat($target);
             if ($info === null || $info['type'] !== 'dir') {
                 throw new ValidationError('This path is not a folder');
@@ -112,7 +112,7 @@ final class FileSearch extends FileCapability
                 || $state['visited'] >= self::MAX_VISITED
                 || microtime(true) > $state['deadline']
             ];
-        });
+        }, actor: $context->actor);
 
         return [
             'root' => $scope->key,
@@ -166,7 +166,7 @@ final class FileSearch extends FileCapability
                 $described = self::describe($entry['name'], $childRelative, $entry);
                 $described['kind'] = $entry['type'] === 'dir' ? 'folder' : FileCatalog::kind($entry['name']);
                 $described['editable'] = $entry['type'] === 'file'
-                && FileCatalog::isEditable($entry['name'], $entry['size']);
+                && FileCatalog::isEditable($entry['name'], $entry['size'], $context->actor->role);
                 // The result's parent folder — used by the screen to take the user to where the file actually lives
                 $described['parent'] = $relative;
 

@@ -119,9 +119,11 @@ final class FileRoots
     /**
      * Check whether this path can be modified — used on every write command, not just when displaying it
      */
-    public static function assertWritable(string $absolutePath): void
+    public static function assertWritable(string $absolutePath, ?Actor $actor = null): void
     {
-        SelfProtection::assertPath($absolutePath);
+        if ($actor === null || !self::isServerAdmin($actor)) {
+            SelfProtection::assertPath($absolutePath);
+        }
 
         foreach (self::READ_ONLY_PREFIXES as $prefix) {
             if ($absolutePath === $prefix || str_starts_with($absolutePath, $prefix.'/')) {
@@ -131,9 +133,11 @@ final class FileRoots
     }
 
     /** The panel's own path is closed to both reading and writing, since panel.db holds password hashes and sessions */
-    public static function assertReadable(string $absolutePath): void
+    public static function assertReadable(string $absolutePath, ?Actor $actor = null): void
     {
-        SelfProtection::assertPath($absolutePath);
+        if ($actor === null || !self::isServerAdmin($actor)) {
+            SelfProtection::assertPath($absolutePath);
+        }
     }
 
     /**

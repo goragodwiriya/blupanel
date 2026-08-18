@@ -56,7 +56,7 @@ final class FileList extends FileCapability
                 self::DEFAULT_PER_PAGE,
                 min: 1,
                 max: self::MAX_PER_PAGE,
-            ),
+            )
         ];
     }
 
@@ -70,7 +70,7 @@ final class FileList extends FileCapability
         $scope = $this->scope($context, $args);
         $relative = $args['path'];
 
-        $result = $this->withPath($executor, $scope, $relative, static function (string $root, string $target) use ($executor, $relative, $scope): array {
+        $result = $this->withPath($executor, $scope, $relative, static function (string $root, string $target) use ($executor, $relative, $scope, $context): array {
             $info = $executor->stat($target);
             if ($info === null || $info['type'] !== 'dir') {
                 throw new \Phpcp\Agent\ValidationError('This path is not a folder');
@@ -82,7 +82,7 @@ final class FileList extends FileCapability
                 $described = self::describe($entry['name'], $childPath, $entry);
 
                 $described['editable'] = $entry['type'] === 'file'
-                && FileCatalog::isEditable($entry['name'], $entry['size']);
+                && FileCatalog::isEditable($entry['name'], $entry['size'], $context->actor->role);
                 $described['kind'] = $entry['type'] === 'dir' ? 'folder' : FileCatalog::kind($entry['name']);
                 // A folder's inode size (usually 4096) tells the user nothing —
                 // null lets the table's standard formatter (data-format="bytes" +
@@ -111,7 +111,7 @@ final class FileList extends FileCapability
                 'entries' => $entries,
                 'disk' => $executor->diskSpace($root)
             ];
-        });
+        }, actor: $context->actor);
 
         $total = count($result['entries']);
         $perPage = $args['per_page'];

@@ -60,13 +60,13 @@ final class FileRead extends FileCapability
         $relative = $args['path'];
         $name = basename($relative);
 
-        $result = $this->withPath($executor, $scope, $relative, static function (string $root, string $target) use ($executor, $name): array {
+        $result = $this->withPath($executor, $scope, $relative, static function (string $root, string $target) use ($executor, $name, $context): array {
             $info = $executor->stat($target);
             if ($info === null || $info['type'] !== 'file') {
                 throw new ValidationError('Only regular files can be read');
             }
 
-            if (!FileCatalog::isEditable($name, $info['size'])) {
+            if (!FileCatalog::isEditable($name, $info['size'], $context->actor->role)) {
                 throw new ValidationError(
                     $info['size'] > FileCatalog::MAX_EDIT_BYTES
                         ? 'File is too large to open in the editor (over 5 MB)'
@@ -89,7 +89,7 @@ final class FileRead extends FileCapability
                 'mode' => sprintf('%04o', $info['mode']),
                 'mtime' => $info['mtime']
             ];
-        });
+        }, actor: $context->actor);
 
         return [
             'root' => $scope->key,

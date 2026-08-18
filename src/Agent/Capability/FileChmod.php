@@ -94,7 +94,7 @@ final class FileChmod extends FileCapability
             }
 
             return ['changed' => $changed];
-        });
+        }, actor: $context->actor);
 
         return [
             'root' => $scope->key,

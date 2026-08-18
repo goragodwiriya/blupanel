@@ -18,7 +18,7 @@
  * privileges via `Executor::asUser()`, and every one is recorded to the
  * audit log · this page has no shortcut to the filesystem and no login system of its own
  */
-(function () {
+(function() {
   'use strict';
 
   /**
@@ -126,7 +126,7 @@
   }
 
   // ===========================================================================
-  window.pageFileManager = function (page) {
+  window.pageFileManager = function(page) {
     const find = (selector) => page.querySelector(selector);
 
     const refs = {
@@ -163,7 +163,7 @@
       selected: new Set(),
       anchor: -1,
       view: window.localStorage.getItem('phpcp_fm_view') === 'grid' ? 'grid' : 'list',
-      sort: { field: 'name', desc: false },
+      sort: {field: 'name', desc: false},
       clipboard: null,
       query: '',
       crumbs: [],
@@ -243,7 +243,7 @@
         // search that crosses folders never has any · the last one is kept,
         // since "where we currently are" doesn't change just because of a search
         if (Array.isArray(state.meta.breadcrumb)) {
-            state.crumbs = state.meta.breadcrumb;
+          state.crumbs = state.meta.breadcrumb;
         }
         state.selected.clear();
         state.anchor = -1;
@@ -266,7 +266,7 @@
       state.nodes.clear();
 
       try {
-        const result = await window.PhpcpApi.getFull('/files/tree', { root: state.root, path: '', depth: 2 });
+        const result = await window.PhpcpApi.getFull('/files/tree', {root: state.root, path: '', depth: 2});
 
         storeNodes('', Array.isArray(result.data) ? result.data : []);
       } catch (error) {
@@ -294,7 +294,7 @@
     async function expandNode(path) {
       if (!state.nodes.has(path)) {
         try {
-          const result = await window.PhpcpApi.getFull('/files/tree', { root: state.root, path: path, depth: 1 });
+          const result = await window.PhpcpApi.getFull('/files/tree', {root: state.root, path: path, depth: 1});
 
           storeNodes(path, Array.isArray(result.data) ? result.data : []);
         } catch (error) {
@@ -340,7 +340,7 @@
     function renderCrumbs() {
       refs.crumbs.textContent = '';
 
-      const trail = state.crumbs.length > 0 ? state.crumbs : [{ label: '/', path: '' }];
+      const trail = state.crumbs.length > 0 ? state.crumbs : [{label: '/', path: ''}];
 
       trail.forEach((step, index) => {
         if (index > 0) refs.crumbs.appendChild(el('span', 'fm-crumb-sep', '/'));
@@ -412,7 +412,7 @@
         if (field === 'mtime') return ((a.mtime || 0) - (b.mtime || 0)) * direction;
         if (field === 'mode') return String(a.mode).localeCompare(String(b.mode)) * direction;
 
-        return String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' }) * direction;
+        return String(a.name).localeCompare(String(b.name), undefined, {sensitivity: 'base'}) * direction;
       });
     }
 
@@ -458,10 +458,11 @@
       const headRow = el('tr');
 
       [
-        { field: 'name', label: 'Name' },
-        { field: 'size', label: 'Size' },
-        { field: 'mtime', label: 'Modified' },
-        { field: 'mode', label: 'Permissions' }
+        {field: 'name', label: 'Name'},
+        {field: 'size', label: 'Size'},
+        {field: 'mtime', label: 'Modified'},
+        {field: 'mode', label: 'Permissions'},
+        {field: 'owner', label: 'Owner'}
       ].forEach((column) => {
         const cell = el('th', null, t(column.label));
 
@@ -499,6 +500,7 @@
         row.appendChild(el('td', 'fm-muted', entry.type === 'dir' ? '—' : fmt().bytes(entry.size)));
         row.appendChild(el('td', 'fm-muted', fmt().datetime(entry.mtime)));
         row.appendChild(el('td', 'fm-mono fm-muted', entry.mode));
+        row.appendChild(el('td', 'fm-muted', ((entry.owner || '') + (entry.group ? ' / ' + entry.group : '')) || '—'));
 
         bindRow(row, entry, index);
         body.appendChild(row);
@@ -615,11 +617,11 @@
       if (state.query === '' && pages > 1) {
         const previous = button(null, '‹');
         previous.disabled = state.page <= 1;
-        previous.addEventListener('click', () => { state.page -= 1; loadList(); });
+        previous.addEventListener('click', () => {state.page -= 1; loadList();});
 
         const next = button(null, '›');
         next.disabled = state.page >= pages;
-        next.addEventListener('click', () => { state.page += 1; loadList(); });
+        next.addEventListener('click', () => {state.page += 1; loadList();});
 
         refs.pager.appendChild(previous);
         refs.pager.appendChild(el('span', null, state.page + ' / ' + pages));
@@ -775,7 +777,7 @@
       let file;
 
       try {
-        file = await window.PhpcpApi.get('/files/content', { root: state.root, path: entry.path });
+        file = await window.PhpcpApi.get('/files/content', {root: state.root, path: entry.path});
       } catch (error) {
         fail(error);
         return;
@@ -802,7 +804,7 @@
 
       async function save() {
         try {
-          await send('PUT', '/files/content', { root: state.root, path: entry.path, content: area.value });
+          await send('PUT', '/files/content', {root: state.root, path: entry.path, content: area.value});
           window.PhpcpUi.success(t('File saved'));
           closeModal();
           loadList();
@@ -825,7 +827,7 @@
       let dataUrl;
 
       try {
-        const response = await window.fetch(downloadUrl(state.root, entry.path), { credentials: 'same-origin' });
+        const response = await window.fetch(downloadUrl(state.root, entry.path), {credentials: 'same-origin'});
 
         if (!response.ok) throw new Error(t('This file is too large to preview'));
 
@@ -836,7 +838,7 @@
 
           reader.onload = () => resolve(String(reader.result));
           reader.onerror = () => reject(new Error(t('Could not read the file')));
-          reader.readAsDataURL(new window.Blob([blob], { type: mime }));
+          reader.readAsDataURL(new window.Blob([blob], {type: mime}));
         });
       } catch (error) {
         refs.modalBody.textContent = '';
@@ -866,7 +868,7 @@
       let info;
 
       try {
-        info = await window.PhpcpApi.get('/files/info', { root: state.root, path: entry.path });
+        info = await window.PhpcpApi.get('/files/info', {root: state.root, path: entry.path});
       } catch (error) {
         fail(error);
         return;
@@ -921,9 +923,9 @@
     function makeDirectory() {
       askText(t('New folder'), t('Folder name'), '', (name) => {
         run(
-          () => send('POST', '/files/directories', { root: state.root, path: state.path, name: name }),
+          () => send('POST', '/files/directories', {root: state.root, path: state.path, name: name}),
           t('Folder created')
-        ).then((ok) => { if (ok) loadTree(); });
+        ).then((ok) => {if (ok) loadTree();});
       });
     }
 
@@ -951,7 +953,7 @@
             rename: name
           }),
           t('Renamed')
-        ).then((ok) => { if (ok) loadTree(); });
+        ).then((ok) => {if (ok) loadTree();});
       });
     }
 
@@ -959,7 +961,7 @@
       const chosen = selectedEntries();
       if (chosen.length === 0) return;
 
-      state.clipboard = { op: op, root: state.root, items: chosen.map((entry) => entry.path) };
+      state.clipboard = {op: op, root: state.root, items: chosen.map((entry) => entry.path)};
       window.PhpcpUi.success(op === 'copy' ? t('Copied to clipboard') : t('Cut to clipboard'));
       paintSelection();
     }
@@ -1021,7 +1023,7 @@
           destination: state.path
         }),
         t('Extracted')
-      ).then((ok) => { if (ok) loadTree(); });
+      ).then((ok) => {if (ok) loadTree();});
     }
 
     function changeMode(entry) {
@@ -1085,9 +1087,9 @@
       if (!ok) return;
 
       run(
-        () => send('DELETE', '/files', { root: state.root, items: chosen.map((entry) => entry.path) }),
+        () => send('DELETE', '/files', {root: state.root, items: chosen.map((entry) => entry.path)}),
         t('Deleted')
-      ).then((ok) => { if (ok) loadTree(); });
+      ).then((ok) => {if (ok) loadTree();});
     }
 
     async function upload(files) {
@@ -1145,16 +1147,16 @@
       mkdir: makeDirectory,
       touch: makeFile,
       upload: () => filePicker().click(),
-      download: () => { const one = selectedEntries()[0]; if (one) download(one); },
-      open: () => { const one = selectedEntries()[0]; if (one) open(one); },
-      rename: () => { const one = selectedEntries()[0]; if (one) rename(one); },
+      download: () => {const one = selectedEntries()[0]; if (one) download(one);},
+      open: () => {const one = selectedEntries()[0]; if (one) open(one);},
+      rename: () => {const one = selectedEntries()[0]; if (one) rename(one);},
       copy: () => remember('copy'),
       cut: () => remember('cut'),
       paste: paste,
       zip: compress,
-      unzip: () => { const one = selectedEntries()[0]; if (one) extract(one); },
-      chmod: () => { const one = selectedEntries()[0]; if (one) changeMode(one); },
-      info: () => { const one = selectedEntries()[0]; if (one) showInfo(one); },
+      unzip: () => {const one = selectedEntries()[0]; if (one) extract(one);},
+      chmod: () => {const one = selectedEntries()[0]; if (one) changeMode(one);},
+      info: () => {const one = selectedEntries()[0]; if (one) showInfo(one);},
       delete: remove,
       refresh: () => loadList()
     };
@@ -1167,31 +1169,31 @@
 
       const items = entry
         ? [
-          { label: t('Open'), icon: 'icon-folder-open', command: 'open' },
-          { label: t('Download'), icon: 'icon-download', command: 'download', when: entry.type === 'file' },
-          { separator: true },
-          { label: t('Rename'), icon: 'icon-edit', command: 'rename' },
-          { label: t('Copy'), icon: 'icon-copy', command: 'copy' },
-          { label: t('Cut'), icon: 'icon-cut', command: 'cut' },
-          { label: t('Paste'), icon: 'icon-import', command: 'paste', when: state.clipboard !== null },
-          { separator: true },
-          { label: t('Compress'), icon: 'icon-zip', command: 'zip' },
+          {label: t('Open'), icon: 'icon-folder-open', command: 'open'},
+          {label: t('Download'), icon: 'icon-download', command: 'download', when: entry.type === 'file'},
+          {separator: true},
+          {label: t('Rename'), icon: 'icon-edit', command: 'rename'},
+          {label: t('Copy'), icon: 'icon-copy', command: 'copy'},
+          {label: t('Cut'), icon: 'icon-cut', command: 'cut'},
+          {label: t('Paste'), icon: 'icon-import', command: 'paste', when: state.clipboard !== null},
+          {separator: true},
+          {label: t('Compress'), icon: 'icon-zip', command: 'zip'},
           {
             label: t('Extract'), icon: 'icon-unzip', command: 'unzip',
             when: ARCHIVE_EXTENSIONS.indexOf(extensionOf(entry.name)) !== -1
           },
-          { label: t('Permissions'), icon: 'icon-lock', command: 'chmod' },
-          { label: t('Properties'), icon: 'icon-info', command: 'info' },
-          { separator: true },
-          { label: t('Delete'), icon: 'icon-delete', command: 'delete' }
+          {label: t('Permissions'), icon: 'icon-lock', command: 'chmod'},
+          {label: t('Properties'), icon: 'icon-info', command: 'info'},
+          {separator: true},
+          {label: t('Delete'), icon: 'icon-delete', command: 'delete'}
         ]
         : [
-          { label: t('New folder'), icon: 'icon-create-folder', command: 'mkdir' },
-          { label: t('New file'), icon: 'icon-new', command: 'touch' },
-          { label: t('Upload'), icon: 'icon-upload', command: 'upload' },
-          { label: t('Paste'), icon: 'icon-import', command: 'paste', when: state.clipboard !== null },
-          { separator: true },
-          { label: t('Refresh'), icon: 'icon-refresh', command: 'refresh' }
+          {label: t('New folder'), icon: 'icon-create-folder', command: 'mkdir'},
+          {label: t('New file'), icon: 'icon-new', command: 'touch'},
+          {label: t('Upload'), icon: 'icon-upload', command: 'upload'},
+          {label: t('Paste'), icon: 'icon-import', command: 'paste', when: state.clipboard !== null},
+          {separator: true},
+          {label: t('Refresh'), icon: 'icon-refresh', command: 'refresh'}
         ];
 
       items.forEach((item) => {
@@ -1344,13 +1346,13 @@
         return;
       }
 
-      if (ctrl && event.key.toLowerCase() === 'c') { remember('copy'); return; }
-      if (ctrl && event.key.toLowerCase() === 'x' && state.canWrite) { remember('cut'); return; }
-      if (ctrl && event.key.toLowerCase() === 'v' && state.canWrite) { paste(); return; }
+      if (ctrl && event.key.toLowerCase() === 'c') {remember('copy'); return;}
+      if (ctrl && event.key.toLowerCase() === 'x' && state.canWrite) {remember('cut'); return;}
+      if (ctrl && event.key.toLowerCase() === 'v' && state.canWrite) {paste(); return;}
 
-      if (event.key === 'F2' && state.canWrite) { commands.rename(); return; }
-      if (event.key === 'Delete' && state.canWrite) { remove(); return; }
-      if (event.key === 'Backspace') { event.preventDefault(); goUp(); return; }
+      if (event.key === 'F2' && state.canWrite) {commands.rename(); return;}
+      if (event.key === 'Delete' && state.canWrite) {remove(); return;}
+      if (event.key === 'Backspace') {event.preventDefault(); goUp(); return;}
 
       if (event.key === 'Enter') {
         const one = selectedEntries()[0];
