@@ -91,6 +91,29 @@ final class SftpController extends ApiController
         return $this->ok($rows);
     }
 
+    /**
+     * The owner's own password form — opens in a Modal
+     *
+     * Kept out of the page for the same reason `UsersController::sftpForm()` is:
+     * a screen owns either a table or a form, never both at once, and one
+     * password field has no claim on permanent space next to a table of every
+     * account (FRAMEWORK_GUIDE pattern 3).
+     */
+    public function passwordForm(Request $request): Response
+    {
+        return $this->ok(
+            ['form_action' => '/api/v2/sftp/password'],
+            [],
+            [[
+                'type' => 'modal',
+                'action' => 'show',
+                'template' => 'sftp-own-password-form.html',
+                'title' => '{LNG_Change SFTP password}',
+                'titleClass' => 'icon-lock',
+            ]],
+        );
+    }
+
     /** The owner changes their own SFTP password — the id always comes from the session */
     public function changeOwnPassword(Request $request): Response
     {

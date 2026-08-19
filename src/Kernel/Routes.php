@@ -204,6 +204,7 @@ final class Routes
         $router->add(new Route('GET', '/api/v2/sftp/accounts', SftpController::class, 'accounts', 'customer.view', 'api.v2.sftp.accounts'));
         // The user id always comes from the session — there is deliberately no
         // {id} to get wrong or to point at someone else's account
+        $router->add(new Route('GET', '/api/v2/sftp/password/form', SftpController::class, 'passwordForm', 'file.manage', 'api.v2.sftp.password.form'));
         $router->add(new Route('PUT', '/api/v2/sftp/password', SftpController::class, 'changeOwnPassword', 'file.manage', 'api.v2.sftp.password'));
 
 

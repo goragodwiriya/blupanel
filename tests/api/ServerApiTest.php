@@ -279,6 +279,55 @@ test('รายการแหล่ง log มี log ของแต่ละ�
     $harness->app->db()->run('DELETE FROM sites WHERE id = :id', ['id' => $siteId]);
 });
 
+test('กราฟย้อนหลังส่งค่าสูงสุดของแต่ละช่วง ไม่ใช่ค่าเฉลี่ย', static function (): void {
+    /*
+     * **นี่คือทั้งหมดที่กราฟย้อนหลังมีไว้ตอบ** — "ช่วงไหนผิดปกติ" · ค่าเฉลี่ยกลบคำตอบนั้น
+     * ทิ้งพอดี: ช่วง 7 วันหนึ่งจุดครอบ 12 ชั่วโมง เครื่องที่ตัน 95% อยู่หนึ่งนาทีจึงโผล่มา
+     * เป็นเนินไม่ถึง 1% แยกไม่ออกจากเครื่องที่ว่างทั้งวัน
+     *
+     * ถ้าใครเปลี่ยนกลับไปส่งค่าเฉลี่ย กราฟจะยังวาดสวยและไม่มีอะไรฟ้องเลย — เทสต์นี้คือ
+     * สิ่งเดียวที่ฟ้อง
+     */
+    $harness = serverLogin('srvadmin', 'Server-Admin-Pass-11');
+    $repository = new Phpcp\Domain\MetricsHistoryRepository($harness->app->db());
+
+    // สามนาทีเมื่อสามวันก่อน โดยมีนาทีเดียวที่พุ่ง — แล้วยุบขึ้นชั้นชั่วโมงให้เรียบร้อย
+    $base = (intdiv(time(), 3600) * 3600) - (3 * 86400);
+
+    foreach ([[4.0, 20.0], [95.0, 91.0], [4.0, 20.0]] as $offset => [$cpu, $memory]) {
+        $repository->record([
+            'cpu' => ['percent' => $cpu],
+            'memory' => ['percent' => $memory, 'used' => 1000],
+            'disk' => ['percent' => 30.0, 'used' => 2000],
+            'load' => [1 => 0.5],
+        ], $base + $offset * 60);
+    }
+
+    $repository->rollUp(time());
+
+    $week = $harness->request('GET', '/api/v2/metrics/history', [], [], ['range' => '7d']);
+
+    assertSame(200, $week->status, 'ผู้ดูแลต้องอ่านกราฟย้อนหลังได้');
+    assertTrue($week->json['meta']['peak'] === true, 'ช่วงที่หนึ่งจุดครอบหลายตัวอย่างต้องบอกว่าเป็นค่าสูงสุด');
+
+    $names = array_column($week->json['data'], 'name');
+
+    assertSame(['CPU (peak)', 'Memory (peak)', 'Disk (peak)'], $names, 'ชื่อเส้นต้องบอกด้วยว่าเป็นค่าสูงสุด ไม่ใช่ค่าปกติ');
+
+    $highest = static fn (array $series): float => max(array_column($series['data'], 'value'));
+
+    assertSame(95.0, $highest($week->json['data'][0]), 'CPU ต้องเป็น 95 ที่วัดได้จริง ไม่ใช่ค่าเฉลี่ยที่ถูกกลบจนเหลือไม่ถึง 1');
+    assertSame(91.0, $highest($week->json['data'][1]), 'หน่วยความจำก็ต้องเป็นค่าสูงสุด ไม่ใช่ค่าเฉลี่ย');
+
+    // ช่วงเดียวที่หนึ่งจุด = หนึ่งแถวที่บันทึกไว้ · ไม่มีช่วงให้หาค่าสูงสุด การเรียกมันว่า
+    // "สูงสุด" จึงเป็นการโกหกว่าวัดอะไรมา
+    $live = $harness->request('GET', '/api/v2/metrics/history', [], [], ['range' => '20m']);
+
+    assertSame(200, $live->status, 'ช่วงสั้นต้องอ่านได้เหมือนกัน');
+    assertTrue($live->json['meta']['peak'] === false, '20m ต้องบอกว่าเป็นค่าที่วัดได้ตรง ๆ');
+    assertSame(['CPU', 'Memory', 'Disk'], array_column($live->json['data'], 'name'), 'ชื่อเส้นของช่วงสั้นต้องไม่มีคำว่า peak');
+});
+
 test('ผู้ดูแลเว็บไซต์ยังเข้ารายการแหล่ง log ไม่ได้เลย', static function (): void {
     // การเพิ่ม log รายเว็บต้องไม่เผลอเปิดหมวด SERVER ให้ลูกค้าไปด้วย
     $harness = serverLogin('srvweb', 'Server-Web-Pass-33');

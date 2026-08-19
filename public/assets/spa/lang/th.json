@@ -1382,6 +1382,7 @@
     "truncated": "ถูกตัดผลลัพธ์",
     "matches": "รายการที่ตรง",
     "Quick Templates": "ตัวอย่างคำสั่ง",
+    "{metric} (peak)": "{metric} (สูงสุด)",
     "{name} failed: {message}": "{name} ล้มเหลว: {message}",
     "{name} finished: {status} ({ms} ms)": "{name} เสร็จแล้ว: {status} ({ms} ms)"
 }

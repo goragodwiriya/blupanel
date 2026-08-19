@@ -18,9 +18,12 @@ use Phpcp\Kernel\Db;
  * must carry different weight when rolling up into the day tier, otherwise a period
  * with sparse data would pull the whole day's average toward itself.
  *
- * **`cpu_peak` is kept separate from `cpu_percent`** because averaging erases a short
+ * **Every metric keeps a peak beside its average** because averaging erases a short
  * spike entirely — which is exactly the root cause behind "the site is slow in
- * bursts," the very thing this historical graph exists to answer.
+ * bursts," the very thing this historical graph exists to answer · the peak has to
+ * be carried up through every tier (migration 0026): once an hour has been reduced
+ * to the mean of its 60 samples, taking the maximum later only finds "the highest
+ * hourly average," which is a different number answering a different question.
  */
 final class MetricsHistoryRepository
 {
@@ -98,7 +101,8 @@ final class MetricsHistoryRepository
         $until ??= time();
 
         return $this->db->all(
-            'SELECT bucket_at, cpu_percent, cpu_peak, memory_percent, disk_percent, load1,
+            'SELECT bucket_at, cpu_percent, cpu_peak, memory_percent, memory_peak,
+                    disk_percent, disk_peak, load1, load1_peak,
                     memory_used_bytes, disk_used_bytes, samples
              FROM metrics_history
              WHERE bucket = :b AND bucket_at >= :since AND bucket_at <= :until
@@ -118,9 +122,9 @@ final class MetricsHistoryRepository
      *
      * Weighted by `samples` for the same reason as `rollUpInto()` — a period with
      * few recorded samples (the machine just booted, or the scheduler missed a few
-     * minutes) must not pull the whole interval's average toward itself ·
-     * `cpu_peak` takes the maximum, since a short spike is exactly what this graph
-     * exists to answer.
+     * minutes) must not pull the whole interval's average toward itself · every
+     * `*_peak` takes the maximum instead, since a short spike is exactly what this
+     * graph exists to answer.
      *
      * @param list<array<string,mixed>> $rows already sorted by bucket_at
      * @return list<array<string,mixed>>
@@ -155,15 +159,22 @@ final class MetricsHistoryRepository
                 return $total / $weight;
             };
 
+            $peak = static fn(string $column): float => max(
+                array_map(static fn(array $r): float => (float) $r[$column], $group),
+            );
+
             $last = $group[count($group) - 1];
 
             $summary[] = [
                 'bucket_at' => $bucketAt,
                 'cpu_percent' => $average('cpu_percent'),
-                'cpu_peak' => max(array_map(static fn(array $r): float => (float) $r['cpu_peak'], $group)),
+                'cpu_peak' => $peak('cpu_peak'),
                 'memory_percent' => $average('memory_percent'),
+                'memory_peak' => $peak('memory_peak'),
                 'disk_percent' => $average('disk_percent'),
+                'disk_peak' => $peak('disk_peak'),
                 'load1' => $average('load1'),
+                'load1_peak' => $peak('load1_peak'),
                 // Bytes use the interval's most recent value, not an average — answers "how much was in use at that moment"
                 'memory_used_bytes' => (int) $last['memory_used_bytes'],
                 'disk_used_bytes' => (int) $last['disk_used_bytes'],
@@ -213,15 +224,20 @@ final class MetricsHistoryRepository
     {
         $this->db->run(
             'INSERT INTO metrics_history
-                (bucket, bucket_at, cpu_percent, cpu_peak, memory_percent, disk_percent, load1,
+                (bucket, bucket_at, cpu_percent, cpu_peak, memory_percent, memory_peak,
+                 disk_percent, disk_peak, load1, load1_peak,
                  memory_used_bytes, disk_used_bytes, samples, created_at)
-             VALUES (:b, :t, :cpu, :cpu, :mem, :disk, :load, :membytes, :diskbytes, 1, :now)
+             VALUES (:b, :t, :cpu, :cpu, :mem, :mem, :disk, :disk, :load, :load,
+                     :membytes, :diskbytes, 1, :now)
              ON CONFLICT(bucket, bucket_at) DO UPDATE SET
                 cpu_percent    = (cpu_percent    * samples + :cpu)  / (samples + 1),
                 memory_percent = (memory_percent * samples + :mem)  / (samples + 1),
                 disk_percent   = (disk_percent   * samples + :disk) / (samples + 1),
                 load1          = (load1          * samples + :load) / (samples + 1),
-                cpu_peak       = MAX(cpu_peak, :cpu),
+                cpu_peak       = MAX(cpu_peak,    :cpu),
+                memory_peak    = MAX(memory_peak, :mem),
+                disk_peak      = MAX(disk_peak,   :disk),
+                load1_peak     = MAX(load1_peak,  :load),
                 memory_used_bytes = :membytes,
                 disk_used_bytes   = :diskbytes,
                 samples        = samples + 1',
@@ -254,7 +270,8 @@ final class MetricsHistoryRepository
 
         $this->db->run(
             'INSERT INTO metrics_history
-                (bucket, bucket_at, cpu_percent, cpu_peak, memory_percent, disk_percent, load1,
+                (bucket, bucket_at, cpu_percent, cpu_peak, memory_percent, memory_peak,
+                 disk_percent, disk_peak, load1, load1_peak,
                  memory_used_bytes, disk_used_bytes, samples, created_at)
              SELECT
                 :to,
@@ -263,10 +280,15 @@ final class MetricsHistoryRepository
                 -- each row carries a different sample count (e.g. a period right
                 -- after the machine booted)
                 SUM(cpu_percent    * samples) / SUM(samples),
+                -- The peak travels up untouched · reduce it to an average here and
+                -- the spike is gone from every longer range for good
                 MAX(cpu_peak),
                 SUM(memory_percent * samples) / SUM(samples),
+                MAX(memory_peak),
                 SUM(disk_percent   * samples) / SUM(samples),
+                MAX(disk_peak),
                 SUM(load1          * samples) / SUM(samples),
+                MAX(load1_peak),
                 -- Bytes use the most recent value of the interval, not an average -- answers how much was in use at that moment
                 (SELECT memory_used_bytes FROM metrics_history i
                   WHERE i.bucket = :from2 AND (i.bucket_at / :size2) * :size2 = (o.bucket_at / :size3) * :size3
@@ -291,8 +313,11 @@ final class MetricsHistoryRepository
                 cpu_percent    = excluded.cpu_percent,
                 cpu_peak       = excluded.cpu_peak,
                 memory_percent = excluded.memory_percent,
+                memory_peak    = excluded.memory_peak,
                 disk_percent   = excluded.disk_percent,
+                disk_peak      = excluded.disk_peak,
                 load1          = excluded.load1,
+                load1_peak     = excluded.load1_peak,
                 memory_used_bytes = excluded.memory_used_bytes,
                 disk_used_bytes   = excluded.disk_used_bytes,
                 samples        = excluded.samples',

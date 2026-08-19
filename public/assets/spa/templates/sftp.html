@@ -40,22 +40,14 @@
           <p data-i18n>SFTP is currently disabled for your account — ask your hosting provider to enable it.</p>
         </fieldset>
 
-        <form data-if="own && own.sftp_enabled === true" data-form="ownSftpPassword" method="post" data-method="PUT"
-              action="/api/v2/sftp/password" data-ajax-submit="true" data-validate="true" data-emit-event="phpcp:reload">
-          <fieldset>
-            <div>
-              <label for="own_sftp_password" data-i18n>New SFTP password</label>
-              <span class="form-control icon-lock">
-                <input type="password" id="own_sftp_password" name="password" required minlength="12"
-                       autocomplete="new-password" spellcheck="false">
-              </span>
-              <div class="comment" data-i18n>At least 12 characters. This is separate from your panel password — it is what SFTP programs ask for.</div>
-            </div>
-          </fieldset>
-          <fieldset class="submit">
-            <button type="submit" class="btn btn-primary icon-save" data-i18n>Change SFTP password</button>
-          </fieldset>
-        </form>
+        <!-- The form opens in a Modal, never inline beside the table below —
+             a page owns either a table or a form, not both (FRAMEWORK_GUIDE
+             pattern 3) · a single password field has no business permanently
+             occupying the page either way -->
+        <div data-if="own && own.sftp_enabled === true">
+          <button type="button" class="btn btn-primary icon-lock" data-action="click.prevent:requestApi"
+                  data-api-url="/api/v2/sftp/password/form" data-api-method="get" data-i18n>Change SFTP password</button>
+        </div>
       </div>
 
       <!-- Every account at a glance — the admin half of the same page -->
@@ -72,12 +64,20 @@
                      "url": "/app/user?id={id}",
                      "condition": "${can_manage}"
                    },
+                   "password": {
+                     "title": "Password",
+                     "className": "btn icon-lock",
+                     "method": "get",
+                     "navigate": false,
+                     "url": "/api/v2/users/{id}/sftp/form",
+                     "condition": "${can_manage && sftp_available && site_count > 0}"
+                   },
                    "disable": {
                      "title": "Disable",
                      "className": "btn btn-danger icon-ban",
                      "method": "delete",
                      "url": "/api/v2/users/{id}/sftp",
-                     "condition": "${can_manage} && ${sftp_enabled}",
+                     "condition": "${can_manage && sftp_enabled}",
                      "confirm": "Disable SFTP for this account? Files and websites are not affected."
                    }
                  }'>

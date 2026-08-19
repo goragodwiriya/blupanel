@@ -50,12 +50,13 @@ final class MetricsController extends ApiController
      */
     private const RANGES = [
         /*
-         * The one range that averages nothing at all — one point is one row `metrics.record` wrote
+         * The one range that combines nothing at all — one point is one row
+         * `metrics.record` wrote, so its value is a reading, not a peak
          *
          * Exists to answer "how is the machine right now," which longer ranges
-         * can't: a spike lasting two minutes gets buried and lost in an
-         * hourly average · the live number bar up top can only say "right now,"
-         * not that it spiked and came back down ten minutes ago
+         * can't: they state the worst moment of each interval but not the shape
+         * of the last few minutes · the live number bar up top can only say
+         * "right now," not that it spiked and came back down ten minutes ago
          */
         '20m' => [1200, 60, 'H:i'],            // 20 points · every minute (raw resolution)
         '1h' => [3600, 300, 'H:i'],            // 12 points · every 5 minutes
@@ -98,8 +99,20 @@ final class MetricsController extends ApiController
         $repository = new MetricsHistoryRepository($this->app->db());
         $rows = $repository->summarise($repository->range($bucket, $since), $step);
 
+        // **The graph draws peaks, not averages** — it exists to answer "when was
+        // something wrong," and an average erases exactly that: a 7-day point
+        // covers 12 hours, so a machine pinned at 100% for twenty minutes reads
+        // as a 3% bump · the averages stay recorded (`summarise()` still returns
+        // them) but nothing asks for them, because "the machine averaged 9% this
+        // week" answers a question nobody opened this screen to ask
+        //
+        // Except when one point IS one stored sample: there is no interval to
+        // take a maximum over, so the value is the reading itself and calling it
+        // a peak would be a lie about what was measured
+        $peaks = $step > MetricsHistoryRepository::BUCKETS[$bucket][0];
+
         return $this->ok(
-            $this->toSeries($rows, $format),
+            $this->toSeries($rows, $format, $peaks),
             [
                 'range' => $range,
                 'bucket' => $bucket,
@@ -107,6 +120,9 @@ final class MetricsController extends ApiController
                 // One point's width — the screen uses this to explain to the user what average they're looking at
                 'step' => $step,
                 'points' => count($rows),
+                // Says whether the values are peaks or single readings, so the
+                // screen can state which without re-deriving the rule from `step`
+                'peak' => $peaks,
                 // The screen uses this to tell the user why the graph is empty, instead of just showing a blank box
                 'collecting' => $rows === [],
             ],
@@ -128,9 +144,10 @@ final class MetricsController extends ApiController
      * `value` directly, and `meta` states the full context
      *
      * @param list<array<string,mixed>> $rows
+     * @param bool $peaks draw each interval's maximum — false only when a point covers exactly one stored sample
      * @return list<array{name:string,data:list<array{label:string,value:float}>}>
      */
-    private function toSeries(array $rows, string $format): array
+    private function toSeries(array $rows, string $format, bool $peaks = false): array
     {
         // The label format comes with the chosen range, not the storage tier —
         // the same tier serves several ranges (7 days and 30 days both read from
@@ -143,17 +160,26 @@ final class MetricsController extends ApiController
         $series = [];
 
         foreach ([
-            ['CPU', 'cpu_percent'],
-            ['Memory', 'memory_percent'],
-            ['Disk', 'disk_percent'],
-        ] as [$name, $column]) {
+            ['CPU', 'cpu'],
+            ['Memory', 'memory'],
+            ['Disk', 'disk'],
+        ] as [$name, $metric]) {
+            // The name says which of the two it is — the legend is the only place
+            // a reader can find out, and a peak line labelled plainly "CPU" would
+            // have them reading a worst case as if it were the usual state
+            $column = $peaks ? $metric . '_peak' : $metric . '_percent';
             $points = [];
 
             foreach ($rows as $index => $row) {
                 $points[] = ['label' => $labels[$index], 'value' => round((float) $row[$column], 1)];
             }
 
-            $series[] = ['name' => $this->t($name), 'data' => $points];
+            $series[] = [
+                'name' => $peaks
+                    ? $this->t('{metric} (peak)', ['metric' => $this->t($name)])
+                    : $this->t($name),
+                'data' => $points,
+            ];
         }
 
         return $series;

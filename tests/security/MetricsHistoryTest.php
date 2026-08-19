@@ -11,7 +11,10 @@ declare(strict_types=1);
  *   2. **ยุบซ้ำต้องได้ผลเท่าเดิม** — scheduler รันทุกนาที ถ้าบวกสะสมค่าจะพองขึ้นเรื่อย ๆ
  *   3. **ต้องลบข้อมูลเกินอายุ** — ไม่งั้นไฟล์ฐานข้อมูลโตไม่หยุด ซึ่งเป็นเหตุผลทั้งหมด
  *      ที่ต้องยุบชั้นตั้งแต่แรก
- *   4. **`cpu_peak` ต้องไม่ถูกกลบด้วยค่าเฉลี่ย** — พีคสั้น ๆ คือสิ่งที่กราฟมีไว้ตอบ
+ *   4. **ค่าสูงสุดของทุกตัววัดต้องไม่ถูกกลบด้วยค่าเฉลี่ย** — พีคสั้น ๆ คือสิ่งเดียวที่กราฟ
+ *      มีไว้ตอบ และเป็นค่าที่ `GET /metrics/history` วาดจริง (ไม่ใช่ค่าเฉลี่ย) · ค่าสูงสุด
+ *      ต้องถูกพาขึ้นทุกชั้นตอนยุบด้วย ไม่งั้นช่วง 7 วัน/30 วัน/1 ปี ได้แค่ "ค่าเฉลี่ยราย
+ *      ชั่วโมงที่สูงที่สุด" ซึ่งเป็นคนละคำตอบ
  */
 
 use Phpcp\Domain\MetricsHistoryRepository;
@@ -80,20 +83,52 @@ test('ค่าเฉลี่ยรายชั่วโมงถ่วงน�
     assertSame(32.5, round((float) $hour['cpu_percent'], 2), 'ต้องถ่วงน้ำหนัก — ถ้าได้ 55 แปลว่าเฉลี่ยของค่าเฉลี่ย');
 });
 
-test('cpu_peak เก็บค่าสูงสุดจริง ไม่ถูกกลบด้วยค่าเฉลี่ย', static function (): void {
+test('ทุกตัววัดเก็บค่าสูงสุดจริง ไม่ถูกกลบด้วยค่าเฉลี่ย', static function (): void {
+    /*
+     * เดิมมีแค่ `cpu_peak` (0014) · หน่วยความจำกับดิสก์ตกไปอยู่ในค่าเฉลี่ยล้วน ๆ
+     * ทั้งที่กราฟวาดค่าสูงสุดของทั้งสามเส้น — 0026 เพิ่มคอลัมน์ที่เหลือให้ครบ
+     */
     $db = metricsDb();
     $repo = new MetricsHistoryRepository($db);
     $base = metricsBase();
 
-    foreach ([5.0, 95.0, 5.0] as $offset => $cpu) {
-        $repo->record(metricsSample($cpu), $base + $offset * 60);
+    // นาทีกลางคือช่วงที่ทุกอย่างพุ่งพร้อมกัน อีกสองนาทีเป็นค่าปกติ
+    foreach ([[5.0, 30.0, 10.0], [95.0, 90.0, 70.0], [5.0, 30.0, 10.0]] as $offset => [$cpu, $mem, $disk]) {
+        $repo->record(metricsSample($cpu, $mem, $disk), $base + $offset * 60);
     }
     metricsCloseBucket($repo, $base);
 
     $hour = $db->first('SELECT * FROM metrics_history WHERE bucket = :b', ['b' => 'hour']);
 
-    assertSame(95.0, round((float) $hour['cpu_peak'], 1), 'พีคต้องเป็น 95 ไม่ใช่ค่าเฉลี่ย 35');
+    assertSame(95.0, round((float) $hour['cpu_peak'], 1), 'พีค CPU ต้องเป็น 95 ไม่ใช่ค่าเฉลี่ย 35');
     assertSame(35.0, round((float) $hour['cpu_percent'], 1), 'ค่าเฉลี่ยยังต้องถูกต้องคู่กัน');
+    assertSame(90.0, round((float) $hour['memory_peak'], 1), 'พีคหน่วยความจำต้องเป็น 90 ไม่ใช่ค่าเฉลี่ย 50');
+    assertSame(70.0, round((float) $hour['disk_peak'], 1), 'พีคดิสก์ต้องเป็น 70 ไม่ใช่ค่าเฉลี่ย 30');
+    assertSame(1.5, round((float) $hour['load1_peak'], 1), 'load ก็ต้องมีค่าสูงสุดของตัวเองเก็บไว้');
+});
+
+test('ค่าสูงสุดต้องรอดขึ้นไปถึงชั้นวัน ไม่ใช่ถูกเฉลี่ยทิ้งระหว่างทาง', static function (): void {
+    /*
+     * ชั้นที่ไกลที่สุดคือชั้นที่ต้องการมันที่สุด — ช่วง 30 วัน/1 ปี หนึ่งจุดครอบทั้งวัน
+     * ถ้าค่าสูงสุดถูกยุบเป็นค่าเฉลี่ยตอนขึ้นชั้น กราฟช่วงยาวจะราบเรียบเหมือนเดิมทุกประการ
+     * ทั้งที่คอลัมน์มีอยู่ครบ — พังแบบเงียบสนิท
+     */
+    $db = metricsDb();
+    $repo = new MetricsHistoryRepository($db);
+    $base = (intdiv(time(), 86400) * 86400) - (2 * 86400);
+
+    foreach ([[5.0, 30.0, 10.0], [99.0, 88.0, 77.0], [5.0, 30.0, 10.0]] as $offset => [$cpu, $mem, $disk]) {
+        $repo->record(metricsSample($cpu, $mem, $disk), $base + $offset * 60);
+    }
+    // เวลาเดินไปจนทั้งวันของ $base ปิดแล้ว ทั้งสองขั้น (นาที→ชม.→วัน) จึงยุบครบ
+    $repo->rollUp($base + (2 * 86400));
+
+    $day = $db->first('SELECT * FROM metrics_history WHERE bucket = :b', ['b' => 'day']);
+
+    assertTrue($day !== null && $day !== false, 'ต้องมีแถวของชั้นวันเกิดขึ้นจริง');
+    assertSame(99.0, round((float) $day['cpu_peak'], 1), 'พีค CPU ต้องรอดถึงชั้นวัน');
+    assertSame(88.0, round((float) $day['memory_peak'], 1), 'พีคหน่วยความจำต้องรอดถึงชั้นวัน');
+    assertSame(77.0, round((float) $day['disk_peak'], 1), 'พีคดิสก์ต้องรอดถึงชั้นวัน');
 });
 
 test('ไบต์ที่ใช้เก็บค่าล่าสุดของช่วง ไม่ใช่ค่าเฉลี่ย', static function (): void {
@@ -286,10 +321,12 @@ test('summarise() ยุบให้เหลือหนึ่งจุดต�
     // สองแถวในช่วงเดียวกัน: 60 ตัวอย่างที่ 10% กับ 1 ตัวอย่างที่ 90%
     // เฉลี่ยธรรมดาได้ 50% ซึ่งไกลจากความจริงมาก · ถ่วงน้ำหนักแล้วต้องได้ ~11.3%
     $rows = [
-        ['bucket_at' => 3600, 'cpu_percent' => 10.0, 'cpu_peak' => 12.0, 'memory_percent' => 40.0,
-            'disk_percent' => 20.0, 'load1' => 1.0, 'memory_used_bytes' => 100, 'disk_used_bytes' => 200, 'samples' => 60],
-        ['bucket_at' => 3660, 'cpu_percent' => 90.0, 'cpu_peak' => 95.0, 'memory_percent' => 40.0,
-            'disk_percent' => 20.0, 'load1' => 1.0, 'memory_used_bytes' => 111, 'disk_used_bytes' => 222, 'samples' => 1],
+        ['bucket_at' => 3600, 'cpu_percent' => 10.0, 'cpu_peak' => 12.0, 'memory_percent' => 40.0, 'memory_peak' => 44.0,
+            'disk_percent' => 20.0, 'disk_peak' => 21.0, 'load1' => 1.0, 'load1_peak' => 1.2,
+            'memory_used_bytes' => 100, 'disk_used_bytes' => 200, 'samples' => 60],
+        ['bucket_at' => 3660, 'cpu_percent' => 90.0, 'cpu_peak' => 95.0, 'memory_percent' => 40.0, 'memory_peak' => 82.0,
+            'disk_percent' => 20.0, 'disk_peak' => 20.5, 'load1' => 1.0, 'load1_peak' => 4.0,
+            'memory_used_bytes' => 111, 'disk_used_bytes' => 222, 'samples' => 1],
     ];
 
     $summary = $repository->summarise($rows, 3600);
@@ -298,6 +335,11 @@ test('summarise() ยุบให้เหลือหนึ่งจุดต�
     assertSame(3600, $summary[0]['bucket_at'], 'เวลาของจุดต้องเป็นต้นช่วง');
     assertSame(11.3, round($summary[0]['cpu_percent'], 1), 'ต้องถ่วงน้ำหนัก ไม่ใช่ได้ 50');
     assertSame(95.0, $summary[0]['cpu_peak'], 'พีคต้องเป็นค่าสูงสุด ไม่ใช่ค่าเฉลี่ย');
+    // แถวที่มีตัวอย่างเดียวถ่วงน้ำหนักแล้วแทบไม่ขยับค่าเฉลี่ยเลย แต่ต้องชนะพีคเสมอ —
+    // นี่คือเคสที่ค่าเฉลี่ยกับค่าสูงสุดให้คำตอบต่างกันมากที่สุด
+    assertSame(82.0, $summary[0]['memory_peak'], 'พีคหน่วยความจำต้องเป็นค่าสูงสุด ไม่ใช่ 44 ของแถวที่ตัวอย่างเยอะกว่า');
+    assertSame(21.0, $summary[0]['disk_peak'], 'พีคดิสก์ต้องเป็นค่าสูงสุด');
+    assertSame(4.0, $summary[0]['load1_peak'], 'พีค load ต้องเป็นค่าสูงสุด');
     assertSame(111, $summary[0]['memory_used_bytes'], 'ไบต์ต้องเป็นค่าล่าสุดของช่วง');
     assertSame(61, $summary[0]['samples'], 'จำนวนตัวอย่างต้องรวมกัน');
 });
@@ -325,8 +367,9 @@ test('ทุกช่วงที่เลือกได้ต้องส่�
         $rows = [];
 
         for ($at = 0; $at < $seconds; $at += $bucketSize) {
-            $rows[] = ['bucket_at' => $at, 'cpu_percent' => 10.0, 'cpu_peak' => 10.0, 'memory_percent' => 10.0,
-                'disk_percent' => 10.0, 'load1' => 1.0, 'memory_used_bytes' => 1, 'disk_used_bytes' => 1, 'samples' => 1];
+            $rows[] = ['bucket_at' => $at, 'cpu_percent' => 10.0, 'cpu_peak' => 10.0,
+                'memory_percent' => 10.0, 'memory_peak' => 10.0, 'disk_percent' => 10.0, 'disk_peak' => 10.0,
+                'load1' => 1.0, 'load1_peak' => 1.0, 'memory_used_bytes' => 1, 'disk_used_bytes' => 1, 'samples' => 1];
         }
 
         $points = count($repository->summarise($rows, $step));
