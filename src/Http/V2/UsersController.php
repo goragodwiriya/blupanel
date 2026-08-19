@@ -186,10 +186,27 @@ final class UsersController extends ApiController
             $password = Password::random(20);
         }
 
+        /*
+         * SFTP in the same breath as the account — always a password the
+         * system generates, never one an admin types, so it has the same
+         * one-response-only lifetime as a generated panel password · the
+         * checkbox means "this customer should upload over SFTP from the
+         * start"; the capability still refuses when the package's quota
+         * says no
+         */
+        $wantSftp = (bool) $request->payload('sftp');
+        $sftpPassword = '';
+        $sftpUsername = null;
+        $sftpError = '';
+
         $createdSite = null;
         $siteError = '';
 
         if ($role === Permissions::WEBADMIN) {
+            if ($wantSftp) {
+                $sftpPassword = Password::random(20);
+            }
+
             $result = $this->agent()->data('customer.create', [
                 'username' => $username,
                 'password' => $password,
@@ -202,10 +219,13 @@ final class UsersController extends ApiController
                 'quota_ftp_users' => (int) $request->payload('quota_ftp_users', 5),
                 'disk_quota_mb' => (int) $request->payload('disk_quota_mb', 10240),
                 'expiry_at' => $this->expiryFrom($request),
-                'must_change_password' => $wasRandom
+                'must_change_password' => $wasRandom,
+                'sftp_password' => $sftpPassword
             ], $this->ctx->actor($request));
 
             $id = (int) $result['id'];
+            $sftpUsername = $result['sftp_username'] ?? null;
+            $sftpError = (string) ($result['sftp_error'] ?? '');
 
             // Create the first site right away if a domain was given too
             //
@@ -261,9 +281,11 @@ final class UsersController extends ApiController
         // this response and in a dialog the user has to close themselves).
         return $this->done(
             $this->t('Account {user} created', ['user' => $username]),
-            $this->createdActions($username, $password, $wasRandom, $createdSite, $siteError),
+            $this->createdActions($username, $password, $wasRandom, $createdSite, $siteError, $sftpUsername, $sftpPassword, $sftpError),
             ['user_id' => $id, 'username' => $username, 'must_change_password' => $wasRandom]
              + ($wasRandom ? ['password' => $password] : [])
+             + ($sftpUsername === null ? [] : ['sftp_username' => $sftpUsername, 'sftp_password' => $sftpPassword])
+             + ($sftpError === '' ? [] : ['sftp_error' => $sftpError])
              + ($createdSite === null ? [] : ['site' => $createdSite])
              + ($siteError === '' ? [] : ['site_error' => $siteError]),
             201,
@@ -812,8 +834,16 @@ final class UsersController extends ApiController
      * @param array<string,mixed>|null $site
      * @return list<array<string,mixed>>
      */
-    private function createdActions(string $username, string $password, bool $wasRandom, ?array $site, string $siteError): array
-    {
+    private function createdActions(
+        string $username,
+        string $password,
+        bool $wasRandom,
+        ?array $site,
+        string $siteError,
+        ?string $sftpUsername = null,
+        string $sftpPassword = '',
+        string $sftpError = '',
+    ): array {
         $actions = [];
 
         if ($siteError !== '') {
@@ -824,6 +854,25 @@ final class UsersController extends ApiController
                 'message' => $this->t('Account {user} created, but the website could not be created: {error}', ['user' => $username, 'error' => $siteError])
             ];
         }
+
+        if ($sftpError !== '') {
+            $actions[] = [
+                'type' => 'notification',
+                'level' => 'warning',
+                'duration' => 15000,
+                'message' => $this->t('Account {user} created, but SFTP could not be enabled: {error}', ['user' => $username, 'error' => $sftpError])
+            ];
+        }
+
+        /*
+         * One dialog holding every credential this response is the only chance
+         * to copy — the SFTP password follows the same rule as the generated
+         * panel password: shown once, stored nowhere
+         */
+        $sftpBlock = ($sftpUsername === null || $sftpPassword === '')
+            ? ''
+            : '<p>' . $this->t('SFTP password for {user} — copy it now too, it is not stored anywhere either', ['user' => htmlspecialchars($sftpUsername, ENT_QUOTES, 'UTF-8')]) . '</p>'
+                . '<p class="mono selectable">' . htmlspecialchars($sftpPassword, ENT_QUOTES, 'UTF-8') . '</p>';
 
         if ($wasRandom) {
             $summary = $site === null
@@ -836,11 +885,26 @@ final class UsersController extends ApiController
                 'title' => 'Account created',
                 'content' => sprintf(
                     '<p>Password for <strong>%s</strong> — copy it before closing this window,'
-                    .' since the system does not store it anywhere else</p><p class="mono selectable">%s</p>%s',
+                    .' since the system does not store it anywhere else</p><p class="mono selectable">%s</p>%s%s',
                     htmlspecialchars($username, ENT_QUOTES, 'UTF-8'),
                     htmlspecialchars($password, ENT_QUOTES, 'UTF-8'),
+                    $sftpBlock,
                     $summary,
                 )
+            ];
+
+            return $actions;
+        }
+
+        // An admin-chosen panel password is never shown — but a generated SFTP
+        // password still has exactly this one chance to be copied, so it gets
+        // its own dialog and the redirect is skipped for it too
+        if ($sftpBlock !== '') {
+            $actions[] = [
+                'type' => 'modal',
+                'action' => 'show',
+                'title' => 'SFTP enabled',
+                'content' => $sftpBlock,
             ];
 
             return $actions;

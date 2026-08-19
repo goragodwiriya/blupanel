@@ -46,6 +46,7 @@ use Phpcp\Agent\Capability\RollbackConfirm;
 use Phpcp\Agent\Capability\RollbackRun;
 use Phpcp\Agent\Capability\SftpDisable;
 use Phpcp\Agent\Capability\SftpEnable;
+use Phpcp\Agent\Capability\SftpOwnPassword;
 use Phpcp\Agent\Capability\SshConfigGet;
 use Phpcp\Agent\Capability\HostnameSet;
 use Phpcp\Agent\Capability\SshConfigSet;
@@ -303,6 +304,9 @@ final class CapabilityRegistry
             // SFTP — one hosting account = one login (PLAN-V2 Phase E4)
             SftpEnable::class,
             SftpDisable::class,
+            // The owner's own password change — a separate permission from
+            // SftpEnable on purpose (see that class for the reasoning)
+            SftpOwnPassword::class,
         ];
     }
 

@@ -52,6 +52,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // menu in ui.js sets target=_blank), so its template has no sidebar or
     // topbar — same as login.html, which also has no chrome
     '/filemanager': { template: 'filemanager.html', title: '{LNG_File Manager}', permission: 'file.view' },
+    // One page shaped by role — a customer's own account and password form,
+    // a server admin's overview table on the very same screen
+    '/sftp': { template: 'sftp.html', title: '{LNG_SFTP}', permission: 'file.view' },
     '/cron-jobs': { template: 'cron-jobs.html', title: '{LNG_Cron Jobs}', permission: 'cron.view' },
     '/mailboxes': { template: 'mailboxes.html', title: '{LNG_Mailboxes}', permission: 'mail.view' },
     // The queue belongs to the whole machine and mixes every customer's

@@ -682,3 +682,209 @@ test('ปิด SFTP ของบัญชีที่ไม่เคยเป�
     assertSame('neveron', $result['username'], 'ต้องสำเร็จแม้ไม่เคยเปิดมาก่อน');
     assertSame(0, (int) $fixture['db']->value('SELECT sftp_enabled FROM users WHERE id = :id', ['id' => $account['id']]), 'สถานะต้องเป็นปิด');
 });
+
+// --- 4. เจ้าของเปลี่ยนรหัสเอง + เปิด SFTP ตั้งแต่สร้างบัญชี ----------------------
+
+/**
+ * Executor ที่ทำให้ชื่อบัญชีระบบ "ว่างเสมอ" — getent ตอบ exit 2 (ไม่พบ)
+ *
+ * DryRunExecutor คืน exit 0 กับทุกคำสั่ง ทำให้ assertNameAvailable() เห็น getent
+ * สำเร็จด้วย output ว่าง แล้วเข้าใจว่ามีคนใช้ชื่อนี้อยู่ — ต้องตอบ exit 2 แบบ
+ * getent จริงตอนไม่พบ การ provision ในโหมดจำลองจึงเดินต่อได้
+ */
+final class SftpFreeNameExecutor implements Executor
+{
+    private DryRunExecutor $inner;
+
+    public function __construct()
+    {
+        $this->inner = new DryRunExecutor();
+    }
+
+    public function exec(array $argv, int $timeout = 30, ?string $cwd = null, ?string $stdin = null): ExecResult
+    {
+        if (basename((string) ($argv[0] ?? '')) === 'getent') {
+            return new ExecResult(argv: $argv, exitCode: 2, stdout: '', stderr: '', durationMs: 0);
+        }
+
+        return $this->inner->exec($argv, $timeout, $cwd, $stdin);
+    }
+
+    public function mode(): Mode { return Mode::DryRun; }
+    public function isSimulated(): bool { return true; }
+    public function simulatedCommands(): array { return $this->inner->simulatedCommands(); }
+    public function path(string $absolutePath): string { return $absolutePath; }
+
+    /** เนื้อไฟล์ sshd ตอบเป็นค่าคงที่ — เครื่องที่รันเทสต์อาจไม่มี openssh ติดตั้ง */
+    public function readFile(string $path): string
+    {
+        if ($path === SftpAccessManager::CONFIG_FILE) {
+            return "# ของเดิมที่ล้าสมัย\n";
+        }
+
+        if ($path === Phpcp\Driver\SshManager::CONFIG) {
+            return "Include /etc/ssh/sshd_config.d/*.conf\nPort 22\n";
+        }
+
+        return $this->inner->readFile($path);
+    }
+
+    public function exists(string $path): bool
+    {
+        return in_array($path, [SftpAccessManager::CONFIG_FILE, Phpcp\Driver\SshManager::CONFIG], true)
+            || $this->inner->exists($path);
+    }
+    public function writeFile(string $path, string $content, int $mode = 0644): void { $this->inner->writeFile($path, $content, $mode); }
+    public function makeDirectory(string $path, int $mode = 0750): void { $this->inner->makeDirectory($path, $mode); }
+    public function diskSpace(string $path): array { return $this->inner->diskSpace($path); }
+    public function realPath(string $path): ?string { return $this->inner->realPath($path); }
+    public function listDirectory(string $path): array { return $this->inner->listDirectory($path); }
+    public function stat(string $path): ?array { return $this->inner->stat($path); }
+    public function rename(string $from, string $to): void { $this->inner->rename($from, $to); }
+    public function copyPath(string $from, string $to): void { $this->inner->copyPath($from, $to); }
+    public function removePath(string $path): void { $this->inner->removePath($path); }
+    public function changeMode(string $path, int $mode): void { $this->inner->changeMode($path, $mode); }
+    public function zip(array $sources, string $base, string $archive): array { return $this->inner->zip($sources, $base, $archive); }
+    public function unzip(string $archive, string $destination): array { return $this->inner->unzip($archive, $destination); }
+    public function asUser(?string $systemUser, callable $work): array { return $this->inner->asUser($systemUser, $work); }
+}
+
+test('เจ้าของบัญชีเปลี่ยนรหัส ของตัวเองได้เมื่อเปิดอยู่ — และไม่กระทบเวลาที่เปิด', static function (): void {
+    $fixture = sftpFixture();
+    $account = seedSftpAccount($fixture, 'ownuser', quotaFtp: 5, systemUser: 'ownuser');
+    $enabledAt = time() - 86400;
+    $fixture['db']->update('users', ['sftp_enabled' => 1, 'sftp_enabled_at' => $enabledAt], ['id' => $account['id']]);
+
+    $capability = new Phpcp\Agent\Capability\SftpOwnPassword();
+    $context = new Context(
+        new Actor($account['id'], 'ownuser', Permissions::WEBADMIN, '127.0.0.1', 'test'),
+        $fixture['config'],
+        $fixture['db'],
+    );
+
+    $result = $capability->run(
+        $capability->validate(['password' => 'BrandNewPass12345']),
+        new SftpFreeNameExecutor(),
+        $context,
+    );
+
+    assertSame('SFTP password changed', $result['message'], 'ต้องเปลี่ยนรหัสสำเร็จ');
+
+    $row = $fixture['db']->first('SELECT sftp_enabled_at FROM users WHERE id = :id', ['id' => $account['id']]);
+    assertSame($enabledAt, (int) $row['sftp_enabled_at'], 'การเปลี่ยนรหัสไม่ใช่การเปิดใหม่ — เวลาที่เปิดต้องคงเดิม');
+});
+
+test('บัญชีที่ยังไม่เปิด SFTP เปลี่ยนรหัสเองไม่ได้ — ต้องบอกให้ติดต่อผู้ให้บริการ', static function (): void {
+    $fixture = sftpFixture();
+    $account = seedSftpAccount($fixture, 'offuser', quotaFtp: 5, systemUser: 'offuser');
+
+    $capability = new Phpcp\Agent\Capability\SftpOwnPassword();
+    $context = new Context(
+        new Actor($account['id'], 'offuser', Permissions::WEBADMIN, '127.0.0.1', 'test'),
+        $fixture['config'],
+        $fixture['db'],
+    );
+
+    assertRejects(
+        Phpcp\Agent\ValidationError::class,
+        static fn () => $capability->run(
+            $capability->validate(['password' => 'BrandNewPass12345']),
+            new DryRunExecutor(),
+            $context,
+        ),
+        'การเปิดช่องทางคือการตัดสินใจของผู้ดูแล — เจ้าของเปลี่ยนรหัสเมื่อยังไม่เปิดไม่ได้',
+    );
+});
+
+test('ผู้ดูแล (ไม่ใช่ webadmin) ไม่มีรหัส SFTP ของตัวเองให้เปลี่ยน', static function (): void {
+    $fixture = sftpFixture();
+
+    $capability = new Phpcp\Agent\Capability\SftpOwnPassword();
+
+    assertRejects(
+        Phpcp\Agent\ValidationError::class,
+        static fn () => $capability->run(
+            $capability->validate(['password' => 'BrandNewPass12345']),
+            new DryRunExecutor(),
+            sftpContext($fixture), // actor เป็น superadmin
+        ),
+        'บัญชีผู้ดูแลไม่มี SFTP — ต้องปฏิเสธไม่ใช่ผ่านเงียบ ๆ',
+    );
+});
+
+test('customer.create ที่ขอ SFTP ต้องสร้างบัญชีระบบและเปิด SFTP ในคำสั่งเดียว', static function (): void {
+    $fixture = sftpFixture();
+    $executor = new SftpFreeNameExecutor();
+
+    $capability = new Phpcp\Agent\Capability\CustomerCreate();
+    $args = $capability->validate([
+        'username' => 'sftpnew',
+        'password' => 'PanelPassword123',
+        'email' => 'sftpnew@example.co',
+        'quota_ftp_users' => 5,
+        'sftp_password' => 'LongEnoughPass123',
+    ]);
+
+    $result = $capability->run($args, $executor, sftpContext($fixture));
+
+    assertSame('', (string) $result['sftp_error'], 'ต้องไม่มีข้อผิดพลาด: ' . (string) $result['sftp_error']);
+    assertSame('sftpnew', $result['sftp_username'], 'ต้องคืนชื่อบัญชี SFTP ที่เปิดแล้ว');
+
+    $row = $fixture['db']->first(
+        'SELECT system_user, sftp_enabled FROM users WHERE username = :u',
+        ['u' => 'sftpnew'],
+    );
+    assertSame('sftpnew', $row['system_user'], 'บัญชีระบบต้องถูกสร้างและจดไว้ทันที แม้ยังไม่มีเว็บแรก');
+    assertSame(1, (int) $row['sftp_enabled'], 'SFTP ต้องเปิดอยู่');
+
+    $commands = implode(' | ', $executor->simulatedCommands());
+    assertTrue(str_contains($commands, 'useradd'), 'ต้องสร้างบัญชีระบบ: ' . $commands);
+    assertTrue(str_contains($commands, 'chpasswd'), 'ต้องตั้งรหัสผ่านบัญชีระบบ: ' . $commands);
+});
+
+test('customer.create ที่ขอ SFTP ในแพ็กเกจโควตา 0 ต้องไม่ล้มทั้งคำสั่ง', static function (): void {
+    $fixture = sftpFixture();
+
+    $capability = new Phpcp\Agent\Capability\CustomerCreate();
+    $args = $capability->validate([
+        'username' => 'nosftp',
+        'password' => 'PanelPassword123',
+        'email' => 'nosftp@example.co',
+        'quota_ftp_users' => 0,
+        'sftp_password' => 'LongEnoughPass123',
+    ]);
+
+    $result = $capability->run($args, new SftpFreeNameExecutor(), sftpContext($fixture));
+
+    // บัญชีต้องถูกสร้างครบ — ความล้มเหลวของ SFTP ต้องไม่ทำให้ผู้ดูแลเข้าใจว่าสร้างไม่สำเร็จ
+    assertTrue((int) $result['id'] > 0, 'บัญชีต้องถูกสร้าง');
+    assertSame(null, $result['sftp_username'], 'ยังไม่มีบัญชี SFTP');
+    assertTrue(trim((string) $result['sftp_error']) !== '', 'เหตุผลที่เปิดไม่ได้ต้องถูกส่งกลับให้อ่าน');
+
+    $row = $fixture['db']->first('SELECT sftp_enabled FROM users WHERE username = :u', ['u' => 'nosftp']);
+    assertSame(0, (int) $row['sftp_enabled'], 'SFTP ต้องยังปิดอยู่');
+});
+
+test('customer.create ที่ไม่ขอ SFTP ต้องไม่สร้างบัญชีระบบ — โมเดลขี้เกียจเดิม', static function (): void {
+    $fixture = sftpFixture();
+    $executor = new SftpFreeNameExecutor();
+
+    $capability = new Phpcp\Agent\Capability\CustomerCreate();
+    $args = $capability->validate([
+        'username' => 'lazycust',
+        'password' => 'PanelPassword123',
+        'email' => 'lazycust@example.co',
+    ]);
+
+    $result = $capability->run($args, $executor, sftpContext($fixture));
+
+    assertSame(null, $result['sftp_username'], 'ไม่มี SFTP ในคำตอบ');
+    assertSame('', (string) $result['sftp_error'], 'ไม่มีข้อผิดพลาด');
+
+    $row = $fixture['db']->first('SELECT system_user, sftp_enabled FROM users WHERE username = :u', ['u' => 'lazycust']);
+    assertSame(null, $row['system_user'], 'บัญชีระบบยังต้องรอเว็บแรกตามโมเดลเดิม');
+    assertSame(0, (int) $row['sftp_enabled'], 'SFTP ต้องปิด');
+
+    $commands = implode(' | ', $executor->simulatedCommands());
+    assertTrue(!str_contains($commands, 'useradd'), 'ห้ามสร้างบัญชีระบบเมื่อไม่ได้ขอ SFTP: ' . $commands);
+});

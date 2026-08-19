@@ -1,0 +1,100 @@
+<aside data-component="sidebar"></aside>
+<div class="main-content">
+  <header data-component="topbar"></header>
+  <div data-component="mode-banner"></div>
+  <div data-component="rollback-bar"></div>
+  <main class="content" data-component="api" data-endpoint="/api/v2/sftp" data-refresh-event="phpcp:reload">
+    <div class="card-groups">
+      <header>
+        <div>
+          <h1 class="icon-lock" data-i18n>SFTP</h1>
+          <p data-i18n>File access over SSH — one account per customer, no shell, caged to its own home</p>
+        </div>
+        <div class="header-actions">
+          <button type="button" class="btn is-loading icon-refresh" data-action="click.prevent:emit" data-emit-event="phpcp:reload" data-i18n>Refresh</button>
+        </div>
+      </header>
+
+      <!-- The customer's own account — admins have no SFTP login of their own, so this card is theirs alone -->
+      <div class="content-body" data-if="own">
+        <h2 data-i18n>Your SFTP access</h2>
+
+        <div class="flex middle gap-4">
+          <span class="pill pill-ok" data-show="own.sftp_enabled === true" data-i18n>Enabled</span>
+          <span class="pill pill-muted" data-show="own.sftp_enabled === false" data-i18n>Disabled</span>
+          <span class="mono" data-text="own.username"></span>
+        </div>
+
+        <fieldset class="notice notice-warning" data-if="own && own.sftp_available === false">
+          <legend class="icon-warning" data-i18n>Not included in this package</legend>
+          <p data-i18n>Your package does not include SFTP. Contact your hosting provider if you need it.</p>
+        </fieldset>
+
+        <fieldset class="notice" data-if="own && own.sftp_available === true && own.has_system_account === false">
+          <legend class="icon-warning" data-i18n>No website yet</legend>
+          <p data-i18n>SFTP can be enabled once your first website exists — ask your hosting provider after creating one.</p>
+        </fieldset>
+
+        <fieldset class="notice" data-if="own && own.sftp_available === true && own.sftp_enabled === false && own.has_system_account === true">
+          <legend class="icon-warning" data-i18n>Disabled</legend>
+          <p data-i18n>SFTP is currently disabled for your account — ask your hosting provider to enable it.</p>
+        </fieldset>
+
+        <form data-if="own && own.sftp_enabled === true" data-form="ownSftpPassword" method="post" data-method="PUT"
+              action="/api/v2/sftp/password" data-ajax-submit="true" data-validate="true" data-emit-event="phpcp:reload">
+          <fieldset>
+            <div>
+              <label for="own_sftp_password" data-i18n>New SFTP password</label>
+              <span class="form-control icon-lock">
+                <input type="password" id="own_sftp_password" name="password" required minlength="12"
+                       autocomplete="new-password" spellcheck="false">
+              </span>
+              <div class="comment" data-i18n>At least 12 characters. This is separate from your panel password — it is what SFTP programs ask for.</div>
+            </div>
+          </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-save" data-i18n>Change SFTP password</button>
+          </fieldset>
+        </form>
+      </div>
+
+      <!-- Every account at a glance — the admin half of the same page -->
+      <div class="content-body" data-if="can['view_accounts']">
+        <h2 data-i18n>All accounts</h2>
+        <div class="tablebody">
+          <table class="table border fullwidth" data-table="sftpAccounts" data-source="/api/v2/sftp/accounts"
+                 data-default-sort="username asc" data-search-columns="username" data-page-size="25"
+                 data-row-actions='{
+                   "manage": {
+                     "title": "Manage",
+                     "className": "btn btn-success icon-edit",
+                     "method": "get",
+                     "url": "/app/user?id={id}",
+                     "condition": "${can_manage}"
+                   },
+                   "disable": {
+                     "title": "Disable",
+                     "className": "btn btn-danger icon-ban",
+                     "method": "delete",
+                     "url": "/api/v2/users/{id}/sftp",
+                     "condition": "${can_manage} && ${sftp_enabled}",
+                     "confirm": "Disable SFTP for this account? Files and websites are not affected."
+                   }
+                 }'>
+            <thead>
+              <tr>
+                <th data-field="username" data-i18n>{LNG_Account}</th>
+                <th data-field="status_label" class="center" data-cell-class="center"
+                    data-template="<span class='pill pill-${status_tone}'>{LNG_${status_label}}</span>" data-i18n>{LNG_Status}</th>
+                <th data-field="sftp_enabled_at" class="center" data-cell-class="center" data-format="datetime"
+                    data-empty-text="—" data-i18n>{LNG_Opened since}</th>
+                <th data-field="site_count" class="center" data-cell-class="center" data-i18n>{LNG_Websites}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>

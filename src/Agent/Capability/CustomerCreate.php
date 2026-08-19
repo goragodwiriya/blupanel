@@ -118,6 +118,15 @@ final class CustomerCreate extends CustomerCapability implements Capability
             // — the caller states whether it was generated or set by an admin,
             // since this layer can't tell the difference itself
             'must_change_password' => (bool) ($args['must_change_password'] ?? false),
+            /*
+             * Enable SFTP in the same command, with a password the caller
+             * generated (shown to the admin exactly once, then never stored ·
+             * redacted from the audit log by Dispatcher like every *password*)
+             * · empty = don't enable — the default, because a package with
+             * `quota_ftp_users = 0` deliberately excludes SFTP and an account
+             * nobody uploads through shouldn't have a live password on sshd
+             */
+            'sftp_password' => Validator::optionalString($args, 'sftp_password', '', 128),
         ];
     }
 
@@ -155,6 +164,49 @@ final class CustomerCreate extends CustomerCapability implements Capability
             throw new ValidationError($e->getMessage());
         }
 
+        /*
+         * SFTP in the same command, when the caller asked for it — the account
+         * is provisioned right here, because the system account is otherwise
+         * created lazily with the first website, and "enable SFTP at creation"
+         * would be impossible for a customer who starts with no site.
+         *
+         * **A failure here must not fail the whole command** — the account row
+         * is already created and genuinely usable; failing everything would
+         * read as "creation failed" and make the admin retry into a username
+         * that now exists · the reason comes back in `sftp_error` for the
+         * caller to show, exactly like the first-site step of the web tier.
+         */
+        $sftpError = '';
+        $sftpUsername = null;
+
+        if ($args['sftp_password'] !== '') {
+            try {
+                $row = $users->find($userId);
+
+                if ($row === null) {
+                    throw new ValidationError("Hosting account {$userId} not found");
+                }
+
+                $owner = \Phpcp\Domain\UserAccount::fromRow($row);
+                $identity = SiteCapability::provisionerFor($context)->account()->ensure($executor, $owner);
+
+                // The same bookkeeping SiteCreate::rememberSystemUser() does —
+                // without it the row would keep claiming there is no system
+                // account, and every later command would repeat the provisioning
+                $context->db->update('users', [
+                    'system_user' => $owner->username,
+                    'uid' => (int) ($identity['uid'] ?? 0),
+                    'gid' => (int) ($identity['gid'] ?? 0),
+                    'updated_at' => time(),
+                ], ['id' => $userId]);
+
+                SftpEnable::enableAccount($context, $executor, $users->find($userId), $args['sftp_password']);
+                $sftpUsername = $owner->username;
+            } catch (\Throwable $e) {
+                $sftpError = $e->getMessage();
+            }
+        }
+
         // The audit log is already written by Dispatcher around every run() call (ARCHITECTURE §4.1)
         return [
             'id' => $userId,
@@ -169,6 +221,8 @@ final class CustomerCreate extends CustomerCapability implements Capability
             'disk_quota_mb' => $args['disk_quota_mb'],
             'expiry_at' => $args['expiry_at'],
             'must_change_password' => $args['must_change_password'],
+            'sftp_username' => $sftpUsername,
+            'sftp_error' => $sftpError,
             'message' => "Created hosting account {$args['username']}",
         ];
     }

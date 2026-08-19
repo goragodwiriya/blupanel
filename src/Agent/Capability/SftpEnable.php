@@ -64,6 +64,30 @@ final class SftpEnable extends CustomerCapability implements Capability
     {
         $user = $this->loadHostingAccount($context, $args['user_id']);
 
+        if (($user['system_user'] ?? null) === null) {
+            throw new ValidationError(
+                'This account has no system account yet (created automatically when the first '
+                . 'website is created) — create a website first before SFTP can be enabled',
+            );
+        }
+
+        return self::enableAccount($context, $executor, $user, $args['password']);
+    }
+
+    /**
+     * The part every enable path shares — the quota gate, the sshd/group work,
+     * and flipping `sftp_enabled` in the database
+     *
+     * Kept next to the capability (not inside `SftpAccessManager`) because the
+     * quota decision belongs to the panel's rules, not to sshd's mechanics ·
+     * called by `run()` above and by `customer.create` when a new account is
+     * created with SFTP requested up front.
+     *
+     * @param array<string,mixed> $user a row from the users table
+     * @return array<string,mixed>
+     */
+    public static function enableAccount(Context $context, Executor $executor, array $user, string $password): array
+    {
         // Quota of 0 = this package doesn't include SFTP · -1 or >0 = can be
         // enabled (see the reasoning at migration 0013)
         if (Quota::isDisabled((int) ($user['quota_ftp_users'] ?? 0))) {
@@ -73,27 +97,20 @@ final class SftpEnable extends CustomerCapability implements Capability
             );
         }
 
-        if (($user['system_user'] ?? null) === null) {
-            throw new ValidationError(
-                'This account has no system account yet (created automatically when the first '
-                . 'website is created) — create a website first before SFTP can be enabled',
-            );
-        }
-
         $account = UserAccount::fromRow($user);
-        $result = (new SftpAccessManager($executor))->enable($account, $args['password']);
+        $result = (new SftpAccessManager($executor))->enable($account, $password);
 
         $context->db->update('users', [
             'sftp_enabled' => 1,
             'sftp_enabled_at' => time(),
             'updated_at' => time(),
-        ], ['id' => $args['user_id']]);
+        ], ['id' => (int) $user['id']]);
 
         // The password never appears in the response — Dispatcher::redact()
         // already masks it in the audit log, but the response sent back to the
         // web page shouldn't repeat it either
         return $result + [
-            'user_id' => (int) $args['user_id'],
+            'user_id' => (int) $user['id'],
             'message' => sprintf('Enabled SFTP for %s', $account->username),
         ];
     }

@@ -1270,6 +1270,11 @@ paths:
         (ซึ่งมักได้รหัสที่อ่อน) และรหัสที่ผ่านตาคนกลางมาแล้วมีอายุสั้นที่สุด
 
         `password` อยู่ใน body ของคำตอบ **ครั้งเดียว** — panel ไม่เก็บไว้ที่ไหนเลย
+
+        `sftp: true` (บัญชีโฮสติ้งเท่านั้น) สั่งเปิด SFTP ในคำสั่งเดียวกับการสร้าง —
+        รหัส SFTP สุ่มโดยระบบเสมอและแสดงครั้งเดียวใน dialog เดียวกับรหัส panel ·
+        ถ้าแพ็กเกจโควตา 0 การเปิดจะถูกปฏิเสธแบบไม่ล้มทั้งคำสั่ง (`sftp_error`) ·
+        บัญชีระบบจะถูกสร้างทันทีในกรณีนี้แม้ยังไม่มีเว็บแรก เพราะ SFTP ต้องมีบัญชีระบบก่อน
       requestBody:
         required: true
         content:
@@ -1281,6 +1286,7 @@ paths:
                 username: { type: string, maxLength: 32 }
                 role: { type: string, enum: [superadmin, sysadmin, webadmin] }
                 display_name: { type: string }
+                sftp: { type: boolean, description: "เปิด SFTP พร้อมสร้างบัญชี (บัญชีโฮสติ้งเท่านั้น)" }
       responses:
         "201":
           description: สร้างแล้ว — `password` แสดงครั้งเดียว
@@ -1609,6 +1615,106 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CommandResponse" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /sftp:
+    get:
+      tags: [hosting]
+      summary: หน้าจอ SFTP — บัญชีของตัวเอง
+      description: |
+        หน้าเดียวที่แสดงต่างกันตามบทบาท (แนวคิดเดียวกับ `/users` ตั้งแต่เฟส M):
+        ลูกค้าเห็นสถานะบัญชีตัวเองและฟอร์มเปลี่ยนรหัสผ่าน · ผู้ดูแลเครื่องเห็นตาราง
+        รวมทุกบัญชีบนหน้าเดียวกัน (ตารางดึงข้อมูลจาก `/sftp/accounts` แยก)
+
+        `own` เป็น null สำหรับผู้ดูแล — บัญชีผู้ดูแลไม่มี SFTP ของตัวเอง ·
+        `has_system_account` บอกเหตุผลจริงว่ายังเปิดไม่ได้เพราะยังไม่มีเว็บไซต์แรก
+        (บัญชีระบบถูกสร้างพร้อมเว็บแรก) แทนการซ่อนส่วนนี้เงียบ ๆ
+      responses:
+        "200":
+          description: บัญชี SFTP ของผู้เรียก (ถ้าเป็นบัญชีโฮสติ้ง)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      own:
+                        type: object
+                        nullable: true
+                        properties:
+                          username: { type: string }
+                          sftp_enabled: { type: boolean }
+                          sftp_available: { type: boolean }
+                          has_system_account: { type: boolean }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /sftp/accounts:
+    get:
+      tags: [hosting]
+      summary: ตารางบัญชี SFTP ทุกบัญชี (ผู้ดูแล)
+      description: |
+        แถวต่อหนึ่งบัญชีโฮสติ้ง — `status_label`/`status_tone` ประกอบมาจากเซิร์ฟเวอร์
+        เพื่อแยก "ปิดอยู่" กับ "แพ็กเกจไม่รวม" ให้หน้าจอแสดงได้ทันที ·
+        `can_manage` ควบคุมการแสดงปุ่มของแถว (route จริงตรวจสิทธิ์ซ้ำเสมอ)
+      responses:
+        "200":
+          description: รายการบัญชีทั้งหมด
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, data]
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        username: { type: string }
+                        sftp_enabled: { type: boolean }
+                        sftp_available: { type: boolean }
+                        status_label: { type: string }
+                        status_tone: { type: string }
+                        sftp_enabled_at: { type: integer, nullable: true }
+                        site_count: { type: integer }
+                        can_manage: { type: boolean }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /sftp/password:
+    put:
+      tags: [hosting]
+      summary: เจ้าของบัญชีเปลี่ยนรหัสผ่าน SFTP ของตัวเอง
+      description: |
+        ไม่มี `{id}` โดยตั้งใจ — user id มาจาก session เสมอ จึงไม่มีทางชี้ไปที่
+        บัญชีคนอื่นได้เลย · แยกจาก `sftp.enable` ของผู้ดูแลเพราะ "เปิดช่องทาง"
+        คือการตัดสินใจของผู้ดูแล แต่การเปลี่ยนรหัสของช่องทางที่เปิดอยู่แล้ว
+        ไม่เพิ่มสิทธิ์อะไร — เจ้าของทำเองได้เหมือนเปลี่ยนรหัส panel ของตัวเอง
+
+        บัญชีที่ยังไม่เปิด SFTP ได้ 422 พร้อมบอกให้ติดต่อผู้ดูแลก่อน
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, minLength: 12 }
+      responses:
+        "200":
+          description: เปลี่ยนแล้ว
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "422": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
 
   /users/{id}/sites:

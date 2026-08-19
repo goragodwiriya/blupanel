@@ -39,6 +39,9 @@
         // stacking the panel's own menu on top would leave too little room
         // to show filenames · working with files also often means switching back to look at another panel page too
         {key: 'files', label: 'File Manager', url: '/filemanager', icon: 'icon-folder', permission: 'file.view', newTab: true},
+        // SFTP is file access too — customers get their own account's state and
+        // password form here, server admins get the all-accounts table on the same screen
+        {key: 'sftp', label: 'SFTP', url: '/sftp', icon: 'icon-lock', permission: 'file.view'},
         {key: 'cron', label: 'Cron Jobs', url: '/cron-jobs', icon: 'icon-clock', permission: 'cron.view'},
         {key: 'mail', label: 'Mailboxes', url: '/mailboxes', icon: 'icon-email', permission: 'mail.view'},
         {key: 'mailqueue', label: 'Mail queue', url: '/mail-queue', icon: 'icon-send', permission: 'settings.manage'},

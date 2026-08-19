@@ -34,6 +34,7 @@ use Phpcp\Http\V2\PhpMyAdminController;
 use Phpcp\Http\V2\PhpVersionsController;
 use Phpcp\Http\V2\ScheduledJobsController;
 use Phpcp\Http\V2\SessionController;
+use Phpcp\Http\V2\SftpController;
 use Phpcp\Http\V2\SitesController;
 use Phpcp\Http\V2\SqliteController;
 use Phpcp\Http\SpaController;
@@ -193,6 +194,17 @@ final class Routes
         $router->add(new Route('GET', '/api/v2/users/{id}/sftp/form', UsersController::class, 'sftpForm', 'customer.manage', 'api.v2.users.sftp.form'));
         $router->add(new Route('PUT', '/api/v2/users/{id}/sftp', UsersController::class, 'enableSftp', 'customer.manage', 'api.v2.users.sftp.enable'));
         $router->add(new Route('DELETE', '/api/v2/users/{id}/sftp', UsersController::class, 'disableSftp', 'customer.manage', 'api.v2.users.sftp.disable'));
+
+        // The SFTP screen — one page shaped by role: a customer sees their own
+        // account and password form, a server admin sees every account too ·
+        // `file.view`/`file.manage` because SFTP *is* file access, so everyone
+        // who can open the file manager can see their own SFTP state
+        $router->add(new Route('GET', '/api/v2/sftp', SftpController::class, 'index', 'file.view', 'api.v2.sftp.index'));
+        // The admin table's rows — a plain array, gated to customer.view
+        $router->add(new Route('GET', '/api/v2/sftp/accounts', SftpController::class, 'accounts', 'customer.view', 'api.v2.sftp.accounts'));
+        // The user id always comes from the session — there is deliberately no
+        // {id} to get wrong or to point at someone else's account
+        $router->add(new Route('PUT', '/api/v2/sftp/password', SftpController::class, 'changeOwnPassword', 'file.manage', 'api.v2.sftp.password'));
 
 
         $router->add(new Route('GET', '/api/v2/settings', V2SettingsController::class, 'show', 'settings.view', 'api.v2.settings.show'));

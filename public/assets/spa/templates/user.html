@@ -241,7 +241,10 @@
           </fieldset>
         </form>
       </div>
-      <div class="content-body" data-if="sites && permissions['customer.manage']">
+      <!-- Always visible for a hosting account — an SFTP section that silently
+           disappears leaves an admin hunting for a feature that does exist;
+           each state states its own reason instead -->
+      <div class="content-body" data-if="role === 'webadmin' && permissions['customer.manage']">
         <div class="flex middle gap-4">
           <h2 class="icon-folder" data-i18n>SFTP access</h2>
           <div data-if="sftp_available">
@@ -254,7 +257,13 @@
           <legend class="icon-warning" data-i18n>Not included in this package</legend>
           <p data-i18n>The FTP/SFTP quota for this account is 0. Change it above to allow SFTP.</p>
         </fieldset>
-        <div data-if="sftp_available">
+        <!-- The system account the SFTP login would use is created together with
+             the first website — without one there is genuinely nothing to log into -->
+        <fieldset class="notice notice-warning" data-if="sftp_available && (!sites || sites.length === 0)">
+          <legend class="icon-warning" data-i18n>No website yet</legend>
+          <p data-i18n>This account has no website yet, so its system account does not exist — create a website first, then SFTP can be enabled.</p>
+        </fieldset>
+        <div data-if="sftp_available && sites && sites.length > 0">
           <button type="button" class="btn btn-primary icon-lock" data-show="sftp_enabled === false" data-action="click.prevent:requestApi"
                   data-api-url="/api/v2/users/{id}/sftp/form" data-api-method="get" data-i18n>Enable SFTP</button>
           <button type="button" class="btn icon-lock" data-show="sftp_enabled === true" data-action="click.prevent:requestApi" data-api-url="/api/v2/users/{id}/sftp/form"
