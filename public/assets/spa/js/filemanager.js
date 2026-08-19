@@ -81,7 +81,7 @@
   const ARCHIVE_EXTENSIONS = ['zip', 'gz', 'tgz', 'tar'];
 
   /** Commands that require the `file.manage` permission — their buttons and menu items are hidden without it */
-  const WRITE_COMMANDS = ['mkdir', 'touch', 'upload', 'rename', 'cut', 'paste', 'zip', 'unzip', 'chmod', 'delete'];
+  const WRITE_COMMANDS = ['mkdir', 'touch', 'upload', 'rename', 'cut', 'paste', 'moveTo', 'copyTo', 'zip', 'unzip', 'chmod', 'delete'];
 
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -179,6 +179,13 @@
     // Small helpers
     // -----------------------------------------------------------------------
     const selectedEntries = () => state.shown.filter((entry) => state.selected.has(entry.path));
+
+    /** The folder an item sits in — '' means the scope's own root */
+    const parentOf = (path) => {
+      const at = String(path).lastIndexOf('/');
+
+      return at === -1 ? '' : path.slice(0, at);
+    };
 
     const fail = (error) => window.PhpcpUi.error(error);
 
@@ -291,16 +298,27 @@
       });
     }
 
-    async function expandNode(path) {
-      if (!state.nodes.has(path)) {
-        try {
-          const result = await window.PhpcpApi.getFull('/files/tree', {root: state.root, path: path, depth: 1});
+    /**
+     * Loads one folder's children into the shared cache — does nothing when they're already there
+     *
+     * Kept apart from expandNode because the "Move to…"/"Copy to…" dialog
+     * draws its own tree from the very same cache: it needs the fetching, but
+     * must not touch which branches the left panel has open
+     */
+    async function fetchNodes(path) {
+      if (state.nodes.has(path)) return;
 
-          storeNodes(path, Array.isArray(result.data) ? result.data : []);
-        } catch (error) {
-          state.nodes.set(path, []);
-        }
+      try {
+        const result = await window.PhpcpApi.getFull('/files/tree', {root: state.root, path: path, depth: 1});
+
+        storeNodes(path, Array.isArray(result.data) ? result.data : []);
+      } catch (error) {
+        state.nodes.set(path, []);
       }
+    }
+
+    async function expandNode(path) {
+      await fetchNodes(path);
 
       state.expanded.add(path);
       renderTree();
@@ -330,8 +348,7 @@
     function goUp() {
       if (state.path === '') return;
 
-      const at = state.path.lastIndexOf('/');
-      goTo(at === -1 ? '' : state.path.slice(0, at));
+      goTo(parentOf(state.path));
     }
 
     // -----------------------------------------------------------------------
@@ -770,6 +787,122 @@
       }
     }
 
+    /**
+     * Asks for a destination folder by picking it out of a tree
+     *
+     * Draws from the very same node cache the left panel uses
+     * (`state.nodes`), so a branch already opened over there doesn't get
+     * fetched twice · **which branches are open is not shared**: this dialog
+     * opens showing the folder the user is standing in, and expanding
+     * something here must not go rearranging the panel behind it
+     *
+     * `onPick` returning exactly `false` means "not a usable destination" —
+     * the dialog stays open so another folder can be picked, instead of
+     * closing and leaving the user to start the whole selection over
+     *
+     * @param {string} title
+     * @param {string} confirmLabel
+     * @param {function(string): (boolean|undefined)} onPick receives the chosen path, relative to the scope
+     */
+    function askFolder(title, confirmLabel, onPick) {
+      const opened = new Set(['']);
+      const scope = state.scopes.find((item) => item.key === state.root);
+      let chosen = state.path;
+      let box = null;
+      let line = null;
+
+      // Opens with the current branch already unfolded — the folder next door is the most likely destination of all
+      let walked = '';
+      state.path.split('/').filter(Boolean).forEach((segment) => {
+        walked = walked === '' ? segment : walked + '/' + segment;
+        opened.add(walked);
+      });
+
+      function choose(path) {
+        chosen = path;
+        draw();
+      }
+
+      function draw() {
+        box.textContent = '';
+
+        // The scope's own root is a destination as well — the tree below only ever lists what's *inside* it
+        const top = el('div', 'fm-node' + (chosen === '' ? ' is-current' : ''));
+        const label = button('fm-label icon-folder-open', scope ? scope.label : '/');
+
+        label.addEventListener('click', () => choose(''));
+        top.appendChild(label);
+        box.appendChild(top);
+        box.appendChild(pickLevel('', 0));
+
+        line.textContent = t('Destination folder') + ': /' + chosen;
+      }
+
+      function pickLevel(path, depth) {
+        const list = el('ul');
+
+        (state.nodes.get(path) || []).forEach((node) => {
+          const item = el('li');
+          const row = el('div', 'fm-node' + (node.path === chosen ? ' is-current' : ''));
+
+          const twist = button('fm-twist icon-' + (opened.has(node.path) ? 'down' : 'next'));
+          twist.hidden = !node.hasChildren;
+          twist.addEventListener('click', (event) => {
+            event.stopPropagation();
+
+            if (opened.has(node.path)) {
+              opened.delete(node.path);
+              draw();
+
+              return;
+            }
+
+            fetchNodes(node.path).then(() => {
+              opened.add(node.path);
+              draw();
+            });
+          });
+
+          const label = button('fm-label icon-folder', node.name);
+          label.title = node.path;
+          label.addEventListener('click', () => choose(node.path));
+
+          row.appendChild(twist);
+          row.appendChild(label);
+          item.appendChild(row);
+
+          if (opened.has(node.path) && depth < 12) item.appendChild(pickLevel(node.path, depth + 1));
+
+          list.appendChild(item);
+        });
+
+        return list;
+      }
+
+      openModal(title, (body) => {
+        box = el('div', 'fm-tree fm-pick');
+        line = el('p', 'fm-pick-path');
+
+        body.appendChild(box);
+        body.appendChild(line);
+        draw();
+      }, [{
+        label: confirmLabel,
+        className: 'btn-primary icon-valid',
+        onClick: () => {
+          if (onPick(chosen) === false) return;
+
+          closeModal();
+        }
+      }]);
+
+      // Every folder on the way down has to actually be in the cache before the
+      // branch can show anything: the left panel only fetches what was clicked,
+      // and the current folder is usually reached by double-clicking rows
+      // instead — without this the dialog opens on a branch that is unfolded but empty
+      Promise.all(Array.from(opened).map((path) => fetchNodes(path))).then(draw);
+    }
+
     // -----------------------------------------------------------------------
     // The text editor
     // -----------------------------------------------------------------------
@@ -996,6 +1129,59 @@
       });
     }
 
+    /**
+     * Move to… / Copy to… — names both ends of the trip in one step
+     *
+     * The clipboard route can only ever paste into the folder currently open,
+     * so sending a folder somewhere else meant walking there first — and the
+     * list reloads on the way, which is exactly when a long selection gets
+     * lost · here the destination is picked from the tree, and what's selected
+     * never leaves the screen
+     *
+     * Copying across scopes is left out for the same reason paste leaves it
+     * out: one command carries a single `root`, and crossing scopes would
+     * cross file owners too
+     */
+    function transferTo(copy) {
+      const chosen = selectedEntries();
+      if (chosen.length === 0) return;
+
+      askFolder(
+        copy ? t('Copy to...') : t('Move to...'),
+        copy ? t('Copy here') : t('Move here'),
+        (destination) => {
+          // A folder can't be sent inside itself — rename() refuses it outright,
+          // and a copy would keep copying into its own growing copy · the agent
+          // refuses this too, this only says so before making the trip
+          const swallowed = chosen.some((entry) => entry.type === 'dir'
+            && (destination === entry.path || destination.indexOf(entry.path + '/') === 0));
+
+          if (swallowed) {
+            window.NotificationManager.error(t('A folder cannot be moved into itself'));
+
+            return false;
+          }
+
+          // Everything already sitting there would make the agent skip every
+          // single item and answer "0 item(s)" — a reply that reads like a failure
+          if (chosen.every((entry) => parentOf(entry.path) === destination)) {
+            window.NotificationManager.error(t('The selected items are already in this folder'));
+
+            return false;
+          }
+
+          run(
+            () => send('POST', copy ? '/files/copy' : '/files/move', {
+              root: state.root,
+              items: chosen.map((entry) => entry.path),
+              destination: destination
+            }),
+            copy ? t('Copied') : t('Moved')
+          ).then((ok) => {if (ok) loadTree();});
+        }
+      );
+    }
+
     function compress() {
       const chosen = selectedEntries();
       if (chosen.length === 0) return;
@@ -1153,6 +1339,8 @@
       copy: () => remember('copy'),
       cut: () => remember('cut'),
       paste: paste,
+      moveTo: () => transferTo(false),
+      copyTo: () => transferTo(true),
       zip: compress,
       unzip: () => {const one = selectedEntries()[0]; if (one) extract(one);},
       chmod: () => {const one = selectedEntries()[0]; if (one) changeMode(one);},
@@ -1176,6 +1364,8 @@
           {label: t('Copy'), icon: 'icon-copy', command: 'copy'},
           {label: t('Cut'), icon: 'icon-cut', command: 'cut'},
           {label: t('Paste'), icon: 'icon-import', command: 'paste', when: state.clipboard !== null},
+          {label: t('Move to...'), icon: 'icon-move', command: 'moveTo'},
+          {label: t('Copy to...'), icon: 'icon-export', command: 'copyTo'},
           {separator: true},
           {label: t('Compress'), icon: 'icon-zip', command: 'zip'},
           {
