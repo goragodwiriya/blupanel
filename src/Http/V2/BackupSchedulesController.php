@@ -101,15 +101,7 @@ final class BackupSchedulesController extends ApiController
         // This resource doesn't go through the Dispatcher, so nothing writes the audit entry automatically
         $this->app->audit()->write($this->ctx->actor($request), 'backup.schedule_update', self::JOB, 'ok', $fields);
 
-        return $this->done(
-            'Schedule saved',
-            [
-                ['type' => 'modal', 'action' => 'close'],
-                ['type' => 'notification', 'level' => 'success', 'message' => 'Schedule saved'],
-                ['type' => 'redirect', 'url' => 'reload', 'target' => 'backups'],
-            ],
-            $this->present($this->row()),
-        );
+        return $this->saved('Schedule saved', 'backups', $this->present($this->row()));
     }
 
     /**

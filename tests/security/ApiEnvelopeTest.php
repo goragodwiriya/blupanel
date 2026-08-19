@@ -58,3 +58,72 @@ test('คำตอบแบบ done() ไม่มีคีย์ data — ต�
         'unwrap() ต้องคืน body ทั้งก้อนเมื่อไม่มีคีย์ data ไม่งั้น result.url เป็น undefined',
     );
 });
+
+test('คำสั่ง refresh ที่เซิร์ฟเวอร์ส่ง ต้องมีตัวรับอยู่ฝั่ง SPA จริง', static function (): void {
+    /*
+     * `refresh` เป็นชนิดของโปรเจกต์นี้เอง ไม่ใช่ของ Now.js — `ResponseHandler`
+     * เจอชนิดที่ไม่รู้จักจะ `console.warn` แล้วทิ้งเงียบ ๆ · อาการคือ "กดแล้วขึ้นว่า
+     * สำเร็จ แต่ตารางยังเป็นของเดิม" ซึ่งผู้ใช้อ่านว่าคำสั่งไม่ติดแล้วกดซ้ำ
+     *
+     * ผูกสองฝั่งไว้ด้วยกัน: ตัวส่งอยู่ใน ApiController ตัวรับอยู่ใน ui.js
+     */
+    assertTrue(
+        str_contains(apiControllerSource(), "return ['type' => 'refresh', 'target' => \$table];"),
+        'ตัวประกอบคำสั่งรีเฟรชหายไปจาก ApiController',
+    );
+
+    $ui = (string) file_get_contents(PHPCP_ROOT . '/public/assets/spa/js/ui.js');
+
+    assertTrue(
+        str_contains($ui, "registerHandler('refresh'"),
+        'ui.js ต้องลงทะเบียนตัวรับชนิด refresh ไม่งั้นคำสั่งถูกทิ้งเงียบ ๆ',
+    );
+});
+
+test('ห้ามใช้ redirect url=reload อีก — มันถอยไป reload ทั้งหน้าเมื่อหาตารางไม่เจอ', static function (): void {
+    /*
+     * `ResponseHandler` จัดการ `{"type":"redirect","url":"reload"}` ด้วย
+     * `tryHandleReload()` ซึ่งคืน false เมื่อไม่มีตารางชื่อนั้นในหน้าที่เปิดอยู่ แล้ว
+     * ตกไปที่ `window.location.reload()` — **โหลดใหม่ทั้งเบราว์เซอร์**
+     *
+     * ไม่ใช่กรณีหายาก: endpoint เดียวถูกเรียกจากหลายหน้า (เพิ่มโดเมนตอบชื่อตาราง
+     * `sites` แต่ถูกกดจากหน้าเว็บไซต์รายตัว · เปิด SFTP ถูกกดทั้งจากหน้า SFTP และ
+     * หน้าผู้ใช้) · และการโหลดใหม่ทั้งหน้าทิ้งหน้าต่างรหัสผ่านที่เพิ่งเปิดไปด้วย
+     * ซึ่งแปลว่ารหัสนั้นหายไปจากโลกนี้เลย เพราะ panel ไม่ได้เก็บไว้ที่ไหน
+     */
+    $offenders = [];
+
+    foreach (glob(PHPCP_ROOT . '/src/Http/V2/*.php') ?: [] as $file) {
+        $code = (string) preg_replace('~/\*.*?\*/|//[^\n]*~s', '', (string) file_get_contents($file));
+
+        if (preg_match("/'url'\s*=>\s*'reload'/", $code) === 1) {
+            $offenders[] = basename($file);
+        }
+    }
+
+    assertSame([], $offenders, "ใช้ ['type' => 'refresh', 'target' => ...] แทน — controller เหล่านี้ยังใช้ของเดิม:\n  " . implode("\n  ", $offenders));
+});
+
+test('ปุ่มในกล่องค่าที่ดูได้ครั้งเดียว ต้องเรียก action ที่ ui.js ลงทะเบียนไว้จริง', static function (): void {
+    // กล่องนี้เป็น HTML ที่เซิร์ฟเวอร์ประกอบเอง ไม่ผ่านเทมเพลต — ถ้าชื่อ action
+    // ไม่ตรงกับที่ลงทะเบียนไว้ ปุ่มจะกดแล้วเงียบสนิท ไม่มีข้อผิดพลาดให้เห็น
+    $server = apiControllerSource();
+    $ui = (string) file_get_contents(PHPCP_ROOT . '/public/assets/spa/js/ui.js');
+
+    foreach (['closeModal', 'copyToClipboard'] as $action) {
+        assertTrue(
+            str_contains($server, 'click.prevent:' . $action),
+            "กล่องต้องมีปุ่มที่เรียก {$action}",
+        );
+    }
+
+    // closeModal เป็นของโปรเจกต์นี้ · copyToClipboard เป็นของ Now.js เองอยู่แล้ว
+    assertTrue(
+        str_contains($ui, "registerAction('closeModal'"),
+        'ui.js ต้องลงทะเบียน closeModal ไม่งั้นปุ่มปิดกดไม่ได้',
+    );
+    assertTrue(
+        str_contains((string) file_get_contents(PHPCP_ROOT . '/public/assets/spa/vendor/now/now.core.min.js'), 'copyToClipboard'),
+        'Now.js ต้องยังมี copyToClipboard อยู่ในเวอร์ชันที่ vendor ไว้',
+    );
+});

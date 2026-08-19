@@ -4,7 +4,7 @@
   <div data-component="mode-banner"></div>
   <div data-component="rollback-bar"></div>
   <main class="content" data-script="pageDetail" data-fallback="/backups">
-    <div class="card-groups" data-component="api" data-endpoint="/api/v2/backup-destinations/{id}">
+    <div class="card-groups" data-component="api" data-endpoint="/api/v2/backup-destinations/{id}" data-refresh-event="phpcp:reload">
       <header>
         <div>
           <h1 class="icon-cloud" data-i18n>Offsite destination</h1>

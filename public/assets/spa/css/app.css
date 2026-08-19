@@ -718,3 +718,44 @@ textarea.config-file-editor {
   border-radius: var(--phpcp-radius);
 }
 /* ป้ายบอกสิทธิ์ในตาราง — "แก้ได้" ต้องเด่นกว่า "ดูได้อย่างเดียว" อย่างชัดเจน */
+
+/* --------------------------------------------------------------------------
+   หน้าต่างค่าที่ดูได้ครั้งเดียว — รหัสผ่านที่ระบบสุ่มให้ (ApiController::revealed)
+
+   ค่าพวกนี้ไม่มีที่อื่นให้ดูย้อนหลังอีกเลย ระบบเก็บแต่ hash · หน้าต่างนี้จึงต้อง
+   อ่านง่ายและคัดลอกพลาดยาก: ค่าคู่กับป้ายเสมอ (รู้ว่าอันไหนคือ user อันไหนคือ
+   รหัสผ่าน) มีปุ่มคัดลอกต่อค่า เพราะการลากเมาส์คลุมสตริงสุ่ม 20 ตัวคือจุดที่มัน
+   ขาดหาย และรหัสที่ขาดไปตัวเดียวหน้าตาเหมือนรหัสผิดทุกประการ
+   -------------------------------------------------------------------------- */
+.secret-reveal dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.5rem 1rem;
+  align-items: center;
+  margin: 1rem 0;
+}
+.secret-reveal dt {
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+.secret-reveal dd {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  margin: 0;
+}
+/* ทับ .selectable ที่ตั้ง margin/text-align ไว้สำหรับกล่องเดี่ยวกลางหน้า */
+.secret-reveal dd code {
+  flex: 1;
+  /* รหัสสุ่มยาวกว่าความกว้างหน้าต่างได้ — ต้องตัดบรรทัดแทนที่จะล้นออกไป */
+  word-break: break-all;
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+.secret-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1.25rem;
+}

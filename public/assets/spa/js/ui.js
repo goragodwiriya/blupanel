@@ -502,6 +502,33 @@
   });
 
   /**
+   * Closes the dialog currently open — and optionally goes somewhere afterward
+   *
+   *   data-go   the route to navigate to once it's closed (optional)
+   *
+   * **Why a button and not just the X in the corner:** the dialog this is
+   * built for shows a value that exists nowhere else — a generated password —
+   * and closing it is the one deliberate step that says "I've copied it" ·
+   * the corner X is 32px of unlabelled icon, easy to miss and easy to hit by
+   * accident, and Now.js's own `.modal-close` class (which Modal binds
+   * automatically) is styled as exactly that icon, so it can't carry a label
+   *
+   * `data-go` exists because navigating **while** the dialog is open would
+   * close it along with the page — the account-created dialog used to skip
+   * its redirect entirely for that reason, leaving the admin on the create
+   * form after a successful create · now the trip happens when they say so
+   */
+  events.registerAction('closeModal', (event, element) => {
+    if (window.modal && typeof window.modal.hide === 'function') {
+      window.modal.hide();
+    }
+
+    if (element.dataset.go) {
+      window.RouterManager.navigate(element.dataset.go);
+    }
+  });
+
+  /**
    * Calls the API, then refreshes whatever needs to follow along
    *
    * Lets the framework's own `requestApi` do all the real work (confirm
@@ -712,6 +739,51 @@
     if (host && host.dataset && host.dataset.reloadTable) {
       window.TableManager.loadTableData(host.dataset.reloadTable, {force: true});
     }
+  });
+
+  // ---------------------------------------------------------------------------
+  // `{"type": "refresh"}` — the one way the server says "the screen is now out of date"
+  //
+  // Replaces `{"type":"redirect","url":"reload","target":"<table>"}`, which
+  // had a trap built into it: when the named table isn't on the page the user
+  // is actually looking at, `ResponseHandler` falls through to
+  // `window.location.reload()` — **a full browser reload** · that fires more
+  // often than it sounds, because one endpoint serves several screens (adding
+  // a domain answers `sites`, but is pressed from the site's own page;
+  // enabling SFTP is pressed from both the SFTP page and a user's page), and
+  // a full reload throws away the dialog that was just opened to show a
+  // generated password, which then exists nowhere at all
+  //
+  // What this does instead, and never more than this:
+  //   - reloads each named table **that genuinely exists on this page**
+  //   - emits `phpcp:reload`, which every page-level `data-component="api"`
+  //     with `data-refresh-event` listens for — that covers the pages whose
+  //     tables are bound to page data (`data-attr="data:..."`) and can't be
+  //     told to reload on their own
+  //
+  // `phpcp:rollback` is deliberately **not** emitted here — the splice below
+  // already raises it for exactly the responses that scheduled a rollback,
+  // decided from the response body rather than from who fired the request
+  // ---------------------------------------------------------------------------
+  window.ResponseHandler.registerHandler('refresh', (action) => {
+    const manager = window.TableManager;
+    const tables = (manager && manager.state && manager.state.tables) || null;
+
+    if (manager) {
+      String(action.target || '')
+        .split(',')
+        .map((name) => name.trim())
+        .filter((name) => name !== '')
+        .forEach((name) => {
+          // `has` guards the case this whole action type exists for — a table
+          // named for another screen is skipped in silence, never escalated
+          if (tables && typeof tables.has === 'function' && !tables.has(name)) return;
+
+          manager.loadTableData(name, {force: true});
+        });
+    }
+
+    window.EventManager.emit(action.event || 'phpcp:reload', {});
   });
 
   // ---------------------------------------------------------------------------

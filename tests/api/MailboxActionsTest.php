@@ -39,10 +39,15 @@ function mailboxActions(array $result, string $message = 'Mailbox created'): arr
         $controller = new MailboxesController($app, new Ctx($app), new Router());
     }
 
-    $method = new ReflectionMethod($controller, 'passwordActions');
+    $method = new ReflectionMethod($controller, 'mailboxSaved');
     $method->setAccessible(true);
 
-    return $method->invoke($controller, $result, 'Mailbox created', $message);
+    // อ่านคำสั่งจากตัว response จริง ไม่ใช่จาก array กลางทาง — ลำดับที่ผู้ใช้เจอคือ
+    // ลำดับใน body ที่ส่งออกไปจริง ๆ และเส้นทางนี้ผ่าน done() ที่แปลภาษาด้วย
+    $response = $method->invoke($controller, $message, 'Mailbox created', $result, 200);
+    $body = json_decode($response->body(), true);
+
+    return $body['actions'] ?? [];
 }
 
 /**
@@ -66,7 +71,7 @@ test('บันทึกสำเร็จต้องปิด Modal แจ้�
     );
 
     assertSame(
-        ['modal:close', 'notification', 'redirect'],
+        ['modal:close', 'notification', 'refresh'],
         mailboxActionKinds($actions),
         'ปิดฟอร์ม → แถบแจ้งผล → โหลดตาราง · ขาดข้อไหนผู้ใช้ก็ไม่รู้ว่าสำเร็จ',
     );
@@ -75,7 +80,8 @@ test('บันทึกสำเร็จต้องปิด Modal แจ้�
     assertSame('สร้างกล่อง sales@example.com แล้ว', $actions[1]['message'], 'ต้องเป็นข้อความจริงจาก capability');
 
     // ตารางในหน้านี้ดึงข้อมูลเอง (`data-table="mailboxes"`) จึงสั่งโหลดใหม่ได้ตรง ๆ
-    assertSame('reload', $actions[2]['url'], 'ตารางต้องถูกสั่งให้ดึงข้อมูลใหม่');
+    // ต้องเป็นชนิด `refresh` ไม่ใช่ `redirect url=reload` — ชนิดหลังถอยไป
+    // reload ทั้งหน้าเมื่อไม่เจอตารางชื่อนี้ในหน้าที่เปิดอยู่
     assertSame('mailboxes', $actions[2]['target'], 'ชื่อต้องตรงกับ data-table ในเทมเพลต ไม่งั้นแถวใหม่ไม่ขึ้น');
 });
 
@@ -88,15 +94,27 @@ test('รหัสที่ผู้ดูแลพิมพ์เองต้�
 test('รหัสที่ระบบสุ่มให้ต้องแสดงครั้งเดียว หลังแถบแจ้งผล', static function (): void {
     $actions = mailboxActions(['password' => 'S3cretGenerated9', 'password_generated' => true]);
 
+    /*
+     * **ห้ามมี `modal:close` นำหน้า `modal:show`** — Modal.hide() ตั้งเวลาไว้ล้าง
+     * เนื้อในของตัวเอง 150ms หลังจากนั้น ซึ่งมาถึงหลังเนื้อหาใหม่ถูกใส่ไปแล้ว
+     * ผลคือหน้าต่างเปิดขึ้นมา "ว่างเปล่า" และรหัสผ่านหายไปพร้อมกัน · การ show
+     * เฉย ๆ คือการสลับเนื้อในของหน้าต่างเดิม ซึ่งเป็นสิ่งที่ตั้งใจไว้แต่แรก
+     */
     assertSame(
-        ['modal:close', 'notification', 'modal:show', 'redirect'],
+        ['notification', 'modal:show', 'refresh'],
         mailboxActionKinds($actions),
-        'แถบแจ้งผลต้องมาก่อนหน้าต่างรหัสผ่าน ไม่งั้นถูกบังจนไม่มีใครเห็น',
+        'แถบแจ้งผลต้องมาก่อนหน้าต่างรหัสผ่าน และห้ามปิดหน้าต่างก่อนเปิดหน้าต่างใหม่',
     );
 
     assertTrue(
-        str_contains((string) $actions[2]['html'], 'S3cretGenerated9'),
+        str_contains((string) $actions[1]['html'], 'S3cretGenerated9'),
         'รหัสที่ระบบสุ่มให้ไม่มีที่อื่นให้ดูย้อนหลังอีกเลย ต้องอยู่ในหน้าต่างนี้',
+    );
+
+    // ปิดเองได้ด้วยปุ่มที่มีป้าย ไม่ใช่แค่กากบาทมุมบนที่ไม่มีคำอธิบาย
+    assertTrue(
+        str_contains((string) $actions[1]['html'], 'closeModal'),
+        'หน้าต่างที่ผู้ใช้ต้องปิดเองต้องมีปุ่มปิดที่มีป้ายกำกับ',
     );
 });
 
@@ -104,7 +122,7 @@ test('รหัสที่ไม่ได้เปลี่ยนต้อง�
     // แก้แค่โควตา — capability คืน password เป็นค่าว่าง
     $kinds = mailboxActionKinds(mailboxActions(['password' => '', 'password_generated' => false], 'บันทึกกล่องแล้ว'));
 
-    assertSame(['modal:close', 'notification', 'redirect'], $kinds, 'ไม่มีรหัสใหม่ก็ไม่ควรมีหน้าต่างอะไรเปิดขึ้นมา');
+    assertSame(['modal:close', 'notification', 'refresh'], $kinds, 'ไม่มีรหัสใหม่ก็ไม่ควรมีหน้าต่างอะไรเปิดขึ้นมา');
 });
 
 test('capability ต้องบอกด้วยว่ารหัสนั้นใครเป็นคนกำหนด', static function (): void {

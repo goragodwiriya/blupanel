@@ -123,7 +123,7 @@ final class MailboxesController extends ApiController
 
         $message = (string) ($result['message'] ?? 'Mailbox created');
 
-        return $this->done($message, $this->passwordActions($result, 'Mailbox created', $message), $result, 201);
+        return $this->mailboxSaved($message, 'Mailbox created', $result, 201);
     }
 
     public function update(Request $request): Response
@@ -142,7 +142,7 @@ final class MailboxesController extends ApiController
 
         $message = (string) ($result['message'] ?? 'Mailbox saved');
 
-        return $this->done($message, $this->passwordActions($result, 'New password', $message), $result);
+        return $this->mailboxSaved($message, 'New password', $result);
     }
 
     public function destroy(Request $request): Response
@@ -238,58 +238,39 @@ final class MailboxesController extends ApiController
     }
 
     /**
-     * The command telling the screen to show a system-generated password
+     * A mailbox form saved — showing the generated password when there is one
      *
-     * This password has no other place it can ever be viewed again — the system
-     * only stores a hash · it must be shown as a box the user closes themselves,
-     * not a notification that vanishes on its own after 5 seconds
+     * The password only exists in this one response: Dovecot stores a hash and
+     * so does the panel · a password the admin typed in themselves is never
+     * shown back (they already have it), which is what `password_generated`
+     * from the capability distinguishes.
+     *
+     * Everything about *how* it is shown — no `modal close` before the dialog
+     * (that wipes it blank 150ms later), a labelled Close button, a Copy button
+     * per value, the table refresh underneath — is `ApiController::revealed()`'s
+     * job, shared with every other screen that hands out a credential.
      *
      * @param array<string,mixed> $result
-     * @return list<array<string,mixed>>
      */
-    private function passwordActions(array $result, string $title, string $message = ''): array
+    private function mailboxSaved(string $message, string $title, array $result, int $status = 200): Response
     {
-        $password = (string) ($result['password'] ?? '');
+        $generated = ($result['password_generated'] ?? false)
+            ? (string) ($result['password'] ?? '')
+            : '';
 
-        // Always closes the form first — then opens the password dialog on top of it, if there's a password to show
-        $actions = [['type' => 'modal', 'action' => 'close']];
-
-        /*
-         * The notification bar — this used to be missing even though the modal
-         * closed and the table reloaded correctly
-         *
-         * The result was clicking save just made the modal disappear, a new row
-         * appeared in the table with nothing confirming "success" — an admin not
-         * watching the table closely couldn't tell whether it went through or
-         * silently vanished, and would often click again · other pages in the
-         * system use `saved()`, which already includes this bar
-         *
-         * Must come before the password dialog, so it isn't hidden behind it when there's a password to show
-         */
-        if ($message !== '') {
-            $actions[] = ['type' => 'notification', 'level' => 'success', 'message' => $message];
-        }
-
-        if ($password !== '' && ($result['password_generated'] ?? false)) {
-            $actions[] = [
-                'type' => 'modal',
-                'action' => 'show',
-                'title' => $this->t($title),
-                'titleClass' => 'icon-lock',
-                'html' => '<p>' . $this->t('Copy this password before closing — it is not stored anywhere')
-                    . '</p><p class="mono selectable">' . htmlspecialchars($password, ENT_QUOTES, 'UTF-8') . '</p>',
-            ];
-        }
-
-        /*
-         * **Tells the table to reload using a type the framework genuinely
-         * handles** — `{type:"event"}` has no handler at all; `ResponseHandler`
-         * warns in the console and drops it · the mailbox table already fetches
-         * its own data (`data-source`), so it can be told to reload directly
-         */
-        $actions[] = ['type' => 'redirect', 'url' => 'reload', 'target' => 'mailboxes'];
-
-        return $actions;
+        return $this->revealed(
+            $message,
+            'mailboxes',
+            $title,
+            // The address alone is no reason to open a dialog — it is right
+            // there in the table · only a password the system generated is
+            $generated === '' ? [] : [
+                'Mailbox' => (string) ($result['address'] ?? ''),
+                'Password' => $generated,
+            ],
+            extra: is_array($result) ? $result : [],
+            status: $status,
+        );
     }
 
     /** @return list<array<string,mixed>> */

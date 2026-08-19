@@ -150,7 +150,7 @@
             <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>
           </fieldset>
         </form>
-        <div data-component="api" data-endpoint="/api/v2/sites/{id}/rate-limit" data-if="enabled">
+        <div data-component="api" data-endpoint="/api/v2/sites/{id}/rate-limit" data-if="enabled" data-refresh-event="phpcp:reload">
           <h3 data-i18n>Currently banned</h3>
           <div class="tablebody">
             <table class="table border fullwidth" data-table="bannedIps" data-source="/api/v2/sites/{id}/rate-limit/bans">

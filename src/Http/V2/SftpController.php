@@ -129,7 +129,11 @@ final class SftpController extends ApiController
             'password' => $password,
         ], $this->ctx->actor($request));
 
-        return $this->saved((string) ($result['message'] ?? 'SFTP password changed'), '', $result);
+        // The same shape as every other modal form in the panel: close it,
+        // say so, then bring the screen back up to date · the customer's own
+        // card on this page shows the account's state, and the admin table
+        // (when the viewer is looking at one) shows every account's
+        return $this->saved((string) ($result['message'] ?? 'SFTP password changed'), 'sftpAccounts', $result);
     }
 
     /**

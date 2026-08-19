@@ -478,13 +478,9 @@ final class SitesController extends HostingController
         // Always goes back to the list page — deleting from the detail page and
         // staying there would get a 404 · deleting from the list page and going to
         // the same route just makes the table reload correctly
-        return $this->done(
+        return $this->completed(
             $this->t('Website {domain} deleted', ['domain' => (string) $site['primary_domain']]),
-            [
-                ['type' => 'notification', 'level' => 'success',
-                    'message' => $this->t('Website {domain} deleted', ['domain' => (string) $site['primary_domain']])],
-                ['type' => 'redirect', 'url' => 'reload', 'target' => 'sites']
-            ],
+            'sites',
             ['site_id' => (int) $site['id']],
         );
     }
@@ -588,13 +584,16 @@ final class SitesController extends HostingController
             ['s' => $site['id'], 'd' => $domain],
         );
 
-        return $this->done(
+        /*
+         * `sites` names the list page's table, but this form is opened from the
+         * site's **own** page, where that table doesn't exist — the refresh
+         * action reloads it when it's there and otherwise just signals the page,
+         * whose `data-refresh-event` reloads the domain list bound to it · this
+         * used to fall through to a full browser reload every single time
+         */
+        return $this->saved(
             $this->t('Domain {domain} added', ['domain' => $domain]),
-            [
-                ['type' => 'modal', 'action' => 'close'],
-                ['type' => 'notification', 'level' => 'success', 'message' => $this->t('Domain {domain} added', ['domain' => $domain])],
-                ['type' => 'redirect', 'url' => 'reload', 'target' => 'sites']
-            ],
+            'sites,siteDomains',
             ['site_id' => (int) $site['id'], 'domain' => $domain],
             201,
         )->withHeader('Location', '/api/v2/sites/'.$site['id'].'/domains');

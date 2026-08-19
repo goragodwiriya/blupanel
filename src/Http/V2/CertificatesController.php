@@ -122,13 +122,9 @@ final class CertificatesController extends HostingController
             'staging' => (bool) $request->payload('staging', false),
         ], $this->ctx->actor($request));
 
-        return $this->done(
+        return $this->completed(
             (string) ($result['message'] ?? 'Certificate issued'),
-            [
-                ['type' => 'notification', 'level' => 'success',
-                 'message' => (string) ($result['message'] ?? 'Certificate issued')],
-                ['type' => 'redirect', 'url' => 'reload', 'target' => 'certificates'],
-            ],
+            'certificates,siteCertificates',
             $result,
             201,
         )->withHeader('Location', '/api/v2/certificates');

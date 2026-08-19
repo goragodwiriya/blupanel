@@ -88,12 +88,9 @@ final class DomainsController extends HostingController
 
         $domain = (string) ($result['domain'] ?? '');
 
-        return $this->done(
+        return $this->completed(
             $this->t('Domain {domain} added', ['domain' => $domain]),
-            [
-                ['type' => 'notification', 'level' => 'success', 'message' => $this->t('Domain {domain} added', ['domain' => $domain])],
-                ['type' => 'redirect', 'url' => 'reload', 'target' => 'domains'],
-            ],
+            'domains,siteDomains',
             ['domain_id' => (int) ($row['id'] ?? 0), 'domain' => $domain],
             201,
         )->withHeader('Location', '/api/v2/domains' . ($row === null ? '' : '/' . $row['id']));
@@ -220,17 +217,12 @@ final class DomainsController extends HostingController
 
         $sync = $this->syncZone($request, (int) $domain['id']);
 
-        return $this->done(
+        return $this->saved(
             $this->t('{type} record added', ['type' => $clean['type']]),
-            [
-                ['type' => 'modal', 'action' => 'close'],
-                ['type' => 'notification', 'level' => 'success',
-                 'message' => $this->t('{type} record added', ['type' => $clean['type']])],
-                ...$this->dnsSyncWarning($sync),
-                ['type' => 'redirect', 'url' => 'reload', 'target' => 'dnsRecords'],
-            ],
+            'dnsRecords',
             ['record_id' => $id, 'domain_id' => (int) $domain['id']] + $sync,
             201,
+            $this->dnsSyncWarning($sync),
         )->withHeader('Location', '/api/v2/domains/' . $domain['id'] . '/dns-records');
     }
 
@@ -285,14 +277,11 @@ final class DomainsController extends HostingController
         $sync = $this->syncZone($request, (int) $domain['id']);
         $message = $this->t('{type} record removed', ['type' => (string) $record['type']]);
 
-        return $this->done(
+        return $this->completed(
             $message,
-            [
-                ['type' => 'notification', 'level' => 'success', 'message' => $message],
-                ...$this->dnsSyncWarning($sync),
-                ['type' => 'redirect', 'url' => 'reload', 'target' => 'dnsRecords'],
-            ],
+            'dnsRecords',
             ['record_id' => (int) $record['id']] + $sync,
+            notices: $this->dnsSyncWarning($sync),
         );
     }
 

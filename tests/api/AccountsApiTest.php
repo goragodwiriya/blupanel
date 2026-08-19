@@ -80,8 +80,18 @@ test('สร้างผู้ใช้ได้รหัสผ่านสุ�
 
     assertSame(Permissions::SYSADMIN, $created->data('role'), 'บทบาทต้องตรงกับที่ขอ');
 
-    // และต้องสั่งหน้าจอให้แสดงรหัสที่สุ่มให้ — ไม่มีที่อื่นให้ดูย้อนหลังอีกเลย
-    assertSame(['modal'], $response->actionTypes(), 'ต้องเปิดกล่องที่ผู้ใช้กดปิดเอง ไม่ใช่ toast');
+    /*
+     * และต้องสั่งหน้าจอให้แสดงรหัสที่สุ่มให้ — ไม่มีที่อื่นให้ดูย้อนหลังอีกเลย
+     *
+     * ลำดับเดียวกับทุกหน้าในระบบ (ApiController::revealed): แจ้งผล → กล่องที่ผู้ใช้
+     * กดปิดเอง → สั่งรีเฟรชหน้าจอ · **ห้ามมี modal close นำหน้ากล่อง** เพราะ
+     * Modal.hide() ล้างเนื้อในตัวเอง 150ms ให้หลัง ซึ่งมาถึงหลังเนื้อหาใหม่ถูกใส่แล้ว
+     */
+    assertSame(
+        ['notification', 'modal', 'refresh'],
+        $response->actionTypes(),
+        'ต้องเปิดกล่องที่ผู้ใช้กดปิดเอง ไม่ใช่ toast — และห้ามปิดหน้าต่างก่อนเปิดกล่อง',
+    );
 
     // ข้อมูลลับต้องไม่หลุดมากับผลลัพธ์
     assertTrue(!str_contains($response->body, 'password_hash'), 'ต้องไม่มี password_hash');
@@ -179,7 +189,7 @@ test('ปิด 2FA ให้คนอื่นได้ แต่ไม่ม�
     $disabled = $harness->request('DELETE', '/api/v2/users/' . $targetId . '/two-factor');
 
     assertSame(200, $disabled->status, 'ปิด 2FA ต้องได้ 200 พร้อมคำสั่งหน้าจอ');
-    assertSame(['notification', 'redirect'], $disabled->actionTypes(), 'ต้องแจ้งผลแล้วโหลดตารางใหม่');
+    assertSame(['notification', 'refresh'], $disabled->actionTypes(), 'ต้องแจ้งผลแล้วโหลดตารางใหม่');
 
     // ไม่มีเส้นทางเปิด 2FA แทนคนอื่น — ถ้ามี ผู้ดูแลจะถือ secret ของคนอื่นได้
     // ซึ่งทำลายความหมายของ 2FA ทั้งหมด
@@ -273,7 +283,7 @@ test('ลบผู้ใช้ที่ยังเป็นเจ้าขอ�
 
     assertSame(200, $deleted->status, 'ลบผู้ใช้ได้แล้ว');
     assertSame(
-        ['notification', 'redirect'],
+        ['notification', 'refresh'],
         array_column($deleted->json['actions'] ?? [], 'type'),
         'ต้องสั่งหน้าจอแจ้งผลแล้วโหลดตารางใหม่',
     );

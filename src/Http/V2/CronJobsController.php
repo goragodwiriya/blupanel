@@ -93,16 +93,8 @@ final class CronJobsController extends HostingController
             },
         );
 
-        return $this->done(
-            'Cron job added',
-            [
-                ['type' => 'modal', 'action' => 'close'],
-                ['type' => 'notification', 'level' => 'success', 'message' => 'Cron job added'],
-                ['type' => 'redirect', 'url' => 'reload', 'target' => 'cronJobs']
-            ],
-            ['cron_job_id' => $id],
-            201,
-        )->withHeader('Location', '/api/v2/cron-jobs/'.$id);
+        return $this->saved('Cron job added', 'cronJobs', ['cron_job_id' => $id], 201)
+            ->withHeader('Location', '/api/v2/cron-jobs/'.$id);
     }
 
     /**

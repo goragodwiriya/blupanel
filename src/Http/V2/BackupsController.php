@@ -157,14 +157,9 @@ final class BackupsController extends HostingController
             'database' => trim($request->payloadString('database')),
         ], $this->ctx->actor($request));
 
-        return $this->done(
+        return $this->saved(
             (string) ($result['message'] ?? 'Backup created'),
-            [
-                ['type' => 'modal', 'action' => 'close'],
-                ['type' => 'notification', 'level' => 'success',
-                 'message' => (string) ($result['message'] ?? 'Backup created')],
-                ['type' => 'redirect', 'url' => 'reload', 'target' => 'backups'],
-            ],
+            'backups',
             is_array($result) ? $result : [],
             201,
         );

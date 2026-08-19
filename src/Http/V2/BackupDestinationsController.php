@@ -319,14 +319,7 @@ final class BackupDestinationsController extends ApiController
 
         $message = (string) ($result['message'] ?? 'Destination removed');
 
-        return $this->done(
-            $message,
-            [
-                ['type' => 'notification', 'level' => 'success', 'message' => $message],
-                ['type' => 'redirect', 'url' => 'reload', 'target' => 'destinations'],
-            ],
-            is_array($result) ? $result : [],
-        );
+        return $this->completed($message, 'destinations', is_array($result) ? $result : []);
     }
 
     /**

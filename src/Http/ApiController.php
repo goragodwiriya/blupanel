@@ -117,20 +117,44 @@ abstract class ApiController extends Controller
     }
 
     /**
-     * Report success and reload a table — `done()`'s most common shape
+     * Report success and bring the screen back up to date — `done()`'s most common shape
      *
-     * @param string $table the `data-table` name to reload · empty = reload nothing
+     * @param string $table the `data-table` name(s) to reload, comma-separated · empty = only signal the page
      * @param array<string,mixed> $extra
      */
-    protected function completed(string $message, string $table = '', array $extra = []): Response
+    protected function completed(string $message, string $table = '', array $extra = [], int $status = 200, array $notices = []): Response
     {
-        $actions = [['type' => 'notification', 'level' => 'success', 'message' => $message]];
+        return $this->done($message, [
+            ['type' => 'notification', 'level' => 'success', 'message' => $message],
+            ...self::noticeActions($notices),
+            self::refreshAction($table)
+        ], $extra, $status);
+    }
 
-        if ($table !== '') {
-            $actions[] = ['type' => 'redirect', 'url' => 'reload', 'target' => $table];
-        }
-
-        return $this->done($message, $actions, $extra);
+    /**
+     * The one command that says "what's on screen is now out of date" — every helper here ends with it
+     *
+     * **Never `{"type":"redirect","url":"reload"}` again.** That is
+     * `ResponseHandler`'s own action, and when the named table isn't on the
+     * page the user is actually looking at, it falls through to
+     * `window.location.reload()` — a full browser reload · that isn't a rare
+     * corner: one endpoint serves several screens (adding a domain answers
+     * `sites` but is pressed from the site's own page; enabling SFTP is
+     * pressed from both the SFTP page and a user's page), and a full reload
+     * throws away a dialog that was just opened to show a generated password,
+     * which then exists nowhere at all.
+     *
+     * The handler for this type lives in `js/ui.js`: it reloads the named
+     * table **when the page genuinely has one**, and always emits
+     * `phpcp:reload` for pages whose tables are bound to page data
+     * (`data-attr="data:..."`) and so can't be told to reload by name.
+     *
+     * @param string $table the `data-table` name(s), comma-separated · empty = signal the page only
+     * @return array<string,mixed>
+     */
+    private static function refreshAction(string $table): array
+    {
+        return ['type' => 'refresh', 'target' => $table];
     }
 
     /**
@@ -142,25 +166,202 @@ abstract class ApiController extends Controller
      * sees the same form with a success message and often clicks save again,
      * thinking it didn't go through, creating a duplicate record
      *
-     * **Order matters:** close the modal before reloading the table · swap the
-     * order and the table gets redrawn underneath a modal that's still open,
-     * where the user can't see the change happen anyway
+     * **Order matters:** close the modal before refreshing · swap the order and
+     * the table gets redrawn underneath a modal that's still open, where the
+     * user can't see the change happen anyway
      *
-     * @param string $table the `data-table` name to reload · empty = reload nothing
+     * Use {@see revealed()} instead when the response carries something the
+     * user gets one chance to read — closing and re-opening in the same breath
+     * is what wipes a password dialog blank.
+     *
+     * @param string $table the `data-table` name(s) to reload, comma-separated · empty = only signal the page
      * @param array<string,mixed> $extra
      */
-    protected function saved(string $message, string $table = '', array $extra = [], int $status = 200): Response
+    protected function saved(string $message, string $table = '', array $extra = [], int $status = 200, array $notices = []): Response
     {
-        $actions = [
+        return $this->done($message, [
             ['type' => 'modal', 'action' => 'close'],
             ['type' => 'notification', 'level' => 'success', 'message' => $message],
-        ];
+            ...self::noticeActions($notices),
+            self::refreshAction($table)
+        ], $extra, $status);
+    }
 
-        if ($table !== '') {
-            $actions[] = ['type' => 'redirect', 'url' => 'reload', 'target' => $table];
+    /**
+     * Things that went wrong **without failing the command** — a warning bar each
+     *
+     * A command can half-succeed in ways the caller must still be told about:
+     * the account was created but its first website wasn't, the DNS record was
+     * saved but BIND wouldn't reload · answering with an error would be wrong
+     * (the main thing genuinely happened, and retrying would collide with it),
+     * and staying silent is worse — so they ride along beside the success bar.
+     *
+     * Longer on screen than a success message on purpose: this is the one that
+     * has to actually be read.
+     *
+     * @param list<array<string,string>> $notices each `['level' => 'warning', 'message' => '...']`
+     * @return list<array<string,mixed>>
+     */
+    private static function noticeActions(array $notices): array
+    {
+        $out = [];
+
+        foreach ($notices as $notice) {
+            $message = trim((string) ($notice['message'] ?? ''));
+
+            if ($message === '') {
+                continue;
+            }
+
+            $out[] = [
+                'type' => 'notification',
+                'level' => (string) ($notice['level'] ?? 'warning'),
+                'duration' => (int) ($notice['duration'] ?? 15000),
+                'message' => $message
+            ];
         }
 
+        return $out;
+    }
+
+    /**
+     * Saved, **and there is something in the answer the user gets exactly one chance to read**
+     *
+     * The whole reason this is separate from `saved()`: a generated password
+     * is stored nowhere — not by the panel, not by MariaDB, not by Dovecot,
+     * which all keep a hash — so if it isn't copied off this one screen it is
+     * gone, and the only way back is to generate another one.
+     *
+     * **The modal is never closed first.** Closing and immediately re-opening
+     * looks like one dialog replacing another, but `Modal.hide()` schedules
+     * `body.innerHTML = ''` 150ms later to clear itself after the fade — and
+     * that timer lands *after* the new content has already been put in, so the
+     * dialog ends up on screen **empty**, with the password wiped out of it.
+     * That is exactly what "create database showed nothing" was. Showing the
+     * dialog on its own swaps the content of the same one instead, which is
+     * both correct and what it looked like it was meant to do.
+     *
+     * Order is therefore: notification → the dialog (replacing the form) →
+     * refresh · the refresh runs underneath the open dialog, so the new row is
+     * already in the table by the time it's closed.
+     *
+     * **Empty `$secrets` = an ordinary `saved()`.** The caller decides, because
+     * only the caller knows whether the password in its hand was generated or
+     * typed in by the admin — one has to be shown, the other is already in
+     * their hands, and showing it back teaches them to dismiss this dialog
+     * without reading it · rows that only give context (which database, which
+     * mailbox) belong in `$secrets` too, but they are **never a reason on their
+     * own** to interrupt with a dialog, so leave the whole array out when there
+     * is nothing that can only be read once.
+     *
+     * @param array<string,string> $secrets label => value, in the order they should be read · empty = nothing to reveal
+     * @param string $note extra sentence under the values (what else happened, a caveat) — plain text, and only ever shown when there is a dialog to put it in
+     * @param string $goAfterClose route to move to once the user closes the dialog · empty = stay put
+     * @param array<string,mixed> $extra
+     */
+    protected function revealed(
+        string $message,
+        string $table = '',
+        string $title = 'Copy this before closing',
+        array $secrets = [],
+        string $note = '',
+        string $goAfterClose = '',
+        array $extra = [],
+        int $status = 200,
+        array $notices = [],
+    ): Response {
+        // Nothing to reveal = an ordinary save · never an empty dialog the
+        // user has to dismiss to find out it had nothing in it
+        $secrets = array_filter($secrets, static fn($value): bool => trim((string) $value) !== '');
+
+        $actions = [['type' => 'notification', 'level' => 'success', 'message' => $message]];
+        $actions = array_merge($actions, self::noticeActions($notices));
+
+        if ($secrets === []) {
+            /*
+             * Nothing to keep on screen, so this is an ordinary save: close the
+             * form, and take the trip that was only ever postponed for the
+             * dialog's sake · leaving the admin on a create form they have
+             * already submitted is how the same account gets created twice
+             */
+            array_unshift($actions, ['type' => 'modal', 'action' => 'close']);
+            $actions[] = self::refreshAction($table);
+
+            if ($goAfterClose !== '') {
+                $actions[] = ['type' => 'redirect', 'url' => $goAfterClose, 'delay' => 1200];
+            }
+
+            return $this->done($message, $actions, $extra, $status);
+        }
+
+        // With a dialog open, the trip rides on its Close button instead
+        // (`data-go`) — navigating now would take the page and the dialog with it
+        $actions[] = $this->secretDialog($title, $secrets, $note, $goAfterClose);
+        $actions[] = self::refreshAction($table);
+
         return $this->done($message, $actions, $extra, $status);
+    }
+
+    /**
+     * The dialog that shows a value which exists nowhere else
+     *
+     * Assembled here rather than in each controller because every part of it
+     * is a rule that was got wrong somewhere before:
+     *
+     *   - **`html`, not `content`** — `ResponseHandler` reads `html` directly;
+     *     `content` is put through the template engine first, so text with a
+     *     `{` in it (a generated password genuinely can hold one) comes out
+     *     mangled or empty
+     *   - **a labelled Close button**, not only the corner X — closing is the
+     *     step that means "copied", and `.modal-close` (the class Modal binds
+     *     on its own) is styled as a 32px icon that can't carry a label, so
+     *     the button uses the panel's own `closeModal` action instead
+     *   - **a Copy button per value** — selecting a 20-character random string
+     *     by hand is where it gets truncated, and a truncated password looks
+     *     exactly like a wrong one
+     *   - **every value escaped**, including inside `data-copy-value` — the
+     *     text here is generated, but the labels beside it carry a domain or a
+     *     mailbox address the customer chose
+     *
+     * @param array<string,string> $secrets
+     * @return array<string,mixed>
+     */
+    private function secretDialog(string $title, array $secrets, string $note, string $goAfterClose): array
+    {
+        $esc = static fn(string $text): string => htmlspecialchars($text, ENT_QUOTES, 'UTF-8');
+
+        $rows = '';
+
+        foreach ($secrets as $label => $value) {
+            $value = (string) $value;
+
+            $rows .= sprintf(
+                '<dt>%s</dt><dd><code class="mono selectable">%s</code>'
+                .'<button type="button" class="btn small icon-copy" data-action="click.prevent:copyToClipboard"'
+                .' data-copy-value="%s">%s</button></dd>',
+                $esc($this->t((string) $label)),
+                $esc($value),
+                $esc($value),
+                $esc($this->t('Copy')),
+            );
+        }
+
+        return [
+            'type' => 'modal',
+            'action' => 'show',
+            'title' => $this->t($title),
+            'titleClass' => 'icon-lock',
+            'html' => sprintf(
+                '<div class="secret-reveal"><p>%s</p><dl>%s</dl>%s<div class="secret-actions">'
+                .'<button type="button" class="btn btn-primary icon-valid" data-action="click.prevent:closeModal"%s>%s</button>'
+                .'</div></div>',
+                $esc($this->t('Copy this password before closing — it is not stored anywhere')),
+                $rows,
+                $note === '' ? '' : '<p class="muted">'.$esc($note).'</p>',
+                $goAfterClose === '' ? '' : sprintf(' data-go="%s"', $esc($goAfterClose)),
+                $esc($this->t('Close')),
+            )
+        ];
     }
 
     /**
@@ -179,7 +380,7 @@ abstract class ApiController extends Controller
     {
         return $this->done($message, [
             ['type' => 'notification', 'level' => 'success', 'message' => $message],
-            ['type' => 'redirect', 'url' => 'reload', 'target' => $target]
+            self::refreshAction($target)
         ], $extra);
     }
 
@@ -266,7 +467,7 @@ abstract class ApiController extends Controller
     {
         return $problem->response(
             $this->t($message),
-            array_map(fn (string $text): string => $this->t($text), $fields),
+            array_map(fn(string $text): string => $this->t($text), $fields),
         );
     }
 

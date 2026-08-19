@@ -279,16 +279,60 @@ final class UsersController extends ApiController
         // key · values the caller needs sit at the top level (a generated
         // password has nowhere else to be looked up later, so it must live in
         // this response and in a dialog the user has to close themselves).
-        return $this->done(
-            $this->t('Account {user} created', ['user' => $username]),
-            $this->createdActions($username, $password, $wasRandom, $createdSite, $siteError, $sftpUsername, $sftpPassword, $sftpError),
-            ['user_id' => $id, 'username' => $username, 'must_change_password' => $wasRandom]
+        /*
+         * Only what the admin can't get anywhere else — a password they typed
+         * in themselves is already in their hands, and showing it back just
+         * teaches them to dismiss this dialog without reading it · each
+         * password travels next to the account name it belongs to, since this
+         * one dialog can be carrying two of them
+         */
+        $secrets = [];
+
+        if ($wasRandom) {
+            $secrets['Account'] = $username;
+            $secrets['Password'] = $password;
+        }
+
+        if ($sftpUsername !== null && $sftpPassword !== '') {
+            $secrets['SFTP account'] = $sftpUsername;
+            $secrets['SFTP password'] = $sftpPassword;
+        }
+
+        return $this->revealed(
+            $createdSite === null
+                ? $this->t('Account {user} created', ['user' => $username])
+                : $this->t('Account {user} created with website {domain}', ['user' => $username, 'domain' => (string) $createdSite['domain']]),
+            'users',
+            'Account created',
+            $secrets,
+            // The trip to the list waits for the Close button — navigating while
+            // the dialog is open takes the dialog along with the page, and this
+            // is the only place these passwords ever appear
+            goAfterClose: '/users',
+            extra: ['user_id' => $id, 'username' => $username, 'must_change_password' => $wasRandom]
              + ($wasRandom ? ['password' => $password] : [])
              + ($sftpUsername === null ? [] : ['sftp_username' => $sftpUsername, 'sftp_password' => $sftpPassword])
              + ($sftpError === '' ? [] : ['sftp_error' => $sftpError])
              + ($createdSite === null ? [] : ['site' => $createdSite])
              + ($siteError === '' ? [] : ['site_error' => $siteError]),
-            201,
+            status: 201,
+            notices: [
+                /*
+                 * A step that failed **after** the account was already created
+                 * — reported beside the success, never as an error · answering
+                 * with an error would read as "creation failed" and send the
+                 * admin round again into a username that now exists, with the
+                 * generated password lost in between
+                 */
+                ['message' => $siteError === '' ? '' : $this->t(
+                    'Account {user} created, but the website could not be created: {error}',
+                    ['user' => $username, 'error' => $siteError],
+                )],
+                ['message' => $sftpError === '' ? '' : $this->t(
+                    'Account {user} created, but SFTP could not be enabled: {error}',
+                    ['user' => $username, 'error' => $sftpError],
+                )],
+            ],
         )->withHeader('Location', '/api/v2/users/'.$id);
     }
 
@@ -560,9 +604,17 @@ final class UsersController extends ApiController
         // saved(), not completed() — this form opens in a Modal, so it must
         // close it on success, otherwise the Modal stays open with the
         // password field still filled in, looking like the save didn't go through
+        //
+        // **The table has to be named**, even though this endpoint is reached
+        // from two different screens: the SFTP page (where `sftpAccounts` is)
+        // and a user's own page (where it isn't) · the row's state and its
+        // "opened since" date both change here, and with no refresh the row
+        // kept saying Disabled until someone reloaded by hand · naming a table
+        // that isn't on the current page is safe now that the refresh action
+        // skips what it can't find instead of reloading the whole browser page
         return $this->saved(
             (string) ($result['message'] ?? 'SFTP enabled'),
-            '',
+            'sftpAccounts',
             is_array($result) ? $result : [],
         );
     }
@@ -577,7 +629,7 @@ final class UsersController extends ApiController
 
         return $this->completed(
             (string) ($result['message'] ?? 'SFTP disabled'),
-            '',
+            'sftpAccounts',
             is_array($result) ? $result : [],
         );
     }
@@ -696,34 +748,26 @@ final class UsersController extends ApiController
             'sessions_revoked' => $revoked
         ]);
 
-        return $this->done(
+        /*
+         * A system-generated password has **no other place it can be looked up
+         * later** — if the admin misses it, the whole reset has to happen again
+         * · so it goes into a dialog the user closes themselves, not a toast
+         * that vanishes on its own · a password the admin typed in is already
+         * in their hands, so that case is an ordinary "saved" with no dialog
+         */
+        return $this->revealed(
             $this->t('New password set for {user}', ['user' => (string) $user['username']]),
-            // A system-generated password has **no other place it can be looked
-            // up later** — if the admin misses it, the whole reset has to
-            // happen again · so the screen is told to open a dialog the user
-            // has to close themselves, not a toast that vanishes on its own in
-            // 3 seconds · the table is reloaded afterward.
+            'users',
+            'New password',
             $wasRandom ? [
-                [
-                    'type' => 'modal',
-                    'action' => 'show',
-                    'title' => 'New password',
-                    'content' => sprintf(
-                        '<p>New password for <strong>%s</strong> — copy it before closing this window,'
-                        .' since the system does not store it anywhere else</p><p class="mono selectable">%s</p>'
-                        .'<p class="muted">%d open session(s) have been revoked,'
-                        .' and this account must set a new password the next time it logs in</p>',
-                        htmlspecialchars((string) $user['username'], ENT_QUOTES, 'UTF-8'),
-                        htmlspecialchars($password, ENT_QUOTES, 'UTF-8'),
-                        $revoked,
-                    )
-                ],
-                ['type' => 'redirect', 'url' => 'reload', 'target' => 'users']
-            ] : [
-                ['type' => 'notification', 'level' => 'success', 'message' => $this->t('New password set for {user}', ['user' => (string) $user['username']])],
-                ['type' => 'redirect', 'url' => 'reload', 'target' => 'users']
-            ],
-            [
+                'Account' => (string) $user['username'],
+                'Password' => $password,
+            ] : [],
+            note: $this->t(
+                '{count} open session(s) have been revoked, and this account must set a new password the next time it logs in',
+                ['count' => $revoked],
+            ),
+            extra: [
                 'user_id' => $id,
                 'username' => (string) $user['username'],
                 'password' => $password,
@@ -819,109 +863,6 @@ final class UsersController extends ApiController
             'users',
             ['user_id' => $id, 'username' => (string) $user['username']],
         );
-    }
-
-    /**
-     * The screen's instructions after creating an account
-     *
-     * **A system-generated password must sit in a dialog the user closes
-     * themselves**, not a toast that vanishes on its own — there's nowhere else to
-     * look it up later, and missing it means the whole reset has to happen again ·
-     * and it must never navigate away from the page immediately, since changing
-     * pages would close that dialog right along with it (found by actually
-     * clicking through it in a browser).
-     *
-     * @param array<string,mixed>|null $site
-     * @return list<array<string,mixed>>
-     */
-    private function createdActions(
-        string $username,
-        string $password,
-        bool $wasRandom,
-        ?array $site,
-        string $siteError,
-        ?string $sftpUsername = null,
-        string $sftpPassword = '',
-        string $sftpError = '',
-    ): array {
-        $actions = [];
-
-        if ($siteError !== '') {
-            $actions[] = [
-                'type' => 'notification',
-                'level' => 'warning',
-                'duration' => 15000,
-                'message' => $this->t('Account {user} created, but the website could not be created: {error}', ['user' => $username, 'error' => $siteError])
-            ];
-        }
-
-        if ($sftpError !== '') {
-            $actions[] = [
-                'type' => 'notification',
-                'level' => 'warning',
-                'duration' => 15000,
-                'message' => $this->t('Account {user} created, but SFTP could not be enabled: {error}', ['user' => $username, 'error' => $sftpError])
-            ];
-        }
-
-        /*
-         * One dialog holding every credential this response is the only chance
-         * to copy — the SFTP password follows the same rule as the generated
-         * panel password: shown once, stored nowhere
-         */
-        $sftpBlock = ($sftpUsername === null || $sftpPassword === '')
-            ? ''
-            : '<p>' . $this->t('SFTP password for {user} — copy it now too, it is not stored anywhere either', ['user' => htmlspecialchars($sftpUsername, ENT_QUOTES, 'UTF-8')]) . '</p>'
-                . '<p class="mono selectable">' . htmlspecialchars($sftpPassword, ENT_QUOTES, 'UTF-8') . '</p>';
-
-        if ($wasRandom) {
-            $summary = $site === null
-                ? ''
-                : '<p class="muted">' . $this->t('Website {domain} was created too', ['domain' => htmlspecialchars((string) $site['domain'], ENT_QUOTES, 'UTF-8')]) . '</p>';
-
-            $actions[] = [
-                'type' => 'modal',
-                'action' => 'show',
-                'title' => 'Account created',
-                'content' => sprintf(
-                    '<p>Password for <strong>%s</strong> — copy it before closing this window,'
-                    .' since the system does not store it anywhere else</p><p class="mono selectable">%s</p>%s%s',
-                    htmlspecialchars($username, ENT_QUOTES, 'UTF-8'),
-                    htmlspecialchars($password, ENT_QUOTES, 'UTF-8'),
-                    $sftpBlock,
-                    $summary,
-                )
-            ];
-
-            return $actions;
-        }
-
-        // An admin-chosen panel password is never shown — but a generated SFTP
-        // password still has exactly this one chance to be copied, so it gets
-        // its own dialog and the redirect is skipped for it too
-        if ($sftpBlock !== '') {
-            $actions[] = [
-                'type' => 'modal',
-                'action' => 'show',
-                'title' => 'SFTP enabled',
-                'content' => $sftpBlock,
-            ];
-
-            return $actions;
-        }
-
-        $actions[] = [
-            'type' => 'notification',
-            'level' => 'success',
-            'message' => $site === null
-                ? $this->t('Account {user} created', ['user' => $username])
-                : $this->t('Account {user} created with website {domain}', ['user' => $username, 'domain' => (string) $site['domain']])
-        ];
-
-        // Only navigates back to the list page when there's no password dialog left open
-        $actions[] = ['type' => 'redirect', 'url' => '/app/users', 'delay' => 1200];
-
-        return $actions;
     }
 
     /**

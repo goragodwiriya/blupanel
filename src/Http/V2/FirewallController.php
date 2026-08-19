@@ -80,17 +80,14 @@ final class FirewallController extends ApiController
         $message = (string) ($result['message'] ?? 'Rule added — confirm it before the automatic rollback runs out');
 
         /*
-         * Closes the form first, then reloads the whole page (empty target) —
-         * the rules table is bound to the page's own data, not fetched on its
-         * own, so it can't be told to reload just the table · and this page
-         * also has a "pending confirmation" bar that needs updating too,
-         * which already lives outside the table
+         * Closes the form, then signals the page with no table named — the rules
+         * table is bound to the page's own data (`data-attr="data:rules"`)
+         * rather than fetching on its own, so `phpcp:reload` on the card is what
+         * brings it back up to date (see the `data-refresh-event` in
+         * firewall.html) · the "pending confirmation" bar refreshes off the
+         * `pending_rollback` in the body, which ui.js watches for
          */
-        return $this->done($message, [
-            ['type' => 'modal', 'action' => 'close'],
-            ['type' => 'notification', 'level' => 'success', 'message' => $message],
-            ['type' => 'redirect', 'url' => 'reload', 'target' => ''],
-        ], $result + ['pending_rollback' => $this->pendingRollback()])
+        return $this->saved($message, '', $result + ['pending_rollback' => $this->pendingRollback()])
             ->withHeader('Location', '/api/v2/firewall');
     }
 

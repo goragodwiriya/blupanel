@@ -5743,6 +5743,17 @@ components:
 
         ชนิดที่ใช้ได้: `notification` `alert` `modal` `redirect` `update` `render`
         `remove` `class` `attribute` `focus` `scroll` `clipboard` `download` `event`
+        และ `refresh` ซึ่งเป็นของ panel เอง (ตัวรับอยู่ใน `js/ui.js`)
+
+        **`refresh` คือวิธีเดียวที่ใช้บอกว่าหน้าจอล้าสมัยแล้ว** — โหลดตารางที่ระบุชื่อ
+        เมื่อหน้านั้นมีจริง แล้วส่งสัญญาณ `phpcp:reload` ให้คอมโพเนนต์ที่ผูก
+        `data-refresh-event` เสมอ · ห้ามใช้ `{"type":"redirect","url":"reload"}` แทน
+        เพราะเมื่อไม่เจอตารางชื่อนั้นในหน้าที่เปิดอยู่ มันถอยไป `window.location.reload()`
+        คือโหลดใหม่ทั้งเบราว์เซอร์ ซึ่งทิ้งหน้าต่างรหัสผ่านที่เพิ่งเปิดไปด้วย
+
+        **ห้ามส่ง `modal close` นำหน้า `modal show`** — `Modal.hide()` ตั้งเวลาล้าง
+        เนื้อในตัวเองไว้ 150ms ซึ่งมาถึงหลังเนื้อหาใหม่ถูกใส่ไปแล้ว หน้าต่างจึงเปิดขึ้นมา
+        ว่างเปล่า · การ `show` เฉย ๆ คือการสลับเนื้อในของหน้าต่างเดิมอยู่แล้ว
       items:
         type: object
         required: [type]
@@ -5751,9 +5762,11 @@ components:
           message: { type: string }
           title: { type: string }
           content: { type: string }
+          html: { type: string, description: "เนื้อหาของ modal — `ResponseHandler` อ่านคีย์นี้ ไม่ใช่ `content`" }
           level: { type: string, enum: [success, info, warning, error] }
-          url: { type: string, description: "`reload` = โหลดใหม่ · ที่เหลือคือปลายทางจริง" }
-          target: { type: string, description: "ชื่อ data-table ที่จะโหลดใหม่" }
+          duration: { type: integer, description: "มิลลิวินาทีที่แถบแจ้งเตือนค้างอยู่" }
+          url: { type: string, description: "ปลายทางที่จะพาไปหลังทำคำสั่งเสร็จ" }
+          target: { type: string, description: "ชื่อ data-table ที่จะโหลดใหม่ · คั่นด้วย , ได้หลายชื่อ · ว่าง = ส่งสัญญาณอย่างเดียว" }
           action: { type: string, enum: [show, open, close, hide] }
 
     BackupSchedule:

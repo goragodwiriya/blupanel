@@ -428,7 +428,7 @@ test('เพิ่ม DNS record ตรวจค่าตามชนิดจ�
     $deleted = $harness->request('DELETE', '/api/v2/dns-records/' . $created->data('record_id'));
 
     assertSame(200, $deleted->status, 'ลบสำเร็จต้องเป็น 200 พร้อมคำสั่งหน้าจอ');
-    assertSame(['notification', 'redirect'], $deleted->actionTypes(), 'ต้องแจ้งผลแล้วโหลดตารางใหม่');
+    assertSame(['notification', 'refresh'], $deleted->actionTypes(), 'ต้องแจ้งผลแล้วโหลดตารางใหม่');
     assertSame(
         1,
         count($harness->request('GET', '/api/v2/domains/' . $domainId . '/dns-records')->json['data']),

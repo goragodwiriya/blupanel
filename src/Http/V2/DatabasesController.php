@@ -88,14 +88,6 @@ final class DatabasesController extends ApiController
     }
 
     /**
-     * Create a database with its user
-     *
-     * The generated password is in the response **exactly once** — the panel
-     * never stores it anywhere (the old version sent it via query string during a
-     * redirect, which ended up in the web server's log and the browser's history
-     * · sending it in the response body has no such problem)
-     */
-    /**
      * The empty shell of the create-database form, with the command to open its modal
      *
      * A database can't be edited (only created or deleted), so there's no `show`
@@ -216,6 +208,14 @@ final class DatabasesController extends ApiController
         );
     }
 
+    /**
+     * Create a database with its user
+     *
+     * The generated password is in the response **exactly once** — the panel
+     * never stores it anywhere (the old version sent it via query string during a
+     * redirect, which ended up in the web server's log and the browser's history
+     * · sending it in the response body has no such problem)
+     */
     public function store(Request $request): Response
     {
         $result = $this->agent()->data('db.create', [
@@ -231,70 +231,54 @@ final class DatabasesController extends ApiController
             'charset' => $request->payloadString('charset') ?: 'utf8mb4',
         ], $this->ctx->actor($request));
 
-        $message = $this->t('Database {name} created', ['name' => (string) $result['name']]);
-
-        return $this->done($message, $this->createdActions($result, $message), $result, 201)
-            ->withHeader('Location', '/api/v2/databases/' . rawurlencode((string) $result['name']));
+        return $this->databaseCreated(
+            $result,
+            $this->t('Database {name} created', ['name' => (string) $result['name']]),
+        )->withHeader('Location', '/api/v2/databases/' . rawurlencode((string) $result['name']));
     }
 
     /**
-     * The screen actions after a database is created successfully — the same order every page in the system uses
+     * The screen's answer after a database is created
      *
-     * `Close modal → notification bar → (password dialog) → reload table`
+     * The order the whole panel uses after a modal form is saved —
+     * notification, then the dialog holding what can only be read once, then
+     * the table refresh underneath it (see `ApiController::revealed()`).
      *
-     * Three things that were once wrong here:
+     * Three things that were once wrong right here:
      *
-     *   1. **No notification bar at all** — clicking save just made the modal
+     *   1. **The dialog was opened straight after a `modal close`** ·
+     *      `Modal.hide()` clears its own body 150ms later, which landed after
+     *      the new content was already in place — so the dialog opened, then
+     *      blanked itself, and the password was gone with it. That is the
+     *      "created a database and never saw the password" report.
+     *   2. **No notification bar at all** — clicking save just made the modal
      *      disappear, and a user not watching the table closely couldn't tell
-     *      whether it succeeded or silently vanished, so they'd often click again.
-     *   2. **The password dialog sent `content`**, which `ResponseHandler` doesn't
-     *      recognize (it reads `html` or `template`) — so the dialog opened empty,
-     *      and the password, which has nowhere else to be seen again, vanished with it.
-     *   3. The dialog's text was Thai hardcoded in the source, bypassing the translator entirely.
+     *      whether it succeeded, so they'd often click again.
+     *   3. The dialog sent `content`, which `ResponseHandler` puts through the
+     *      template engine instead of showing as-is (it reads `html`).
      *
-     * @param array<string,mixed> $result
-     * @return list<array<string,mixed>>
+     * @param array<string,mixed> $result what `db.create` answered
      */
-    private function createdActions(array $result, string $message): array
+    private function databaseCreated(array $result, string $message): Response
     {
-        $actions = [
-            ['type' => 'modal', 'action' => 'close'],
-            ['type' => 'notification', 'level' => 'success', 'message' => $message],
-        ];
-
+        // `db.create` generates the password itself (the form has no password
+        // field at all), but the dialog is still tied to it genuinely being
+        // there — the database's name and its user are in the table already,
+        // and a dialog holding nothing new is just something to dismiss
         $password = (string) ($result['password'] ?? '');
 
-        // A generated password must sit in a box the user closes themselves, not a bar that vanishes on its own after 5 seconds
-        if ($password !== '') {
-            $actions[] = [
-                'type' => 'modal',
-                'action' => 'show',
-                'title' => $this->t('Database created'),
-                'titleClass' => 'icon-database',
-                'html' => sprintf(
-                    '<p>%s</p><p class="mono selectable">%s</p><p>%s</p><p class="mono selectable">%s</p>',
-                    htmlspecialchars(
-                        $this->t('Database {name} · user {user}', [
-                            'name' => (string) $result['name'],
-                            'user' => (string) ($result['username'] ?? ''),
-                        ]),
-                        ENT_QUOTES,
-                        'UTF-8',
-                    ),
-                    htmlspecialchars((string) $result['name'], ENT_QUOTES, 'UTF-8'),
-                    htmlspecialchars(
-                        $this->t('Copy this password before closing — it is not stored anywhere'),
-                        ENT_QUOTES,
-                        'UTF-8',
-                    ),
-                    htmlspecialchars($password, ENT_QUOTES, 'UTF-8'),
-                ),
-            ];
-        }
-
-        $actions[] = ['type' => 'redirect', 'url' => 'reload', 'target' => 'databases'];
-
-        return $actions;
+        return $this->revealed(
+            $message,
+            'databases',
+            'Database created',
+            $password === '' ? [] : [
+                'Database' => (string) ($result['name'] ?? ''),
+                'User' => (string) ($result['username'] ?? ''),
+                'Password' => $password,
+            ],
+            extra: $result,
+            status: 201,
+        );
     }
 
     /**
@@ -345,28 +329,17 @@ final class DatabasesController extends ApiController
             'host' => $request->payloadString('host') ?: 'localhost',
         ], $this->ctx->actor($request));
 
-        return $this->done(
+        $password = (string) ($result['password'] ?? '');
+
+        return $this->revealed(
             $this->t('New password set for {user}', ['user' => (string) ($result['username'] ?? '')]),
-            [[
-                'type' => 'modal',
-                'action' => 'show',
-                'title' => $this->t('New password'),
-                'titleClass' => 'icon-lock',
-                // `html`, not `content` — ResponseHandler only reads this key
-                // (the old version sent `content`, so the dialog opened empty with the password gone along with it)
-                'html' => sprintf(
-                    '<p>%s</p><p class="mono selectable">%s</p>',
-                    htmlspecialchars(
-                        $this->t('New password for database user {user}', [
-                            'user' => (string) ($result['username'] ?? ''),
-                        ]) . ' — ' . $this->t('Copy this password before closing — it is not stored anywhere'),
-                        ENT_QUOTES,
-                        'UTF-8',
-                    ),
-                    htmlspecialchars((string) ($result['password'] ?? ''), ENT_QUOTES, 'UTF-8'),
-                ),
-            ]],
-            $result,
+            'databases',
+            'New password',
+            $password === '' ? [] : [
+                'User' => (string) ($result['username'] ?? ''),
+                'Password' => $password,
+            ],
+            extra: $result,
         );
     }
 
