@@ -318,3 +318,51 @@ test('ชื่อผู้ใช้ที่ถูกสงวนไว้ต�
     assertTrue($id > 0, 'ชื่อที่ถูกกฎต้องสร้างได้');
     assertSame(Permissions::WEBADMIN, $users->find($id)['role'], 'บัญชีโฮสติ้งต้องเป็น webadmin');
 });
+
+test('บ้านของบัญชีต้องมีที่อัปโหลดตั้งแต่วันแรก ไม่ใช่รอเว็บแรก', static function (): void {
+    /*
+     * createHome() เดิมสร้างแค่ domains/ กับ logs/ ซึ่งเป็นรูปของเลย์เอาต์ phpcp
+     * บัญชีแบบ cpanel (ค่าเริ่มต้นของระบบ) จึงได้บ้านที่ **ไม่มี public_html และ
+     * ไม่มี backup** เลย ทั้งสองอันไม่ถูกสร้างจนกว่าเว็บแรกจะถูกสร้าง
+     *
+     * ผลจริงที่เจอ:
+     *   - เปิด SFTP พร้อมสร้างบัญชี (customer.create) → ลูกค้าต่อเข้ามาแล้วไม่มี
+     *     โฟลเดอร์ให้อัปโหลด เห็นแต่ logs/ กับ tmp/
+     *   - ย้ายบ้านเก่ามาวางเองแล้วกด "reset owner" → ฟ้อง "Website directory not found"
+     *
+     * รายการโฟลเดอร์เป็นคำตอบของ SiteLayout ที่เดียว ไม่ใช่รายการที่เขียนซ้ำใน
+     * AccountProvisioner — ที่นี่จึงตรวจว่า "ผลลัพธ์ตรงกับเลย์เอาต์" ไม่ใช่ตรงกับรายชื่อคงที่
+     */
+    $provisioner = new AccountProvisioner(new ApacheDriver(new Template(PHPCP_ROOT.'/templates')));
+
+    foreach ([Phpcp\Domain\SiteLayout::Cpanel, Phpcp\Domain\SiteLayout::Phpcp] as $layout) {
+        $account = new UserAccount(9, 'newcomer', $layout);
+        $executor = new AccountExecutor();
+
+        $provisioner->ensure($executor, $account);
+
+        foreach ($layout->accountDirectories($account->home()) as $dir => $mode) {
+            assertTrue(
+                in_array('mkdir '.$dir.' '.decoct($mode), $executor->commands, true),
+                "เลย์เอาต์ {$layout->value} ต้องสร้าง {$dir} ตอนสร้างบัญชี — ได้: ".implode(' · ', $executor->commands),
+            );
+        }
+    }
+});
+
+test('บัญชี cpanel ต้องได้ public_html และ backup ตั้งแต่สร้างบัญชี', static function (): void {
+    // ตรึงชื่อโฟลเดอร์จริงไว้ด้วย ไม่ใช่ตรวจแค่ว่า "ตรงกับเลย์เอาต์" — ถ้าเลย์เอาต์
+    // เปลี่ยนคำตอบไปเงียบ ๆ เทสต์ข้างบนจะยังผ่านทั้งที่ลูกค้าไม่มีที่อัปโหลดเหมือนเดิม
+    $provisioner = new AccountProvisioner(new ApacheDriver(new Template(PHPCP_ROOT.'/templates')));
+    $account = new UserAccount(9, 'cpaneluser', Phpcp\Domain\SiteLayout::Cpanel);
+    $executor = new AccountExecutor();
+
+    $provisioner->ensure($executor, $account);
+
+    foreach (['/public_html', '/logs', '/backup'] as $suffix) {
+        assertTrue(
+            in_array('mkdir '.$account->home().$suffix.' 750', $executor->commands, true),
+            "ต้องสร้าง {$suffix} ด้วยสิทธิ์ 0750 — ได้: ".implode(' · ', $executor->commands),
+        );
+    }
+});

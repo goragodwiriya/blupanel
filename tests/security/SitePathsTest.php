@@ -561,3 +561,112 @@ test('Domain Pointer ต้องปิดอยู่จนกว่าผู�
         'ตัวติดตั้งต้องไม่ตั้ง pointer_roots ให้เองเมื่อผู้ดูแลไม่ได้ระบุ',
     );
 });
+
+// --- ปุ่มซ่อมสิทธิ์ไฟล์ (site.reset_owner) ----------------------------------
+
+/**
+ * เว็บหนึ่งเว็บพร้อมบัญชีเจ้าของจริงในฐานข้อมูล + sandbox ที่ map ทุกเส้นทางลงโฟลเดอร์ชั่วคราว
+ *
+ * @return array{db:Phpcp\Kernel\Db,site:int,executor:Phpcp\Agent\Executor\SandboxExecutor,context:Phpcp\Agent\Context,owner:UserAccount}
+ */
+function resetOwnerFixture(string $username, string $domain): array
+{
+    $db = migratedDb();
+    $users = new Phpcp\Domain\UserRepository($db);
+    $now = time();
+
+    $ownerId = $users->createHostingAccount($username, 'Reset-Owner-Password-11', $username.'@example.com');
+    $db->update('users', ['system_user' => $username, 'main_domain' => $domain], ['id' => $ownerId]);
+
+    $siteId = $db->insert('sites', [
+        'primary_domain' => $domain,
+        'docroot' => '',
+        'php_version' => '8.4',
+        'owner_user_id' => $ownerId,
+        'docroot_override' => '',
+        'status' => 'active',
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+
+    $prefix = sys_get_temp_dir().'/phpcp-reset-'.getmypid().'-'.bin2hex(random_bytes(4));
+    register_shutdown_function(static fn () => exec('rm -rf '.escapeshellarg($prefix)));
+
+    return [
+        'db' => $db,
+        'site' => $siteId,
+        'executor' => new Phpcp\Agent\Executor\SandboxExecutor($prefix),
+        'context' => new Phpcp\Agent\Context(
+            new Phpcp\Agent\Actor(1, 'tester', Phpcp\Security\Permissions::SUPERADMIN, '127.0.0.1', 'test'),
+            Phpcp\Kernel\Config::load(PHPCP_ROOT),
+            $db,
+        ),
+        'owner' => new UserAccount($ownerId, $username, null, $domain),
+    ];
+}
+
+test('reset owner ต้องสร้างโฟลเดอร์ที่หายไปให้ ไม่ใช่ฟ้องว่าไม่พบ', static function (): void {
+    /*
+     * อาการจริง: ลบบัญชีเก่าแล้วโฟลเดอร์ไม่หาย → สร้างบัญชีใหม่ → ย้ายโฟลเดอร์เดิม
+     * มาเป็นบ้านของบัญชีใหม่ด้วยมือ → กด reset owner แล้วได้
+     * "Website directory not found: /home/service/.phpcp/gcms.in.th"
+     *
+     * สถานะแบบนี้คือ**เหตุผลที่ปุ่มนี้มีอยู่** ไม่ใช่เหตุผลที่จะปฏิเสธ — ปุ่มซ่อมที่
+     * ทำงานได้เฉพาะตอนที่ไม่มีอะไรเสีย ไม่ใช่ปุ่มซ่อม · ทางแก้เดียวที่เหลือคือ
+     * ssh เข้าเครื่องไป mkdir เอง ซึ่งเป็นสิ่งที่ panel ต้องทำแทนได้อยู่แล้ว
+     */
+    $fixture = resetOwnerFixture('resetowner', 'reset.example.com');
+    $executor = $fixture['executor'];
+    $owner = $fixture['owner'];
+
+    // มีแต่บ้าน — ไม่มี .phpcp/<domain>, public_html, logs/<domain> เลยสักอัน
+    $executor->makeDirectory($executor->path($owner->home()), 0750);
+
+    $result = (new Phpcp\Agent\Capability\SiteResetOwner())->run(
+        ['site_id' => $fixture['site'], 'fix_permissions' => false],
+        $executor,
+        $fixture['context'],
+    );
+
+    $site = (new Phpcp\Domain\SiteRepository($fixture['db']))->load($fixture['site']);
+
+    foreach ([$site->root(), $site->docroot(), $site->logDir(), $site->backupDir()] as $dir) {
+        assertTrue(
+            $executor->exists($executor->path($dir)),
+            "ต้องสร้าง {$dir} ให้ระหว่างซ่อม",
+        );
+    }
+
+    assertTrue(
+        in_array($site->root(), $result['created'], true),
+        'ต้องรายงานว่าโฟลเดอร์ไหนหายไปบ้าง ไม่ใช่ซ่อมเงียบ ๆ — ได้: '.implode(', ', $result['created']),
+    );
+    assertTrue(
+        str_contains($result['message'], 'missing director'),
+        'ข้อความที่ผู้ใช้เห็นต้องบอกว่ามีการสร้างโฟลเดอร์ที่หายไป — ได้: '.$result['message'],
+    );
+});
+
+test('reset owner ต้องยังปฏิเสธเมื่อบ้านของบัญชีไม่มีอยู่จริง', static function (): void {
+    /*
+     * บ้านหายทั้งก้อน = ยังไม่เคยมีบัญชีระบบให้เจ้าของรายนี้เลย · mkdir -p ตรงนี้จะ
+     * "ตอบ" ด้วยการวางโฟลเดอร์ของ root ไว้ในที่ที่ควรเป็นบ้านของผู้ใช้ แล้ว chown
+     * ถัดไปก็ล้มด้วยชื่อผู้ใช้ที่ไม่มีอยู่จริงอยู่ดี — บอกสาเหตุตั้งแต่ยังไม่แตะอะไรดีกว่า
+     */
+    $fixture = resetOwnerFixture('nohomeowner', 'nohome.example.com');
+
+    assertRejects(
+        ValidationError::class,
+        static fn () => (new Phpcp\Agent\Capability\SiteResetOwner())->run(
+            ['site_id' => $fixture['site'], 'fix_permissions' => false],
+            $fixture['executor'],
+            $fixture['context'],
+        ),
+        'บ้านที่ไม่มีอยู่จริงต้องไม่ถูกสร้างขึ้นมาเอง',
+    );
+
+    assertTrue(
+        !$fixture['executor']->exists($fixture['executor']->path($fixture['owner']->home())),
+        'ต้องไม่สร้างบ้านให้เองระหว่างที่ปฏิเสธ',
+    );
+});

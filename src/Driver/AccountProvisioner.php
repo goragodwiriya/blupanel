@@ -126,14 +126,24 @@ final class AccountProvisioner
      * looks: a user can traverse into their own home, but can't `ls` to
      * list every home there — so a customer never even learns how many
      * other customers exist on this machine, let alone their names.
+     *
+     * **Which directories those are is the layout's answer, never a list
+     * written out again here** ({@see \Phpcp\Domain\SiteLayout::accountDirectories()})
+     * · this used to create `domains/` and `logs/` only, which is the phpcp
+     * layout's shape — a cpanel account (the default since the layout was
+     * added) therefore got a home with **no `public_html` and no `backup`**
+     * in it at all, and neither one is created until that account's first
+     * site is · an account created with SFTP switched on and no site yet
+     * lands the customer in a home with nowhere to upload to, and pressing
+     * "reset owner" later reported a directory that was never created.
      */
     private function createHome(Executor $executor, UserAccount $account): void
     {
         $executor->makeDirectory($executor->path(\Phpcp\Kernel\Paths::usersDir()), 0711);
         $executor->makeDirectory($executor->path($account->home()), 0750);
 
-        foreach ([$account->domainsDir(), $account->logDir()] as $dir) {
-            $executor->makeDirectory($executor->path($dir), 0750);
+        foreach ($account->layout()->accountDirectories($account->home()) as $dir => $mode) {
+            $executor->makeDirectory($executor->path($dir), $mode);
         }
 
         // tmp and .ssh must never be readable by the web server's group —

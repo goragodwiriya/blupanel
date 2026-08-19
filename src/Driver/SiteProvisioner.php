@@ -75,11 +75,7 @@ final class SiteProvisioner
      */
     public function createDirectories(Executor $executor, Site $site): void
     {
-        $executor->makeDirectory($executor->path($site->root()), 0750);
-
-        foreach ([$site->docroot(), $site->logDir(), $site->tmpDir(), $site->backupDir()] as $dir) {
-            $executor->makeDirectory($executor->path($dir), 0750);
-        }
+        $this->ensureDirectories($executor, $site);
 
         // The generated vhost includes an `IncludeOptional` for the site's admin config directory.
         // Creating the site while that directory is still absent makes Apache reject the entire config
@@ -105,6 +101,47 @@ final class SiteProvisioner
         }
 
         $this->setOwnership($executor, $site);
+    }
+
+    /**
+     * Creates whatever this site's directory set is missing — **and reports what was missing**
+     *
+     * Split out of `createDirectories()` so creating a site and repairing one
+     * run the exact same list · `site.reset_owner` used to refuse outright when
+     * the site's directory wasn't there ("Website directory not found"), which
+     * is precisely the state the repair button exists to get out of: a home
+     * restored from another machine, a folder moved by hand after an account
+     * was recreated, or an account whose home predates a layout change · a
+     * button that only works when nothing is wrong isn't a repair button.
+     *
+     * Never creates the home itself — an absent home means the system account
+     * was never provisioned, and `mkdir -p` would answer that by planting a
+     * root-owned directory where a user's home belongs · the caller checks for
+     * it and says so instead.
+     *
+     * @return list<string> the directories that genuinely had to be created, in order
+     */
+    public function ensureDirectories(Executor $executor, Site $site): array
+    {
+        $created = [];
+
+        // root() first: in the cpanel layout every other path here is a
+        // sibling of it, not a child, so ordering is only about reading the
+        // report back in a sensible order
+        $wanted = [$site->root(), $site->docroot(), $site->logDir(), $site->tmpDir(), $site->backupDir()];
+
+        foreach ($wanted as $dir) {
+            $path = $executor->path($dir);
+
+            if ($executor->exists($path)) {
+                continue;
+            }
+
+            $executor->makeDirectory($path, 0750);
+            $created[] = $dir;
+        }
+
+        return $created;
     }
 
     /**

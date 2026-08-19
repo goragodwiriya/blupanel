@@ -88,9 +88,36 @@ final class SiteResetOwner extends SiteCapability implements Capability
         // Guards against accidentally targeting the panel's own path, even if the database was tampered with to point there
         SelfProtection::assertPath($root);
 
-        if (!$executor->exists($resolved)) {
-            throw new ValidationError("Website directory not found: {$root}");
+        $provisioner = $this->provisioner($context);
+
+        /*
+         * A missing directory is repaired, not reported as a refusal
+         *
+         * This used to answer "Website directory not found: <path>" and stop —
+         * but the states that produce a missing directory are exactly the ones
+         * this button exists for: an account recreated with its old home moved
+         * into place by hand, a home restored from another machine, an account
+         * created before `public_html`/`backup` were made at account level, or
+         * provisioning that stopped halfway · answering "not found" left the
+         * only fix outside the panel entirely, at a root shell.
+         *
+         * **The home itself is still a hard stop** — an absent home means no
+         * system account was ever provisioned for this owner, and `mkdir -p`
+         * would answer that by creating a root-owned directory in place of a
+         * user's home · the chown further down would fail on an unknown user
+         * name anyway, and this says why while nothing has been touched yet.
+         */
+        $home = $site->owner->home();
+
+        if (!$executor->exists($executor->path($home))) {
+            throw new ValidationError(
+                "The account's home directory does not exist: {$home} — "
+                . "no system account has been provisioned for {$site->systemUser()} yet, "
+                . 'so there is nothing to reset the ownership of (creating a website for this account creates it)',
+            );
         }
+
+        $repaired = $provisioner->ensureDirectories($executor, $site);
 
         // Checked again after realpath — a symlink pointing outside the
         // website's own space would let chown -R follow it and change
@@ -104,7 +131,7 @@ final class SiteResetOwner extends SiteCapability implements Capability
         }
 
         $owner = $site->systemUser();
-        $group = $this->provisioner($context)->webserver()->runAsGroup();
+        $group = $provisioner->webserver()->runAsGroup();
 
         $before = $this->sample($executor, $site);
 
@@ -158,14 +185,28 @@ final class SiteResetOwner extends SiteCapability implements Capability
             'after' => $after,
             'permissions_reset' => $args['fix_permissions'],
             'permission_passes' => $changedModes,
+            // What had to be created is part of the answer, never a silent
+            // side effect — a directory that was missing at all says something
+            // about this site the admin needs to know (files restored to the
+            // wrong place, an account rebuilt by hand), and staying quiet about
+            // it would make a genuinely different outcome look routine
+            'created' => $repaired,
             'message' => sprintf(
-                "Set %s's file ownership to %s:%s%s",
+                "Set %s's file ownership to %s:%s%s%s",
                 $site->domain,
                 $owner,
                 $group,
                 $args['fix_permissions']
                     ? ' and set directory permissions to 0750, files to 0640'
                     : '',
+                $repaired === []
+                    ? ''
+                    : sprintf(
+                        ' · created %d missing %s: %s',
+                        count($repaired),
+                        count($repaired) === 1 ? 'directory' : 'directories',
+                        implode(', ', $repaired),
+                    ),
             ),
         ];
     }

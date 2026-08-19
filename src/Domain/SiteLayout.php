@@ -169,11 +169,56 @@ enum SiteLayout: string
     }
 
     /**
+     * Every directory the **account itself** needs, before it owns a single site
+     *
+     * A hosting account is usable before its first site exists — SFTP can be
+     * switched on at creation time (`customer.create` with a password), and the
+     * file manager offers the home as a scope · what that customer finds when
+     * they connect is whatever this list created, so a layout's landing place
+     * has to be here and not wait for a site:
+     *
+     *   - **cpanel** — `public_html` is where the first site's files go
+     *     ({@see docroot()} returns it for the primary domain, and an account
+     *     with no `main_domain` yet treats its first domain as primary) ·
+     *     connecting over SFTP to a home with no `public_html` in it looks like
+     *     a broken account to anyone arriving from cPanel/DirectAdmin
+     *   - **phpcp** — `domains/`, the tier every site is created underneath
+     *
+     * `logs` and `backup` are shared by every site the account owns
+     * ({@see logDir()} splits per domain *inside* `logs` in the cpanel layout),
+     * so they belong to the account too, never to whichever site happened to be
+     * created first.
+     *
+     * @return array<string,int> path => mode
+     */
+    public function accountDirectories(string $home): array
+    {
+        $primary = match ($this) {
+            // Not `docroot()` with a made-up domain — this is the tier sites are
+            // created under, and it has no domain of its own
+            self::Phpcp => $home . '/domains',
+            self::Cpanel => $home . '/public_html',
+        };
+
+        return [
+            $primary => 0750,
+            $home . '/logs' => 0750,
+            $this->backupDir($home) => 0750,
+        ];
+    }
+
+    /**
      * Every directory that must actually exist before a site can work, with the permissions each needs
      *
      * Gathered here because whoever creates the account and whoever creates the site
      * are different code paths, and they've drifted out of sync before — the layout
      * is the one place that actually knows everything its own shape requires.
+     *
+     * **Deliberately only this site's own directories**, never the account's
+     * ({@see accountDirectories()}) — this list is also what `site.reset_owner`
+     * chowns (see `SiteProvisioner::ownershipTargets()`), and a site's repair
+     * button reaching into a *sibling* site's docroot would break the
+     * one-site-at-a-time rule that makes a recursive chown safe to press.
      *
      * @return array<string,int> path => mode
      */
