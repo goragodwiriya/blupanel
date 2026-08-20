@@ -38,6 +38,14 @@
             one: the question an admin actually has is "what can this site run
             on", and answering it from two lists means comparing across them.
             The `state` column carries the difference instead.
+
+            `install` tests `row.state`, not a bare `state`: TableManager
+            evaluates a row condition with `{state: row, data: row, row: row,
+            item: row}` as the scope, and the evaluator resolves names against
+            that scope before the row's own fields. A bare `state` therefore
+            reads back the whole row object, `row === "available"` is never
+            true, and the button never renders. Only those four names collide —
+            every other field here is safe to reference directly.
           -->
           <table class="table border fullwidth"
                  data-table="phpVersions"
@@ -46,16 +54,16 @@
                  data-row-actions='{
                    "install": {
                      "title": "Install",
-                     "className": "btn small btn-success icon-download",
+                     "className": "btn btn-success icon-download",
                      "method": "post",
                      "url": "/api/v2/php-versions",
                      "params": {"version": "{version}"},
-                     "condition": "${state === \"available\"}",
+                     "condition": "${row.state === \"available\"}",
                      "confirm": "Install this PHP version? It takes a few minutes and runs in the background."
                    },
                    "remove": {
                      "title": "Remove",
-                     "className": "btn small btn-danger icon-delete",
+                     "className": "btn btn-danger icon-delete",
                      "method": "delete",
                      "url": "/api/v2/php-versions/{version}",
                      "condition": "${removable}",
