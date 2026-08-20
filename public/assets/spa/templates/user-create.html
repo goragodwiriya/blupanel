@@ -50,7 +50,7 @@
                  underneath, which reads as a chore instead of an offer — so
                  admins typed their own, and a password thought up on the spot is
                  the weakest one on the machine -->
-            <div class="from-group bottom">
+            <div class="form-group bottom">
               <div class="width90">
                 <label for="nu_password" data-i18n>Password</label>
                 <span class="form-control icon-lock">
@@ -58,93 +58,96 @@
                 </span>
               </div>
               <div>
-                <button type="button" class="btn small icon-refresh" data-action="click.prevent:suggestPassword" data-password-target="nu_password" data-i18n>Generate a new
+                <button type="button" class="btn fullwidth icon-refresh" data-action="click.prevent:suggestPassword" data-password-target="nu_password" data-i18n>Generate a new
                   one</button>
-                <button type="button" class="btn small icon-copy" data-action="click.prevent:copyField" data-copy-target="nu_password" data-i18n>Copy</button>
+              </div>
+              <div>
+                <button type="button" class="btn fullwidth icon-copy" data-action="click.prevent:copyField" data-copy-target="nu_password" data-i18n>Copy</button>
               </div>
             </div>
-            <div class="comment" data-i18n>SFTP gets this same password. Leave empty and the system generates one instead.</div>
-          </fieldset>
-          <fieldset>
-            <legend class="icon-link" data-i18n>First website</legend>
-            <div class="form-group">
-              <div class="width50">
-                <label for="nu_domain" data-i18n>Domain</label>
-                <span class="form-control icon-website">
-                  <input type="text" id="nu_domain" name="domain" maxlength="253" autocomplete="off" placeholder="example.com">
-                </span>
-                <div class="comment" data-i18n>Leave empty to create the account without a website</div>
-              </div>
-              <div class="width50">
-                <label for="nu_php" data-i18n>PHP version</label>
-                <span class="form-control icon-code">
-                  <select id="nu_php" name="php_version" data-options-key="php_version">
-                  </select>
-                </span>
-              </div>
-            </div>
-          </fieldset>
-          <fieldset>
-            <legend class="icon-meter" data-i18n>Quota</legend>
-            <div class="form-group">
-              <div class="width25">
-                <label for="nu_q_domains" data-i18n>Domains</label>
-                <span class="form-control icon-number"><input type="number" id="nu_q_domains" name="quota_domains" min="-1" data-allow-negative="true" value="10"></span>
-              </div>
-              <div class="width25">
-                <label for="nu_q_subdomains" data-i18n>Subdomains</label>
-                <span class="form-control icon-number"><input type="number" id="nu_q_subdomains" name="quota_subdomains" min="-1" data-allow-negative="true" value="20"></span>
-              </div>
-              <div class="width25">
-                <label for="nu_q_aliases" data-i18n>Domain aliases</label>
-                <span class="form-control icon-number"><input type="number" id="nu_q_aliases" name="quota_aliases" min="-1" data-allow-negative="true" value="50"></span>
-              </div>
-              <div class="width25">
-                <label for="nu_q_emails" data-i18n>Email</label>
-                <span class="form-control icon-number"><input type="number" id="nu_q_emails" name="quota_emails" min="-1" data-allow-negative="true" value="100"></span>
-              </div>
-            </div>
-            <div class="form-group">
-              <div class="width25">
-                <label for="nu_q_databases" data-i18n>Databases</label>
-                <span class="form-control icon-number"><input type="number" id="nu_q_databases" name="quota_databases" min="-1" data-allow-negative="true" value="10"></span>
-                <div class="comment" data-i18n>-1 = unlimited</div>
-              </div>
-              <div class="width25">
-                <label for="nu_q_ftp" data-i18n>SFTP</label>
-                <span class="form-control icon-folder">
-                  <select id="nu_q_ftp" name="quota_ftp_users">
-                    <option value="-1" data-i18n>Allowed in this package</option>
-                    <option value="0" data-i18n>Not included</option>
-                  </select>
-                </span>
-              </div>
-              <div class="width25">
-                <label for="nu_q_disk" data-i18n>Disk space (MB)</label>
-                <span class="form-control icon-number"><input type="number" id="nu_q_disk" name="disk_quota_mb" min="-1" data-allow-negative="true" value="10240"></span>
-              </div>
-              <div class="width25">
-                <label for="nu_expiry" data-i18n>Expires</label>
-                <span class="form-control icon-calendar">
-                  <input type="date" id="nu_expiry" name="expiry_at">
-                </span>
-                <div class="comment" data-i18n>Leave blank for no expiry date</div>
-              </div>
-            </div>
-            <!-- SFTP enabled in the same command as the account, using the same
+      </div>
+      <div class="comment" data-i18n>SFTP gets this same password. Leave empty and the system generates one instead.</div>
+      </fieldset>
+      <fieldset>
+        <legend class="icon-link" data-i18n>First website</legend>
+        <div class="form-group">
+          <div class="width50">
+            <label for="nu_domain" data-i18n>Domain</label>
+            <span class="form-control icon-website">
+              <input type="text" id="nu_domain" name="domain" maxlength="253" autocomplete="off" placeholder="example.com">
+            </span>
+            <div class="comment" data-i18n>Leave empty to create the account without a website</div>
+          </div>
+          <div class="width50">
+            <label for="nu_php" data-i18n>PHP version</label>
+            <span class="form-control icon-code">
+              <select id="nu_php" name="php_version" data-options-key="php_version">
+              </select>
+            </span>
+          </div>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend class="icon-meter" data-i18n>Quota</legend>
+        <div class="form-group">
+          <div class="width25">
+            <label for="nu_q_domains" data-i18n>Domains</label>
+            <span class="form-control icon-number"><input type="number" id="nu_q_domains" name="quota_domains" min="-1" data-allow-negative="true" value="10"></span>
+          </div>
+          <div class="width25">
+            <label for="nu_q_subdomains" data-i18n>Subdomains</label>
+            <span class="form-control icon-number"><input type="number" id="nu_q_subdomains" name="quota_subdomains" min="-1" data-allow-negative="true" value="20"></span>
+          </div>
+          <div class="width25">
+            <label for="nu_q_aliases" data-i18n>Domain aliases</label>
+            <span class="form-control icon-number"><input type="number" id="nu_q_aliases" name="quota_aliases" min="-1" data-allow-negative="true" value="50"></span>
+          </div>
+          <div class="width25">
+            <label for="nu_q_emails" data-i18n>Email</label>
+            <span class="form-control icon-number"><input type="number" id="nu_q_emails" name="quota_emails" min="-1" data-allow-negative="true" value="100"></span>
+          </div>
+        </div>
+        <div class="form-group">
+          <div class="width25">
+            <label for="nu_q_databases" data-i18n>Databases</label>
+            <span class="form-control icon-number"><input type="number" id="nu_q_databases" name="quota_databases" min="-1" data-allow-negative="true" value="10"></span>
+            <div class="comment" data-i18n>-1 = unlimited</div>
+          </div>
+          <div class="width25">
+            <label for="nu_q_ftp" data-i18n>SFTP</label>
+            <span class="form-control icon-folder">
+              <select id="nu_q_ftp" name="quota_ftp_users">
+                <option value="-1" data-i18n>Allowed in this package</option>
+                <option value="0" data-i18n>Not included</option>
+              </select>
+            </span>
+          </div>
+          <div class="width25">
+            <label for="nu_q_disk" data-i18n>Disk space (MB)</label>
+            <span class="form-control icon-number"><input type="number" id="nu_q_disk" name="disk_quota_mb" min="-1" data-allow-negative="true" value="10240"></span>
+          </div>
+          <div class="width25">
+            <label for="nu_expiry" data-i18n>Expires</label>
+            <span class="form-control icon-calendar">
+              <input type="date" id="nu_expiry" name="expiry_at">
+            </span>
+            <div class="comment" data-i18n>Leave blank for no expiry date</div>
+          </div>
+        </div>
+        <!-- SFTP enabled in the same command as the account, using the same
                  password as the panel login — they are one identity to the
                  customer, and they are handed over together in one welcome email -->
-            <div>
-              <input type="checkbox" class="switch" id="nu_sftp" name="sftp" value="1">
-              <label for="nu_sftp" data-i18n>Enable SFTP now</label>
-              <div class="comment" data-i18n>Uses the password above. Ignored when the package does not include SFTP. Applies to hosting accounts only.</div>
-            </div>
-          </fieldset>
-          <fieldset class="submit">
-            <button type="submit" class="btn btn-primary icon-save" data-i18n>Add user</button>
-          </fieldset>
-        </form>
-      </div>
+        <div>
+          <input type="checkbox" class="switch" id="nu_sftp" name="sftp" value="1">
+          <label for="nu_sftp" data-i18n>Enable SFTP now</label>
+          <div class="comment" data-i18n>Uses the password above. Ignored when the package does not include SFTP. Applies to hosting accounts only.</div>
+        </div>
+      </fieldset>
+      <fieldset class="submit">
+        <button type="submit" class="btn btn-primary icon-save" data-i18n>Add user</button>
+      </fieldset>
+      </form>
     </div>
-  </main>
+</div>
+</main>
 </div>
