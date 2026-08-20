@@ -118,9 +118,6 @@ final class SiteSetDomains extends SiteCapability
             sslMode: $site->sslMode,
             status: $site->status,
             aliases: $allAliases,
-            memoryLimitMb: $site->memoryLimitMb,
-            uploadLimitMb: $site->uploadLimitMb,
-            maxChildren: $site->maxChildren,
             docrootOverride: $site->docrootOverride,
         );
 

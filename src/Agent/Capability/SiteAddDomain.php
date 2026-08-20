@@ -160,9 +160,6 @@ final class SiteAddDomain extends SiteCapability
             sslMode: $site->sslMode,
             status: $site->status,
             aliases: $aliases,
-            memoryLimitMb: $site->memoryLimitMb,
-            uploadLimitMb: $site->uploadLimitMb,
-            maxChildren: $site->maxChildren,
             docrootOverride: $site->docrootOverride,
             subdomainPaths: $subdomainPaths,
         );

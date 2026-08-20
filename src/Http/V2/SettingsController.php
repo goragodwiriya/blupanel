@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Phpcp\Http\V2;
 
 use Phpcp\Domain\Notifier;
+use Phpcp\Domain\PhpSettings;
 use Phpcp\Domain\SettingsRepository;
 use Phpcp\Http\ApiController;
 use Phpcp\Kernel\Request;
@@ -194,6 +195,40 @@ final class SettingsController extends ApiController
 
         return $this->completed(
             (string) ($result['message'] ?? 'Panel certificate changed'),
+            '',
+            is_array($result) ? $result : [],
+        );
+    }
+
+    /**
+     * Set the panel's own PHP values — its pool and its Apache limit together
+     *
+     * Kept off `PATCH /settings` for the same reason as the web server mode:
+     * these values only mean anything once the pool file and Apache's
+     * `LimitRequestBody` have been rewritten from them and both services have
+     * re-read them · saving the row alone would leave the screen reporting a
+     * limit no process on the machine is enforcing.
+     *
+     * Nothing is decided here — the capability is the only place that knows
+     * which files the installer wrote and in what order they have to be
+     * validated and reloaded.
+     */
+    public function applyPanelPhp(Request $request): Response
+    {
+        $args = [];
+
+        foreach (array_keys(PhpSettings::FIELDS) as $field) {
+            $value = $request->payload($field);
+
+            if ($value !== null) {
+                $args[$field] = $value;
+            }
+        }
+
+        $result = $this->agent()->data('panel.php_set', $args, $this->ctx->actor($request));
+
+        return $this->completed(
+            (string) ($result['message'] ?? 'PHP settings saved'),
             '',
             is_array($result) ? $result : [],
         );

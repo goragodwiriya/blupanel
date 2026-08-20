@@ -65,6 +65,112 @@
           </fieldset>
         </form>
       </div>
+      <!-- The panel's own PHP values
+           Its own form and its own endpoint, not part of the general settings
+           form: saving here rewrites the panel's pool file and Apache's body
+           ceiling and reloads both, so the values and the files can never drift
+           apart -->
+      <div class="content-body">
+        <form data-form="panelPhp" action="/api/v2/settings/panel-php" method="post" data-ajax-submit="true" data-load-api="/api/v2/settings" data-emit-event="phpcp:reload">
+          <fieldset>
+            <legend class="icon-code" data-i18n>PHP for this control panel</legend>
+            <div class="comment" data-i18n>These apply to the panel itself and to phpMyAdmin opened from it — not to customer websites, which have their own values on each
+              account's page.</div>
+            <div class="form-group">
+              <div class="width33">
+                <label for="pp_memory" data-i18n>Memory limit (MB)</label>
+                <span class="form-control icon-cpu"><input type="number" id="pp_memory" name="memory_limit_mb" min="16" max="16384"
+                         data-attr="value:values['panel.php.memory_limit_mb']"></span>
+                <div class="comment">memory_limit</div>
+              </div>
+              <div class="width33">
+                <label for="pp_upload" data-i18n>Max upload size (MB)</label>
+                <span class="form-control icon-upload"><input type="number" id="pp_upload" name="upload_max_mb" min="1" max="2048"
+                         data-attr="value:values['panel.php.upload_max_mb']"></span>
+                <div class="comment">upload_max_filesize</div>
+              </div>
+              <div class="width33">
+                <label for="pp_post" data-i18n>Max POST size (MB)</label>
+                <span class="form-control icon-upload"><input type="number" id="pp_post" name="post_max_mb" min="1" max="2048" data-attr="value:values['panel.php.post_max_mb']"></span>
+                <div class="comment">post_max_size</div>
+              </div>
+            </div>
+            <div class="comment" data-i18n>Apache's own body limit for the panel is written from the POST size, so an upload is never rejected before PHP sees it.</div>
+            <div class="form-group">
+              <div class="width33">
+                <label for="pp_exec" data-i18n>Max execution time (seconds)</label>
+                <span class="form-control icon-clock"><input type="number" id="pp_exec" name="max_execution_time" min="0" max="86400"
+                         data-attr="value:values['panel.php.max_execution_time']"></span>
+                <div class="comment">max_execution_time · 0 = <span data-i18n>no limit</span></div>
+              </div>
+              <div class="width33">
+                <label for="pp_input_time" data-i18n>Max input time (seconds)</label>
+                <span class="form-control icon-clock"><input type="number" id="pp_input_time" name="max_input_time" min="-1" max="86400"
+                         data-attr="value:values['panel.php.max_input_time']"></span>
+                <div class="comment">max_input_time · -1 = max_execution_time</div>
+              </div>
+              <div class="width33">
+                <label for="pp_children" data-i18n>Concurrent PHP processes</label>
+                <span class="form-control icon-number"><input type="number" id="pp_children" name="max_children" min="1" max="500"
+                         data-attr="value:values['panel.php.max_children']"></span>
+                <div class="comment" data-i18n>The panel keeps these alive at all times, so memory limit × this number is memory the machine must be able to hold at once. One
+                  live log or progress stream holds one of them for as long as its tab is open.</div>
+              </div>
+            </div>
+            <div class="form-group">
+              <div class="width33">
+                <label for="pp_input_vars" data-i18n>Max form fields</label>
+                <span class="form-control icon-number"><input type="number" id="pp_input_vars" name="max_input_vars" min="100" max="1000000"
+                         data-attr="value:values['panel.php.max_input_vars']"></span>
+                <div class="comment">max_input_vars</div>
+              </div>
+              <div class="width33">
+                <label for="pp_files" data-i18n>Max files per upload</label>
+                <span class="form-control icon-number"><input type="number" id="pp_files" name="max_file_uploads" min="1" max="1000"
+                         data-attr="value:values['panel.php.max_file_uploads']"></span>
+                <div class="comment">max_file_uploads</div>
+              </div>
+              <div class="width33">
+                <label for="pp_session" data-i18n>Session lifetime (seconds)</label>
+                <span class="form-control icon-clock"><input type="number" id="pp_session" name="session_lifetime" min="60" max="604800"
+                         data-attr="value:values['panel.php.session_lifetime']"></span>
+                <div class="comment">session.gc_maxlifetime</div>
+              </div>
+            </div>
+            <div class="form-group">
+              <div class="width33">
+                <label for="pp_timezone" data-i18n>Timezone</label>
+                <span class="form-control icon-world"><input type="text" id="pp_timezone" name="timezone" autocomplete="off" placeholder="Asia/Bangkok"
+                         data-attr="value:values['panel.php.timezone']"></span>
+                <div class="comment" data-i18n>Leave blank to follow the machine</div>
+              </div>
+              <div class="width33">
+                <label for="pp_display_errors" data-i18n>Show errors on the page</label>
+                <span class="form-control icon-warning">
+                  <select id="pp_display_errors" name="display_errors" data-attr="value:isOn(values['panel.php.display_errors']) ? '1' : '0'">
+                    <option value="0" data-i18n>Off — write to the log only</option>
+                    <option value="1" data-i18n>On — show in the browser</option>
+                  </select>
+                </span>
+                <div class="comment" data-i18n>Leave off on a live site — an error message can reveal file paths and database details.</div>
+              </div>
+              <div class="width33">
+                <label for="pp_allow_url_fopen" data-i18n>Open remote URLs as files</label>
+                <span class="form-control icon-world">
+                  <select id="pp_allow_url_fopen" name="allow_url_fopen" data-attr="value:isOn(values['panel.php.allow_url_fopen']) ? '1' : '0'">
+                    <option value="0" data-i18n>Off</option>
+                    <option value="1" data-i18n>On</option>
+                  </select>
+                </span>
+                <div class="comment">allow_url_fopen</div>
+              </div>
+            </div>
+          </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-save" data-loading-text="Saving..." data-i18n>Save</button>
+          </fieldset>
+        </form>
+      </div>
       <div class="content-body">
         <form data-form="siteLayout" action="/api/v2/settings" method="post" data-method="PATCH" data-ajax-submit="true" data-load-api="/api/v2/settings">
           <fieldset>

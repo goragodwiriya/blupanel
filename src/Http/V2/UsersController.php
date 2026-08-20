@@ -4,6 +4,7 @@ declare (strict_types = 1);
 
 namespace Phpcp\Http\V2;
 
+use Phpcp\Domain\PhpSettings;
 use Phpcp\Domain\QuotaChecker;
 use Phpcp\Domain\SettingsRepository;
 use Phpcp\Domain\UserNotice;
@@ -949,6 +950,52 @@ final class UsersController extends ApiController
                 'type' => 'notification',
                 // Cutting off a customer's access is a side effect that should catch the eye, not an ordinary green bar
                 'level' => $revoked ? 'warning' : 'success',
+                'message' => $message,
+            ]],
+            is_array($result) ? $result : [],
+        );
+    }
+
+    /**
+     * Set this account's PHP values — saved and written into its pools in one request
+     *
+     * Kept as its own sub-resource rather than part of `PATCH /users/{id}`, for
+     * the same reason the layout is: this doesn't only write a row, it rewrites
+     * every FPM pool and vhost the account has and reloads the services that
+     * read them · someone changing a customer's email address should not be
+     * dragged into a config reload.
+     *
+     * Only the values genuinely sent are changed. The screen sends all of them,
+     * but a script sending one is a supported and useful thing to do — which is
+     * also why the two on/off values are `<select>` on the form and not
+     * checkboxes: an unchecked checkbox is never sent at all, so a form built
+     * from them could not express "turn this off" without the server having to
+     * guess, and that guess would silently reset a field nobody touched.
+     */
+    public function setPhp(Request $request): Response
+    {
+        $args = ['user_id' => $request->paramInt('id')];
+
+        foreach (array_keys(PhpSettings::FIELDS) as $field) {
+            $value = $request->payload($field);
+
+            if ($value !== null) {
+                $args[$field] = $value;
+            }
+        }
+
+        $result = $this->agent()->data('customer.php_set', $args, $this->ctx->actor($request));
+
+        // The capability's own message, never a fixed one — it is what knows how
+        // many sites were genuinely rewritten, and "saved" alone would hide the
+        // case where the account has no website yet and nothing took effect
+        $message = (string) ($result['message'] ?? 'PHP settings saved');
+
+        return $this->done(
+            $message,
+            [[
+                'type' => 'notification',
+                'level' => 'success',
                 'message' => $message,
             ]],
             is_array($result) ? $result : [],

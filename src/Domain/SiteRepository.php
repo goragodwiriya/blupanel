@@ -35,7 +35,11 @@ final class SiteRepository
      * owner_user_id is NOT NULL and already has an FK, so the join never drops a row.
      */
     private const WITH_OWNER = 'SELECT s.*, u.username AS owner_username, u.system_user AS owner_system_user,
-                    u.site_layout AS owner_site_layout, u.main_domain AS owner_main_domain
+                    u.site_layout AS owner_site_layout, u.main_domain AS owner_main_domain,
+                    u.php_memory_limit_mb, u.php_upload_max_mb, u.php_post_max_mb,
+                    u.php_max_execution_time, u.php_max_input_time, u.php_max_input_vars,
+                    u.php_max_file_uploads, u.php_session_lifetime, u.php_display_errors,
+                    u.php_allow_url_fopen, u.php_timezone, u.php_max_children
              FROM sites s JOIN users u ON u.id = s.owner_user_id';
 
     /** @return array<string,mixed>|null */

@@ -54,6 +54,7 @@ final class Application
                 'sites:rebuild' => $this->sitesRebuild(),
                 'panel:cert' => $this->panelCert($args),
                 'panel:cert-sync' => $this->panelCertSync(),
+                'panel:php-apply' => $this->panelPhpApply(),
                 'mail:enable' => $this->mailDomain($args, true),
                 'mail:disable' => $this->mailDomain($args, false),
                 'mail:box-add' => $this->mailBoxAdd($args),
@@ -112,6 +113,7 @@ final class Application
             'Mail (real mailboxes on this machine)' => [
                 'panel:cert' => 'Certificate for the panel - `phpcp panel:cert panel.example.com` or `--self-signed`',
                 'panel:cert-sync' => 'Copy a freshly renewed certificate to the panel (certbot calls this itself)',
+                'panel:php-apply' => "Write the panel's saved PHP values back into its pool file (the installer calls this itself)",
                 'mail:enable' => 'Enable mail for a domain - `phpcp mail:enable example.com`',
                 'mail:disable' => 'Disable mail for a domain (mailboxes stay, but no mail is accepted)',
                 'mail:box-add' => 'Create a mailbox - `phpcp mail:box-add me@example.com [--quota=1024] [--password=...]`',
@@ -935,6 +937,40 @@ final class Application
      * exits quietly with code 0, since a non-zero exit from the hook makes
      * certbot report the renewal as failed even though the new certificate came out fine
      */
+    /**
+     * Puts the panel's stored PHP values back into `panel.conf`
+     *
+     * `install.sh` regenerates the panel's own config tree from the templates on
+     * every update, because those files belong to the installer — which also
+     * resets any PHP value an admin set from the screen back to the template's
+     * default, silently. This runs right after the migration step and writes them
+     * back, so an update never quietly undoes a setting.
+     *
+     * Sends nothing to change: `apply_only` means "re-render from what is already
+     * stored," so this is safe to run on a machine where nobody ever changed
+     * anything — it writes the same file back.
+     */
+    private function panelPhpApply(): int
+    {
+        $app = App::boot();
+
+        try {
+            $result = $app->agent()->data(
+                'panel.php_set',
+                ['apply_only' => true],
+                $app->systemActor('cli.panel_php_apply'),
+            );
+        } catch (AgentException $e) {
+            $this->out->fail($e->getMessage());
+
+            return 1;
+        }
+
+        $this->out->ok((string) ($result['message'] ?? "Applied the panel's PHP values"));
+
+        return 0;
+    }
+
     private function panelCertSync(): int
     {
         $app = App::boot();

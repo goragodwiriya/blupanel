@@ -241,6 +241,106 @@
           </fieldset>
         </form>
       </div>
+      <!-- PHP values for this account
+           One pool serves every site this account has on the same PHP version,
+           so these are the account's values, not any one site's — saving here
+           rewrites those pools and reloads FPM, which is why it is its own form
+           with its own button rather than a field on the profile above -->
+      <div class="content-body" data-if="role === 'webadmin' && permissions['customer.manage']">
+        <h2 class="icon-code" data-i18n>PHP settings</h2>
+        <form data-form="userPhp" action="/api/v2/users/{id}/php" method="post" data-method="PUT" data-ajax-submit="true" data-emit-event="phpcp:reload">
+          <fieldset>
+            <div class="form-group">
+              <div class="width33">
+                <label for="up_memory" data-i18n>Memory limit (MB)</label>
+                <span class="form-control icon-cpu"><input type="number" id="up_memory" name="memory_limit_mb" min="16" max="16384" data-attr="value:php.memory_limit_mb"></span>
+                <div class="comment">memory_limit</div>
+              </div>
+              <div class="width33">
+                <label for="up_upload" data-i18n>Max upload size (MB)</label>
+                <span class="form-control icon-upload"><input type="number" id="up_upload" name="upload_max_mb" min="1" max="2048" data-attr="value:php.upload_max_mb"></span>
+                <div class="comment">upload_max_filesize</div>
+              </div>
+              <div class="width33">
+                <label for="up_post" data-i18n>Max POST size (MB)</label>
+                <span class="form-control icon-upload"><input type="number" id="up_post" name="post_max_mb" min="1" max="2048" data-attr="value:php.post_max_mb"></span>
+                <div class="comment">post_max_size</div>
+              </div>
+            </div>
+            <div class="comment" data-i18n>The POST size must be at least the upload size — a file is sent together with the rest of the form, so PHP caps every upload at the
+              smaller of the two.</div>
+            <div class="form-group">
+              <div class="width33">
+                <label for="up_exec" data-i18n>Max execution time (seconds)</label>
+                <span class="form-control icon-clock"><input type="number" id="up_exec" name="max_execution_time" min="0" max="86400" data-attr="value:php.max_execution_time"></span>
+                <div class="comment">max_execution_time · 0 = <span data-i18n>no limit</span></div>
+              </div>
+              <div class="width33">
+                <label for="up_input_time" data-i18n>Max input time (seconds)</label>
+                <span class="form-control icon-clock"><input type="number" id="up_input_time" name="max_input_time" min="-1" max="86400" data-attr="value:php.max_input_time"></span>
+                <div class="comment">max_input_time · -1 = max_execution_time</div>
+              </div>
+              <div class="width33">
+                <label for="up_children" data-i18n>Concurrent PHP processes</label>
+                <span class="form-control icon-number"><input type="number" id="up_children" name="max_children" min="1" max="500" data-attr="value:php.max_children"></span>
+                <div class="comment">pm.max_children</div>
+              </div>
+            </div>
+            <div class="form-group">
+              <div class="width33">
+                <label for="up_input_vars" data-i18n>Max form fields</label>
+                <span class="form-control icon-number"><input type="number" id="up_input_vars" name="max_input_vars" min="100" max="1000000" data-attr="value:php.max_input_vars"></span>
+                <div class="comment">max_input_vars</div>
+              </div>
+              <div class="width33">
+                <label for="up_files" data-i18n>Max files per upload</label>
+                <span class="form-control icon-number"><input type="number" id="up_files" name="max_file_uploads" min="1" max="1000" data-attr="value:php.max_file_uploads"></span>
+                <div class="comment">max_file_uploads</div>
+              </div>
+              <div class="width33">
+                <label for="up_session" data-i18n>Session lifetime (seconds)</label>
+                <span class="form-control icon-clock"><input type="number" id="up_session" name="session_lifetime" min="60" max="604800" data-attr="value:php.session_lifetime"></span>
+                <div class="comment">session.gc_maxlifetime</div>
+              </div>
+            </div>
+            <div class="form-group">
+              <div class="width33">
+                <label for="up_timezone" data-i18n>Timezone</label>
+                <span class="form-control icon-world"><input type="text" id="up_timezone" name="timezone" autocomplete="off" placeholder="Asia/Bangkok" data-attr="value:php.timezone"></span>
+                <div class="comment" data-i18n>Leave blank to follow the machine</div>
+              </div>
+              <!-- A select, not a checkbox: an unchecked checkbox is never sent
+                   at all, so turning one of these off could not be told apart
+                   from not touching it -->
+              <div class="width33">
+                <label for="up_display_errors" data-i18n>Show errors on the page</label>
+                <span class="form-control icon-warning">
+                  <select id="up_display_errors" name="display_errors" data-attr="value:php.display_errors ? '1' : '0'">
+                    <option value="0" data-i18n>Off — write to the log only</option>
+                    <option value="1" data-i18n>On — show in the browser</option>
+                  </select>
+                </span>
+                <div class="comment" data-i18n>Leave off on a live site — an error message can reveal file paths and database details.</div>
+              </div>
+              <div class="width33">
+                <label for="up_allow_url_fopen" data-i18n>Open remote URLs as files</label>
+                <span class="form-control icon-world">
+                  <select id="up_allow_url_fopen" name="allow_url_fopen" data-attr="value:php.allow_url_fopen ? '1' : '0'">
+                    <option value="0" data-i18n>Off</option>
+                    <option value="1" data-i18n>On</option>
+                  </select>
+                </span>
+                <div class="comment">allow_url_fopen</div>
+              </div>
+            </div>
+            <div class="comment" data-i18n>Saving rewrites the PHP pool of every website in this account and reloads it — sites stay up, but the next request uses the new
+              values.</div>
+          </fieldset>
+          <fieldset class="submit">
+            <button type="submit" class="btn btn-primary icon-save" data-loading-text="Saving..." data-i18n>Save</button>
+          </fieldset>
+        </form>
+      </div>
       <!-- Always visible for a hosting account — an SFTP section that silently
            disappears leaves an admin hunting for a feature that does exist;
            each state states its own reason instead -->

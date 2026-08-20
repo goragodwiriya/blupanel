@@ -1094,6 +1094,26 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# The panel's own PHP values, put back after this script overwrote them
+#
+# Step 8 regenerates $CONF_DIR/fpm/pool.d/panel.conf from the template every time, because that
+# file belongs to the installer. That also resets any PHP value the admin set from the settings
+# page (upload_max_filesize, memory_limit, ...) back to the template's default, silently - an
+# update would quietly undo a setting somebody deliberately made, and the screen would keep
+# showing the value it no longer has.
+#
+# The settings table is the source of truth; this writes it back into the file. On a machine
+# where nobody ever changed anything, it writes the same file back and costs nothing.
+# ---------------------------------------------------------------------------
+if [ "$MODE" = "production" ]; then
+  if as_panel "$PHP_BIN" /usr/local/bin/phpcp panel:php-apply >/dev/null 2>&1; then
+    ok "Restored the panel's own PHP settings"
+  else
+    warn "Could not restore the panel's PHP settings - run 'phpcp panel:php-apply' to see the full message"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # 11. Check the result of the install
 #
 # An installer that exits 0 does not mean the system works - it has happened that every step

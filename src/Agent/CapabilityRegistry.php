@@ -29,6 +29,7 @@ use Phpcp\Agent\Capability\CertSync;
 use Phpcp\Agent\Capability\CustomerCreate;
 use Phpcp\Agent\Capability\CustomerDelete;
 use Phpcp\Agent\Capability\CustomerLayoutSet;
+use Phpcp\Agent\Capability\CustomerPhpSet;
 use Phpcp\Agent\Capability\CustomerQuotaUpdate;
 use Phpcp\Agent\Capability\CustomerSiteAttach;
 use Phpcp\Agent\Capability\DiskQuotaCheck;
@@ -80,6 +81,7 @@ use Phpcp\Agent\Capability\Fail2banSet;
 use Phpcp\Agent\Capability\NeverBanSet;
 use Phpcp\Agent\Capability\ProtectionOverview;
 use Phpcp\Agent\Capability\PanelJailSet;
+use Phpcp\Agent\Capability\PanelPhpSet;
 use Phpcp\Agent\Capability\PanelJailStatus;
 use Phpcp\Agent\Capability\PanelJailUnban;
 use Phpcp\Agent\Capability\ServiceStatus;
@@ -227,6 +229,8 @@ final class CapabilityRegistry
             DnsZoneRead::class,
             DnsZoneImport::class,
             PanelCertSet::class,
+            // The panel's own PHP values — its pool and its Apache body ceiling
+            PanelPhpSet::class,
 
             // Databases
             DbCreate::class,
@@ -308,6 +312,7 @@ final class CapabilityRegistry
             CustomerCreate::class,
             CustomerDelete::class,
             CustomerQuotaUpdate::class,
+            CustomerPhpSet::class,
             CustomerSiteAttach::class,
             CustomerLayoutSet::class,
             ExpiryCheck::class,

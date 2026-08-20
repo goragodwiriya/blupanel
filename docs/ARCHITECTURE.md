@@ -105,6 +105,16 @@ php_admin_value[upload_tmp_dir] = /var/lib/phpcp/tmp
 php_admin_value[memory_limit] = 128M
 ```
 
+ตัวเลขในไฟล์นี้ (`memory_limit`, `upload_max_filesize`, `post_max_size`, `max_execution_time`,
+`pm.max_children` และอีกไม่กี่ตัว) **ผู้ดูแลตั้งเองได้จากหน้าตั้งค่า** ผ่าน `panel.php_set` ซึ่ง
+แก้เฉพาะบรรทัดเหล่านั้นในไฟล์ที่ตัวติดตั้งเขียนไว้ แล้วเขียน `LimitRequestBody` ของ Apache ฝั่ง
+panel ให้ตรงกันในทรานแซกชันเดียว — สามเพดานนั้นจำกัดการอัปโหลดเดียวกันและตัวเล็กที่สุดชนะ ·
+ตารางค่าตั้งคือแหล่งความจริง ไฟล์คือผลลัพธ์ ตัวติดตั้งจึงเรียก `phpcp panel:php-apply` ทุกครั้ง
+หลังอัปเดต เพราะขั้นตอนติดตั้งสร้าง `panel.conf` ใหม่จากเทมเพลตเสมอ
+
+`open_basedir` กับ `disable_functions` **ไม่อยู่ในรายการที่ตั้งได้** และจะไม่มีวันอยู่ — สองบรรทัดนี้
+คือขอบเขตของชั้นที่ 1 ทั้งหมด หน้าจอที่ขยายมันได้คือหน้าจอที่ยกเลิกการแยกชั้นได้ในคลิกเดียว
+
 `/run/phpcp/` ต้องอยู่ใน `open_basedir` ด้วยเพราะ `Agent\Client` ต่อ agent ผ่าน `stream_socket_client('unix://…')` ซึ่งอยู่ใต้กฎเดียวกับการอ่านไฟล์ · tmp ของ panel อยู่ใต้ `/var/lib/phpcp/` ไม่ใช่ `/tmp` เพราะ `/tmp` ถูกล้างตอนบูตแล้ว `ReadWritePaths` ของ systemd จะหาไม่เจอจน unit สตาร์ตไม่ขึ้น
 
 `disable_functions` ปิด `proc_open`/`exec` **ที่ตัว panel เอง** — ต่อให้มีช่องโหว่ RCE ในโค้ด PHP ของ panel ก็สั่ง shell ไม่ได้ ทำได้แค่เรียก capability ที่ agent อนุญาต ซึ่งถูกจำกัดและถูก audit ครบ
@@ -784,6 +794,30 @@ v1 ส่ง `ApacheDriver` (เครื่องเป้าหมายมี
 - เปลี่ยน PHP version = ชี้ socket ใหม่ใน vhost + สร้าง pool ของเวอร์ชันนั้นให้เจ้าของ ไม่กระทบใครอื่น
 
 การเปลี่ยน PHP version ต่อเว็บไซต์ (ตาม [PROMPT.md](history/PROMPT.md) `example.com → PHP 8.4`, `legacy.example.com → PHP 7.4`) จึงทำได้จริงและปลอดภัย
+
+### 11.1 ค่า PHP ที่ตั้งได้รายบัญชี
+
+`memory_limit`, `upload_max_filesize`, `post_max_size`, `max_execution_time`, `max_input_time`,
+`max_input_vars`, `max_file_uploads`, `session.gc_maxlifetime`, `display_errors`,
+`allow_url_fopen`, `date.timezone` และ `pm.max_children` เก็บเป็นคอลัมน์ `php_*` บน `users`
+(migration 0027) และถูกเขียนลง pool ผ่าน `Domain\PhpSettings` ที่เดียว
+
+**เก็บที่บัญชี ไม่ใช่ที่เว็บ** เพราะหนึ่ง pool = หนึ่งบัญชี × หนึ่งเวอร์ชัน PHP · ค่ารายเว็บจึงเป็น
+คำสัญญาที่โครงสร้าง pool ทำไม่ได้ — เว็บที่เขียนทีหลังจะทับค่าของเว็บก่อนหน้าโดยไม่มีอะไรเตือน
+
+สามข้อที่ทำให้ค่าพวกนี้ "มีผลจริง" ไม่ใช่แค่ตัวเลขในฐานข้อมูล:
+
+- **บันทึกแล้วเขียนไฟล์ทันที** — `customer.php_set` เขียน pool ของทุกเวอร์ชันที่บัญชีนั้นใช้
+  ใหม่ทั้งหมด ตรวจด้วย `php-fpm -t` ของทุกเวอร์ชัน แล้ว reload · ล้มที่ขั้นตรวจคือคืนทั้งไฟล์
+  และคืนค่าในฐานข้อมูลด้วย ไม่งั้นหน้าจอจะรายงานค่าที่ไม่มีโปรเซสไหนใช้อยู่
+- **`request_terminate_timeout` ตามค่า `max_execution_time` ไม่ใช่ค่าคงที่** — เดิมตรึงไว้ 120s
+  การเพิ่ม `max_execution_time` จึงไม่ได้เวลาเพิ่มขึ้นจริง และงานที่เกินจะกลายเป็น 502 เปล่า ๆ
+  ที่ไม่มีอะไรใน log ของเว็บอธิบาย
+- **vhost ถูกเขียนใหม่ด้วย** — `client_max_body_size` ของ nginx ต้องไม่น้อยกว่า `post_max_size`
+  ไม่งั้น nginx ตอบ 413 ตั้งแต่ก่อนคำขอถึง PHP
+
+`open_basedir` กับ `disable_functions` **ไม่อยู่ในรายการที่ตั้งได้** เพราะสองบรรทัดนั้นคือ
+การแยกลูกค้าออกจากกันทั้งหมดตามหัวข้อนี้
 
 ---
 

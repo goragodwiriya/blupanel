@@ -155,6 +155,29 @@ final class SettingsRepository
          * file rewritten through fail2ban's validator.
          */
         'security.never_ban_ips' => 'string',
+
+        /*
+         * **The panel's own** PHP values — see {@see PhpSettings} for the field list
+         *
+         * Not editable through the general settings form, same as `webserver.*`:
+         * these have to travel together with the pool file and the Apache
+         * `LimitRequestBody` that were written from them, through
+         * `panel.php_set` · writing them straight into the table would leave the
+         * screen reporting a 512M upload limit while the file on disk still says
+         * 32M, and nothing anywhere would say which one is true.
+         */
+        'panel.php.memory_limit_mb' => 'int',
+        'panel.php.upload_max_mb' => 'int',
+        'panel.php.post_max_mb' => 'int',
+        'panel.php.max_execution_time' => 'int',
+        'panel.php.max_input_time' => 'int',
+        'panel.php.max_input_vars' => 'int',
+        'panel.php.max_file_uploads' => 'int',
+        'panel.php.session_lifetime' => 'int',
+        'panel.php.display_errors' => 'bool',
+        'panel.php.allow_url_fopen' => 'bool',
+        'panel.php.timezone' => 'string',
+        'panel.php.max_children' => 'int',
     ];
 
     /** Defaults used until a value has been set */
@@ -245,7 +268,10 @@ final class SettingsRepository
                 && !str_starts_with($key, 'security.panel_jail.')
                 && !str_starts_with($key, 'security.fail2ban.')
                 && $key !== 'security.never_ban_ips'
-                && $key !== 'panel.cert_domain',
+                && $key !== 'panel.cert_domain'
+                // The panel's own PHP values have to travel with the pool file
+                // and the Apache limit written from them — `panel.php_set` only
+                && !str_starts_with($key, 'panel.php.'),
             ARRAY_FILTER_USE_KEY,
         );
     }
@@ -257,7 +283,7 @@ final class SettingsRepository
     /** @return array<string,string> every value, including defaults for keys never set */
     public function all(): array
     {
-        $values = self::DEFAULTS;
+        $values = self::defaults();
 
         foreach ($this->db->all('SELECT key, value FROM settings') as $row) {
             $key = (string) $row['key'];
@@ -281,7 +307,7 @@ final class SettingsRepository
 
         $row = $this->db->first('SELECT value FROM settings WHERE key = :k', ['k' => $key]);
 
-        return $row === null ? (self::DEFAULTS[$key] ?? $default) : (string) $row['value'];
+        return $row === null ? (self::defaults()[$key] ?? $default) : (string) $row['value'];
     }
 
     public function bool(string $key): bool
@@ -337,7 +363,14 @@ final class SettingsRepository
      */
     public static function defaults(): array
     {
-        return self::DEFAULTS;
+        /*
+         * The panel's own PHP defaults are not literals here — they are
+         * {@see PhpSettings::panelDefaults()}, which is the same value pinned to
+         * the literals in `templates/panel/panel-pool.conf.tpl` · a second copy
+         * in this file would be the copy that eventually disagrees, and the
+         * screen would then show a number no process is running
+         */
+        return self::DEFAULTS + PhpSettings::panelDefaults()->toSettings();
     }
 
     /**

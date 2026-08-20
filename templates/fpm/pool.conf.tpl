@@ -29,12 +29,18 @@ pm.max_requests      = 500
 ; (log ของเว็บเซิร์ฟเวอร์ยังแยกรายเว็บเหมือนเดิม เพราะ vhost แยกกันจริง)
 slowlog                    = {{SLOW_LOG}}
 request_slowlog_timeout    = 10s
-request_terminate_timeout  = 120s
+
+; ตัวนี้ต้องยาวกว่า max_execution_time เสมอ ไม่ใช่ค่าคงที่
+;
+; ถ้า FPM ฆ่า worker ก่อนที่ PHP จะยอมแพ้เอง สิ่งที่ผู้ใช้ได้คือ 502 เปล่า ๆ ไม่มีอะไร
+; ใน log ของเว็บให้อ่านเลย · ปล่อยให้ PHP หมดเวลาก่อนจะได้ fatal error พร้อม stack trace
+; ที่บอกว่าค้างตรงไหน · เดิมค่านี้ตรึงไว้ 120s ตายตัว การเพิ่ม max_execution_time จึงไม่ได้
+; เวลาเพิ่มขึ้นจริงแม้แต่วินาทีเดียว
+request_terminate_timeout  = {{REQUEST_TIMEOUT}}
 
 catch_workers_output = yes
 php_admin_value[error_log] = {{PHP_ERROR_LOG}}
 php_admin_flag[log_errors] = on
-php_admin_flag[display_errors] = off
 
 ; ---------------------------------------------------------------------------
 ; ขอบเขตของบัญชี — สองบรรทัดนี้คือหัวใจของการแยกลูกค้าออกจากกัน
@@ -48,11 +54,18 @@ php_admin_value[upload_tmp_dir] = {{TMP_DIR}}
 php_admin_value[sys_temp_dir]   = {{TMP_DIR}}
 php_admin_value[session.save_path] = {{TMP_DIR}}
 
-php_admin_value[memory_limit]       = {{MEMORY_LIMIT}}
-php_admin_value[upload_max_filesize] = {{UPLOAD_LIMIT}}
-php_admin_value[post_max_size]      = {{UPLOAD_LIMIT}}
-php_admin_value[max_execution_time] = 120
+; ---------------------------------------------------------------------------
+; ค่าที่ผู้ดูแลตั้งได้เองต่อบัญชี — หน้าผู้ใช้ใน panel เขียนลงคอลัมน์ php_* ของ users
+; แล้วสร้างไฟล์นี้ใหม่ (Domain\PhpSettings)
+;
+; ใช้ php_admin_value ไม่ใช่ php_value โดยตั้งใจ: ค่าที่ผู้ดูแลตั้งต้องเป็นเพดานจริง
+; ที่โค้ดของลูกค้าดันขึ้นเองด้วย ini_set() หรือ .user.ini ไม่ได้ — ไม่งั้น "จำกัดหน่วยความจำ
+; ต่อบัญชี" ก็ไม่ได้จำกัดอะไรเลยสำหรับคนที่อ่านคู่มือ PHP มา
+; ---------------------------------------------------------------------------
+{{PHP_TUNABLES}}
 
-php_admin_flag[allow_url_fopen]  = off
+; open_basedir กับ disable_functions ข้างบนไม่อยู่ในรายการที่ตั้งได้จากหน้าเว็บ และ
+; สองบรรทัดนี้ก็เช่นกัน — allow_url_include คือช่องโหว่ RFI ตรง ๆ ส่วน expose_php
+; ไม่มีเหตุผลให้เปิด
 php_admin_flag[allow_url_include] = off
 php_admin_value[expose_php] = off

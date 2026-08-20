@@ -112,6 +112,18 @@ final class UserResource extends Resource
                 (string) ($row['main_domain'] ?? '') !== '' ? (string) $row['main_domain'] : 'example.com',
             ),
             'main_domain' => (string) ($row['main_domain'] ?? ''),
+
+            /*
+             * The PHP values this account's pools are built from
+             *
+             * Sent as one nested object rather than twelve flat keys, so the
+             * form binds to `php.memory_limit_mb` and a field added later needs
+             * no change here at all · `php_limits` carries each field's own
+             * min/max so the screen states the same rule the server enforces,
+             * instead of a second copy of the numbers drifting in the HTML
+             */
+            'php' => \Phpcp\Domain\PhpSettings::fromRow($row)->toArray(),
+            'php_limits' => \Phpcp\Domain\PhpSettings::FIELDS,
         ];
     }
 

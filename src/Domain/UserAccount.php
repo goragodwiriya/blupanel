@@ -41,6 +41,15 @@ final readonly class UserAccount
         public ?SiteLayout $layout = null,
         /** The domain that gets `public_html` in the cpanel layout — empty = no site yet */
         public string $mainDomain = '',
+        /**
+         * The PHP values this account's pools are built with
+         *
+         * Lives on the account rather than the site because a pool is per
+         * (account × PHP version) since migration 0006 — see
+         * `db/migrations/0027_php_settings.sql` for why storing it per site
+         * would be a promise the pool layout cannot keep.
+         */
+        public PhpSettings $php = new PhpSettings(),
     ) {
     }
 
@@ -59,6 +68,10 @@ final readonly class UserAccount
             username: self::assertSystemUser($name !== '' ? $name : (string) ($row['username'] ?? '')),
             layout: SiteLayout::tryFrom(trim((string) ($row['site_layout'] ?? ''))),
             mainDomain: trim((string) ($row['main_domain'] ?? '')),
+            // A row that was never joined with the php_* columns falls back to
+            // the defaults, which is exactly what the columns hold anyway until
+            // an admin changes them
+            php: PhpSettings::fromRow($row),
         );
     }
 

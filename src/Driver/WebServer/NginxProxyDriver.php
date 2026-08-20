@@ -251,7 +251,7 @@ final class NginxProxyDriver implements WebServerDriver
             'PHP_VERSION' => $site->phpVersion,
             'BACKEND' => self::BACKEND,
             'HTTP_PORT' => self::HTTP_PORT,
-            'UPLOAD_LIMIT' => $site->uploadLimitMb,
+            'UPLOAD_LIMIT' => $site->php()->bodyLimitMb(),
             'ERROR_LOG' => $executor->path($site->errorLog()),
             'ACCESS_LOG' => $executor->path($site->accessLog()),
             'GENERATED_AT' => date('Y-m-d H:i:s'),

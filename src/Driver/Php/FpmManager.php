@@ -9,6 +9,8 @@ use Phpcp\Agent\Executor\Executor;
 use Phpcp\Domain\PhpSupport;
 use Phpcp\Domain\ServiceCatalog;
 use Phpcp\Domain\Site;
+use Phpcp\Domain\PhpSettings;
+use Phpcp\Driver\SafeBlock;
 use Phpcp\Driver\Template;
 use Phpcp\Support\Validator;
 
@@ -52,6 +54,7 @@ final class FpmManager
     ): string {
         $owner = $site->owner;
         $version = $site->phpVersion;
+        $php = $site->php();
 
         // A single pool covers several sites, so open_basedir has to be
         // **the union** of the home and the Domain Pointer of every site
@@ -82,10 +85,41 @@ final class FpmManager
             'TMP_DIR' => $executor->path($owner->tmpDir()),
             'SLOW_LOG' => $executor->path($owner->phpSlowLog($version)),
             'PHP_ERROR_LOG' => $executor->path($owner->phpErrorLog($version)),
-            'MAX_CHILDREN' => $site->maxChildren,
-            'MEMORY_LIMIT' => $site->memoryLimitMb . 'M',
-            'UPLOAD_LIMIT' => $site->uploadLimitMb . 'M',
+            'MAX_CHILDREN' => $php->maxChildren,
+            'REQUEST_TIMEOUT' => $php->requestTerminateTimeout() . 's',
+            'PHP_TUNABLES' => self::tunableBlock($php),
         ]);
+    }
+
+    /**
+     * The admin-settable directives, as lines of a pool file
+     *
+     * Built here rather than as one placeholder per directive, because
+     * `date.timezone` has to be **absent** when it isn't set — a template with a
+     * `{{TIMEZONE}}` hole would have to write an empty value instead, and an
+     * empty `date.timezone` makes every date call in every customer's site emit
+     * a warning.
+     *
+     * Every value goes through `Template::assertValue()` on the way in, exactly
+     * like nginx's server_name does — a `SafeBlock` built by hand is the one
+     * place in this codebase where a newline could reach a config file without
+     * anything checking, and "PhpSettings validated it already" is the kind of
+     * assumption that stops being true the day someone adds a field.
+     */
+    public static function tunableBlock(PhpSettings $php): SafeBlock
+    {
+        $lines = [];
+
+        foreach ($php->iniDirectives() as $ini => $value) {
+            $lines[] = sprintf(
+                '%s[%s] = %s',
+                PhpSettings::isFlag($ini) ? 'php_admin_flag' : 'php_admin_value',
+                Template::assertValue('php ini directive', $ini),
+                Template::assertValue($ini, $value),
+            );
+        }
+
+        return new SafeBlock(implode("\n", $lines));
     }
 
     /**

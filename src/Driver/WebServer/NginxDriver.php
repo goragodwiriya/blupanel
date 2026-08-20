@@ -164,7 +164,7 @@ final class NginxDriver implements WebServerDriver
             'FPM_SOCKET' => $executor->path($site->fpmSocket()),
             'ERROR_LOG' => $executor->path($site->errorLog()),
             'ACCESS_LOG' => $executor->path($site->accessLog()),
-            'UPLOAD_LIMIT' => $site->uploadLimitMb,
+            'UPLOAD_LIMIT' => $site->php()->bodyLimitMb(),
         ]));
 
         $common = [

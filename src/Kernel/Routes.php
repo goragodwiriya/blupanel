@@ -217,6 +217,10 @@ final class Routes
         $router->add(new Route('PATCH', '/api/v2/users/{id}', UsersController::class, 'update', 'customer.manage', 'api.v2.users.update'));
         $router->add(new Route('DELETE', '/api/v2/users/{id}', UsersController::class, 'destroy', 'customer.manage', 'api.v2.users.destroy'));
         $router->add(new Route('PUT', '/api/v2/users/{id}/quota', UsersController::class, 'setQuota', 'customer.manage', 'api.v2.users.quota'));
+        // PHP values are their own sub-resource for the same reason the layout is:
+        // saving one rewrites every pool and vhost this account has and reloads
+        // the services that read them — not a field on the profile form
+        $router->add(new Route('PUT', '/api/v2/users/{id}/php', UsersController::class, 'setPhp', 'customer.manage', 'api.v2.users.php'));
         // A sub-resource kept separate from PATCH /users/{id} on purpose — changing
         // the layout **moves real files** and briefly takes that account's website
         // down, so it must be a deliberate click, not a side effect of saving a form
@@ -272,6 +276,10 @@ final class Routes
         // /certificates, which belongs to websites
         $router->add(new Route('POST', '/api/v2/settings/panel-certificate', V2SettingsController::class, 'applyPanelCertificate', 'settings.manage', 'api.v2.settings.panel_cert'));
         $router->add(new Route('POST', '/api/v2/settings/webserver', V2SettingsController::class, 'applyWebserver', 'settings.manage', 'api.v2.settings.webserver'));
+        // The panel's own PHP values — kept off PATCH /settings because saving
+        // them rewrites the panel's pool file and its Apache body ceiling, then
+        // reloads both services (see SettingsRepository::webEditableKeys)
+        $router->add(new Route('POST', '/api/v2/settings/panel-php', V2SettingsController::class, 'applyPanelPhp', 'settings.manage', 'api.v2.settings.panel_php'));
 
         // The scheduler's heartbeat — read-only (Phase A1 item 7, left pending for Phase C)
         $router->add(new Route('GET', '/api/v2/scheduled-jobs', ScheduledJobsController::class, 'index', 'settings.view', 'api.v2.scheduled_jobs'));

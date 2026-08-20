@@ -1744,6 +1744,61 @@ paths:
               schema: { $ref: "#/components/schemas/CommandResponse" }
         "404": { $ref: "#/components/responses/Error" }
 
+  /users/{id}/php:
+    put:
+      tags: [users]
+      summary: ตั้งค่า PHP ของบัญชีโฮสติ้ง
+      description: |
+        บันทึกค่า **แล้วเขียน FPM pool กับ vhost ของทุกเว็บในบัญชีนี้ใหม่ พร้อมรีโหลดบริการ**
+        ในคำขอเดียว — เขียนแถวเฉย ๆ จะได้หน้าจอที่บอกว่า 512M ทั้งที่ทุกเว็บยังรันที่ 64M
+
+        ส่งเฉพาะค่าที่ต้องการเปลี่ยน · ค่าที่ไม่ได้ส่งคือ "ไม่เปลี่ยน" ไม่ใช่ "คืนค่าเริ่มต้น"
+
+        `post_max_mb` ต้องไม่น้อยกว่า `upload_max_mb` — PHP รับค่าที่น้อยกว่าเงียบ ๆ
+        แล้วกดเพดานอัปโหลดลงมาที่ตัวเล็กกว่าโดยไม่บอกใคร คำขอนี้จึงปฏิเสธตั้งแต่ต้นทาง
+
+        หนึ่ง pool = หนึ่งบัญชี × หนึ่งเวอร์ชัน PHP ค่าจึงเป็นของ**บัญชี** ไม่ใช่ของเว็บ
+      parameters:
+        - { $ref: "#/components/parameters/UserId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                memory_limit_mb:    { type: integer, minimum: 16, maximum: 16384, description: "memory_limit (MB)" }
+                upload_max_mb:      { type: integer, minimum: 1,  maximum: 2048,  description: "upload_max_filesize (MB)" }
+                post_max_mb:        { type: integer, minimum: 1,  maximum: 2048,  description: "post_max_size (MB) — ต้องไม่น้อยกว่า upload_max_mb" }
+                max_execution_time: { type: integer, minimum: 0,  maximum: 86400, description: "วินาที · 0 = ไม่จำกัด" }
+                max_input_time:     { type: integer, minimum: -1, maximum: 86400, description: "วินาที · -1 = ตาม max_execution_time" }
+                max_input_vars:     { type: integer, minimum: 100, maximum: 1000000 }
+                max_file_uploads:   { type: integer, minimum: 1,  maximum: 1000 }
+                session_lifetime:   { type: integer, minimum: 60, maximum: 604800, description: "session.gc_maxlifetime (วินาที)" }
+                display_errors:     { type: boolean }
+                allow_url_fopen:    { type: boolean }
+                timezone:           { type: string, description: "ชื่อไทม์โซนที่ PHP รู้จัก เช่น Asia/Bangkok · ว่าง = ตามเครื่อง" }
+                max_children:       { type: integer, minimum: 1,  maximum: 500, description: "pm.max_children ของ pool" }
+      responses:
+        "200":
+          description: ค่าหลังบันทึก พร้อมรายการว่าอะไรเปลี่ยนจากอะไรเป็นอะไร และเว็บไหนถูกเขียนใหม่บ้าง
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      user_id: { type: integer }
+                      username: { type: string }
+                      php: { type: object }
+                      changes: { type: object }
+                      sites: { type: array, items: { type: string } }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
   /users/{id}/quota:
     put:
       tags: [users]
@@ -2278,6 +2333,60 @@ paths:
               schema:
                 type: object
         "422": { $ref: "#/components/responses/Error" }
+
+  /settings/panel-php:
+    post:
+      tags: [settings]
+      summary: ตั้งค่า PHP ของหน้าจัดการเอง
+      description: |
+        เขียน pool ของ panel เองกับ `LimitRequestBody` ของ Apache ที่หน้าจัดการใช้
+        ให้ตรงกัน แล้วรีโหลดทั้งสองแบบไม่ตัดการเชื่อมต่อ (reload ไม่ใช่ restart —
+        คำขอที่กำลังตอบอยู่คือคำขอของคนที่เพิ่งกดบันทึก)
+
+        **สามเพดานนี้ต้องขยับพร้อมกัน** `upload_max_filesize`, `post_max_size` และ
+        `LimitRequestBody` จำกัดการอัปโหลดเดียวกัน ตัวที่เล็กที่สุดชนะ · ขยับแค่ฝั่ง PHP
+        จะได้ 413 จาก Apache โดยไม่มีอะไรใน log ของ PHP ให้อ่านเลย
+
+        แยกจาก `PATCH /settings` เพราะค่าพวกนี้ต้องเดินทางคู่กับไฟล์ที่ถูกเขียนจากมัน
+
+        ตัวติดตั้งเรียก `phpcp panel:php-apply` ทุกครั้งหลังอัปเดต เพราะ install.sh
+        สร้าง panel.conf ใหม่จากเทมเพลตเสมอ — ตารางค่าตั้งคือแหล่งความจริง ไฟล์คือผลลัพธ์
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                memory_limit_mb:    { type: integer, minimum: 16, maximum: 16384, description: "memory_limit (MB)" }
+                upload_max_mb:      { type: integer, minimum: 1,  maximum: 2048,  description: "upload_max_filesize (MB)" }
+                post_max_mb:        { type: integer, minimum: 1,  maximum: 2048,  description: "post_max_size (MB) — ต้องไม่น้อยกว่า upload_max_mb" }
+                max_execution_time: { type: integer, minimum: 0,  maximum: 86400, description: "วินาที · 0 = ไม่จำกัด" }
+                max_input_time:     { type: integer, minimum: -1, maximum: 86400, description: "วินาที · -1 = ตาม max_execution_time" }
+                max_input_vars:     { type: integer, minimum: 100, maximum: 1000000 }
+                max_file_uploads:   { type: integer, minimum: 1,  maximum: 1000 }
+                session_lifetime:   { type: integer, minimum: 60, maximum: 604800, description: "session.gc_maxlifetime (วินาที)" }
+                display_errors:     { type: boolean }
+                allow_url_fopen:    { type: boolean }
+                timezone:           { type: string, description: "ชื่อไทม์โซนที่ PHP รู้จัก เช่น Asia/Bangkok · ว่าง = ตามเครื่อง" }
+                max_children:       { type: integer, minimum: 1,  maximum: 500, description: "pm.max_children ของ pool" }
+      responses:
+        "200":
+          description: ค่าหลังบันทึก พร้อมชื่อ unit ที่รีโหลดจริง
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      php: { type: object }
+                      changes: { type: object }
+                      reloaded: { type: array, items: { type: string } }
+                      limit_request_body: { type: integer, description: "ไบต์ — ค่าที่เขียนลง Apache" }
+        "422": { $ref: "#/components/responses/ValidationError" }
 
   /settings/webserver:
     post:

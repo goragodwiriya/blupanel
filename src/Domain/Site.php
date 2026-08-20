@@ -30,9 +30,6 @@ final readonly class Site
         public string $sslMode = 'off',
         public string $status = 'active',
         public array $aliases = [],
-        public int $memoryLimitMb = 256,
-        public int $uploadLimitMb = 64,
-        public int $maxChildren = 5,
         /** Empty = use <home>/public as normal */
         public string $docrootOverride = '',
         /** subdomain => target path */
@@ -67,7 +64,11 @@ final readonly class Site
                 // the vhost would point at the wrong place for the whole site.
                 'site_layout' => $row['owner_site_layout'] ?? '',
                 'main_domain' => $row['owner_main_domain'] ?? '',
-            ]),
+                // The owner's PHP values travel with the same row (they arrive
+                // unprefixed from the join, since they are columns on `users`) ·
+                // a row that never joined them just gets the defaults, which is
+                // what those columns hold until an admin changes something
+            ] + PhpSettings::fromRow($row)->toColumns()),
             phpVersion: Validator::phpVersion((string) $row['php_version']),
             sslMode: (string) ($row['ssl_mode'] ?? 'off'),
             status: (string) ($row['status'] ?? 'active'),
@@ -248,6 +249,21 @@ final readonly class Site
         return false;
     }
 
+    /**
+     * The PHP values this site runs with — the owner's, never its own
+     *
+     * A site cannot have PHP values of its own: its pool is shared with every
+     * other site the same owner has on the same PHP version, so a per-site value
+     * could only ever be "whichever site was written last." This used to be
+     * three properties right here on `Site` that no code path ever filled from
+     * the database, which read as configurable and was not
+     * (`db/migrations/0027_php_settings.sql`).
+     */
+    public function php(): PhpSettings
+    {
+        return $this->owner->php;
+    }
+
     /** Whether this site shares its owner and PHP version with another site */
     public function sharesPoolWith(self $other): bool
     {
@@ -265,9 +281,6 @@ final readonly class Site
             sslMode: $this->sslMode,
             status: $this->status,
             aliases: $this->aliases,
-            memoryLimitMb: $this->memoryLimitMb,
-            uploadLimitMb: $this->uploadLimitMb,
-            maxChildren: $this->maxChildren,
             docrootOverride: $this->docrootOverride,
             subdomainPaths: $this->subdomainPaths,
         );
@@ -286,9 +299,6 @@ final readonly class Site
             sslMode: self::assertSslMode($sslMode),
             status: $this->status,
             aliases: $this->aliases,
-            memoryLimitMb: $this->memoryLimitMb,
-            uploadLimitMb: $this->uploadLimitMb,
-            maxChildren: $this->maxChildren,
             docrootOverride: $this->docrootOverride,
             subdomainPaths: $this->subdomainPaths,
         );
@@ -325,9 +335,6 @@ final readonly class Site
             sslMode: $this->sslMode,
             status: $status,
             aliases: $this->aliases,
-            memoryLimitMb: $this->memoryLimitMb,
-            uploadLimitMb: $this->uploadLimitMb,
-            maxChildren: $this->maxChildren,
             docrootOverride: $this->docrootOverride,
             subdomainPaths: $this->subdomainPaths,
         );
