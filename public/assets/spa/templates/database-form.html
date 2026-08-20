@@ -1,8 +1,4 @@
-<form data-form="databaseCreate"
-      action="/api/v2/databases"
-      method="post"
-      data-ajax-submit="true"
-      data-validate="true">
+<form data-form="databaseCreate" action="/api/v2/databases" method="post" data-ajax-submit="true" data-validate="true">
   <fieldset>
     <div>
       <label for="nd_owner" data-i18n>Owner account</label>
@@ -18,8 +14,7 @@
     <div>
       <label for="nd_name" data-i18n>Name</label>
       <span class="form-control icon-database">
-        <input type="text" id="nd_name" name="name" required maxlength="64" autocomplete="off"
-               placeholder="shop" data-attr="value:name">
+        <input type="text" id="nd_name" name="name" required maxlength="64" autocomplete="off" placeholder="shop" data-attr="value:name">
       </span>
       <div class="comment" data-i18n>Letters, digits and underscore · the account prefix is added automatically</div>
     </div>
@@ -39,17 +34,19 @@
          field arrives already filled in), but it is a field now, so an
          application being moved onto this panel can keep the password already
          written into its own config file -->
-    <div>
-      <label for="nd_password" data-i18n>Password</label>
-      <span class="form-control icon-lock">
-        <input type="text" id="nd_password" name="password" minlength="12" maxlength="128"
-               autocomplete="off" spellcheck="false" data-attr="value:suggested_password">
-      </span>
-      <div class="flex middle gap-4">
-        <button type="button" class="btn small icon-refresh" data-action="click.prevent:suggestPassword"
-                data-password-target="nd_password" data-i18n>Generate a new one</button>
-        <button type="button" class="btn small icon-copy" data-action="click.prevent:copyField"
-                data-copy-target="nd_password" data-i18n>Copy</button>
+    <div class="form-group bottom">
+      <div class="width90">
+        <label for="nd_password" data-i18n>Password</label>
+        <span class="form-control icon-lock">
+          <input type="text" id="nd_password" name="password" minlength="12" maxlength="128" autocomplete="off" spellcheck="false" data-attr="value:suggested_password">
+        </span>
+      </div>
+      <div>
+        <button type="button" class="btn fullwidth icon-refresh" data-action="click.prevent:suggestPassword" data-password-target="nd_password" data-i18n>Generate a new
+          one</button>
+      </div>
+      <div>
+        <button type="button" class="btn fullwidth icon-copy" data-action="click.prevent:copyField" data-copy-target="nd_password" data-i18n>Copy</button>
       </div>
       <div class="comment" data-i18n>This is what the website connects with. It is shown once more after saving and never stored in readable form.</div>
     </div>
