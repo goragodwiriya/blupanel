@@ -1,17 +1,11 @@
-<form data-form="mailbox"
-      action="/api/v2/mailboxes"
-      method="post"
-      data-ajax-submit="true"
-      data-reload-table="mailboxes"
-      data-validate="true">
+<form data-form="mailbox" action="/api/v2/mailboxes" method="post" data-ajax-submit="true" data-reload-table="mailboxes" data-validate="true">
   <fieldset>
     <div data-show="id === 0">
       <label for="mb_local" data-i18n>Address</label>
       <div class="form-group">
         <div class="width50">
           <span class="form-control icon-user">
-            <input type="text" id="mb_local" name="local_part" maxlength="64"
-                   autocomplete="off" placeholder="sales" data-attr="value:local_part">
+            <input type="text" id="mb_local" name="local_part" maxlength="64" autocomplete="off" placeholder="sales" data-attr="value:local_part">
           </span>
         </div>
         <div class="width50">
@@ -33,21 +27,23 @@
     <!-- Prefilled on the create form, blank on the edit form — the server
          decides which, because "blank means leave the password alone" is a rule
          about mailboxes, not about this screen -->
-    <div>
-      <label for="mb_password" data-i18n>Password</label>
-      <span class="form-control icon-lock">
-        <input type="text" id="mb_password" name="password" maxlength="128"
-               autocomplete="off" spellcheck="false" data-attr="value:suggested_password">
-      </span>
-      <div class="flex middle gap-4">
-        <button type="button" class="btn small icon-refresh" data-action="click.prevent:suggestPassword"
-                data-password-target="mb_password" data-i18n>Generate a new one</button>
-        <button type="button" class="btn small icon-copy" data-action="click.prevent:copyField"
-                data-copy-target="mb_password" data-i18n>Copy</button>
+    <div class="form-group bottom">
+      <div class="width90">
+        <label for="mb_password" data-i18n>Password</label>
+        <span class="form-control icon-lock">
+          <input type="text" id="mb_password" name="password" maxlength="128" autocomplete="off" spellcheck="false" data-attr="value:suggested_password">
+        </span>
       </div>
-      <div class="comment" data-show="id === 0" data-i18n>Copy it before saving — only a hash is stored, so it cannot be read back later</div>
-      <div class="comment" data-show="id > 0" data-i18n>Leave blank to keep the current password</div>
+      <div>
+        <button type="button" class="btn fullwidth icon-refresh" data-action="click.prevent:suggestPassword" data-password-target="mb_password" data-i18n>Generate a new
+          one</button>
+      </div>
+      <div>
+        <button type="button" class="btn fullwidth icon-copy" data-action="click.prevent:copyField" data-copy-target="mb_password" data-i18n>Copy</button>
+      </div>
     </div>
+    <div class="comment" data-show="id === 0" data-i18n>Copy it before saving — only a hash is stored, so it cannot be read back later</div>
+    <div class="comment" data-show="id > 0" data-i18n>Leave blank to keep the current password</div>
     <div>
       <label for="mb_quota" data-i18n>Quota (MB)</label>
       <span class="form-control icon-stack">
