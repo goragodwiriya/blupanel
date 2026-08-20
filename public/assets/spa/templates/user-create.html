@@ -50,20 +50,20 @@
                  underneath, which reads as a chore instead of an offer — so
                  admins typed their own, and a password thought up on the spot is
                  the weakest one on the machine -->
-            <div>
-              <label for="nu_password" data-i18n>Password</label>
-              <span class="form-control icon-lock">
-                <input type="text" id="nu_password" name="password" minlength="12"
-                       autocomplete="off" spellcheck="false" data-attr="value:suggested_password">
-              </span>
-              <div class="flex middle gap-4">
-                <button type="button" class="btn small icon-refresh" data-action="click.prevent:suggestPassword"
-                        data-password-target="nu_password" data-i18n>Generate a new one</button>
-                <button type="button" class="btn small icon-copy" data-action="click.prevent:copyField"
-                        data-copy-target="nu_password" data-i18n>Copy</button>
+            <div class="from-group bottom">
+              <div class="width90">
+                <label for="nu_password" data-i18n>Password</label>
+                <span class="form-control icon-lock">
+                  <input type="text" id="nu_password" name="password" minlength="12" autocomplete="off" spellcheck="false" data-attr="value:suggested_password">
+                </span>
               </div>
-              <div class="comment" data-i18n>SFTP gets this same password. Leave empty and the system generates one instead.</div>
+              <div>
+                <button type="button" class="btn small icon-refresh" data-action="click.prevent:suggestPassword" data-password-target="nu_password" data-i18n>Generate a new
+                  one</button>
+                <button type="button" class="btn small icon-copy" data-action="click.prevent:copyField" data-copy-target="nu_password" data-i18n>Copy</button>
+              </div>
             </div>
+            <div class="comment" data-i18n>SFTP gets this same password. Leave empty and the system generates one instead.</div>
           </fieldset>
           <fieldset>
             <legend class="icon-link" data-i18n>First website</legend>
@@ -131,7 +131,6 @@
                 <div class="comment" data-i18n>Leave blank for no expiry date</div>
               </div>
             </div>
-            
             <!-- SFTP enabled in the same command as the account, using the same
                  password as the panel login — they are one identity to the
                  customer, and they are handed over together in one welcome email -->
