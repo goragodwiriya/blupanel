@@ -379,7 +379,20 @@ final class UsersController extends ApiController
                         'owner_user_id' => $id
                     ], $this->ctx->actor($request));
 
-                    $createdSite = ['id' => (int) ($site['id'] ?? 0), 'domain' => $domain];
+                    /*
+                     * **`site_id`, not `id`** — `site.create` has always
+                     * answered with `site_id` (SitesController::store reads it
+                     * by that name), and this line read `id`, so the site's own
+                     * id here was silently 0 from the day it was written.
+                     *
+                     * Nothing noticed while the value only travelled out in the
+                     * response as a link nobody followed. The moment a step in
+                     * this same request needed it — issuing the certificate —
+                     * it surfaced as `site_id must be between 1 and …`, an
+                     * error that names the argument and says nothing about
+                     * where the 0 came from.
+                     */
+                    $createdSite = ['id' => (int) ($site['site_id'] ?? 0), 'domain' => $domain];
                 } catch (\Throwable $e) {
                     $siteError = $e->getMessage();
 
