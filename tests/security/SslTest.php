@@ -240,3 +240,137 @@ test('ไม่ใช้ปลั๊กอิน apache ของ certbot', stat
     assertTrue(!str_contains($source, "'--nginx'"), 'ต้องไม่ใช้ --nginx');
     assertTrue(str_contains($source, "'--webroot'"), 'ต้องใช้ --webroot');
 });
+
+test('ออกใบรับรองแล้วต้องมีทางเปิด HTTPS จริงจากหน้าจอ', static function (): void {
+    /*
+     * **บั๊กที่อยู่มานาน และผู้ใช้เห็นเป็น "สร้าง SSL แล้วทำไมยังขึ้นไม่ปลอดภัย":**
+     *
+     * `ssl.issue` ตั้งใจไม่เปิด HTTPS ให้เอง (ดูคอมเมนต์ในคลาสนั้น) การเปิดเป็น
+     * คำสั่งที่สอง `ssl.set_mode` ซึ่งมีเส้นทางรออยู่แล้วที่
+     * `PUT /api/v2/certificates/{site_id}/mode` · แต่**ไม่มีหน้าจอไหนเรียกมันเลย
+     * สักหน้า** ผลคือ `sites.ssl_mode` ค้างที่ `off` ตลอดกาล vhost ไม่มีบล็อก
+     * `:443` และใบรับรองที่ออกมาถูกต้องทุกอย่างนอนอยู่บนดิสก์เฉย ๆ
+     *
+     * เส้นทางที่ไม่มีปุ่มเรียก = ความสามารถที่ไม่มีอยู่จริงสำหรับคนใช้งาน
+     */
+    $found = [];
+
+    foreach (glob(PHPCP_ROOT . '/public/assets/spa/templates/*.html') ?: [] as $file) {
+        $html = (string) file_get_contents($file);
+
+        if (str_contains($html, '/api/v2/certificates/{site_id}/mode')) {
+            $found[] = basename($file);
+        }
+    }
+
+    assertTrue(
+        in_array('certificates.html', $found, true),
+        'หน้าใบรับรองต้องมีปุ่มเปิด/บังคับ/ปิด HTTPS ไม่งั้นใบที่ออกมาไม่มีวันถูกใช้',
+    );
+    assertTrue(
+        in_array('site.html', $found, true),
+        'หน้าเว็บไซต์รายตัวต้องเปิด HTTPS ได้ด้วย — เป็นหน้าที่ผู้ดูแลอยู่ตอนเพิ่งสร้างเว็บเสร็จ',
+    );
+
+    // ทั้งสามโหมดต้องเรียกได้ ไม่ใช่เปิดได้อย่างเดียวแล้วปิดไม่ได้
+    $certificates = (string) file_get_contents(PHPCP_ROOT . '/public/assets/spa/templates/certificates.html');
+
+    foreach (['"mode": "on"', '"mode": "forced"', '"mode": "off"'] as $mode) {
+        assertTrue(str_contains($certificates, $mode), "หน้าใบรับรองต้องสั่ง {$mode} ได้");
+    }
+});
+
+test('สร้างผู้ใช้พร้อม SSL ต้องสั่งทั้งสองคำสั่ง ตามลำดับ', static function (): void {
+    // ออกใบรับรองอย่างเดียวแล้วหยุด = ส่งมอบเว็บที่เบราว์เซอร์ยังขึ้น "ไม่ปลอดภัย"
+    // ให้ลูกค้า ซึ่งเป็นสิ่งแรกที่ลูกค้าเห็นและเป็นสิ่งเดียวที่ผู้ดูแลไม่ได้เห็น
+    $source = (string) file_get_contents(PHPCP_ROOT . '/src/Http/V2/UsersController.php');
+
+    $issueAt = strpos($source, "'ssl.issue'");
+    $modeAt = strpos($source, "'ssl.set_mode'");
+
+    assertTrue($issueAt !== false, 'ฟอร์มสร้างผู้ใช้ต้องออกใบรับรองได้ในคำสั่งเดียวกัน');
+    assertTrue($modeAt !== false, 'และต้องเปิด HTTPS ต่อให้ด้วย ไม่ใช่ปล่อยไว้เป็นงานที่ต้องจำไปทำต่อ');
+    assertTrue($issueAt < $modeAt, 'ต้องออกใบรับรองก่อนแล้วค่อยเปิด — สลับลำดับจะถูกปฏิเสธเพราะยังไม่มีใบ');
+
+    // ใบที่เซ็นเองต้องไม่ถูกบังคับ redirect — เบราว์เซอร์ไม่เชื่อถือใบนั้น
+    // การบังคับทุกคนไปทาง HTTPS จะเหลือแต่หน้าเตือนเป็นหน้าเดียวของเว็บ
+    assertTrue(
+        str_contains($source, "\$sslMethod === 'letsencrypt' ? 'forced' : 'on'"),
+        'letsencrypt เท่านั้นที่บังคับ HTTPS · ใบที่เซ็นเองเปิดไว้เฉย ๆ',
+    );
+});
+
+test('ขั้นตอนเสริมตอนสร้างบัญชีต้องไม่ล้มทั้งคำสั่ง', static function (): void {
+    /*
+     * บัญชีถูกสร้างไปแล้วจริงตอนที่ขั้นตอนพวกนี้เริ่มทำงาน · ถ้าปล่อยให้ throw
+     * ออกไป ผู้ดูแลจะอ่านคำตอบว่า "สร้างไม่สำเร็จ" แล้วกดซ้ำเข้าไปชนชื่อผู้ใช้ที่
+     * มีอยู่แล้ว โดยที่รหัสผ่านสุ่มของรอบแรกหายไปแล้วไม่มีที่ให้ดูอีก
+     */
+    $source = (string) file_get_contents(PHPCP_ROOT . '/src/Http/V2/UsersController.php');
+
+    foreach (['ssl.issue', 'db.create', 'mail.user_notice'] as $capability) {
+        $at = strpos($source, "'{$capability}'");
+
+        assertTrue($at !== false, "ฟอร์มสร้างผู้ใช้ต้องเรียก {$capability}");
+
+        // ต้องมี catch ครอบอยู่ในระยะที่เป็นบล็อกเดียวกันจริง ๆ
+        $tail = substr($source, $at, 3000);
+
+        assertTrue(
+            str_contains($tail, 'catch (\Throwable $e)'),
+            "{$capability} ต้องถูกครอบด้วย catch — ล้มแล้วต้องรายงานข้าง ๆ ความสำเร็จ ไม่ใช่ล้มทั้งคำสั่ง",
+        );
+    }
+});
+
+test('ตารางใบรับรองต้องแยก "มีใบแต่ไม่ได้ใช้" ออกจาก "ยังไม่มีใบ"', static function (): void {
+    /*
+     * สองสถานะนี้ต่างกันคนละเรื่อง แต่คอลัมน์โหมดเดิมพิมพ์ `off` เหมือนกันทั้งคู่
+     * ข้าง ๆ ป้ายสถานะที่เขียนว่า `valid` — อ่านรวมกันแล้วเหมือนเว็บนี้เรียบร้อยดี
+     * ทั้งที่ vhost ไม่มีบล็อก `:443` และผู้เข้าชมทุกคนยังได้ HTTP ล้วน
+     */
+    $flatten = (new ReflectionClass(\Phpcp\Http\V2\CertificatesController::class))->getMethod('flatten');
+    $flatten->setAccessible(true);
+
+    $withCertificate = $flatten->invoke(null, [
+        'site_id' => 1,
+        'domain' => 'example.test',
+        'ssl_mode' => 'off',
+        'certificate' => ['status' => 'valid', 'days_left' => 80],
+    ]);
+
+    assertSame('warn', $withCertificate['ssl_tone'], 'ใบที่ออกแล้วแต่ยังไม่ได้เปิดใช้ต้องเตือน ไม่ใช่สีเทาเฉย ๆ');
+    assertSame('Certificate not in use', $withCertificate['ssl_mode_label'], 'ต้องบอกตรง ๆ ว่ามีใบแต่ไม่ได้ใช้');
+
+    $noCertificate = $flatten->invoke(null, [
+        'site_id' => 2,
+        'domain' => 'plain.test',
+        'ssl_mode' => 'off',
+        'certificate' => ['status' => 'none'],
+    ]);
+
+    assertSame('muted', $noCertificate['ssl_tone'], 'เว็บที่ยังไม่ได้ขอใบเลยไม่ใช่ความผิดปกติ');
+    assertSame('HTTPS off', $noCertificate['ssl_mode_label'], 'ยังไม่มีใบต้องอ่านว่าปิดอยู่เฉย ๆ');
+
+    foreach (['on' => 'HTTPS on', 'forced' => 'HTTPS forced'] as $mode => $label) {
+        $row = $flatten->invoke(null, [
+            'site_id' => 3,
+            'domain' => 'secure.test',
+            'ssl_mode' => $mode,
+            'certificate' => ['status' => 'valid', 'days_left' => 80],
+        ]);
+
+        assertSame('ok', $row['ssl_tone'], "โหมด {$mode} คือสถานะที่ถูกต้อง");
+        assertSame($label, $row['ssl_mode_label'], "โหมด {$mode} ต้องอ่านออกว่าเปิดอยู่");
+    }
+
+    // ป้ายทุกอันต้องมีคำแปลไทย ไม่งั้นตารางจะขึ้นอังกฤษกลางหน้าจอไทย
+    $lang = json_decode(
+        (string) file_get_contents(PHPCP_ROOT . '/public/assets/spa/lang/th.json'),
+        true,
+    );
+
+    foreach (['HTTPS off', 'HTTPS on', 'HTTPS forced', 'Certificate not in use'] as $label) {
+        assertTrue(is_array($lang) && array_key_exists($label, $lang), "ป้าย '{$label}' ต้องมีคำแปลไทย");
+    }
+});

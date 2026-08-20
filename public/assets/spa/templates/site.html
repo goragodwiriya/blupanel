@@ -213,6 +213,51 @@
         <h2 class="icon-lock" data-i18n>SSL Certificates</h2>
         <div class="tablebody">
           <table class="table border fullwidth" data-table="siteCertificates" data-source="/api/v2/certificates?site_id={id}" data-row-actions='{
+                   "issue": {
+                     "title": "Issue",
+                     "className": "btn btn-primary icon-plus",
+                     "method": "post",
+                     "url": "/api/v2/certificates",
+                     "params": {"site_id": "{site_id}", "method": "letsencrypt"},
+                     "condition": "${can_manage && status === \"none\"}",
+                     "confirm": "Issue a free TLS certificate for this website?"
+                   },
+                   "self_signed": {
+                     "title": "Self-signed",
+                     "className": "btn icon-lock",
+                     "method": "post",
+                     "url": "/api/v2/certificates",
+                     "params": {"site_id": "{site_id}", "method": "self-signed"},
+                     "condition": "${can_manage && status === \"none\"}",
+                     "confirm": "Create a self-signed certificate? Browsers and mail clients will warn about it, but it works — use it for names no public authority can issue for, such as .test or .local."
+                   },
+                   "enable": {
+                     "title": "Enable HTTPS",
+                     "className": "btn btn-success icon-lock",
+                     "method": "put",
+                     "url": "/api/v2/certificates/{site_id}/mode",
+                     "params": {"mode": "on"},
+                     "condition": "${can_manage && status !== \"none\" && ssl_mode === \"off\"}",
+                     "confirm": "Start serving this website over HTTPS as well as HTTP?"
+                   },
+                   "force": {
+                     "title": "Force HTTPS",
+                     "className": "btn btn-success icon-lock",
+                     "method": "put",
+                     "url": "/api/v2/certificates/{site_id}/mode",
+                     "params": {"mode": "forced"},
+                     "condition": "${can_manage && status !== \"none\" && ssl_mode === \"on\"}",
+                     "confirm": "Redirect every HTTP visitor to HTTPS? Browsers will remember this for 6 months (HSTS)."
+                   },
+                   "https_off": {
+                     "title": "Turn HTTPS off",
+                     "className": "btn btn-warning icon-unlock",
+                     "method": "put",
+                     "url": "/api/v2/certificates/{site_id}/mode",
+                     "params": {"mode": "off"},
+                     "condition": "${can_manage && ssl_mode !== \"off\"}",
+                     "confirm": "Serve this website over plain HTTP only? The certificate is kept."
+                   },
                    "renew": {
                      "title": "Renew",
                      "className": "btn btn-primary icon-refresh",
@@ -234,7 +279,7 @@
             <thead>
               <tr>
                 <th data-field="domain" data-cell-class="mono" data-i18n>{LNG_Domain}</th>
-                <th data-field="ssl_mode" class="center" data-cell-class="center" data-i18n>{LNG_Mode}</th>
+                <th data-field="ssl_mode" class="center" data-cell-class="center" data-template="<span class='pill pill-${ssl_tone}'>${ssl_mode_label}</span>" data-i18n>{LNG_Mode}</th>
                 <th data-field="status" class="center" data-cell-class="center" data-template="<span class='pill pill-${status_tone}'>{LNG_${status}}</span>" data-i18n>{LNG_Status}
                 </th>
                 <th data-field="expires_at" class="center" data-cell-class="center" data-format="date" data-empty-text="—" data-i18n>{LNG_Expires}</th>

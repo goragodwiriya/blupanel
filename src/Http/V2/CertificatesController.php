@@ -42,7 +42,10 @@ final class CertificatesController extends HostingController
         $manage = $this->ctx->can('ssl.manage');
 
         return $this->ok(
-            array_map(static fn (array $row): array => self::flatten($row) + ['can_manage' => $manage], $sites),
+            array_map(
+                fn (array $row): array => $this->localise(self::flatten($row) + ['can_manage' => $manage]),
+                $sites,
+            ),
             [
                 'expiring' => (int) ($data['expiring'] ?? 0),
                 'certbot_installed' => (bool) ($data['certbot_installed'] ?? false),
@@ -75,6 +78,7 @@ final class CertificatesController extends HostingController
         unset($row['certificate']);
 
         $status = (string) ($certificate['status'] ?? 'none');
+        $mode = (string) ($row['ssl_mode'] ?? 'off');
 
         return $row + [
             'status' => $status,
@@ -96,7 +100,49 @@ final class CertificatesController extends HostingController
             'expires_at' => !empty($certificate['expires_at']) ? (int) $certificate['expires_at'] : null,
             'days_left' => isset($certificate['days_left']) && $status !== 'none' ? (int) $certificate['days_left'] : null,
             'auto_renew' => (bool) ($certificate['auto_renew'] ?? false),
+            /*
+             * **The column that had no way of telling the truth**
+             *
+             * `ssl_mode` was printed raw — `off`, `on`, `forced` — next to a
+             * status pill that said `valid`, and the two together read as "this
+             * site has a working certificate". They do not mean that: a site
+             * with a perfectly valid certificate and `ssl_mode = off` has no
+             * `:443` block in its vhost at all, so every visitor still gets
+             * plain HTTP and a browser that says "not secure".
+             *
+             * That combination is now the loud one. It is not a neutral state
+             * to sit in — it is a certificate that was paid for in DNS checks
+             * and rate limit and is doing nothing.
+             */
+            'ssl_tone' => match (true) {
+                $mode === 'forced', $mode === 'on' => 'ok',
+                $status !== 'none' => 'warn',
+                default => 'muted',
+            },
+            'ssl_mode_label' => match ($mode) {
+                'forced' => 'HTTPS forced',
+                'on' => 'HTTPS on',
+                default => $status === 'none' ? 'HTTPS off' : 'Certificate not in use',
+            },
         ];
+    }
+
+    /**
+     * Translate the labels the table prints straight out
+     *
+     * `flatten()` is static and has no app to ask, so it writes English — the
+     * same split `UsersController::present()` uses for `role_label`. The
+     * English text is itself the catalogue key, so an untranslated label still
+     * reads as a sentence rather than as a code.
+     *
+     * @param array<string,mixed> $row
+     * @return array<string,mixed>
+     */
+    private function localise(array $row): array
+    {
+        $row['ssl_mode_label'] = $this->t((string) $row['ssl_mode_label']);
+
+        return $row;
     }
 
     /**
@@ -146,7 +192,7 @@ final class CertificatesController extends HostingController
 
         return $this->completed(
             (string) ($result['message'] ?? 'Certificate renewed'),
-            'certificates',
+            'certificates,siteCertificates',
             $result,
         );
     }
@@ -171,7 +217,7 @@ final class CertificatesController extends HostingController
 
         return $this->completed(
             (string) ($result['message'] ?? 'HTTPS mode changed'),
-            'certificates',
+            'certificates,siteCertificates',
             $result,
         );
     }
@@ -198,6 +244,6 @@ final class CertificatesController extends HostingController
             'confirm_domain' => $confirm,
         ], $this->ctx->actor($request));
 
-        return $this->completed('Certificate deleted', 'certificates', ['site_id' => $siteId]);
+        return $this->completed('Certificate deleted', 'certificates,siteCertificates', ['site_id' => $siteId]);
     }
 }

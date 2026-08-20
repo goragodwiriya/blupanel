@@ -987,3 +987,72 @@ test('หัวตารางไม่มีอักขระเกินต�
 
     assertSame([], $problems, 'หัวตารางมี > เกิน: ' . implode(', ', $problems));
 });
+
+test('ทุก pattern ของ <input> ต้องคอมไพล์ได้ในเบราว์เซอร์ยุคนี้', static function (): void {
+    /*
+     * **เจอบนเครื่องจริง (2026-08-20):** ช่องชื่อผู้ใช้ในหน้าสร้างผู้ใช้ใช้
+     * `pattern="[a-z][a-z0-9_-]{2,31}"` แล้วเบราว์เซอร์โยน
+     * `Invalid regular expression: /[a-z][a-z0-9_-]{2,31}/v: Invalid character in character class`
+     *
+     * HTML spec สั่งให้คอมไพล์ค่าของ `pattern` ด้วยแฟล็ก **`v`** (unicodeSets)
+     * ซึ่งจอง `- ( ) [ ] { } / | \` ไว้เป็นอักขระไวยากรณ์ **ในคลาสอักขระ** ·
+     * ขีดกลางที่เคยเป็น literal ได้ตามสบายในแฟล็ก `u` จึงกลายเป็น syntax error
+     * ทั้งรูปแบบ — ผลคือ **การตรวจค่าทั้งช่องนั้นหายไปเงียบ ๆ** พร้อม error
+     * ในคอนโซลที่ไม่มีใครเปิดดู · ต้องเขียนเป็น `\-` แทน
+     *
+     * เทสต์นี้เดินคลาสอักขระเองแทนที่จะเรียก preg_match เพราะ PCRE ยอมรับรูปแบบ
+     * ที่ JavaScript แฟล็ก `v` ปฏิเสธ — ตัวที่ต้องเลียนแบบคือเบราว์เซอร์ ไม่ใช่ PHP
+     */
+    $problems = [];
+
+    foreach (glob(PHPCP_ROOT . '/public/assets/spa/templates/*.html') ?: [] as $file) {
+        if (!preg_match_all('/\bpattern="([^"]+)"/', (string) file_get_contents($file), $matches)) {
+            continue;
+        }
+
+        foreach ($matches[1] as $pattern) {
+            $pattern = html_entity_decode($pattern);
+            $inClass = false;
+            $length = strlen($pattern);
+
+            for ($i = 0; $i < $length; $i++) {
+                $char = $pattern[$i];
+
+                if ($char === '\\') {
+                    $i++;
+
+                    continue;
+                }
+
+                if (!$inClass) {
+                    $inClass = $char === '[';
+
+                    continue;
+                }
+
+                if ($char === ']') {
+                    $inClass = false;
+
+                    continue;
+                }
+
+                // ช่วงค่า (a-z) ยังเขียนได้ตามปกติ — ที่ผิดคือขีดกลางที่ยืนเดี่ยว
+                // ติดขอบคลาสหรือติดกับช่วงอื่น ซึ่งแฟล็ก v ไม่ยอมให้เป็น literal
+                if ($char === '-'
+                    && ($i + 1 >= $length
+                        || $pattern[$i + 1] === ']'
+                        || $pattern[$i - 1] === '['
+                        || $pattern[$i - 1] === '-')) {
+                    $problems[] = basename($file) . ' → ' . $pattern;
+                }
+            }
+        }
+    }
+
+    assertSame(
+        [],
+        $problems,
+        "pattern เหล่านี้เบราว์เซอร์คอมไพล์ไม่ผ่าน (แฟล็ก v) การตรวจค่าจึงหายไปทั้งช่อง — ใช้ \\- แทน:\n  "
+        . implode("\n  ", $problems),
+    );
+});

@@ -131,7 +131,7 @@ final class UserNotice
 
         $lines = array_merge(
             $lines,
-            $this->panelSection($username, $password),
+            $this->panelSection($username, $password, (int) ($user['must_change_password'] ?? 0) === 1),
             $this->sitesSection($id),
             $this->sftpSection($user),
             $this->databaseSection($id),
@@ -152,7 +152,7 @@ final class UserNotice
     /**
      * @return list<string>
      */
-    private function panelSection(string $username, string $password): array
+    private function panelSection(string $username, string $password, bool $mustChange = true): array
     {
         $lines = [
             ...$this->heading('Control panel'),
@@ -162,7 +162,18 @@ final class UserNotice
 
         if ($password !== '') {
             $lines[] = $this->pair('Password', $password);
-            $lines[] = $this->t('You will be asked to choose your own password the first time you sign in.');
+
+            /*
+             * Only promised when it is actually going to happen · the account
+             * is flagged to force a change only for a password the system
+             * generated — one an admin typed in deliberately (often with the
+             * customer on the phone) is left alone, and telling that customer
+             * they will be asked to replace it sends them looking for a screen
+             * that never appears
+             */
+            if ($mustChange) {
+                $lines[] = $this->t('You will be asked to choose your own password the first time you sign in.');
+            }
         }
 
         return $lines;

@@ -8,6 +8,7 @@ use Phpcp\Domain\QuotaChecker;
 use Phpcp\Domain\SettingsRepository;
 use Phpcp\Domain\UserNotice;
 use Phpcp\Domain\UserRepository;
+use Phpcp\Driver\Db\MariaDbManager;
 use Phpcp\Http\ApiController;
 use Phpcp\Http\ApiProblem;
 use Phpcp\Http\Resource\SiteResource;
@@ -185,6 +186,30 @@ final class UsersController extends ApiController
      * forced on first login — the admin never has to think one up themselves
      * (which usually produces a weak one), and a password that passed through a
      * middleman's eyes gets the shortest possible lifespan.
+     *
+     * ## One request, the whole handover
+     *
+     * A usable hosting account is never just a row in `users`. It is an account,
+     * a website, a certificate that is actually *switched on*, somewhere to put
+     * the data, and a message telling the customer all of it. Split across five
+     * screens, the steps after the first are the ones that get forgotten — and
+     * every one of them is only noticed by the customer, days later: no site, a
+     * browser saying "not secure", no database, no idea what the password was.
+     *
+     * So this one endpoint runs all of them, in the order they depend on each
+     * other, each one optional and each one asked for on the same form:
+     *
+     *   1. the account (`customer.create`) — the only step that may fail the request
+     *   2. the first website (`site.create`)
+     *   3. its certificate (`ssl.issue`) **and `ssl.set_mode`** — see below
+     *   4. its first database (`db.create`)
+     *   5. the welcome email, built by reading 1–4 back out of the database
+     *
+     * **Steps 2–5 never fail the request.** The account exists by then and is
+     * genuinely usable · answering with an error would read as "creation
+     * failed" and send the admin round again into a username that now exists,
+     * with the generated password lost in between. Each one reports itself as
+     * a warning beside the success instead, saying what to do about it.
      */
     public function store(Request $request): Response
     {
@@ -211,6 +236,40 @@ final class UsersController extends ApiController
 
         if ($users->findByUsername($username) !== null) {
             return $this->problem(ApiProblem::Conflict, 'That username is already taken');
+        }
+
+        /*
+         * Everything the form can get wrong is checked **before** the account exists
+         *
+         * The optional steps below (website, certificate, database, welcome
+         * email) all half-succeed on purpose — the account is real by then, so
+         * failing the whole request would send the admin back into a username
+         * that now exists with the generated password lost in between · but a
+         * value that was already wrong when it arrived is not a half-success,
+         * it is a typo, and a typo has to come back as a 422 while nothing has
+         * been created yet and the form can still be corrected.
+         */
+        $sslMethod = $request->payloadString('ssl') ?: 'none';
+
+        if (!in_array($sslMethod, ['none', 'letsencrypt', 'self-signed'], true)) {
+            return $this->problem(ApiProblem::ValidationError, 'Invalid SSL choice', [
+                'ssl' => 'Allowed: none, letsencrypt, self-signed'
+            ]);
+        }
+
+        $databaseName = trim($request->payloadString('database'));
+
+        if ($databaseName !== '') {
+            try {
+                // The one rule, read from the driver that enforces it — the
+                // owner's prefix is added by `db.create` later, so what is
+                // checked here is only the part the admin actually typed
+                MariaDbManager::assertDatabaseName($databaseName);
+            } catch (\Throwable $e) {
+                return $this->problem(ApiProblem::ValidationError, 'Invalid database name', [
+                    'database' => $e->getMessage()
+                ]);
+            }
         }
 
         $password = $request->payloadString('password');
@@ -244,8 +303,21 @@ final class UsersController extends ApiController
         $sftpUsername = null;
         $sftpError = '';
 
+        $domain = trim($request->payloadString('domain'));
         $createdSite = null;
         $siteError = '';
+
+        $createdSsl = null;
+        $sslError = '';
+        $sslIssued = false;
+
+        $createdDatabase = null;
+        $databaseError = '';
+
+        $welcomeSentTo = '';
+        $welcomeError = '';
+
+        $adminExtrasIgnored = '';
 
         if ($role === Permissions::WEBADMIN) {
             if ($wantSftp) {
@@ -279,8 +351,6 @@ final class UsersController extends ApiController
             // step that's easy to forget, and if it's forgotten, the customer
             // logs in to an empty page · the quota is already checked by the
             // `site.create` capability itself.
-            $domain = trim($request->payloadString('domain'));
-
             if ($domain !== '') {
                 // **A failure at this step must not fail the whole request**
                 //
@@ -319,10 +389,194 @@ final class UsersController extends ApiController
                     ]);
                 }
             }
+
+            /*
+             * HTTPS — **two commands, not one**
+             *
+             * `ssl.issue` deliberately never switches HTTPS on by itself, and
+             * that split is right at the capability layer: issuing can succeed
+             * while the certificate misses a domain, and an admin may not be
+             * ready to flip a live site over.
+             *
+             * What was wrong is that nothing ever ran the second command. The
+             * panel had no screen anywhere that called `ssl.set_mode`, so
+             * `sites.ssl_mode` stayed `off`, the vhost never grew a `:443`
+             * block, and every certificate the panel had ever issued sat on
+             * disk doing nothing while the browser kept saying "not secure".
+             * The certificates page can do it now, and so can this form, in
+             * the same request that created the account.
+             *
+             * Which mode each method lands on:
+             *   - **letsencrypt → forced.** A publicly trusted certificate is
+             *     the whole reason to redirect; leaving `http://` answering
+             *     next to it means the customer's first visit is still plain text.
+             *   - **self-signed → on.** Forcing every visitor through a
+             *     certificate no browser trusts turns one warning page into
+             *     the only page the site has · both schemes stay reachable so
+             *     the site still works while a real certificate is arranged.
+             *
+             * Failure never fails the request, for the same reason the website
+             * step doesn't — and doubly so here, since the usual cause is DNS
+             * that hasn't been pointed at this machine yet, which is somebody
+             * else's job and not a reason to refuse to create the account.
+             */
+            if ($createdSite !== null && $sslMethod !== 'none') {
+                $sslMode = $sslMethod === 'letsencrypt' ? 'forced' : 'on';
+
+                try {
+                    $certificate = $this->agent()->data('ssl.issue', [
+                        'site_id' => (int) $createdSite['id'],
+                        'method' => $sslMethod,
+                        // Left to the capability to resolve — it reaches for the
+                        // owner's own email first, which is the account being
+                        // created here, then the system's sender address
+                        'email' => '',
+                        'staging' => false,
+                    ], $this->ctx->actor($request));
+
+                    // Which of the two failed decides what the admin is told to
+                    // do next, and the two answers are nothing alike: a
+                    // certificate that was never issued is a DNS problem to
+                    // chase, while one that was issued but not switched on is
+                    // already sitting on disk and is one button away
+                    $sslIssued = true;
+
+                    $this->agent()->data('ssl.set_mode', [
+                        'site_id' => (int) $createdSite['id'],
+                        'mode' => $sslMode,
+                    ], $this->ctx->actor($request));
+
+                    $createdSsl = [
+                        'method' => $sslMethod,
+                        'mode' => $sslMode,
+                        'expires_at' => $certificate['certificate']['expires_at'] ?? null,
+                    ];
+                } catch (\Throwable $e) {
+                    $sslError = $e->getMessage();
+
+                    $this->audit($request, $sslIssued ? 'ssl.set_mode_failed' : 'ssl.issue_failed', $domain, [
+                        'user_id' => $id,
+                        'method' => $sslMethod,
+                        'reason' => $sslError
+                    ]);
+                }
+            }
+
+            /*
+             * The first database, in the same request
+             *
+             * Bound to the website when there is one — `databases_.site_id` is
+             * what puts a database into the automatic backup round and into
+             * the welcome email's database section, so a database created
+             * beside a site and left unbound would quietly be backed up by
+             * nobody.
+             *
+             * The name is prefixed with the account's own (`db.create` does
+             * it), so two customers can both ask for `shop`.
+             */
+            if ($databaseName !== '') {
+                try {
+                    $database = $this->agent()->data('db.create', [
+                        'name' => $databaseName,
+                        'owner_user_id' => $id,
+                        'site_id' => $createdSite === null ? 0 : (int) $createdSite['id'],
+                        // Generated by the capability and shown once, in the
+                        // same dialog as the panel password · never the
+                        // account's own password, because this one is copied
+                        // into a config file and then sits there for years
+                        'password' => '',
+                        'host' => 'localhost',
+                        'privileges' => 'readwrite',
+                        'charset' => 'utf8mb4',
+                    ], $this->ctx->actor($request));
+
+                    $createdDatabase = [
+                        'name' => (string) ($database['name'] ?? ''),
+                        'username' => (string) ($database['username'] ?? ''),
+                        'password' => (string) ($database['password'] ?? ''),
+                    ];
+                } catch (\Throwable $e) {
+                    $databaseError = $e->getMessage();
+
+                    $this->audit($request, 'db.create_failed', $databaseName, [
+                        'user_id' => $id,
+                        'reason' => $databaseError
+                    ]);
+                }
+            }
+
+            /*
+             * The welcome email — **last**, on purpose
+             *
+             * `UserNotice` builds its body by reading the account back out of
+             * the database: its websites, its databases, its SFTP details, its
+             * quota. Sent any earlier in this method it would describe an
+             * account that was still half-built, and the customer's one
+             * handover message would be missing the very things this form just
+             * created.
+             *
+             * The panel password goes in it only when the system generated
+             * one — a password the admin typed is already in the admin's hands
+             * and is usually being read out loud as they type it.
+             */
+            if ((bool) $request->payload('send_welcome')) {
+                $created = $users->find($id);
+
+                try {
+                    if ($created === null || !UserNotice::appliesTo($created)) {
+                        throw new \RuntimeException('A welcome email only applies to a hosting account');
+                    }
+
+                    $notice = (new UserNotice($this->app, $this->machineInfo($request)))
+                        ->build(UserNotice::WELCOME, $created, $password);
+
+                    $sent = $this->agent()->data('mail.user_notice', [
+                        'user_id' => $id,
+                        'subject' => $notice['subject'],
+                        'body' => $notice['body'],
+                    ], $this->ctx->actor($request));
+
+                    $welcomeSentTo = (string) ($sent['to'] ?? '');
+
+                    $this->audit($request, 'user.email_sent', $username, [
+                        'kind' => UserNotice::WELCOME,
+                        'to' => $welcomeSentTo
+                    ]);
+                } catch (\Throwable $e) {
+                    $welcomeError = $e->getMessage();
+
+                    $this->audit($request, 'user.email_failed', $username, [
+                        'kind' => UserNotice::WELCOME,
+                        'reason' => $welcomeError
+                    ]);
+                }
+            }
         } else {
             $id = $users->create($username, $password, $role, mustChangePassword: $wasRandom);
 
             $this->audit($request, 'user.create', $username, ['user_id' => $id, 'role' => $role]);
+
+            /*
+             * An admin account has no website, no database and no welcome email
+             * to send — every one of those belongs to a hosting package.
+             *
+             * The form does not hide those fields (the role is chosen on the
+             * same screen, so hiding them would make the page jump around as
+             * the dropdown changes), so a domain or a database name typed
+             * before switching the role to sysadmin is simply dropped. Dropped
+             * **silently** is the part that is wrong: the admin walks away
+             * believing they created a website. Only the two fields that start
+             * empty are reported — the ones with a default would fire this on
+             * every single admin account and stop being read.
+             */
+            $ignored = array_values(array_filter([
+                $domain === '' ? '' : $this->t('the website'),
+                $databaseName === '' ? '' : $this->t('the database'),
+            ]));
+
+            if ($ignored !== []) {
+                $adminExtrasIgnored = implode(', ', $ignored);
+            }
         }
 
         // A system-generated password lives in this one response only — the
@@ -358,6 +612,39 @@ final class UsersController extends ApiController
             $secrets['SFTP account'] = $sftpUsername;
         }
 
+        /*
+         * The database's password is revealed whether or not the account's was
+         *
+         * `db.create` always generates it — there is no field for it on this
+         * form — and MariaDB keeps only a hash, so this response is the single
+         * place it will ever be readable · it travels next to the database and
+         * user names it belongs to, because the admin is about to paste all
+         * three into a config file
+         */
+        if ($createdDatabase !== null && $createdDatabase['password'] !== '') {
+            $secrets['Database'] = $createdDatabase['name'];
+            $secrets['Database user'] = $createdDatabase['username'];
+            $secrets['Database password'] = $createdDatabase['password'];
+        }
+
+        // Sentences under the revealed values — what else happened that the
+        // admin has to know before closing the only screen that shows it
+        $notes = [];
+
+        if ($sftpUsername !== null && $sftpPassword !== '' && $wasRandom) {
+            $notes[] = $this->t('SFTP uses this same password. The customer must set a new panel password the next time they sign in.');
+        }
+
+        if ($createdSsl !== null) {
+            $notes[] = $createdSsl['mode'] === 'forced'
+                ? $this->t('HTTPS is on and every visitor is redirected to it.')
+                : $this->t('HTTPS is on, but the certificate is self-signed — browsers will warn until a trusted one replaces it.');
+        }
+
+        if ($welcomeSentTo !== '') {
+            $notes[] = $this->t('The welcome email has been sent to {email}.', ['email' => $welcomeSentTo]);
+        }
+
         return $this->revealed(
             $createdSite === null
                 ? $this->t('Account {user} created', ['user' => $username])
@@ -365,9 +652,7 @@ final class UsersController extends ApiController
             'users',
             'Account created',
             $secrets,
-            note: $sftpUsername !== null && $sftpPassword !== '' && $wasRandom
-                ? $this->t('SFTP uses this same password. The customer must set a new panel password the next time they sign in.')
-                : '',
+            note: implode(' ', $notes),
             // The trip to the list waits for the Close button — navigating while
             // the dialog is open takes the dialog along with the page, and this
             // is the only place these passwords ever appear
@@ -377,7 +662,13 @@ final class UsersController extends ApiController
              + ($sftpUsername === null ? [] : ['sftp_username' => $sftpUsername, 'sftp_password' => $sftpPassword])
              + ($sftpError === '' ? [] : ['sftp_error' => $sftpError])
              + ($createdSite === null ? [] : ['site' => $createdSite])
-             + ($siteError === '' ? [] : ['site_error' => $siteError]),
+             + ($siteError === '' ? [] : ['site_error' => $siteError])
+             + ($createdSsl === null ? [] : ['ssl' => $createdSsl])
+             + ($sslError === '' ? [] : ['ssl_error' => $sslError])
+             + ($createdDatabase === null ? [] : ['database' => $createdDatabase])
+             + ($databaseError === '' ? [] : ['database_error' => $databaseError])
+             + ($welcomeSentTo === '' ? [] : ['welcome_sent_to' => $welcomeSentTo])
+             + ($welcomeError === '' ? [] : ['welcome_error' => $welcomeError]),
             status: 201,
             notices: [
                 /*
@@ -394,6 +685,39 @@ final class UsersController extends ApiController
                 ['message' => $sftpError === '' ? '' : $this->t(
                     'Account {user} created, but SFTP could not be enabled: {error}',
                     ['user' => $username, 'error' => $sftpError],
+                )],
+                /*
+                 * The usual cause is DNS that has not been pointed at this
+                 * machine yet — so the message says what to do next rather
+                 * than only what failed · the certificate can be issued from
+                 * the certificates page whenever the domain does resolve here,
+                 * and nothing about the account needs redoing in the meantime
+                 */
+                ['message' => $sslError === '' || $sslIssued ? '' : $this->t(
+                    'Website {domain} was created, but the certificate could not be issued: {error} · issue it from the SSL certificates page once the domain points at this machine',
+                    ['domain' => $domain, 'error' => $sslError],
+                )],
+                /*
+                 * The certificate is genuinely there — saying "could not be
+                 * issued" here would send the admin off to request a second
+                 * one against Let's Encrypt's rate limit for a problem a
+                 * single button already solves
+                 */
+                ['message' => $sslError === '' || !$sslIssued ? '' : $this->t(
+                    'The certificate for {domain} was issued, but HTTPS could not be switched on: {error} · the website is still served over plain HTTP until it is enabled from the SSL certificates page',
+                    ['domain' => $domain, 'error' => $sslError],
+                )],
+                ['message' => $databaseError === '' ? '' : $this->t(
+                    'Account {user} created, but the database could not be created: {error}',
+                    ['user' => $username, 'error' => $databaseError],
+                )],
+                ['message' => $welcomeError === '' ? '' : $this->t(
+                    'Account {user} created, but the welcome email could not be sent: {error}',
+                    ['user' => $username, 'error' => $welcomeError],
+                )],
+                ['message' => $adminExtrasIgnored === '' ? '' : $this->t(
+                    'An administrator account has no hosting package, so {ignored} was not created — create a hosting account for that',
+                    ['ignored' => $adminExtrasIgnored],
                 )],
             ],
         )->withHeader('Location', '/api/v2/users/'.$id);

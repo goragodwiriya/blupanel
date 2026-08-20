@@ -21,6 +21,18 @@ use Phpcp\Support\Validator;
  * doesn't cover every domain, or an admin might not be ready to switch yet —
  * seeing the result first, then clicking to enable it, is safer than switching
  * immediately and breaking the site.
+ *
+ * **But the second step has to exist somewhere.** For a long time it did not:
+ * `ssl.set_mode` was registered and routed, and nothing in the panel ever
+ * called it — so `sites.ssl_mode` stayed `off`, the vhost never grew a `:443`
+ * block, and a perfectly valid certificate sat on disk while the browser said
+ * "not secure", with no screen anywhere that could change that.
+ *
+ * Both callers now pair the two commands rather than leaving the pairing to
+ * memory: the certificates table has explicit enable/force/off buttons, and
+ * {@see \Phpcp\Http\V2\UsersController::store()} runs both in the request
+ * that creates the account. Anything new that issues a certificate has to
+ * decide what switches it on — leaving that out is not a neutral default.
  */
 final class SslIssue extends SslCapability implements Capability
 {

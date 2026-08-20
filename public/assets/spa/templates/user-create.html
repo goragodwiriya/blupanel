@@ -22,7 +22,7 @@
               <div class="width50">
                 <label for="nu_username" data-i18n>Username</label>
                 <span class="form-control icon-user">
-                  <input type="text" id="nu_username" name="username" required maxlength="32" pattern="[a-z][a-z0-9_-]{2,31}" autocomplete="off">
+                  <input type="text" id="nu_username" name="username" required maxlength="32" pattern="[a-z][a-z0-9_\-]{2,31}" autocomplete="off">
                 </span>
                 <div class="comment" data-i18n>Lowercase letters, digits, - and _ only</div>
               </div>
@@ -85,6 +85,31 @@
                 </span>
               </div>
             </div>
+            <!-- HTTPS chosen here, not left for a second visit to the
+                 certificates page · issuing a certificate and switching HTTPS on
+                 are two separate commands, and an account handed over after only
+                 the first one was run is a site the browser still marks "not
+                 secure" — the one thing the customer notices immediately -->
+            <div class="form-group">
+              <div class="width50">
+                <label for="nu_ssl" data-i18n>HTTPS</label>
+                <span class="form-control icon-lock">
+                  <select id="nu_ssl" name="ssl">
+                    <option value="letsencrypt" data-i18n>Let's Encrypt, then force HTTPS</option>
+                    <option value="self-signed" data-i18n>Self-signed, HTTPS on but not forced</option>
+                    <option value="none" data-i18n>No certificate yet</option>
+                  </select>
+                </span>
+                <div class="comment" data-i18n>Let's Encrypt needs the domain to already point at this machine. If it does not, the account and the website are still created and this step is reported as skipped.</div>
+              </div>
+              <div class="width50">
+                <label for="nu_database" data-i18n>First database</label>
+                <span class="form-control icon-database">
+                  <input type="text" id="nu_database" name="database" maxlength="64" pattern="[A-Za-z][A-Za-z0-9_]{1,63}" autocomplete="off" placeholder="shop">
+                </span>
+                <div class="comment" data-i18n>Leave empty to skip. The account prefix is added automatically, and the database password is shown once when this form is saved.</div>
+              </div>
+            </div>
           </fieldset>
           <fieldset>
             <legend class="icon-meter" data-i18n>Quota</legend>
@@ -140,6 +165,15 @@
               <input type="checkbox" class="switch" id="nu_sftp" name="sftp" value="1">
               <label for="nu_sftp" data-i18n>Enable SFTP now</label>
               <div class="comment" data-i18n>Uses the password above. Ignored when the package does not include SFTP. Applies to hosting accounts only.</div>
+            </div>
+            <!-- Sent as the very last step of the request, after the website,
+                 the certificate and the database exist — the body is built by
+                 reading them back out of the database, so an email sent any
+                 earlier would describe an account that was still half-built -->
+            <div>
+              <input type="checkbox" class="switch" id="nu_welcome" name="send_welcome" value="1" checked>
+              <label for="nu_welcome" data-i18n>Send the welcome email now</label>
+              <div class="comment" data-i18n>Hands over the panel address, the password, SFTP, the website and the database in one message. Hosting accounts with an email address only.</div>
             </div>
           </fieldset>
           <fieldset class="submit">
