@@ -242,6 +242,7 @@ final class Routes
         // The password-setting form opens in a Modal — a single field shouldn't
         // permanently take up space on the page
         $router->add(new Route('GET', '/api/v2/users/{id}/sftp/form', UsersController::class, 'sftpForm', 'customer.manage', 'api.v2.users.sftp.form'));
+        $router->add(new Route('GET', '/api/v2/users/{id}/delete/form', UsersController::class, 'deleteForm', 'customer.manage', 'api.v2.users.delete.form'));
         $router->add(new Route('PUT', '/api/v2/users/{id}/sftp', UsersController::class, 'enableSftp', 'customer.manage', 'api.v2.users.sftp.enable'));
         $router->add(new Route('DELETE', '/api/v2/users/{id}/sftp', UsersController::class, 'disableSftp', 'customer.manage', 'api.v2.users.sftp.disable'));
 

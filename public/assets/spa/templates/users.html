@@ -48,10 +48,10 @@
                    "delete": {
                      "title": "Delete",
                      "className": "btn btn-danger icon-delete",
-                     "method": "delete",
-                     "url": "/api/v2/users/{id}",
-                     "condition": "${!is_self}",
-                     "confirm": "Delete this account? Its websites must be removed or reassigned first."
+                     "method": "get",
+                     "navigate": false,
+                     "url": "/api/v2/users/{id}/delete/form",
+                     "condition": "${!is_self}"
                    }
                  }'>
             <thead>

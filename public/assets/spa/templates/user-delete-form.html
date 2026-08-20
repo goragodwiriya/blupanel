@@ -1,0 +1,56 @@
+<form data-form="userDelete"
+      data-attr="action:form_action"
+      method="post"
+      data-method="DELETE"
+      data-ajax-submit="true"
+      data-validate="true">
+  <fieldset>
+    <!-- Said before the switches, not after · an admin who reads "this account
+         still owns 2 websites" first never fills the rest of the form in -->
+    <div class="alert alert-danger" data-if="has_sites">
+      <span data-i18n>This account still owns websites. Delete them or move them to another owner first — this form cannot.</span>
+    </div>
+    <div>
+      <label for="del_confirm" data-i18n>Type the username to confirm</label>
+      <span class="form-control icon-user">
+        <input type="text" id="del_confirm" name="confirm_username" required maxlength="32"
+               autocomplete="off" spellcheck="false" data-attr="placeholder:username">
+      </span>
+      <div class="comment" data-i18n>A row is easy to misclick, and this command reaches the machine itself.</div>
+    </div>
+  </fieldset>
+  <fieldset>
+    <legend class="icon-folder" data-i18n>Files</legend>
+    <!-- Off by default, both of them · the outcome that can still be undone is
+         the one an admin gets by not deciding -->
+    <div>
+      <input type="checkbox" class="switch" id="del_files" name="delete_files" value="1">
+      <label for="del_files" data-i18n>Delete this account's files too</label>
+      <!-- The path on its own line, never spliced into the middle of a
+           sentence — a sentence broken around a value cannot be translated,
+           because the halves do not stay in that order in every language -->
+      <div class="comment" data-i18n>Moves the home directory to the holding area, where it can still be recovered until that is cleared, then removes the Linux account and frees the username.</div>
+      <div class="comment mono" data-text="home"></div>
+    </div>
+    <div class="comment" data-i18n>Left off, the files stay where they are and the Linux account stays with them — which is what keeps the username reserved. Nobody can be given that name again until the files are dealt with, so a later customer can never be handed them by accident.</div>
+  </fieldset>
+  <fieldset data-if="has_databases">
+    <legend class="icon-database" data-i18n>Databases</legend>
+    <div>
+      <input type="checkbox" class="switch" id="del_databases" name="delete_databases" value="1">
+      <label for="del_databases" data-i18n>Delete this account's databases too</label>
+      <div class="comment" data-i18n>Each one is backed up before it is dropped — the dump lands in this account's own backup folder, so it travels with the files above.</div>
+    </div>
+    <!-- Named, not counted · "delete 4 databases" is not a decision anybody is
+         really making until they can see which four -->
+    <ul class="mono" data-for="d in databases">
+      <template>
+        <li data-text="d.name"></li>
+      </template>
+    </ul>
+    <div class="comment" data-i18n>Left off, they stay on the machine with their own users and passwords intact — what is already written in a wp-config.php keeps working, ready for the account that takes over.</div>
+  </fieldset>
+  <fieldset class="submit">
+    <button type="submit" class="btn btn-danger icon-delete" data-i18n>Delete account</button>
+  </fieldset>
+</form>

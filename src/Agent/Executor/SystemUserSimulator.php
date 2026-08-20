@@ -22,7 +22,7 @@ final class SystemUserSimulator implements Simulator
 
     public function handles(string $binary): bool
     {
-        return in_array(basename($binary), ['useradd', 'userdel', 'usermod', 'id', 'chown', 'chgrp'], true);
+        return in_array(basename($binary), ['useradd', 'userdel', 'usermod', 'id', 'chown', 'chgrp', 'getent'], true);
     }
 
     public function simulate(array $argv, SandboxState $state, ?string $stdin = null): ExecResult
@@ -31,6 +31,7 @@ final class SystemUserSimulator implements Simulator
             'useradd' => $this->useradd($argv, $state),
             'userdel' => $this->userdel($argv, $state),
             'id' => $this->id($argv, $state),
+            'getent' => $this->getent($argv, $state),
             // Changing file ownership has no effect in the sandbox, but must still report success
             // — otherwise the site-creation flow would trip up right at the start
             'chown', 'chgrp', 'usermod' => $this->ok($argv),
@@ -55,8 +56,17 @@ final class SystemUserSimulator implements Simulator
         $users[$name] = [
             'uid' => $uid,
             'gid' => $uid,
-            'home' => $this->optionValue($argv, '-d') ?: ('/home/' . $name),
-            'shell' => $this->optionValue($argv, '-s') ?: '/bin/sh',
+            'home' => $this->optionValue($argv, '-d') ?: $this->optionValue($argv, '--home-dir') ?: ('/home/' . $name),
+            'shell' => $this->optionValue($argv, '-s') ?: $this->optionValue($argv, '--shell') ?: '/bin/sh',
+            /*
+             * The comment is stored because it is **evidence**, not decoration
+             *
+             * `AccountProvisioner` decides whether a system account is the
+             * panel's own from the signature it stamps in here — dropping it
+             * would make `getent` below answer with an empty comment field, and
+             * every account the sandbox created would read as somebody else's.
+             */
+            'comment' => $this->optionValue($argv, '-c') ?: $this->optionValue($argv, '--comment'),
             'created_at' => time(),
         ];
 
@@ -96,6 +106,56 @@ final class SystemUserSimulator implements Simulator
             argv: $argv,
             exitCode: 0,
             stdout: $value . "\n",
+            stderr: '',
+            durationMs: 1,
+            simulated: true,
+        );
+    }
+
+    /**
+     * `getent passwd <name>` — the only lookup the panel makes, and it has to
+     * agree with what `useradd` above recorded
+     *
+     * Left unsimulated until now, which meant the sandbox contradicted itself:
+     * `useradd` wrote the account into the sandbox's own state, and the
+     * `getent` that checks whether a name is free read the **developer's real
+     * `/etc/passwd`** instead. The two guards that depend on it —
+     * `AccountProvisioner::assertNameAvailable()` and
+     * `CustomerCreate::assertNoLeftovers()` — could therefore never be
+     * exercised at all, and a machine that happened to have a matching account
+     * would have made them behave differently from every other machine.
+     *
+     * Exit 2 for "not found" is what real getent returns, and both callers read
+     * only "did it succeed", so nothing depends on the exact code.
+     */
+    private function getent(array $argv, SandboxState $state): ExecResult
+    {
+        if (($argv[1] ?? '') !== 'passwd') {
+            return $this->fail($argv, 'sandbox: only `getent passwd` is simulated', 2);
+        }
+
+        $name = $this->lastWord($argv);
+        $users = $state->read('passwd');
+
+        if ($name === '' || !isset($users[$name])) {
+            return $this->fail($argv, '', 2);
+        }
+
+        $user = $users[$name];
+
+        return new ExecResult(
+            argv: $argv,
+            exitCode: 0,
+            // name:x:uid:gid:comment:home:shell — the shape both callers split on
+            stdout: sprintf(
+                "%s:x:%d:%d:%s:%s:%s\n",
+                $name,
+                (int) $user['uid'],
+                (int) $user['gid'],
+                (string) ($user['comment'] ?? ''),
+                (string) ($user['home'] ?? ''),
+                (string) ($user['shell'] ?? ''),
+            ),
             stderr: '',
             durationMs: 1,
             simulated: true,

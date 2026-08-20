@@ -308,3 +308,205 @@ test('ชั้นเว็บและ CLI ต้องไม่เขียน
         );
     }
 });
+
+/** สภาพแวดล้อมจำลองของตัวเอง — ไม่ปนกับเทสต์อื่นที่ใช้ /etc/passwd จำลองร่วมกัน */
+function customerFreshExecutor(): SandboxExecutor
+{
+    return new SandboxExecutor(sys_get_temp_dir() . '/phpcp-cust-del-' . getmypid() . '-' . bin2hex(random_bytes(4)));
+}
+
+/** @return array{0:\Phpcp\Kernel\Db,1:Context,2:SandboxExecutor,3:int} */
+function customerWithSftp(string $username): array
+{
+    $db = migratedDb();
+    $context = customerContext($db);
+    $executor = customerFreshExecutor();
+
+    $create = (new CapabilityRegistry())->resolve('customer.create');
+    $result = $create->run(
+        $create->validate([
+            'username' => $username,
+            'password' => 'temporary-password',
+            'email' => $username . '@example.com',
+            // บังคับให้บัญชีระบบถูกสร้างจริงตั้งแต่ตอนนี้ ไม่รอเว็บแรก
+            'sftp_password' => 'Sftp-Temporary-Pass-11',
+        ]),
+        $executor,
+        $context,
+    );
+
+    return [$db, $context, $executor, (int) $result['id']];
+}
+
+test('ลบบัญชีโฮสติ้งต้องพิมพ์ชื่อยืนยันให้ตรง', static function (): void {
+    // ชั้นเดียวกับที่ site.delete และ db.drop ใช้ · แถวในตารางกดพลาดง่าย
+    // และคำสั่งนี้ลงไปถึงบัญชี Linux ไฟล์ และฐานข้อมูลจริงบนเครื่อง
+    [$db, $context, $executor, $userId] = customerWithSftp('delcust');
+
+    $capability = (new CapabilityRegistry())->resolve('customer.delete');
+
+    assertRejects(
+        ValidationError::class,
+        static fn () => $capability->run(
+            $capability->validate(['user_id' => $userId, 'confirm_username' => 'delcus']),
+            $executor,
+            $context,
+        ),
+        'ชื่อยืนยันที่ไม่ตรงต้องถูกปฏิเสธ',
+    );
+
+    assertSame(
+        1,
+        (int) $db->value('SELECT count(*) FROM users WHERE id = :id', ['id' => $userId], 0),
+        'ถูกปฏิเสธแล้วต้องไม่มีอะไรถูกลบ',
+    );
+});
+
+test('ลบบัญชีโฮสติ้งที่ยังมีเว็บไซต์อยู่ไม่ได้ แม้เรียก capability ตรง ๆ', static function (): void {
+    /*
+     * ชั้นเว็บตรวจให้อยู่แล้ว แต่ด่านที่นับคือด่านนี้ — เว็บที่ยังยืนอยู่หมายถึงไฟล์ที่
+     * ยังถูกเสิร์ฟ vhost, FPM pool และใบรับรอง ซึ่งคำสั่งนี้ไม่รู้วิธีรื้อสักอย่าง
+     */
+    [$db, $context, $executor, $userId] = customerWithSftp('delsite');
+    $now = time();
+
+    $db->insert('sites', [
+        'primary_domain' => 'delsite.example.com',
+        'docroot' => '/home/delsite/sites/delsite.example.com/public',
+        'php_version' => '8.4',
+        'owner_user_id' => $userId,
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+
+    $capability = (new CapabilityRegistry())->resolve('customer.delete');
+
+    assertRejects(
+        ValidationError::class,
+        static fn () => $capability->run(
+            $capability->validate(['user_id' => $userId, 'confirm_username' => 'delsite']),
+            $executor,
+            $context,
+        ),
+        'บัญชีที่ยังเป็นเจ้าของเว็บต้องลบไม่ได้',
+    );
+});
+
+test('ไม่ระบุอะไรมา = เก็บทั้งไฟล์และฐานข้อมูล', static function (): void {
+    // ผู้เรียก API ที่ไม่ได้คิดถึงคำถามนี้ ต้องได้ผลลัพธ์ที่ยังแก้กลับได้
+    $capability = (new CapabilityRegistry())->resolve('customer.delete');
+    $clean = $capability->validate(['user_id' => 1, 'confirm_username' => 'someone']);
+
+    assertSame(false, $clean['delete_files'], 'ไม่ส่งมา = ไม่ลบไฟล์');
+    assertSame(false, $clean['delete_databases'], 'ไม่ส่งมา = ไม่ลบฐานข้อมูล');
+
+    // และรับเฉพาะรูปแบบที่ checkbox ส่งมาจริง ไม่ใช่ค่าอะไรก็ได้ที่ truthy
+    $on = $capability->validate([
+        'user_id' => 1,
+        'confirm_username' => 'someone',
+        'delete_files' => '1',
+        'delete_databases' => true,
+    ]);
+
+    assertSame(true, $on['delete_files'], 'checkbox ส่ง "1" ต้องอ่านว่าเปิด');
+    assertSame(true, $on['delete_databases'], 'true ต้องอ่านว่าเปิด');
+});
+
+test('เก็บไฟล์ไว้ = ชื่อผู้ใช้ยังถูกจอง สร้างซ้ำไม่ได้', static function (): void {
+    /*
+     * **นี่คือทั้งหมดของการ "เก็บไฟล์ไว้"** — บัญชี Linux อยู่ต่อ และมันคือสิ่งเดียว
+     * ที่กั้นระหว่างไฟล์ชุดนั้นกับคนถัดไปที่ได้ชื่อนี้ไป
+     *
+     * ถ้าด่านนี้หาย: AccountProvisioner ตัดสินความเป็นเจ้าของบัญชีระบบจากลายเซ็นที่
+     * panel ประทับไว้ใน /etc/passwd ซึ่งบัญชีที่ตกค้างยังมีอยู่ครบ ชื่อจึงผ่านฉลุย
+     * ได้ uid เดิมกลับมา แล้วลูกค้าคนใหม่เข้า SFTP ไปอ่านไฟล์ของคนเก่าได้ทันที
+     * โดยหน้าจอรายงานว่าสำเร็จทุกขั้นตอน
+     */
+    [$db, $context, $executor, $userId] = customerWithSftp('keepfiles');
+
+    $delete = (new CapabilityRegistry())->resolve('customer.delete');
+    $result = $delete->run(
+        $delete->validate([
+            'user_id' => $userId,
+            'confirm_username' => 'keepfiles',
+            'delete_files' => false,
+        ]),
+        $executor,
+        $context,
+    );
+
+    assertSame(false, $result['files_deleted'], 'ต้องรายงานว่าไม่ได้ลบไฟล์');
+    assertTrue($result['home_kept'] !== '', 'ต้องบอกด้วยว่าไฟล์ถูกเก็บไว้ที่ไหน');
+    assertSame(
+        0,
+        (int) $db->value('SELECT count(*) FROM users WHERE id = :id', ['id' => $userId], 0),
+        'แถวในฐานข้อมูลของ panel ต้องหายไปแล้ว',
+    );
+
+    $create = (new CapabilityRegistry())->resolve('customer.create');
+
+    assertRejects(
+        ValidationError::class,
+        static fn () => $create->run(
+            $create->validate([
+                'username' => 'keepfiles',
+                'password' => 'temporary-password',
+                'email' => 'new@example.com',
+            ]),
+            $executor,
+            $context,
+        ),
+        'ชื่อที่ยังมีไฟล์ของบัญชีเดิมค้างอยู่ ต้องสร้างซ้ำไม่ได้',
+    );
+});
+
+test('ลบไฟล์ด้วย = บัญชีระบบหายไป ชื่อกลับมาใช้ได้', static function (): void {
+    // อีกครึ่งของกฎเดียวกัน — ถ้าลบแล้วชื่อยังถูกจองอยู่ การลบก็ไม่เคยเสร็จจริง
+    [$db, $context, $executor, $userId] = customerWithSftp('dropfiles');
+
+    $delete = (new CapabilityRegistry())->resolve('customer.delete');
+    $result = $delete->run(
+        $delete->validate([
+            'user_id' => $userId,
+            'confirm_username' => 'dropfiles',
+            'delete_files' => '1',
+        ]),
+        $executor,
+        $context,
+    );
+
+    assertSame(true, $result['files_deleted'], 'ต้องรายงานว่าลบไฟล์แล้ว');
+    assertSame('', $result['home_kept'], 'ไม่มีบ้านเหลือให้ต้องกลับมาเก็บ');
+
+    $create = (new CapabilityRegistry())->resolve('customer.create');
+    $again = $create->run(
+        $create->validate([
+            'username' => 'dropfiles',
+            'password' => 'temporary-password',
+            'email' => 'new@example.com',
+        ]),
+        $executor,
+        $context,
+    );
+
+    assertTrue((int) $again['id'] > 0, 'ชื่อเดิมต้องกลับมาสร้างใหม่ได้');
+});
+
+test('ชั้นเว็บต้องส่งการลบบัญชีโฮสติ้งไปให้ capability ไม่ใช่ลบแถวเอง', static function (): void {
+    /*
+     * เดิมเป็น DELETE FROM users ล้วน ๆ ที่ไม่แตะ agent เลย · บัญชี Linux บ้านพร้อม
+     * ไฟล์ ฐานข้อมูล และบัญชี phpMyAdmin อยู่ต่อทั้งหมดโดยไม่มีอะไรบอกและไม่มีอะไร
+     * มาเก็บกวาด — เหตุผลเดียวกับที่การ "สร้าง" ลูกค้าต้องผ่าน capability
+     */
+    $source = (string) file_get_contents(PHPCP_ROOT . '/src/Http/V2/UsersController.php');
+
+    assertTrue(str_contains($source, "'customer.delete'"), 'ต้องเรียก capability customer.delete');
+
+    $deleteAt = strpos($source, 'public function destroy(');
+    $tail = substr($source, (int) $deleteAt, 2500);
+
+    assertTrue(
+        str_contains($tail, 'destroyHostingAccount'),
+        'เส้นทางลบต้องแยกบัญชีโฮสติ้งออกไปให้ capability จัดการ',
+    );
+});

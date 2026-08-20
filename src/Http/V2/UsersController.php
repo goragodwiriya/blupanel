@@ -13,6 +13,7 @@ use Phpcp\Http\ApiController;
 use Phpcp\Http\ApiProblem;
 use Phpcp\Http\Resource\SiteResource;
 use Phpcp\Http\Resource\UserResource;
+use Phpcp\Kernel\Paths;
 use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
 use Phpcp\Security\Password;
@@ -1399,6 +1400,19 @@ final class UsersController extends ApiController
             );
         }
 
+        /*
+         * A hosting account is not just a row — it owns a Linux account, a home
+         * full of files, and databases · `customer.delete` is what takes those
+         * down, and what lets the admin say which of them should survive
+         *
+         * An admin account owns none of it (the system account is only ever
+         * created for a hosting account), so it stays a plain row delete — no
+         * agent, and nothing to ask about.
+         */
+        if (($user['role'] ?? '') === Permissions::WEBADMIN) {
+            return $this->destroyHostingAccount($request, $user);
+        }
+
         $users->delete($id);
 
         $this->audit($request, 'user.delete', (string) $user['username'], ['role' => $user['role']]);
@@ -1415,6 +1429,151 @@ final class UsersController extends ApiController
             $this->t('Account {user} deleted', ['user' => (string) $user['username']]),
             'users',
             ['user_id' => $id, 'username' => (string) $user['username']],
+        );
+    }
+
+    /**
+     * The dialog that asks what should happen to the files and the databases
+     *
+     * A row's `data-confirm` can only ever ask yes/no, and the question here is
+     * not yes/no — it is "which of these two survives", with the account name
+     * typed out to prove the right row was clicked. So it is a real form, the
+     * same way SFTP's password and the customer email are.
+     *
+     * It arrives already knowing what there is to lose. "Delete the databases"
+     * with no idea that there are four of them, named, is not a decision
+     * anybody is really making.
+     */
+    public function deleteForm(Request $request): Response
+    {
+        $users = new UserRepository($this->app->db());
+        $id = $request->paramInt('id');
+        $user = $users->find($id);
+
+        if ($user === null) {
+            return $this->problem(ApiProblem::NotFound, 'User not found');
+        }
+
+        if (($denied = $this->assertMayManage($user)) !== null) {
+            return $denied;
+        }
+
+        $databases = $this->app->db()->all(
+            'SELECT db_name FROM databases_ WHERE owner_user_id = :u ORDER BY db_name',
+            ['u' => $id],
+        );
+
+        $sites = $users->siteIds($id);
+
+        return $this->ok(
+            [
+                'id' => $id,
+                'form_action' => '/api/v2/users/' . $id,
+                'username' => (string) $user['username'],
+                'is_hosting' => ($user['role'] ?? '') === Permissions::WEBADMIN,
+                // A website still standing is the one thing that blocks the
+                // whole command — said here, on the screen that would otherwise
+                // let the admin fill the form in and only then be refused
+                'site_count' => count($sites),
+                'has_sites' => $sites !== [],
+                'databases' => array_map(
+                    static fn (array $row): array => ['name' => (string) $row['db_name']],
+                    $databases,
+                ),
+                'database_count' => count($databases),
+                'has_databases' => $databases !== [],
+                // Read from Paths, never written out as `/home/...` — a
+                // portable install puts homes somewhere else entirely, and a
+                // dialog naming a path that does not exist is worse than one
+                // naming none
+                'home' => Paths::usersDir() . '/' . (string) ($user['system_user'] ?? $user['username']),
+            ],
+            [],
+            [[
+                'type' => 'modal',
+                'action' => 'show',
+                'template' => 'user-delete-form.html',
+                'title' => '{LNG_Delete account}',
+                'titleClass' => 'icon-delete',
+            ]],
+        );
+    }
+
+    /**
+     * Hands a hosting account's deletion to `customer.delete`
+     *
+     * Both switches are read as **explicitly sent or not sent**, never
+     * defaulted to true here: a caller that forgets to mention the files gets
+     * them kept, which is the outcome that can still be undone.
+     *
+     * @param array<string,mixed> $user
+     */
+    private function destroyHostingAccount(Request $request, array $user): Response
+    {
+        $id = (int) $user['id'];
+        $username = (string) $user['username'];
+
+        /*
+         * The typed name arrives in the body from the dialog, but a `DELETE`
+         * sent by hand may put it in the query string instead — the same
+         * both-places read `destroy()` on a certificate does
+         */
+        $confirm = trim($request->payloadString('confirm_username')) ?: trim($request->get('confirm_username'));
+
+        $result = $this->agent()->data('customer.delete', [
+            'user_id' => $id,
+            'confirm_username' => $confirm,
+            'delete_files' => (bool) $request->payload('delete_files'),
+            'delete_databases' => (bool) $request->payload('delete_databases'),
+        ], $this->ctx->actor($request));
+
+        $this->audit($request, 'user.delete', $username, [
+            'role' => (string) $user['role'],
+            'files_deleted' => (bool) ($result['files_deleted'] ?? false),
+            'databases_deleted' => (bool) ($result['databases_deleted'] ?? false),
+            'trash_path' => (string) ($result['trash_path'] ?? ''),
+        ]);
+
+        /*
+         * What was **kept** is the part worth interrupting for · it is the half
+         * somebody has to come back for, and the only moment they are certain
+         * to read about it is right now, before the row leaves the table
+         */
+        $kept = [];
+
+        if (($result['home_kept'] ?? '') !== '') {
+            $kept[] = $this->t('The files are still at {path}, and the name stays taken until they are removed.', [
+                'path' => (string) $result['home_kept'],
+            ]);
+        }
+
+        if (($result['trash_path'] ?? '') !== '') {
+            $kept[] = $this->t('The files were moved to {path} and can still be recovered from there.', [
+                'path' => (string) $result['trash_path'],
+            ]);
+        }
+
+        $keptDatabases = is_array($result['databases_kept'] ?? null) ? $result['databases_kept'] : [];
+
+        if ($keptDatabases !== []) {
+            $kept[] = $this->t('These databases were kept, with their own users and passwords: {names}', [
+                'names' => implode(', ', $keptDatabases),
+            ]);
+        }
+
+        $failed = is_array($result['databases_failed'] ?? null) ? $result['databases_failed'] : [];
+
+        return $this->completed(
+            (string) ($result['message'] ?? $this->t('Account {user} deleted', ['user' => $username])),
+            'users',
+            $result,
+            notices: [
+                ['level' => 'info', 'message' => implode(' ', $kept)],
+                ['message' => $failed === [] ? '' : $this->t(
+                    'The account is gone, but {count} database(s) could not be dropped: {names} — remove them from the databases page',
+                    ['count' => count($failed), 'names' => implode(', ', array_column($failed, 'name'))],
+                )],
+            ],
         );
     }
 

@@ -9,6 +9,7 @@ use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Agent\ValidationError;
 use Phpcp\Domain\UserRepository;
+use Phpcp\Driver\AccountProvisioner;
 use Phpcp\Support\Validator;
 
 /**
@@ -130,6 +131,58 @@ final class CustomerCreate extends CustomerCapability implements Capability
         ];
     }
 
+    /**
+     * Refuses a name whose previous account left its files behind
+     *
+     * `customer.delete` lets an admin keep a deleted account's home — for a
+     * rename, or to reinstall on top of what is already there. Keeping it means
+     * the Linux account stays as well, and **that is what reserves the name**.
+     *
+     * Without this check the reservation would be worth nothing.
+     * `AccountProvisioner` decides whether a system account is the panel's own
+     * from the signature stamped into `/etc/passwd`, and a leftover account
+     * still carries it — so the name would sail through, the same uid would
+     * come back, and the new customer would sign in over SFTP straight into the
+     * previous customer's files. Silently, with the screen reporting success.
+     *
+     * The way out is deliberately not a flag on this command. It is either
+     * delete the leftovers (the file manager, or deleting the account again
+     * with files included), or pick another name — because "adopt somebody
+     * else's files" should cost more than one checkbox nobody read.
+     *
+     * @throws ValidationError
+     */
+    private function assertNoLeftovers(Executor $executor, string $username): void
+    {
+        $entry = $executor->exec(['/usr/bin/getent', 'passwd', $username], timeout: 10);
+
+        if (!$entry->ok()) {
+            return; // No system account by that name — nothing left behind
+        }
+
+        // Shape: name:x:uid:gid:comment:home:shell
+        $fields = explode(':', trim($entry->output()));
+
+        /*
+         * Only the panel's own leftovers are this command's business. A system
+         * account belonging to somebody else is refused too, but by
+         * `AccountProvisioner::assertNameAvailable()` at provisioning time,
+         * which is the one place that decision is made — saying it twice, in
+         * two places, is how the two come to disagree.
+         */
+        if (($fields[4] ?? '') !== AccountProvisioner::comment($username)) {
+            return;
+        }
+
+        throw new ValidationError(sprintf(
+            'The name %s still holds files from a previous account at %s, kept when it was deleted. '
+            . 'Move or delete them from the file manager first, or choose a different username — '
+            . 'creating the account here would hand those files to the new customer.',
+            $username,
+            $fields[5] ?? '',
+        ));
+    }
+
     public function run(array $args, Executor $executor, Context $context): array
     {
         $users = $this->users($context);
@@ -137,6 +190,8 @@ final class CustomerCreate extends CustomerCapability implements Capability
         if ($users->findByUsername($args['username']) !== null) {
             throw new ValidationError("User {$args['username']} already exists");
         }
+
+        $this->assertNoLeftovers($executor, $args['username']);
 
         // The repository checks again at its own layer and throws
         // InvalidArgumentException — it has to be converted to ValidationError

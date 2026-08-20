@@ -277,14 +277,40 @@ test('ลบผู้ใช้ที่ยังเป็นเจ้าขอ�
         'เจ้าของใหม่ต้องเป็นผู้ดูแลที่สั่งถอน — จะได้รู้ว่าใครรับผิดชอบเว็บนี้ต่อ',
     );
 
-    // ตอบ 200 พร้อม `actions` ไม่ใช่ 204 — 204 ไม่มีเนื้อคำตอบ หน้าจอจึงไม่รู้ว่าต้อง
-    // โหลดตารางใหม่ แล้วแถวที่ลบไปแล้วจะค้างอยู่จนกว่าผู้ใช้จะรีเฟรชเอง
-    $deleted = $harness->request('DELETE', '/api/v2/users/' . $userId);
+    /*
+     * **ลบบัญชีโฮสติ้งต้องไปถึง agent เหมือนตอนสร้าง** — 503 เมื่อ agent ไม่ทำงาน
+     *
+     * เดิมเป็น `DELETE FROM users` ที่ชั้นเว็บล้วน ๆ ไม่แตะ agent เลย · ทุกอย่างที่
+     * บัญชีนั้นถือครองบนเครื่องจริงจึงอยู่ต่อทั้งหมด — บัญชี Linux บ้านพร้อมไฟล์
+     * ฐานข้อมูล และบัญชี phpMyAdmin — โดยไม่มีอะไรบอก และไม่มีอะไรมาเก็บกวาดทีหลัง
+     *
+     * ที่อันตรายกว่าความรกคือ **สร้างชื่อเดิมซ้ำแล้วรับช่วงของพวกนั้นทั้งชุด**
+     * เพราะบัญชี Linux ที่ตกค้างยังมีลายเซ็นของ panel อยู่ ลูกค้าคนใหม่จึงเข้า SFTP
+     * ไปเจอไฟล์ของคนเก่าได้ทันทีโดยหน้าจอรายงานว่าสำเร็จ
+     *
+     * ถ้าเทสต์นี้กลับไปเป็น 200 อีกเมื่อไหร่ แปลว่ามีคนย้ายมันกลับมาไว้ที่ชั้นเว็บ
+     */
+    $deleted = $harness->request('DELETE', '/api/v2/users/' . $userId, ['confirm_username' => 'acctcust']);
 
-    assertSame(200, $deleted->status, 'ลบผู้ใช้ได้แล้ว');
+    assertSame(503, $deleted->status, 'ลบบัญชีโฮสติ้งต้องไปถึง agent');
+    assertSame(
+        1,
+        (int) $db->value('SELECT count(*) FROM users WHERE id = :id', ['id' => $userId], 0),
+        'agent ไม่ทำงาน = ต้องไม่มีบัญชีไหนหายไป',
+    );
+
+    // บัญชีผู้ดูแลไม่ได้ถือครองอะไรบนเครื่องเลย (บัญชีระบบสร้างให้เฉพาะบัญชีโฮสติ้ง)
+    // จึงยังลบที่ชั้นเว็บได้ตามเดิม · ตอบ 200 พร้อม `actions` ไม่ใช่ 204 — 204 ไม่มี
+    // เนื้อคำตอบ หน้าจอจึงไม่รู้ว่าต้องโหลดตารางใหม่ แถวที่ลบไปแล้วจะค้างอยู่
+    $adminId = $harness->createUser('acctgoner', 'Accounts-Goner-Pass-77', Permissions::SYSADMIN);
+    $harness = accountsLogin('acctadmin', 'Accounts-Admin-Pass-11');
+
+    $deletedAdmin = $harness->request('DELETE', '/api/v2/users/' . $adminId);
+
+    assertSame(200, $deletedAdmin->status, 'ลบบัญชีผู้ดูแลได้โดยไม่ต้องมี agent');
     assertSame(
         ['notification', 'refresh'],
-        array_column($deleted->json['actions'] ?? [], 'type'),
+        array_column($deletedAdmin->json['actions'] ?? [], 'type'),
         'ต้องสั่งหน้าจอแจ้งผลแล้วโหลดตารางใหม่',
     );
 });
