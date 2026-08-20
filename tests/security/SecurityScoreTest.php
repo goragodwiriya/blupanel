@@ -10,6 +10,7 @@ declare(strict_types=1);
  * เทสต์ชุดนี้จึงคุมสองอย่างนั้นเป็นหลัก
  */
 
+use Phpcp\Domain\PhpSupport;
 use Phpcp\Domain\SecurityScore;
 use Phpcp\Domain\ServiceCatalog;
 
@@ -103,20 +104,78 @@ test('ข้อที่ผ่านแล้วต้องไม่โผล�
     assertSame([], SecurityScore::recommendations($checks), 'ผ่านหมดต้องไม่มีคำแนะนำเลย');
 });
 
-test('รายการ PHP ที่หมดอายุต้องเป็นสับเซ็ตของเวอร์ชันที่ระบบรู้จัก', static function (): void {
-    // ถ้าพิมพ์ผิดในรายการ EOL การตรวจจะไม่เจออะไรเลยแบบเงียบ ๆ
-    foreach (ServiceCatalog::PHP_EOL_VERSIONS as $version) {
+test('สถานะการรองรับของ PHP ต้องตัดสินจากวันหมดอายุ ไม่ใช่รายการที่เขียนมือ', static function (): void {
+    /*
+     * เดิมมีสองรายการเขียนมือตอบคำถามเดียวกัน แล้วขัดกันเอง — PhpList บอกว่า
+     * 8.2 หมดอายุ ส่วน PHP_EOL_VERSIONS บอกว่ายังไม่หมด · ทั้งคู่ถูกในวันที่
+     * เขียน และผิดเงียบ ๆ ทุกวันหลังจากนั้น ตอนนี้เหลือแหล่งเดียวคือวันที่
+     */
+    assertTrue(
+        !PhpSupport::isSupported('7.4', strtotime('2026-01-01')),
+        'PHP 7.4 หมดอายุตั้งแต่ 2022 — ต้องถูกจัดว่าหมดอายุ',
+    );
+
+    // เวอร์ชันที่ยังไม่ถึงวันหมดอายุต้องนับว่ายังรองรับ แม้จะเก่ากว่าตัวใหม่สุด
+    assertTrue(
+        PhpSupport::isSupported('8.4', strtotime('2026-01-01')),
+        'PHP 8.4 ยังอยู่ในช่วงรองรับปี 2026',
+    );
+
+    /*
+     * ข้อที่สำคัญที่สุด — เวอร์ชันที่ยังไม่มีในตารางต้องถือว่า "ยังรองรับ"
+     *
+     * PHP ไม่เคยปล่อยเวอร์ชันที่หมดอายุตั้งแต่วันแรก · ถ้าตอบว่าหมดอายุ วันที่
+     * PHP 8.6 ขึ้น repo หน้าเว็บจะติดป้ายแดงให้ของใหม่เอี่ยม และคะแนนความ
+     * ปลอดภัยจะหักคะแนนเครื่องที่อัปเดตเร็วที่สุด
+     */
+    assertTrue(
+        PhpSupport::isSupported('9.9'),
+        'เวอร์ชันที่ใหม่กว่าทุกตัวในตารางต้องถือว่ายังรองรับ',
+    );
+
+    // เรียงด้วย version_compare ไม่ใช่เรียงสตริง — สตริงจะวาง 8.10 ไว้ก่อน 8.2
+    assertSame(
+        ['8.10', '8.4', '8.2'],
+        PhpSupport::sortNewestFirst(['8.2', '8.10', '8.4']),
+        'ต้องเรียงตามลำดับเวอร์ชันจริง',
+    );
+
+    // เลือกให้เว็บใหม่ = ตัวใหม่สุดที่ยังรองรับ ไม่ใช่ตัวใหม่สุดเฉย ๆ
+    assertSame(
+        '8.4',
+        PhpSupport::preferred(['7.4', '8.4', '8.0'], strtotime('2026-01-01')),
+        'ต้องเลือกตัวใหม่สุดที่ยังได้รับแพตช์ความปลอดภัย',
+    );
+});
+
+test('รายชื่อแพ็กเกจ PHP ของ panel กับของตัวติดตั้งต้องไม่เพี้ยนจากกัน', static function (): void {
+    $packages = ServiceCatalog::phpPackages('8.4');
+
+    foreach (['php8.4-fpm', 'php8.4-cli', 'php8.4-mysql', 'php8.4-mbstring'] as $required) {
         assertTrue(
-            in_array($version, ServiceCatalog::PHP_VERSIONS, true),
-            "PHP {$version} อยู่ในรายการหมดอายุแต่ไม่อยู่ในรายการที่ระบบรู้จัก",
+            in_array($required, $packages, true),
+            "{$required} ขาดไม่ได้ — เว็บ PHP ทั่วไปรันไม่ได้ถ้าไม่มี",
         );
     }
 
-    // เวอร์ชันใหม่สุดต้องไม่ถูกจัดว่าหมดอายุ ไม่งั้นทุกเครื่องจะตกข้อนี้ตลอดกาล
-    assertTrue(
-        !in_array(ServiceCatalog::PHP_VERSIONS[0], ServiceCatalog::PHP_EOL_VERSIONS, true),
-        'เวอร์ชันใหม่สุดต้องไม่อยู่ในรายการหมดอายุ',
-    );
+    /*
+     * **สองที่นี้ใช้นิยามร่วมกันไม่ได้จริง ๆ จึงต้องมีเทสต์คุม**
+     *
+     * install.sh รันก่อนที่เครื่องจะมี PHP มันจึงถามรายชื่อจาก PHP ไม่ได้ ·
+     * ผลคือรายชื่อถูกเขียนสองที่ และวันที่แก้ที่เดียวคือวันที่มันเพี้ยน อาการที่
+     * ตามมาไม่ชัดเลย — เว็บที่รันได้บน 8.4 พังทันทีที่ย้ายไป 7.4 เพราะขาด
+     * extension ที่ไม่มีใครสังเกตว่าหายไป
+     */
+    $installer = (string) file_get_contents(PHPCP_ROOT . '/install.sh');
+
+    foreach (['8.4', '7.4'] as $version) {
+        foreach (ServiceCatalog::phpPackages($version) as $package) {
+            assertTrue(
+                str_contains($installer, $package),
+                "install.sh ไม่ได้ติดตั้ง {$package} ทั้งที่ panel ติดตั้งให้เวอร์ชันที่เพิ่มเองภายหลัง",
+            );
+        }
+    }
 });
 
 test('การตรวจสิทธิ์ไฟล์ต้องยอมรับค่าที่ตัวติดตั้งตั้งไว้จริง', static function (): void {

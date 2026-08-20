@@ -34,6 +34,25 @@
       </span>
       <div class="comment" data-i18n>Only databases linked to a website are included in the automatic backup round</div>
     </div>
+    <!-- This form had no password field at all until now — `db.create` always
+         generated one and revealed it afterward · that stays the default (the
+         field arrives already filled in), but it is a field now, so an
+         application being moved onto this panel can keep the password already
+         written into its own config file -->
+    <div>
+      <label for="nd_password" data-i18n>Password</label>
+      <span class="form-control icon-lock">
+        <input type="text" id="nd_password" name="password" minlength="12" maxlength="128"
+               autocomplete="off" spellcheck="false" data-attr="value:suggested_password">
+      </span>
+      <div class="flex middle gap-4">
+        <button type="button" class="btn small icon-refresh" data-action="click.prevent:suggestPassword"
+                data-password-target="nd_password" data-i18n>Generate a new one</button>
+        <button type="button" class="btn small icon-copy" data-action="click.prevent:copyField"
+                data-copy-target="nd_password" data-i18n>Copy</button>
+      </div>
+      <div class="comment" data-i18n>This is what the website connects with. It is shown once more after saving and never stored in readable form.</div>
+    </div>
     <div>
       <label for="nd_priv" data-i18n>Privileges</label>
       <span class="form-control icon-menus">

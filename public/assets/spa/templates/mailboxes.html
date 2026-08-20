@@ -51,58 +51,112 @@
           </table>
         </div>
       </div>
-      <div class="content-body" data-component="api" data-endpoint="/api/v2/mail/readiness" data-refresh-event="phpcp:reload">
-        <p class="muted" data-show="domains.length === 0" data-i18n>No domain has mail enabled yet. Open a domain and turn mail on before creating mailboxes.</p>
-        <div class="flex middle fullwidth">
-          <h2 class="icon-shield" data-i18n>Mail readiness</h2>
-          <span class="pill pill-ok" data-show="ready === true" data-i18n>Ready</span>
-          <span class="pill pill-danger" data-show="ready === false" data-text="failed | number"></span>
-          <button type="button" class="btn small icon-lock" data-if="permissions['settings.manage']"
-                  data-action="click.prevent:apiRefresh" data-api-url="/api/v2/mail/certificate"
-                  data-api-method="post" data-loading-text="Checking..." data-i18n>Use the certificate for the mail hostname</button>
-        </div>
-        <div class="tablebody">
-          <table class="table border fullwidth" data-table="mailReadiness" data-attr="data:checks">
+      <!-- How to connect a mail client — everything on this card is a value the
+           customer has to type into Outlook or their phone · the readiness card
+           below it is the opposite (paths on disk, the machine's PTR record) and
+           is admin-only -->
+      <div class="content-body" data-component="api" data-endpoint="/api/v2/mail/connection" data-refresh-event="phpcp:reload">
+        <h2 class="icon-link" data-i18n>Connection settings</h2>
+        <p class="muted" data-show="domains === 0" data-i18n>No domain has mail enabled yet. Open a domain and turn mail on before creating mailboxes.</p>
+        <p class="muted" data-show="configured === true" data-i18n>The username is always the full email address, and every server below requires authentication.</p>
+        <fieldset class="notice notice-warning" data-show="configured === false">
+          <legend class="icon-warning" data-i18n>Mail hostname not set yet</legend>
+          <p data-i18n>The server has no mail hostname, so there is nothing to point a mail client at yet. Ask your hosting provider to finish setting mail up.</p>
+        </fieldset>
+        <div class="tablebody" data-show="configured === true">
+          <table class="table border fullwidth" data-table="mailConnection" data-attr="data:servers">
             <thead>
               <tr>
-                <th data-field="label" data-i18n>{LNG_Check}</th>
-                <th data-field="status" class="center" data-cell-class="center"
-                    data-template="<span class='pill pill-${tone}'>${status}</span>" data-i18n>{LNG_Status}</th>
-                <th data-field="found" data-cell-class="mono" data-i18n>{LNG_Found}</th>
-                <th data-field="fix_label" data-i18n>{LNG_Who fixes it}</th>
+                <th data-field="service" data-cell-class="mono" data-i18n>{LNG_Service}</th>
+                <th data-field="host" data-cell-class="mono" data-i18n>{LNG_Server}</th>
+                <th data-field="port" class="center" data-cell-class="center mono" data-i18n>{LNG_Port}</th>
+                <th data-field="security" class="center" data-cell-class="center" data-i18n>{LNG_Encryption}</th>
+                <th data-field="note" data-i18n>{LNG_Note}</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <!-- Matters most for a domain whose DNS is hosted somewhere else — those
+             values have to be copied across by hand, and until now the panel
+             never showed them anywhere the domain's owner could reach -->
+        <h2 class="icon-list" data-show="dns.length > 0" data-i18n>DNS records this domain needs</h2>
+        <p class="muted" data-show="dns.length > 0" data-i18n>Already in place when this panel hosts the DNS. Copy them across by hand when the domain uses another DNS provider — mail will not arrive, or will land in spam, without them.</p>
+        <div class="tablebody" data-show="dns.length > 0">
+          <table class="table border fullwidth" data-table="mailDns" data-attr="data:dns">
+            <thead>
+              <tr>
+                <th data-field="domain" data-i18n>{LNG_Domain}</th>
+                <th data-field="type" class="center" data-cell-class="center" data-i18n>{LNG_Type}</th>
+                <th data-field="name" data-cell-class="mono" data-i18n>{LNG_Name}</th>
+                <th data-field="value" data-cell-class="mono selectable" data-i18n>{LNG_Value}</th>
               </tr>
             </thead>
             <tbody></tbody>
           </table>
         </div>
       </div>
-      <div class="content-body" data-if="permissions['settings.manage']">
-        <h2 class="icon-code" data-i18n>Configuration files</h2>
-        <p class="muted" data-i18n>Postfix and Dovecot settings the panel does not manage. Open a file to view it — the editable ones open with comments explaining what belongs there.</p>
-        <div class="tablebody">
-          <table class="table border fullwidth" data-table="configFiles"
-                 data-source="/api/v2/config-files?scope=mail" data-row-actions='{
-                   "open": {
-                     "title": "Open",
-                     "className": "btn small icon-search",
-                     "method": "get",
-                     "navigate": false,
-                     "url": "/api/v2/config-files/{key}?scope=mail"
-                   }
-                 }'>
-            <thead>
-              <tr>
-                <th data-field="path" data-cell-class="mono" data-i18n>{LNG_File}</th>
-                <th data-field="kind_label" class="center" data-cell-class="center"
-                    data-template="<span class=\'pill pill-${kind_tone}\'>${kind_label}</span>" data-i18n>{LNG_Access}</th>
-                <th data-field="state" class="center" data-cell-class="center" data-i18n>{LNG_Status}</th>
-                <th data-field="size" class="center" data-cell-class="center right" data-format="bytes" data-i18n>{LNG_Size}</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
+
+      <!-- **Gated in two places, and both are needed** — the route is
+           `settings.manage`, and this wrapper stops the request being fired at
+           all · a hidden `data-component="api"` still fetches, so leaving the
+           gate to CSS alone would mean every customer's browser kept asking for
+           the machine's certificate paths and getting a 403 in the console -->
+      <div data-if="permissions['settings.manage']">
+        <div class="content-body" data-component="api" data-endpoint="/api/v2/mail/readiness" data-refresh-event="phpcp:reload">
+          <div class="flex middle fullwidth">
+            <h2 class="icon-shield" data-i18n>Mail readiness</h2>
+            <span class="pill pill-ok" data-show="ready === true" data-i18n>Ready</span>
+            <span class="pill pill-danger" data-show="ready === false" data-text="failed | number"></span>
+            <button type="button" class="btn small icon-lock"
+                    data-action="click.prevent:apiRefresh" data-api-url="/api/v2/mail/certificate"
+                    data-api-method="post" data-loading-text="Checking..." data-i18n>Use the certificate for the mail hostname</button>
+          </div>
+          <div class="tablebody">
+            <table class="table border fullwidth" data-table="mailReadiness" data-attr="data:checks">
+              <thead>
+                <tr>
+                  <th data-field="label" data-i18n>{LNG_Check}</th>
+                  <th data-field="status" class="center" data-cell-class="center"
+                      data-template="<span class='pill pill-${tone}'>${status}</span>" data-i18n>{LNG_Status}</th>
+                  <th data-field="found" data-cell-class="mono" data-i18n>{LNG_Found}</th>
+                  <th data-field="fix_label" data-i18n>{LNG_Who fixes it}</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="content-body">
+          <h2 class="icon-code" data-i18n>Configuration files</h2>
+          <p class="muted" data-i18n>Postfix and Dovecot settings the panel does not manage. Open a file to view it — the editable ones open with comments explaining what belongs there.</p>
+          <div class="tablebody">
+            <table class="table border fullwidth" data-table="configFiles"
+                   data-source="/api/v2/config-files?scope=mail" data-row-actions='{
+                     "open": {
+                       "title": "Open",
+                       "className": "btn small icon-search",
+                       "method": "get",
+                       "navigate": false,
+                       "url": "/api/v2/config-files/{key}?scope=mail"
+                     }
+                   }'>
+              <thead>
+                <tr>
+                  <th data-field="path" data-cell-class="mono" data-i18n>{LNG_File}</th>
+                  <th data-field="kind_label" class="center" data-cell-class="center"
+                      data-template="<span class=\'pill pill-${kind_tone}\'>${kind_label}</span>" data-i18n>{LNG_Access}</th>
+                  <th data-field="state" class="center" data-cell-class="center" data-i18n>{LNG_Status}</th>
+                  <th data-field="size" class="center" data-cell-class="center right" data-format="bytes" data-i18n>{LNG_Size}</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
       </div>
+
       <div class="content-body">
         <h2 class="icon-link" data-i18n>Forwarders</h2>
         <p class="muted" data-i18n>An address with no mailbox that sends everything on to somewhere else. A row with only @domain catches every unmatched address.</p>

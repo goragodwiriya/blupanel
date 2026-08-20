@@ -9,6 +9,7 @@ use Phpcp\Http\ApiController;
 use Phpcp\Http\ApiProblem;
 use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
+use Phpcp\Security\Password;
 use Phpcp\Security\Permissions;
 
 /**
@@ -48,6 +49,7 @@ final class SftpController extends ApiController
             'can' => $this->can([
                 'view_accounts' => 'customer.view',
             ]),
+            'connection' => $this->connection($request),
         ]);
     }
 
@@ -102,7 +104,13 @@ final class SftpController extends ApiController
     public function passwordForm(Request $request): Response
     {
         return $this->ok(
-            ['form_action' => '/api/v2/sftp/password'],
+            [
+                'form_action' => '/api/v2/sftp/password',
+                // A suggestion, not an imposition — the customer can overwrite it
+                // with something they will remember, the same as every other
+                // credential form in the panel
+                'suggested_password' => Password::random(PasswordsController::suggestedLength()),
+            ],
             [],
             [[
                 'type' => 'modal',
@@ -137,6 +145,44 @@ final class SftpController extends ApiController
     }
 
     /**
+     * Where to point an SFTP client — host, port, and the protocol name
+     *
+     * This page used to state that SFTP was enabled and what the username was,
+     * and stop there. On a machine whose admin moved SSH off port 22 — which
+     * the panel's own Security Center recommends — the customer was left with a
+     * client that times out and nothing on screen to explain why.
+     *
+     * **Never fails the page.** The port is read live from `sshd_config`
+     * through the agent, and the agent can be down or mid-restart; the account
+     * card beside this is still worth showing on its own, so a failure returns
+     * "unknown" rather than taking the whole screen down with it.
+     *
+     * @return array<string,mixed>
+     */
+    private function connection(Request $request): array
+    {
+        try {
+            $result = $this->agent()->data('sftp.connection', [], $this->ctx->actor($request));
+
+            $host = (string) ($result['host'] ?? '');
+            $port = (int) ($result['port'] ?? 22);
+        } catch (\Throwable) {
+            $host = '';
+            $port = 0;
+        }
+
+        return [
+            'known' => $host !== '' && $port > 0,
+            'host' => $host,
+            'port' => $port,
+            // SFTP, never FTP — worth stating outright, because a customer told
+            // only "port 22" reaches for an FTP client and gets a protocol error
+            // that reads like the account is broken
+            'protocol' => 'SFTP (SSH File Transfer Protocol)',
+        ];
+    }
+
+    /**
      * @param array<string,mixed> $row
      * @return array<string,mixed>
      */
@@ -144,6 +190,16 @@ final class SftpController extends ApiController
     {
         return [
             'username' => (string) $row['username'],
+            /*
+             * **The login an SFTP client wants is the system account, which is
+             * not always the panel username** — `UserAccount::fromRow()` takes
+             * `system_user` when it is set and only falls back to `username`
+             * · showing the panel username on the connection card would be
+             * right most of the time and wrong exactly where it matters
+             */
+            'sftp_username' => trim((string) ($row['system_user'] ?? '')) !== ''
+                ? (string) $row['system_user']
+                : (string) $row['username'],
             'sftp_enabled' => (int) ($row['sftp_enabled'] ?? 0) === 1,
             'sftp_available' => (int) ($row['quota_ftp_users'] ?? 0) !== 0,
             // The system account exists from the first website on — the honest

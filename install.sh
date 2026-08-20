@@ -282,6 +282,14 @@ EOF
   say "Installing PHP 7.4, PHP 8.4, Apache2, Nginx, BIND9, MariaDB, OpenSSH, UFW, Fail2ban, phpMyAdmin, Cron${POSTFIX_PKG:+, Postfix, Dovecot, rspamd}..."
 
   # Miss any one of these and the panel genuinely cannot work - stop here rather than fail later
+  #
+  # **The php8.4-* names here must match `ServiceCatalog::phpPackages()`**, which is
+  # what the panel installs when an admin adds a version from the PHP page. They cannot
+  # literally share one definition — this script runs before PHP exists, so it cannot ask
+  # PHP for the list — so a test in tests/security/SecurityScoreTest.php compares the two
+  # and fails if they drift. Without it, a version installed from the panel and one
+  # installed here end up with different extensions, and a site that works on 8.4 breaks
+  # the moment it is moved to 8.3.
   APT_REQUIRED="cron openssh-server logrotate ca-certificates openssl procps
     php8.4-cli php8.4-fpm php8.4-sqlite3 php8.4-mbstring php8.4-curl php8.4-zip php8.4-xml
     apache2"
@@ -290,8 +298,8 @@ EOF
   # on some releases only, phpmyadmin/rspamd live in universe, and some admins run MariaDB on a separate server
   APT_OPTIONAL="bind9 bind9-utils nginx ufw fail2ban mariadb-server phpmyadmin
     certbot python3-certbot-apache python3-certbot-nginx
-    php8.4-gd php8.4-intl php8.4-mysql php8.4-imagick php8.4-opcache
-    php7.4-cli php7.4-fpm php7.4-sqlite3 php7.4-mysql php7.4-mbstring php7.4-curl php7.4-zip php7.4-gd php7.4-xml php7.4-intl
+    php8.4-gd php8.4-intl php8.4-mysql php8.4-bcmath php8.4-imagick php8.4-opcache
+    php7.4-cli php7.4-fpm php7.4-sqlite3 php7.4-mysql php7.4-mbstring php7.4-curl php7.4-zip php7.4-gd php7.4-xml php7.4-intl php7.4-bcmath php7.4-opcache
     $POSTFIX_PKG"
 
   if ! APT_ERR=$(apt-get install -y -qq --no-install-recommends $APT_REQUIRED 2>&1); then

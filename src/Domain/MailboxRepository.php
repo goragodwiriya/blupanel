@@ -261,6 +261,45 @@ final class MailboxRepository
         return $this->db->all($sql . ' ORDER BY d.domain', $params);
     }
 
+    /**
+     * The DNS records a mail-enabled domain needs, as the panel already wrote them
+     *
+     * Read straight out of `dns_records` rather than recomputed, because
+     * {@see \Phpcp\Agent\Capability\MailDomainSet} already put them there the
+     * moment mail was turned on for the domain — recomputing would risk showing
+     * the customer a DKIM key different from the one rspamd actually signs with.
+     *
+     * **Safe to show a customer**, unlike the readiness table: MX/SPF/DMARC and
+     * the DKIM *public* key are values that exist to be published in DNS · a
+     * customer whose DNS is hosted elsewhere cannot receive mail at all without
+     * them, and today the panel gives them nowhere to read them from.
+     *
+     * @return list<array<string,mixed>>
+     */
+    public function mailDnsRecords(int $ownerUserId = 0): array
+    {
+        $sql = 'SELECT d.domain, r.type, r.name, r.value, r.priority
+                  FROM dns_records r
+                  JOIN domains d ON d.id = r.domain_id
+                  JOIN sites s   ON s.id = d.site_id
+                 WHERE d.mail_enabled = 1
+                   AND (r.type = :mx OR (r.type = :txt AND (r.name = :root OR r.name = :dmarc OR r.name LIKE :dkim)))';
+        $params = [
+            'mx' => 'MX',
+            'txt' => 'TXT',
+            'root' => '@',
+            'dmarc' => '_dmarc',
+            'dkim' => '%._domainkey',
+        ];
+
+        if ($ownerUserId > 0) {
+            $sql .= ' AND s.owner_user_id = :o';
+            $params['o'] = $ownerUserId;
+        }
+
+        return $this->db->all($sql . ' ORDER BY d.domain, r.type, r.name', $params);
+    }
+
     /** Who owns this domain — used to check permission before touching the domain's mailboxes */
     public function ownerOf(int $domainId): int
     {

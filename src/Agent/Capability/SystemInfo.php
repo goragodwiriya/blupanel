@@ -7,7 +7,7 @@ namespace Phpcp\Agent\Capability;
 use Phpcp\Agent\Capability;
 use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
-use Phpcp\Domain\ServiceCatalog;
+use Phpcp\Domain\PhpSupport;
 
 /**
  * Basic machine information that rarely changes — read-only
@@ -108,15 +108,22 @@ final class SystemInfo implements Capability
      */
     private function installedPhpVersions(Executor $executor): array
     {
+        // Scanned, not matched against a list of names — a version installed on
+        // the machine has to appear here whether or not the panel was compiled
+        // knowing about it · deliberately looks one level higher than
+        // `FpmManager::installedVersions()`, which wants FPM specifically: this
+        // answers "what PHP is on this machine", CLI-only installs included
         $found = [];
 
-        foreach (ServiceCatalog::PHP_VERSIONS as $version) {
-            if ($executor->exists('/etc/php/' . $version)) {
+        foreach (glob($executor->path('/etc/php') . '/*', GLOB_ONLYDIR) ?: [] as $dir) {
+            $version = basename($dir);
+
+            if (PhpSupport::isValid($version)) {
                 $found[] = $version;
             }
         }
 
-        return $found;
+        return PhpSupport::sortNewestFirst($found);
     }
 
     /**

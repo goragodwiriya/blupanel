@@ -759,3 +759,65 @@ textarea.config-file-editor {
   justify-content: flex-end;
   margin-top: 1.25rem;
 }
+
+/* --------------------------------------------------------------------------
+   รายการ "ค่าคู่ป้าย" บนหน้าเว็บ — ข้อมูลการเชื่อมต่อ SFTP / ฐานข้อมูล
+
+   รูปแบบเดียวกับหน้าต่างรหัสผ่านข้างบน เพราะมันคือปัญหาเดียวกัน: ผู้ใช้ต้อง
+   คัดลอกค่าไปพิมพ์ลงโปรแกรมอื่น ป้ายกับค่าจึงต้องอยู่คู่กันเสมอ ไม่ใช่ตาราง
+   ที่ต้องไล่หัวคอลัมน์ · แยกคลาสจาก .secret-reveal เพราะค่าพวกนี้ดูซ้ำได้
+   ตลอด ไม่ใช่ของที่เห็นครั้งเดียว จึงไม่มีปุ่มคัดลอกรายบรรทัด
+   -------------------------------------------------------------------------- */
+.detail-list {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.5rem 1rem;
+  align-items: center;
+  margin: 0.75rem 0;
+}
+.detail-list dt {
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+.detail-list dd {
+  min-width: 0;
+  margin: 0;
+  /* ค่าอย่างคีย์ DKIM ยาวเกินความกว้างคอลัมน์ได้ — ตัดบรรทัดแทนที่จะดันหน้าให้เลื่อนแนวนอน */
+  word-break: break-all;
+}
+/* .selectable ถูกออกแบบไว้สำหรับกล่องเดี่ยวกลางหน้า — ในลิสต์นี้ต้องชิดซ้ายและไม่มีระยะห่างบน-ล่าง */
+.detail-list dd.selectable {
+  text-align: left;
+  margin: 0;
+  padding: 0.3rem 0.5rem;
+}
+
+/* หน้าจอแคบ — วางป้ายไว้เหนือค่า ไม่ใช่บีบสองคอลัมน์จนค่าอ่านไม่ออก */
+@media (max-width: 640px) {
+  .detail-list {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.25rem;
+  }
+  .detail-list dd {
+    margin-bottom: 0.5rem;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   ตัวอย่างอีเมลก่อนส่ง — อีเมลถึงลูกค้าเรียกคืนไม่ได้ ต้องอ่านของจริงก่อนกดส่ง
+
+   ต้องขึ้นบรรทัดตามต้นฉบับเป๊ะ ๆ (จึงใช้ <pre>) แต่ห้ามดันหน้าให้เลื่อนแนวนอน
+   เวลามีบรรทัดยาวอย่างคีย์ DKIM หรือ path ยาว ๆ — จึงตัดคำแทนที่จะปล่อยล้น
+   -------------------------------------------------------------------------- */
+.preview-body {
+  max-height: 22rem;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-align: left;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.85rem;
+  line-height: 1.6;
+  margin: 0.5rem 0;
+  padding: 0.75rem;
+}

@@ -48,6 +48,28 @@
           <button type="button" class="btn btn-primary icon-lock" data-action="click.prevent:requestApi"
                   data-api-url="/api/v2/sftp/password/form" data-api-method="get" data-i18n>Change SFTP password</button>
         </div>
+
+        <!-- The page used to say "Enabled" and the username, and stop there —
+             no host, no port · on a machine whose admin moved SSH off port 22
+             that left the customer with a client that times out and nothing on
+             screen to explain it -->
+        <div data-if="own && own.sftp_enabled === true">
+          <h3 data-i18n>What to enter in your SFTP program</h3>
+          <dl class="detail-list">
+            <dt data-i18n>Protocol</dt>
+            <dd data-text="connection.protocol"></dd>
+            <dt data-i18n>Host</dt>
+            <dd class="mono selectable" data-show="connection.known === true" data-text="connection.host"></dd>
+            <dd class="muted" data-show="connection.known === false" data-i18n>Could not be read just now — ask your hosting provider</dd>
+            <dt data-i18n>Port</dt>
+            <dd class="mono selectable" data-show="connection.known === true" data-text="connection.port"></dd>
+            <dd class="muted" data-show="connection.known === false">—</dd>
+            <dt data-i18n>Username</dt>
+            <dd class="mono selectable" data-text="own.sftp_username"></dd>
+            <dt data-i18n>Password</dt>
+            <dd class="muted" data-i18n>The one set when SFTP was enabled — use the button above to change it</dd>
+          </dl>
+        </div>
       </div>
 
       <!-- Every account at a glance — the admin half of the same page -->

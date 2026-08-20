@@ -3,37 +3,88 @@
   <header data-component="topbar"></header>
   <div data-component="mode-banner"></div>
   <div data-component="rollback-bar"></div>
-  <main class="content">
+  <main class="content" data-component="api" data-endpoint="/api/v2/session">
     <div class="card-groups">
       <header>
         <div>
           <h1 class="icon-code" data-i18n>PHP</h1>
-          <p data-i18n>PHP versions installed on this server</p>
+          <p data-i18n>Every version this server has, and every version it could install</p>
+        </div>
+        <div class="header-actions">
+          <button type="button" class="btn is-loading icon-refresh" data-action="click.prevent:emit"
+                  data-emit-event="phpcp:reload" data-i18n>Refresh</button>
         </div>
       </header>
 
+      <!-- Where a running install or removal reports itself · hidden until one
+           is started, because a permanently empty progress box teaches people
+           to stop looking at it -->
+      <div class="content-body" id="php-job" hidden>
+        <div class="flex middle gap-4">
+          <h2 class="icon-clock" data-i18n>Package job</h2>
+          <span class="pill pill-muted" id="php-job-state"></span>
+          <span class="mono" id="php-job-version"></span>
+        </div>
+        <p class="muted" data-i18n>apt takes a few minutes. This keeps running on the server even if you close the page.</p>
+        <pre class="preview-body" id="php-job-log"></pre>
+      </div>
+
       <div class="content-body">
         <div class="tablebody">
+          <!--
+            One table for installed and installable versions alike
+
+            Splitting them into two tables was the obvious layout and the wrong
+            one: the question an admin actually has is "what can this site run
+            on", and answering it from two lists means comparing across them.
+            The `state` column carries the difference instead.
+          -->
           <table class="table border fullwidth"
                  data-table="phpVersions"
                  data-source="/api/v2/php-versions"
-                 data-page-size="50">
+                 data-page-size="50"
+                 data-row-actions='{
+                   "install": {
+                     "title": "Install",
+                     "className": "btn small btn-success icon-download",
+                     "method": "post",
+                     "url": "/api/v2/php-versions",
+                     "params": {"version": "{version}"},
+                     "condition": "${state === \"available\"}",
+                     "confirm": "Install this PHP version? It takes a few minutes and runs in the background."
+                   },
+                   "remove": {
+                     "title": "Remove",
+                     "className": "btn small btn-danger icon-delete",
+                     "method": "delete",
+                     "url": "/api/v2/php-versions/{version}",
+                     "condition": "${removable}",
+                     "confirm": "Remove this PHP version and all of its packages? Any website still using it would stop working."
+                   }
+                 }'>
             <thead>
               <tr>
                 <th data-field="version" data-cell-class="mono" data-i18n>{LNG_PHP version}</th>
-                <th data-field="fpm_status" class="center" data-cell-class="center"
-                    data-template="<span class='pill pill-${fpm_tone}'>{LNG_${fpm_status}}</span>"
+                <th data-field="state" class="center" data-cell-class="center"
+                    data-template="<span class='pill pill-${state_tone}'>${state_label}</span>"
+                    data-i18n>{LNG_Status}</th>
+                <th data-field="fpm_label" class="center" data-cell-class="center"
+                    data-template="<span class='pill pill-${fpm_tone}'>${fpm_label}</span>"
                     data-i18n>{LNG_FPM service}</th>
                 <th data-field="sites" class="center" data-cell-class="center" data-i18n>{LNG_Websites}</th>
                 <th data-field="supported" class="center" data-cell-class="center"
-                    data-template="<span class='pill pill-${supported_tone}'>{LNG_${supported_label}}</span>"
+                    data-template="<span class='pill pill-${supported_tone}'>${supported_label}</span>"
                     data-i18n>{LNG_Support}</th>
+                <!-- The date, not just the label — "supported" alone gives an
+                     admin nothing to plan a migration around -->
+                <th data-field="support_note" data-i18n>{LNG_Until}</th>
                 <th data-field="extension_count" class="center" data-cell-class="center" data-i18n>{LNG_Extensions}</th>
               </tr>
             </thead>
             <tbody></tbody>
           </table>
         </div>
+        <p class="muted" data-i18n>A version already used by a website cannot be removed. Move those sites to another version first.</p>
       </div>
     </div>
   </main>

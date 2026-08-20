@@ -1217,9 +1217,18 @@ paths:
 
         `fpm_running` มีไว้แสดงสถานะเท่านั้น — การ start/stop อยู่ที่ทรัพยากร services
         ตามกฎ UX ใน PROMPT.md
+      parameters:
+        - name: installed
+          in: query
+          required: false
+          description: |
+            ค่าใดก็ได้ที่ไม่ว่าง = คืนเฉพาะเวอร์ชันที่ติดตั้งแล้ว · สำหรับ dropdown
+            ซึ่งต้องเสนอเฉพาะเวอร์ชันที่ย้ายเว็บไปได้จริงตอนนี้ — ตัวเลือกที่ต้องรอ
+            ให้ใครไปติดตั้งก่อน คือตัวเลือกที่พังตอนกดบันทึก
+          schema: { type: string }
       responses:
         "200":
-          description: รายการเวอร์ชันเรียงจากเก่าไปใหม่
+          description: เวอร์ชันที่ติดตั้งแล้วก่อน ตามด้วยที่ติดตั้งได้ เรียงจากใหม่ไปเก่า
           content:
             application/json:
               schema:
@@ -1234,7 +1243,130 @@ paths:
                     properties:
                       installed_count: { type: integer }
                       default: { type: [string, "null"] }
+                      can_install: { type: boolean, description: "false = ถาม apt ไม่ได้ · หน้าเว็บต้องไม่เสนอปุ่มติดตั้งเลย" }
+                      panel_version: { type: string, description: "เวอร์ชันที่ panel เองรันอยู่ — ถอดถอนไม่ได้" }
         "503": { $ref: "#/components/responses/Error" }
+
+    post:
+      tags: [php]
+      summary: ติดตั้งเวอร์ชัน PHP เพิ่ม
+      description: |
+        เริ่มงานแล้วคืนค่าทันที **ไม่รอให้ apt เสร็จ** — `apt-get install` ใช้เวลา
+        1-5 นาที ส่วน agent ตอบภายใน 30 วินาที งานจึงถูกส่งให้ systemd
+        (`systemd-run`) รันต่อ และติดตามผลได้ที่ `GET /php-versions/job`
+
+        รายชื่อแพ็กเกจสร้างจาก `ServiceCatalog::phpPackages()` ฝั่งเซิร์ฟเวอร์
+        ไม่ได้รับจากผู้เรียก · เวอร์ชันต้องเป็นเวอร์ชันที่ apt ของเครื่องนี้มีจริง
+        ไม่ใช่แค่รูปแบบถูก
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version: { type: string, pattern: "^\\d\\.\\d{1,2}$", example: "8.4" }
+      responses:
+        "200":
+          description: เริ่มงานแล้ว
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /php-versions/job:
+    get:
+      tags: [php]
+      summary: ความคืบหน้าของงานติดตั้ง/ถอดถอนที่กำลังทำงานอยู่
+      description: |
+        **ไม่ผูกกับเวอร์ชัน** — หน้าเว็บถามว่า "มีงานอะไรทำงานอยู่ไหม" ผู้ดูแลที่
+        รีโหลดหน้า หรือผู้ดูแลอีกคนที่เพิ่งเปิดหน้านี้ จึงยังเห็นงานที่ทำงานค้างอยู่ ·
+        ถ้าใส่เวอร์ชันไว้ใน URL จะมีแค่แท็บที่กดสั่งเท่านั้นที่ตามงานได้
+
+        `php.manage` ไม่ใช่ `php.view` — `log` คือผลลัพธ์ของ apt ที่รันด้วย root
+      parameters:
+        - name: version
+          in: query
+          required: false
+          description: ระบุเจาะจงเวอร์ชัน — ว่างไว้ = งานใดก็ตามที่เครื่องนี้มี
+          schema: { type: string }
+      responses:
+        "200":
+          description: สถานะงาน
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      version: { type: string }
+                      state: { type: string, enum: [idle, running, done, failed] }
+                      action: { type: string, enum: ["", install, remove] }
+                      running: { type: boolean }
+                      finished: { type: boolean }
+                      log: { type: string, description: "ท้ายผลลัพธ์ของ apt จาก journal" }
+                      tone: { type: string }
+                      label: { type: string }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /php-versions/{version}:
+    delete:
+      tags: [php]
+      summary: ถอดถอนเวอร์ชัน PHP
+      description: |
+        เริ่มงานแล้วคืนค่าทันทีเหมือนการติดตั้ง · ปฏิเสธก่อนเริ่มงานสี่กรณี —
+        มีเว็บไซต์ใช้อยู่ · เป็นเวอร์ชันที่ panel เองรันอยู่ · เป็นเวอร์ชันสุดท้าย
+        ที่เหลือ · ยังไม่ได้ติดตั้ง
+
+        ใช้ `purge` ไม่ใช่ `remove` เพราะ `remove` ทิ้ง config ไว้ ทำให้
+        `/etc/php/<version>` ยังอยู่และ panel รายงานว่ายังติดตั้งอยู่ต่อไป ·
+        รายชื่อแพ็กเกจอ่านจาก dpkg จริง ไม่ส่ง glob ให้ apt
+      parameters:
+        - name: version
+          in: path
+          required: true
+          schema: { type: string, example: "8.1" }
+      responses:
+        "200":
+          description: เริ่มงานถอดถอนแล้ว
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "422": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /password/suggest:
+    get:
+      tags: [users]
+      summary: รหัสผ่านสุ่มหนึ่งค่า สำหรับฟอร์มที่กำลังจะถามหารหัสผ่าน
+      description: |
+        ทุกฟอร์มที่สร้างข้อมูลประจำตัว (ผู้ใช้ · SFTP · ฐานข้อมูล · กล่องจดหมาย)
+        เปิดขึ้นมาพร้อมรหัสผ่านที่แข็งแรงกรอกไว้แล้ว และมีปุ่มขอค่าใหม่ ซึ่งเรียกที่นี่
+
+        **สุ่มฝั่งเซิร์ฟเวอร์เสมอ** — เกณฑ์ความแข็งแรงที่เซิร์ฟเวอร์จะใช้ตัดสินอยู่ใน
+        `Password::problems()` การเขียนตัวสุ่มฝั่งเบราว์เซอร์อีกตัวคือของอีกชิ้นที่ต้อง
+        ตามให้ตรงกัน และเวลาไม่ตรงกัน อาการคือรหัสที่ระบบแนะนำเอง แต่เซิร์ฟเวอร์ปฏิเสธ
+
+        ค่านี้ไม่ผูกกับบัญชีใดและไม่ถูกเก็บไว้ที่ไหน จนกว่าจะมีฟอร์มถูกส่งพร้อมค่านี้ ·
+        `dashboard.view` = "ล็อกอินอยู่" ซึ่งทุกบทบาทมี
+      responses:
+        "200":
+          description: รหัสผ่านสุ่ม
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      password: { type: string }
 
   /users:
     get:
@@ -1430,6 +1562,80 @@ paths:
                       password: { type: string }
                       sessions_revoked: { type: integer }
         "404": { $ref: "#/components/responses/Error" }
+
+  /users/{id}/email/form:
+    get:
+      tags: [users]
+      summary: ฟอร์มส่งอีเมลถึงเจ้าของบัญชี พร้อมตัวอย่างเนื้อความจริง
+      description: |
+        คืนเนื้อความของอีเมลทั้งสองแบบมาให้ดูก่อนส่ง — อีเมลถึงลูกค้าเรียกคืนไม่ได้
+        การดูตัวอย่างจึงเป็นเหตุผลทั้งหมดที่สิ่งนี้เป็นฟอร์ม ไม่ใช่ปุ่มในแถว
+
+        รหัสผ่านในตัวอย่างเป็นจุดไข่ปลา — ของจริงถูกสุ่มตอนกดส่ง ผู้ดูแลที่เปิดดู
+        แล้วเปลี่ยนใจปิดไป จึงไม่ได้ทิ้งรหัสผ่านที่ใช้ได้จริงไว้ในแท็บเบราว์เซอร์
+        และไม่ได้เผลอตั้งรหัสใหม่ให้ลูกค้าโดยไม่ตั้งใจ
+      parameters:
+        - { $ref: "#/components/parameters/UserId" }
+      responses:
+        "200":
+          description: ข้อมูลฟอร์มพร้อมตัวอย่างอีเมล
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      id: { type: integer }
+                      form_action: { type: string }
+                      username: { type: string }
+                      email: { type: string }
+                      has_email: { type: boolean }
+                      is_hosting: { type: boolean, description: "อีเมลต้อนรับใช้กับบัญชีโฮสติ้งเท่านั้น" }
+                      mail_ready: { type: boolean, description: "ตั้ง mail.from ไว้แล้วหรือยัง" }
+                      welcome_subject: { type: string }
+                      welcome_body: { type: string }
+                      reset_subject: { type: string }
+                      reset_body: { type: string }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /users/{id}/email:
+    post:
+      tags: [users]
+      summary: ส่งอีเมลของระบบถึงเจ้าของบัญชี
+      description: |
+        `welcome` = รายละเอียดโฮสติ้งของบัญชีนั้นทั้งหมด (เว็บ · SFTP · ฐานข้อมูล ·
+        เมล · nameserver · โควตา) ประกอบจากข้อมูลจริงในฐานข้อมูลของ panel
+
+        `password_reset` = **ตั้งรหัสใหม่ก่อน แล้วจึงส่ง** ตามลำดับนั้น เพราะการส่ง
+        รหัสที่ยังไม่ได้ตั้งจริง แปลว่าลูกค้าลองแล้วเข้าไม่ได้ และสรุปว่าบัญชีพัง ·
+        รหัสที่สุ่มได้ยังแสดงใน dialog ด้วย เพราะอีเมลตีกลับหรือไปอยู่ในสแปมได้
+
+        **ผู้รับอ่านจากตาราง users ฝั่ง agent เสมอ ไม่รับจากคำขอ** — ต่อให้ชั้นเว็บ
+        ถูกยึดทั้งหมด ก็สั่งให้เครื่องส่งเมลไปหาที่อยู่นอกระบบไม่ได้
+      parameters:
+        - { $ref: "#/components/parameters/UserId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                kind: { type: string, enum: [welcome, password_reset] }
+      responses:
+        "200":
+          description: ส่งแล้ว — มีรหัสผ่านใหม่ในคำตอบเฉพาะกรณี password_reset
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "422": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
 
   /users/{id}/two-factor:
     delete:
@@ -3870,6 +4076,37 @@ paths:
         "409": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
 
+  /databases/connection:
+    get:
+      tags: [databases]
+      summary: ค่าที่ไฟล์ตั้งค่าของเว็บไซต์ต้องใส่เพื่อต่อ MariaDB
+      description: |
+        หน้ารายการบอกว่ามีฐานข้อมูลอะไรบ้าง และมีปุ่มเข้า phpMyAdmin แต่ไม่เคยบอกว่า
+        แอปพลิเคชันต้องต่อไปที่ไหน — เว็บใหม่ทุกเว็บจึงเริ่มด้วยการเดา และเดาผิดจะได้
+        ข้อความ connection error ที่หน้าตาเหมือน "ฐานข้อมูลไม่เคยถูกสร้าง"
+
+        เป็น local เสมอ เพราะ panel สร้างฐานข้อมูลบนเครื่องนี้และให้สิทธิ์ผู้ใช้เฉพาะ
+        `localhost` การบอกโฮสต์อื่นจึงไม่ใช่แค่ไม่ช่วย แต่ผิด
+
+        ต้องประกาศก่อน `{name}` — ไม่งั้น "connection" ถูกอ่านเป็นชื่อฐานข้อมูล
+      responses:
+        "200":
+          description: โฮสต์ พอร์ต และคำนำหน้าของบัญชีผู้เรียก
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      host: { type: string, example: localhost }
+                      host_alt: { type: string, example: 127.0.0.1 }
+                      port: { type: integer, example: 3306 }
+                      prefix: { type: string, description: "คำนำหน้าชื่อฐานข้อมูลของบัญชีนี้ — ว่างสำหรับผู้ดูแล" }
+                      has_prefix: { type: boolean }
+
   /databases/{name}:
     delete:
       tags: [databases]
@@ -4144,6 +4381,53 @@ paths:
             application/json:
               schema:
                 type: object
+
+  /mail/connection:
+    get:
+      tags: [mail]
+      summary: ค่าที่ลูกค้าต้องกรอกในโปรแกรมอ่านเมล
+      description: |
+        ครึ่งของหน้า Mailboxes ที่เป็นของลูกค้า — ตรงข้ามกับ `/mail/readiness`
+        ซึ่งเป็นเรื่องของเครื่อง (พาธใบรับรอง · PTR · พอร์ต 25 ขาออก) และย้ายไปอยู่
+        ที่ `settings.manage` แล้ว
+
+        `dns` คือเรกคอร์ดที่ panel เขียนไว้ตอนเปิดเมลให้โดเมนนั้น — สำคัญที่สุดกับ
+        ลูกค้าที่ DNS อยู่ที่อื่น เพราะต้องคัดลอกไปใส่เอง และเดิมไม่มีที่ไหนให้อ่าน ·
+        มองเห็นเฉพาะโดเมนของตัวเอง กรองที่ query ไม่ใช่กรองทีหลัง
+      responses:
+        "200":
+          description: เซิร์ฟเวอร์/พอร์ต และเรกคอร์ด DNS ของโดเมนที่ผู้เรียกเป็นเจ้าของ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  data:
+                    type: object
+                    properties:
+                      configured: { type: boolean, description: "ตั้ง mail.hostname ไว้แล้วหรือยัง" }
+                      host: { type: string }
+                      domains: { type: integer, description: "จำนวนโดเมนของผู้เรียกที่เปิดเมลแล้ว" }
+                      servers:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            service: { type: string, enum: [IMAP, POP3, SMTP] }
+                            host: { type: string }
+                            port: { type: integer }
+                            security: { type: string }
+                            note: { type: string }
+                      dns:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            domain: { type: string }
+                            type: { type: string }
+                            name: { type: string, description: "ชื่อเต็ม ไม่ใช่ @ — ค่าที่เอาไปวางในระบบ DNS ของที่อื่นได้เลย" }
+                            value: { type: string }
 
   /mail/certificate:
     post:
@@ -5524,16 +5808,38 @@ components:
 
     PhpVersion:
       type: object
+      description: |
+        **ผู้เรียกที่ไม่มี `php.manage` ได้เฉพาะ `version` · `supported` ·
+        `is_default`** — ตัดฟิลด์ที่ชั้นเซิร์ฟเวอร์ ไม่ใช่ซ่อนที่เทมเพลต ค่าที่ไม่เคย
+        ออกจากเซิร์ฟเวอร์อ่านจากแท็บ network ของเบราว์เซอร์ไม่ได้
+
+        ลูกค้ายังต้องเรียก endpoint นี้ได้ เพราะ dropdown เลือกเวอร์ชันของเว็บตัวเอง
+        สร้างจากมัน
       properties:
         version: { type: string }
         unit: { type: string, description: "ชื่อ systemd unit ของ FPM เวอร์ชันนี้" }
+        state:
+          type: string
+          enum: [installed, available, unavailable]
+          description: "installed = มีบนเครื่อง · available = apt ติดตั้งได้ · unavailable = repo ของเครื่องนี้ไม่มี"
+        installed: { type: boolean }
+        is_default: { type: boolean, description: "เวอร์ชันที่เว็บใหม่ควรได้ — ตัวใหม่สุดที่ยังได้รับแพตช์ความปลอดภัย" }
         fpm_status: { type: string }
         fpm_running: { type: boolean }
         fpm_memory: { type: integer, description: "ไบต์" }
         sites: { type: integer, description: "จำนวนเว็บไซต์ที่ใช้เวอร์ชันนี้" }
         extensions: { type: array, items: { type: string } }
         extension_count: { type: integer }
-        supported: { type: boolean, description: "ยังได้รับการอัปเดตความปลอดภัยอยู่หรือไม่" }
+        supported:
+          type: boolean
+          description: |
+            ยังได้รับแพตช์ความปลอดภัยอยู่หรือไม่ · ตัดสินจากวันหมดอายุที่ php.net
+            ประกาศไว้ ({@see PhpSupport}) ไม่ใช่จากรายการที่เขียนมือ — เวอร์ชันที่
+            ใหม่กว่าทุกตัวในตารางถือว่ายังรองรับ เพราะ PHP ไม่เคยปล่อยเวอร์ชันที่
+            หมดอายุตั้งแต่วันแรก
+        security_ends: { type: string, description: "วันสิ้นสุดแพตช์ความปลอดภัย (YYYY-MM-DD) — ว่าง = ใหม่เกินกว่าที่ตารางจะรู้" }
+        removable: { type: boolean }
+        remove_blocked_reason: { type: string, description: "เหตุผลที่ถอดถอนไม่ได้ — ว่างเมื่อถอดถอนได้" }
         cli_binary: { type: string }
 
     Customer:

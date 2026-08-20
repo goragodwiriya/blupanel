@@ -7,9 +7,9 @@ namespace Phpcp\Agent\Capability;
 use Phpcp\Agent\Capability;
 use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
+use Phpcp\Domain\PhpSupport;
 use Phpcp\Domain\SecurityScore;
 use Phpcp\Domain\SettingsRepository;
-use Phpcp\Domain\ServiceCatalog;
 use Phpcp\Domain\SiteRepository;
 use Phpcp\Driver\Firewall\UfwDriver;
 use Phpcp\Driver\Security\Fail2banManager;
@@ -448,7 +448,10 @@ final class SecurityScan implements Capability
         $outdated = [];
 
         foreach ($rows as $row) {
-            if (in_array((string) $row['php_version'], ServiceCatalog::PHP_EOL_VERSIONS, true)) {
+            // Decided by the version's published end-of-support date, not by a
+            // hand-written list — the list was correct on the day it was
+            // written and quietly wrong every day after
+            if (!PhpSupport::isSupported((string) $row['php_version'])) {
                 $outdated[] = sprintf('PHP %s (%d site(s))', $row['php_version'], $row['n']);
             }
         }

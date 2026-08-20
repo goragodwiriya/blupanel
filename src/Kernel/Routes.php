@@ -30,6 +30,7 @@ use Phpcp\Http\V2\SettingsController as V2SettingsController;
 use Phpcp\Http\V2\SystemController;
 use Phpcp\Http\V2\UsersController;
 use Phpcp\Http\V2\MeController;
+use Phpcp\Http\V2\PasswordsController;
 use Phpcp\Http\V2\PhpMyAdminController;
 use Phpcp\Http\V2\PhpVersionsController;
 use Phpcp\Http\V2\ScheduledJobsController;
@@ -118,6 +119,16 @@ final class Routes
         // --- Dashboard: everything the home page needs, in one request ---
         $router->add(new Route('GET', '/api/v2/dashboard', V2DashboardController::class, 'index', 'dashboard.view', 'api.v2.dashboard'));
 
+        /*
+         * --- A generated password for a form that is about to ask for one ---
+         *
+         * `dashboard.view` = "signed in", the permission every role holds · the
+         * value is bound to nothing and stored nowhere until a form is actually
+         * submitted with it, so the only thing worth gating is that a stranger
+         * can't use the panel as a random-number service
+         */
+        $router->add(new Route('GET', '/api/v2/password/suggest', PasswordsController::class, 'suggest', 'dashboard.view', 'api.v2.password.suggest'));
+
         // --- Own account ---
         $router->add(new Route('GET', '/api/v2/me', MeController::class, 'show', 'dashboard.view', 'api.v2.me.show'));
         $router->add(new Route('PATCH', '/api/v2/me/password', MeController::class, 'changePassword', 'dashboard.view', 'api.v2.me.password'));
@@ -160,8 +171,35 @@ final class Routes
         $router->add(new Route('DELETE', '/api/v2/dns-records/{id}', DomainsController::class, 'deleteRecord', 'domain.manage', 'api.v2.dns.destroy'));
         $router->add(new Route('POST', '/api/v2/dns/reload', DomainsController::class, 'reloadAll', 'dns.manage', 'api.v2.dns.reload'));
 
-        // --- PHP ---
+        /*
+         * --- PHP ---
+         *
+         * **The list stays on `php.view`, everything else is `php.manage`**
+         *
+         * A customer needs the list, because their own website's PHP-version
+         * dropdown is built from it — but they get a trimmed payload, decided
+         * in the controller, not the template (see PhpVersionsController) ·
+         * the *page* is admin-only, gated in `main.js`/`ui.js` on `php.manage`
+         *
+         * Installing and removing a version is `php.manage`, which only
+         * superadmin and sysadmin hold · `{version}` is matched loosely here
+         * and validated properly by the capability, which additionally
+         * requires the version to be one apt genuinely offers
+         */
         $router->add(new Route('GET', '/api/v2/php-versions', PhpVersionsController::class, 'index', 'php.view', 'api.v2.php.index'));
+        $router->add(new Route('POST', '/api/v2/php-versions', PhpVersionsController::class, 'install', 'php.manage', 'api.v2.php.install'));
+        /*
+         * The running job — **not bound to a version**
+         *
+         * The page asks "is anything happening?", so an admin who reloads the
+         * page (or a second admin who opens it) still sees the install that is
+         * running · a version in the URL would mean only the browser tab that
+         * started the job could follow it
+         *
+         * Must come before {version} — otherwise "job" gets read as a version number
+         */
+        $router->add(new Route('GET', '/api/v2/php-versions/job', PhpVersionsController::class, 'job', 'php.manage', 'api.v2.php.job'));
+        $router->add(new Route('DELETE', '/api/v2/php-versions/{version}', PhpVersionsController::class, 'destroy', 'php.manage', 'api.v2.php.remove'));
 
         // --- Panel users · customers · settings ---
         // All user accounts — admins and hosting customers have shared one resource
@@ -184,6 +222,18 @@ final class Routes
         // down, so it must be a deliberate click, not a side effect of saving a form
         $router->add(new Route('PUT', '/api/v2/users/{id}/layout', UsersController::class, 'setLayout', 'customer.manage', 'api.v2.users.layout'));
         $router->add(new Route('POST', '/api/v2/users/{id}/password-reset', UsersController::class, 'resetPassword', 'customer.manage', 'api.v2.users.password'));
+        /*
+         * Mailing the account holder — the welcome email with their full hosting
+         * details, or a new password
+         *
+         * `customer.manage`, the same permission as resetting a password from
+         * the row, because "send this person a new password" is that same
+         * operation with the result handed over by email instead of read off
+         * the screen · the agent checks it again, and additionally refuses to
+         * send anywhere except the address stored on the account itself
+         */
+        $router->add(new Route('GET', '/api/v2/users/{id}/email/form', UsersController::class, 'emailForm', 'customer.manage', 'api.v2.users.email.form'));
+        $router->add(new Route('POST', '/api/v2/users/{id}/email', UsersController::class, 'sendEmail', 'customer.manage', 'api.v2.users.email.send'));
         $router->add(new Route('POST', '/api/v2/users/{id}/sites', UsersController::class, 'attachSites', 'customer.manage', 'api.v2.users.sites.attach'));
         $router->add(new Route('DELETE', '/api/v2/users/{id}/sites/{site_id}', UsersController::class, 'detachSite', 'customer.manage', 'api.v2.users.sites.detach'));
         $router->add(new Route('DELETE', '/api/v2/users/{id}/two-factor', UsersController::class, 'disableTwoFactor', 'customer.manage', 'api.v2.users.2fa'));
@@ -327,6 +377,9 @@ final class Routes
         // instruction for the page (same pattern as GET /cron-jobs/0), so the page
         // never needs to know the template's filename
         $router->add(new Route('GET', '/api/v2/databases/form', DatabasesController::class, 'form', 'db.manage', 'api.v2.databases.form'));
+        // What a website's config file has to say to reach MariaDB — same
+        // ordering rule as /form: a literal segment must be registered before {name}
+        $router->add(new Route('GET', '/api/v2/databases/connection', DatabasesController::class, 'connection', 'db.view', 'api.v2.databases.connection'));
         $router->add(new Route('DELETE', '/api/v2/databases/{name}', DatabasesController::class, 'destroy', 'db.manage', 'api.v2.databases.destroy'));
         // POST, not GET, on purpose — this logs into phpMyAdmin, it isn't an ordinary link
         $router->add(new Route('POST', '/api/v2/phpmyadmin/session', PhpMyAdminController::class, 'create', 'db.view', 'api.v2.phpmyadmin.session'));
@@ -363,8 +416,25 @@ final class Routes
         // --- Mail and backups ---
         // Mail hosting — mailboxes and forwarding addresses (PLAN-MAIL Phase M2)
         $router->add(new Route('GET', '/api/v2/mailboxes', MailboxesController::class, 'index', 'mail.view', 'api.v2.mailboxes.index'));
-        // Must come before {id} — otherwise "form" gets read as a mailbox id
-        $router->add(new Route('GET', '/api/v2/mail/readiness', MailboxesController::class, 'readiness', 'mail.view', 'api.v2.mail.readiness'));
+        /*
+         * Must come before {id} — otherwise "form" gets read as a mailbox id
+         *
+         * **`settings.manage`, not `mail.view`** — the readiness table answers
+         * questions about *the machine*: the certificate's path on disk, the
+         * mail hostname, the PTR record, whether the provider blocks outbound
+         * port 25 · every row that fails says "fix this at your VPS provider"
+         * or "the panel can fix this", and a customer can do neither · it used
+         * to sit on `mail.view`, which customers hold to manage their own
+         * domain's mailboxes, so every one of them could read the machine's
+         * certificate paths from a page they otherwise only use to add a mailbox
+         *
+         * What a customer needs from this page is `/api/v2/mail/connection`
+         * below — the ports and hostnames they type into a mail client
+         */
+        $router->add(new Route('GET', '/api/v2/mail/readiness', MailboxesController::class, 'readiness', 'settings.manage', 'api.v2.mail.readiness'));
+        // How to connect a mail client — the customer half of the same page ·
+        // scoped to the caller's own domains, with no machine-level detail in it
+        $router->add(new Route('GET', '/api/v2/mail/connection', MailboxesController::class, 'connection', 'mail.view', 'api.v2.mail.connection'));
         // The mail hostname's certificate belongs to the whole machine, so it's a
         // machine-admin permission, not `mail.manage`, which site owners hold to
         // manage their own domain's mailboxes

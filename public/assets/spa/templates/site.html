@@ -50,7 +50,7 @@
                 <div class="width90">
                   <label for="php_version">
                     <span data-i18n>PHP version</span> (<span data-i18n>current</span>: <strong data-text="php_version"></strong>) </label>
-                  <span class="form-control icon-code" data-component="api" data-endpoint="/api/v2/php-versions">
+                  <span class="form-control icon-code" data-component="api" data-endpoint="/api/v2/php-versions?installed=1">
                     <select id="php_version" name="php_version" required data-for="php in data">
                       <template>
                         <option data-attr="value:php.version" data-text="php.version"></option>

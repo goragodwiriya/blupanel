@@ -8,6 +8,7 @@ use Phpcp\Domain\DbAccountRepository;
 use Phpcp\Http\ApiController;
 use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
+use Phpcp\Security\Password;
 use Phpcp\Security\Permissions;
 
 /**
@@ -113,6 +114,16 @@ final class DatabasesController extends ApiController
                 'privileges' => 'readwrite',
                 'owner_user_id' => $owner ?? 0,
                 'site_id' => 0,
+                /*
+                 * The form now opens with a generated password already in it
+                 *
+                 * It used to have no password field at all — `db.create` always
+                 * generated one and revealed it afterward, which is fine right
+                 * up until somebody is moving an existing application onto this
+                 * panel and needs the database user to keep the password that
+                 * is already written into its config file
+                 */
+                'suggested_password' => Password::random(PasswordsController::suggestedLength()),
                 'accounts' => $this->selectableAccounts($owner),
                 'sites' => $this->selectableSites($owner),
             ],
@@ -125,6 +136,40 @@ final class DatabasesController extends ApiController
                 'titleClass' => 'icon-database',
             ]],
         );
+    }
+
+    /**
+     * What a website's config file has to say to reach MariaDB
+     *
+     * The page listed a customer's databases and gave them a phpMyAdmin button,
+     * and never once said what host or port an application should connect to —
+     * so every new site started with a guess, and the guess that fails
+     * (`mysql.example.com`, a remembered host from another provider) fails with
+     * a connection error that looks like the database was never created.
+     *
+     * **Always local.** The panel creates every database on this machine and
+     * grants the dedicated user `localhost` by default ({@see DbCreate}), so
+     * naming any other host would be wrong rather than merely unhelpful.
+     */
+    public function connection(Request $request): Response
+    {
+        $owner = $this->scopeOwner();
+        $prefix = '';
+
+        if ($owner !== null) {
+            $accounts = $this->selectableAccounts($owner);
+            $prefix = (string) ($accounts[0]['prefix'] ?? '');
+        }
+
+        return $this->ok([
+            // `localhost` first — on Debian/Ubuntu that means the unix socket,
+            // which is both faster and unaffected by anything the firewall does
+            'host' => 'localhost',
+            'host_alt' => '127.0.0.1',
+            'port' => 3306,
+            'prefix' => $prefix,
+            'has_prefix' => $prefix !== '',
+        ]);
     }
 
     /** null = an admin who sees the whole machine · anything else = a customer who sees only their own */
@@ -226,6 +271,8 @@ final class DatabasesController extends ApiController
             // the same thing never collide on the same user
             'host' => $request->payloadString('host') ?: 'localhost',
             'privileges' => $request->payloadString('privileges') ?: 'readwrite',
+            // Empty = let the capability generate one, exactly as before this field existed
+            'password' => $request->payloadString('password'),
             'owner_user_id' => (int) $request->payload('owner_user_id', 0),
             'site_id' => (int) $request->payload('site_id', 0),
             'charset' => $request->payloadString('charset') ?: 'utf8mb4',

@@ -159,6 +159,35 @@ abstract class DbCapability implements Capability
         return $row;
     }
 
+    /**
+     * A password supplied by the caller, checked before it reaches MariaDB
+     *
+     * `MariaDbManager` escapes the value for SQL on its own, so this is not
+     * what keeps the statement safe. What it stops is the other half: a
+     * password holding a newline or a control character is accepted by
+     * `CREATE USER` and then cannot be typed back into any config file or
+     * connection string — the customer ends up with a credential that works
+     * only in the panel that generated it.
+     *
+     * Empty is allowed, and means "generate one" — the caller decides.
+     */
+    protected static function assertPassword(string $password): string
+    {
+        if ($password === '') {
+            return '';
+        }
+
+        if (preg_match('/[\x00-\x1f\x7f]/', $password) === 1) {
+            throw new ValidationError('The password contains a character that cannot be used in a database password');
+        }
+
+        if (mb_strlen($password) < 12) {
+            throw new ValidationError('The database password must be at least 12 characters long');
+        }
+
+        return $password;
+    }
+
     /** Generates a random database password — never uses characters that need escaping in SQL or a connection string */
     protected static function randomPassword(int $length = 24): string
     {

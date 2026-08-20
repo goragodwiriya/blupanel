@@ -148,6 +148,14 @@ final class SitesController extends HostingController
 
             if ($this->agent()->isAvailable()) {
                 foreach ($this->fetchPhpVersions($request)['versions'] as $version) {
+                    // Installed only · the list now also carries versions the
+                    // machine *could* install, and offering one of those in a
+                    // create form means the site fails to be created on a
+                    // version that was never there
+                    if (($version['installed'] ?? false) !== true) {
+                        continue;
+                    }
+
                     $phpVersions[] = ['value' => $version['version'], 'text' => $version['version']];
                 }
             }

@@ -75,6 +75,14 @@ final class DbCreate extends DbAccountCapability
             'privileges' => MariaDbManager::assertPrivilege(
                 Validator::optionalString($args, 'privileges', 'readwrite', 16),
             ),
+            /*
+             * Empty = generate one · the form now arrives with a generated
+             * password already filled in, but it stays *a field*, so an admin
+             * moving an existing application onto this panel can keep the
+             * password already written into its config file instead of having
+             * to edit that file afterward
+             */
+            'password' => self::assertPassword(Validator::optionalString($args, 'password', '', 128)),
             'site_id' => isset($args['site_id']) ? Validator::requireInt($args, 'site_id', 0) : 0,
             // 0 = no hosting account chosen · the owner is then taken from the
             // site, and failing that the database belongs to the machine itself
@@ -282,7 +290,7 @@ final class DbCreate extends DbAccountCapability
         }
 
         $args['username'] = $this->dedicatedUser($executor, $args['name'], $args['host']);
-        $password = self::randomPassword();
+        $password = $args['password'] !== '' ? $args['password'] : self::randomPassword();
 
         // Created on the machine first, then recorded in the panel — if the
         // step on the machine fails, no row is left behind in the panel's own

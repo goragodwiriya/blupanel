@@ -203,14 +203,35 @@ test('site.create ปฏิเสธชื่อโดเมนที่ผิ�
     assertSame('good.example.test', $clean['domain'], 'โดเมนต้องถูกแปลงเป็นตัวพิมพ์เล็ก');
 });
 
-test('site.create ปฏิเสธเวอร์ชัน PHP ที่ระบบไม่รู้จัก', static function (): void {
+test('site.create ปฏิเสธเวอร์ชัน PHP ที่ผิดรูปแบบ', static function (): void {
     $capability = (new CapabilityRegistry())->resolve('site.create');
 
-    foreach (['9.9', '8', 'latest', '8.4; rm -rf /', '../8.4'] as $version) {
+    foreach (['8', 'latest', '8.4; rm -rf /', '../8.4', '8.4.1'] as $version) {
         assertRejects(
             ValidationError::class,
             static fn () => $capability->validate(['domain' => 'ok.test', 'php_version' => $version]),
             "ต้องปฏิเสธเวอร์ชัน: {$version}",
+        );
+    }
+
+    /*
+     * **เวอร์ชันที่รูปแบบถูกแต่ยังไม่ได้ติดตั้ง ต้องผ่านชั้นนี้ไปตกที่ run()**
+     *
+     * เดิม validate() เทียบกับรายการชื่อที่คอมไพล์มากับ panel ผลคือวันที่ PHP
+     * ปล่อยเวอร์ชันใหม่ apt ติดตั้งได้ php-fpm รันอยู่จริง แต่ panel ปฏิเสธ
+     * เพราะยังไม่มีใครไปแก้ค่าคงที่ · คำถามว่า "เวอร์ชันนี้มีจริงไหม" ต้องถาม
+     * เครื่อง ไม่ใช่ถามรายการ — SiteCreate/SiteSetPhp เรียก isVersionInstalled()
+     * ก่อนเขียนไฟล์อยู่แล้ว
+     */
+    $clean = $capability->validate(['domain' => 'ok.test', 'php_version' => '9.9']);
+    assertSame('9.9', $clean['php_version'], 'รูปแบบถูกต้องผ่าน validate ได้');
+
+    foreach (['SiteCreate', 'SiteSetPhp'] as $class) {
+        $source = (string) file_get_contents(PHPCP_ROOT . "/src/Agent/Capability/{$class}.php");
+
+        assertTrue(
+            str_contains($source, 'isVersionInstalled'),
+            "{$class} ต้องตรวจว่าเวอร์ชันติดตั้งจริงก่อนเขียนไฟล์ ไม่งั้นเว็บจะถูกสร้างบน pool ที่ไม่มีอยู่",
         );
     }
 });

@@ -44,6 +44,7 @@ use Phpcp\Agent\Capability\ExpiryCheck;
 use Phpcp\Agent\Capability\BackupCreate;
 use Phpcp\Agent\Capability\RollbackConfirm;
 use Phpcp\Agent\Capability\RollbackRun;
+use Phpcp\Agent\Capability\SftpConnection;
 use Phpcp\Agent\Capability\SftpDisable;
 use Phpcp\Agent\Capability\SftpEnable;
 use Phpcp\Agent\Capability\SftpOwnPassword;
@@ -66,7 +67,10 @@ use Phpcp\Agent\Capability\DbDrop;
 use Phpcp\Agent\Capability\DbList;
 use Phpcp\Agent\Capability\DbUserPassword;
 use Phpcp\Agent\Capability\LogTail;
+use Phpcp\Agent\Capability\PhpInstall;
+use Phpcp\Agent\Capability\PhpJobStatus;
 use Phpcp\Agent\Capability\PhpList;
+use Phpcp\Agent\Capability\PhpRemove;
 use Phpcp\Agent\Capability\ServiceReload;
 use Phpcp\Agent\Capability\ServiceRestart;
 use Phpcp\Agent\Capability\ServiceStart;
@@ -116,6 +120,7 @@ use Phpcp\Agent\Capability\MailReadiness;
 use Phpcp\Agent\Capability\MailBoxDelete;
 use Phpcp\Agent\Capability\MailDomainSet;
 use Phpcp\Agent\Capability\MailTest;
+use Phpcp\Agent\Capability\MailUserNotice;
 use Phpcp\Agent\Capability\NotifyTest;
 use Phpcp\Agent\Capability\SettingsGet;
 use Phpcp\Agent\Capability\SettingsSet;
@@ -157,6 +162,9 @@ final class CapabilityRegistry
             ServiceStatus::class,
             LogTail::class,
             PhpList::class,
+            PhpInstall::class,
+            PhpRemove::class,
+            PhpJobStatus::class,
             DbList::class,
             FileRootsList::class,
             FileList::class,
@@ -245,6 +253,7 @@ final class CapabilityRegistry
             NotifyTest::class,
             MailApply::class,
             MailTest::class,
+            MailUserNotice::class,
 
             // Mail hosting — real mailboxes on this machine (PLAN-MAIL Phase M1)
             MailDomainSet::class,
@@ -304,6 +313,7 @@ final class CapabilityRegistry
             // SFTP — one hosting account = one login (PLAN-V2 Phase E4)
             SftpEnable::class,
             SftpDisable::class,
+            SftpConnection::class,
             // The owner's own password change — a separate permission from
             // SftpEnable on purpose (see that class for the reasoning)
             SftpOwnPassword::class,

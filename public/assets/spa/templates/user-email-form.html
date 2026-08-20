@@ -1,0 +1,65 @@
+<!-- Both messages are rendered here in full, inside <details> elements
+
+     A preview that re-fetches every time a radio button changes is a round
+     trip and a piece of JavaScript for something the browser does natively ·
+     and an email to a customer cannot be recalled, so the preview is the whole
+     reason this is a form instead of a second button in the row -->
+<form data-form="userEmail"
+      data-attr="action:form_action"
+      method="post"
+      data-ajax-submit="true"
+      data-validate="true">
+  <fieldset>
+    <div>
+      <label data-i18n>Recipient</label>
+      <p class="mono" data-show="has_email === true" data-text="email"></p>
+      <fieldset class="notice notice-warning" data-show="has_email === false">
+        <legend class="icon-warning" data-i18n>No email address</legend>
+        <p data-i18n>This account has no email address on file. Add one on the account page first — there is nowhere to send this.</p>
+      </fieldset>
+    </div>
+
+    <!-- Sending is impossible without a sender address, and the failure would
+         otherwise arrive as an agent error after the password had already been
+         reset — say so before anything is changed -->
+    <fieldset class="notice notice-warning" data-show="mail_ready === false">
+      <legend class="icon-warning" data-i18n>Outgoing mail is not set up</legend>
+      <p data-i18n>No sender address is set on the settings page, so the server cannot send anything yet.</p>
+    </fieldset>
+
+    <div>
+      <label data-i18n>What to send</label>
+      <!-- `data-if`, not `data-show` — a *hidden* radio is still a checked
+           radio, and it is still what the form submits · on an admin account
+           (no websites, no quota, no SFTP) a welcome email is a list of empty
+           sections, so the option has to be gone from the DOM, not merely
+           invisible · `required` then makes the browser insist on a choice,
+           since the only remaining option starts unchecked -->
+      <div data-if="is_hosting === true">
+        <input type="radio" id="ue_kind_welcome" name="kind" value="welcome" required checked>
+        <label for="ue_kind_welcome" data-i18n>Welcome email — every detail of this account's hosting</label>
+      </div>
+      <div>
+        <input type="radio" id="ue_kind_reset" name="kind" value="password_reset" required>
+        <label for="ue_kind_reset" data-i18n>New password — resets it, then sends the new one</label>
+      </div>
+      <div class="comment" data-i18n>A reset takes effect immediately: the current password stops working and every open session is signed out.</div>
+    </div>
+
+    <details data-if="is_hosting === true">
+      <summary data-i18n>Preview the welcome email</summary>
+      <p class="mono" data-text="welcome_subject"></p>
+      <pre class="preview-body selectable" data-text="welcome_body"></pre>
+    </details>
+
+    <details>
+      <summary data-i18n>Preview the new-password email</summary>
+      <p class="mono" data-text="reset_subject"></p>
+      <pre class="preview-body selectable" data-text="reset_body"></pre>
+      <p class="comment" data-i18n>The dots stand in for the real password, which is generated at the moment of sending.</p>
+    </details>
+  </fieldset>
+  <fieldset class="submit right">
+    <button type="submit" class="btn btn-primary icon-send" data-i18n>Send</button>
+  </fieldset>
+</form>

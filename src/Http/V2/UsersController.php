@@ -5,7 +5,8 @@ declare (strict_types = 1);
 namespace Phpcp\Http\V2;
 
 use Phpcp\Domain\QuotaChecker;
-use Phpcp\Domain\ServiceCatalog;
+use Phpcp\Domain\SettingsRepository;
+use Phpcp\Domain\UserNotice;
 use Phpcp\Domain\UserRepository;
 use Phpcp\Http\ApiController;
 use Phpcp\Http\ApiProblem;
@@ -49,6 +50,16 @@ use Phpcp\Security\SessionStore;
  */
 final class UsersController extends ApiController
 {
+    /**
+     * Stands in for the password in the email preview
+     *
+     * The real one is generated at the moment of sending, not while a preview
+     * is being read — so an admin who opens the preview, thinks better of it
+     * and closes the dialog has not left a live password sitting in a browser
+     * tab, and has not silently locked the customer out of the account either.
+     */
+    private const PASSWORD_PLACEHOLDER = '••••••••••••';
+
     /**
      * @param Request $request
      * @return mixed
@@ -113,12 +124,35 @@ final class UsersController extends ApiController
 
             if ($this->agent()->isAvailable()) {
                 foreach ($this->fetchPhpVersions($request)['versions'] as $version) {
+                    // Installed only · the list now includes versions that
+                    // could be installed, and offering one of those here would
+                    // create an account whose first website fails to be created
+                    if (($version['installed'] ?? false) !== true) {
+                        continue;
+                    }
+
                     $phpVersions[] = ['value' => $version['version'], 'text' => $version['version']];
                 }
             }
 
             $body = [
-                'data' => ['id' => 0],
+                'data' => [
+                    'id' => 0,
+                    /*
+                     * The create form opens with a strong password already in it
+                     *
+                     * The field used to start empty with "leave blank and one
+                     * will be generated" underneath, which reads as a chore
+                     * rather than an offer — so admins typed their own, and a
+                     * password somebody thinks up under mild time pressure is
+                     * the weakest one in the system · now the good answer is
+                     * the default and typing is the deliberate act
+                     *
+                     * **One value, shown in both fields** — see `store()` for
+                     * why the panel login and SFTP share it for a brand-new account
+                     */
+                    'suggested_password' => Password::random(PasswordsController::suggestedLength()),
+                ],
                 'options' => [
                     'php_version' => $phpVersions
                 ]
@@ -187,12 +221,23 @@ final class UsersController extends ApiController
         }
 
         /*
-         * SFTP in the same breath as the account — always a password the
-         * system generates, never one an admin types, so it has the same
-         * one-response-only lifetime as a generated panel password · the
-         * checkbox means "this customer should upload over SFTP from the
-         * start"; the capability still refuses when the package's quota
-         * says no
+         * SFTP in the same breath as the account · the checkbox means "this
+         * customer should upload over SFTP from the start", and the capability
+         * still refuses when the package's quota says no
+         *
+         * **A brand-new account gets one password for both the panel and
+         * SFTP.** They are the same thing to the customer — their own identity
+         * on this host — and they are handed over together in one welcome
+         * email that has to be read once and acted on. Two random strings in
+         * that email is how one of them ends up written down wrong, and the
+         * support ticket that follows costs more than the separation was worth
+         * for a credential that gets replaced on first login anyway.
+         *
+         * **The sharing stops here.** A database password and a mailbox
+         * password are still generated per resource, because those two get
+         * copied into `wp-config.php` and into a phone, then sit untouched for
+         * years — sharing the account password with them would mean one leaked
+         * config file hands over the panel too.
          */
         $wantSftp = (bool) $request->payload('sftp');
         $sftpPassword = '';
@@ -204,7 +249,7 @@ final class UsersController extends ApiController
 
         if ($role === Permissions::WEBADMIN) {
             if ($wantSftp) {
-                $sftpPassword = Password::random(20);
+                $sftpPassword = $password;
             }
 
             $result = $this->agent()->data('customer.create', [
@@ -251,8 +296,16 @@ final class UsersController extends ApiController
                 try {
                     $site = $this->agent()->data('site.create', [
                         'domain' => $domain,
-                        // Not specified = use the newest version the system supports · `site.create` validates it again anyway
-                        'php_version' => $request->payloadString('php_version') ?: ServiceCatalog::PHP_VERSIONS[0],
+                        /*
+                         * Not specified = the machine's own preferred version
+                         *
+                         * This used to be `ServiceCatalog::PHP_VERSIONS[0]`, a
+                         * constant — so on a machine that did not happen to have
+                         * the panel's newest known version installed, leaving the
+                         * dropdown alone created the account and then failed to
+                         * create its website, on a version that was never there
+                         */
+                        'php_version' => $request->payloadString('php_version') ?: $this->defaultPhpVersion($request),
                         'owner_user_id' => $id
                     ], $this->ctx->actor($request));
 
@@ -293,9 +346,16 @@ final class UsersController extends ApiController
             $secrets['Password'] = $password;
         }
 
-        if ($sftpUsername !== null && $sftpPassword !== '') {
+        /*
+         * The SFTP **login name** still belongs in the dialog — it is the one
+         * value that isn't guessable from what the admin typed (the system
+         * account name can differ from the panel username) · its password is
+         * not repeated as a second row, because it is the same string sitting
+         * right above it, and two rows holding the same secret reads as two
+         * different secrets, which is how one of them gets copied into the wrong box
+         */
+        if ($sftpUsername !== null && $sftpPassword !== '' && $wasRandom) {
             $secrets['SFTP account'] = $sftpUsername;
-            $secrets['SFTP password'] = $sftpPassword;
         }
 
         return $this->revealed(
@@ -305,6 +365,9 @@ final class UsersController extends ApiController
             'users',
             'Account created',
             $secrets,
+            note: $sftpUsername !== null && $sftpPassword !== '' && $wasRandom
+                ? $this->t('SFTP uses this same password. The customer must set a new panel password the next time they sign in.')
+                : '',
             // The trip to the list waits for the Close button — navigating while
             // the dialog is open takes the dialog along with the page, and this
             // is the only place these passwords ever appear
@@ -582,7 +645,13 @@ final class UsersController extends ApiController
         $enabled = (bool) ($user['sftp_enabled'] ?? false);
 
         return $this->ok(
-            ['form_action' => '/api/v2/users/' . $id . '/sftp'],
+            [
+                'form_action' => '/api/v2/users/' . $id . '/sftp',
+                // Prefilled, like every other credential form in the panel · this
+                // one used to be the only field in the system that demanded the
+                // admin think a password up themselves
+                'suggested_password' => Password::random(PasswordsController::suggestedLength()),
+            ],
             [],
             [[
                 'type' => 'modal',
@@ -713,6 +782,171 @@ final class UsersController extends ApiController
         );
     }
 
+    /**
+     * The "send this account an email" form — one row action, two things it can send
+     *
+     * ## Why this is a form and not two more buttons in the row
+     *
+     * The row already carries Manage, Reset password and Delete. A fourth and
+     * fifth would push the useful ones off the edge on a laptop screen, and
+     * both of these want something a row action cannot give them anyway: the
+     * chance to read the message before it leaves. An email to a customer is
+     * not undoable — the preview is the whole point.
+     *
+     * ## Both previews are rendered, not one that follows a dropdown
+     *
+     * A preview that re-fetches on every change of a radio button is a round
+     * trip and a piece of JavaScript for something a `<details>` element does
+     * natively. Both bodies are already composed by the time this answers.
+     */
+    public function emailForm(Request $request): Response
+    {
+        $users = new UserRepository($this->app->db());
+        $id = $request->paramInt('id');
+        $user = $users->find($id);
+
+        if ($user === null) {
+            return $this->problem(ApiProblem::NotFound, 'User not found');
+        }
+
+        if (($denied = $this->assertMayManage($user)) !== null) {
+            return $denied;
+        }
+
+        $notice = new UserNotice($this->app, $this->machineInfo($request));
+        $email = trim((string) ($user['email'] ?? ''));
+
+        /*
+         * The password in the preview is a placeholder, because the real one
+         * does not exist yet — it is generated at the moment of sending, so
+         * that a preview the admin looked at and closed never leaves a live
+         * password lying in a browser tab
+         */
+        $welcome = $notice->build(UserNotice::WELCOME, $user);
+        $reset = $notice->build(UserNotice::PASSWORD_RESET, $user, self::PASSWORD_PLACEHOLDER);
+
+        return $this->ok(
+            [
+                'id' => $id,
+                // The modal's template is a string of its own by the time it
+                // opens, so nothing fills `{id}` into it — the action comes
+                // ready-made from here, the same as the SFTP password form
+                'form_action' => '/api/v2/users/' . $id . '/email',
+                'username' => (string) $user['username'],
+                'email' => $email,
+                'has_email' => $email !== '',
+                // A welcome email to an admin account would be a list of empty
+                // sections — no websites, no quota, no SFTP · the screen hides
+                // that choice rather than offering something that reads as broken
+                'is_hosting' => UserNotice::appliesTo($user),
+                'mail_ready' => trim((new SettingsRepository($this->app->db()))->get('mail.from')) !== '',
+                'welcome_subject' => $welcome['subject'],
+                'welcome_body' => $welcome['body'],
+                'reset_subject' => $reset['subject'],
+                'reset_body' => $reset['body'],
+            ],
+            [],
+            [[
+                'type' => 'modal',
+                'action' => 'show',
+                'template' => 'user-email-form.html',
+                'title' => '{LNG_Send an email}',
+                'titleClass' => 'icon-send',
+            ]],
+        );
+    }
+
+    /**
+     * Send it
+     *
+     * `password_reset` resets the password **and then** mails it, in that
+     * order — mailing a password that was never actually set is the one
+     * failure mode worth designing against, since the customer would then try
+     * it, fail, and conclude the whole account is broken.
+     *
+     * The generated password still appears in the reveal dialog as well. The
+     * email can bounce, sit in a queue, or land in spam, and the admin on the
+     * phone with the customer needs the value in front of them regardless.
+     */
+    public function sendEmail(Request $request): Response
+    {
+        $users = new UserRepository($this->app->db());
+        $id = $request->paramInt('id');
+        $user = $users->find($id);
+
+        if ($user === null) {
+            return $this->problem(ApiProblem::NotFound, 'User not found');
+        }
+
+        if (($denied = $this->assertMayManage($user)) !== null) {
+            return $denied;
+        }
+
+        $kind = $request->payloadString('kind') ?: UserNotice::WELCOME;
+
+        if (!UserNotice::isValidKind($kind)) {
+            return $this->problem(ApiProblem::ValidationError, 'Unknown email type', [
+                'kind' => 'Allowed: ' . implode(', ', array_keys(UserNotice::kinds())),
+            ]);
+        }
+
+        if ($kind === UserNotice::WELCOME && !UserNotice::appliesTo($user)) {
+            return $this->problem(
+                ApiProblem::ValidationError,
+                'A welcome email only applies to a hosting account',
+            );
+        }
+
+        $password = '';
+        $revoked = 0;
+
+        if ($kind === UserNotice::PASSWORD_RESET) {
+            [$password, $revoked] = $this->assignNewPassword($request, $users, $user);
+        }
+
+        $notice = (new UserNotice($this->app, $this->machineInfo($request)))
+            ->build($kind, $user, $password);
+
+        $result = $this->agent()->data('mail.user_notice', [
+            'user_id' => $id,
+            'subject' => $notice['subject'],
+            'body' => $notice['body'],
+        ], $this->ctx->actor($request));
+
+        $this->audit($request, 'user.email_sent', (string) $user['username'], [
+            'kind' => $kind,
+            'to' => (string) ($result['to'] ?? ''),
+        ]);
+
+        $message = $this->t('Email sent to {user}', ['user' => (string) $user['username']]);
+
+        /*
+         * The dialog only opens when there is a password in play · a welcome
+         * email holds nothing the admin cannot read again, so that case is an
+         * ordinary save with the modal closed behind it
+         */
+        return $this->revealed(
+            $message,
+            'users',
+            'New password',
+            $password === '' ? [] : [
+                'Account' => (string) $user['username'],
+                'Password' => $password,
+            ],
+            note: $password === ''
+                ? ''
+                : $this->t(
+                    '{count} open session(s) have been revoked, and this account must set a new password the next time it logs in',
+                    ['count' => $revoked],
+                ),
+            extra: [
+                'user_id' => $id,
+                'kind' => $kind,
+                'to' => (string) ($result['to'] ?? ''),
+            ],
+        );
+    }
+
     /** Set a new password for another user — used when a password is forgotten */
     public function resetPassword(Request $request): Response
     {
@@ -728,25 +962,7 @@ final class UsersController extends ApiController
             return $denied;
         }
 
-        $password = $request->payloadString('password');
-        $wasRandom = $password === '';
-
-        if ($wasRandom) {
-            $password = Password::random(20);
-        }
-
-        $users->setPassword($id, $password, clearMustChange: false);
-
-        if ($wasRandom) {
-            $users->requirePasswordChange($id);
-        }
-
-        $revoked = (new SessionStore($this->app->db(), $this->app->config))->destroyAllFor($id);
-
-        $this->audit($request, 'auth.password_reset', (string) $user['username'], [
-            'by' => $this->ctx->username(),
-            'sessions_revoked' => $revoked
-        ]);
+        [$password, $revoked, $wasRandom] = $this->assignNewPassword($request, $users, $user);
 
         /*
          * A system-generated password has **no other place it can be looked up
@@ -863,6 +1079,94 @@ final class UsersController extends ApiController
             'users',
             ['user_id' => $id, 'username' => (string) $user['username']],
         );
+    }
+
+    /**
+     * Give this account a new password, revoke its sessions, write the audit entry
+     *
+     * Shared by the row's own Reset button and by the "send a new password"
+     * email, because they are one operation with two ways of handing the result
+     * over. Written twice, the two would drift — and the half that would drift
+     * is "revoke every open session", which is the part that actually matters
+     * when the reason for the reset is that somebody else knows the password.
+     *
+     * @param array<string,mixed> $user
+     * @return array{0:string,1:int,2:bool} the password · sessions revoked · whether the system generated it
+     */
+    private function assignNewPassword(Request $request, UserRepository $users, array $user): array
+    {
+        $id = (int) $user['id'];
+        $password = $request->payloadString('password');
+        $wasRandom = $password === '';
+
+        if ($wasRandom) {
+            $password = Password::random(PasswordsController::suggestedLength());
+        }
+
+        $users->setPassword($id, $password, clearMustChange: false);
+
+        // Only a password the system generated forces a change on next login —
+        // one an admin typed was chosen deliberately, often while the customer
+        // was on the phone, and forcing it to be replaced immediately would
+        // undo the point of typing it
+        if ($wasRandom) {
+            $users->requirePasswordChange($id);
+        }
+
+        $revoked = (new SessionStore($this->app->db(), $this->app->config))->destroyAllFor($id);
+
+        $this->audit($request, 'auth.password_reset', (string) $user['username'], [
+            'by' => $this->ctx->username(),
+            'sessions_revoked' => $revoked
+        ]);
+
+        return [$password, $revoked, $wasRandom];
+    }
+
+    /**
+     * The version a website should get when nobody chose one
+     *
+     * Comes from the machine — the newest installed version still receiving
+     * security fixes ({@see \Phpcp\Domain\PhpSupport::preferred()}) — never
+     * from a constant, which can name a version this machine does not have.
+     *
+     * Empty when the agent cannot be reached; `site.create` then refuses with
+     * a clear message rather than the account creation failing halfway.
+     */
+    private function defaultPhpVersion(Request $request): string
+    {
+        try {
+            return (string) ($this->fetchPhpVersions($request)['default'] ?? '');
+        } catch (\Throwable) {
+            return '';
+        }
+    }
+
+    /**
+     * The handful of facts about this machine that only the machine can answer
+     *
+     * Host and port for the SFTP section of a welcome email, and the host the
+     * panel's own address is built from. Fetched through `sftp.connection`,
+     * which exists to hand out exactly these two values and nothing else about sshd.
+     *
+     * **Never fails the request.** A welcome email missing its SFTP section is
+     * still worth sending; refusing to send anything because the agent happened
+     * to be restarting would not be.
+     *
+     * @return array{host?:string,port?:int}
+     */
+    private function machineInfo(Request $request): array
+    {
+        try {
+            $result = $this->agent()->data('sftp.connection', [], $this->ctx->actor($request));
+
+            return [
+                'host' => (string) ($result['host'] ?? ''),
+                'port' => (int) ($result['port'] ?? 0),
+            ];
+        } catch (\Throwable) {
+            return [];
+        }
     }
 
     /**

@@ -32,7 +32,10 @@
         {key: 'sites', label: 'Websites', url: '/sites', icon: 'icon-website', permission: 'site.view'},
         {key: 'domains', label: 'Domains', url: '/domains', icon: 'icon-link', permission: 'domain.view'},
         {key: 'ssl', label: 'SSL Certificates', url: '/certificates', icon: 'icon-lock', permission: 'ssl.view'},
-        {key: 'php', label: 'PHP', url: '/php-versions', icon: 'icon-code', permission: 'php.view'},
+        // `php.manage` — the PHP page is an admin screen · a customer chooses
+        // their site's version from the site's own page, which is the only
+        // place the choice means anything to them
+        {key: 'php', label: 'PHP', url: '/php-versions', icon: 'icon-code', permission: 'php.manage'},
         {key: 'databases', label: 'Databases', url: '/databases', icon: 'icon-database', permission: 'db.view'},
         // `newTab` opens the file manager in its own tab — that page fills
         // the entire screen (folder tree + file list + status bar), and
@@ -496,6 +499,71 @@
     field.focus();
   });
 
+  /**
+   * Replaces a password field's contents with a freshly generated one
+   *
+   *   data-password-target   the id of the password field to fill
+   *
+   * **The value comes from the server, never from `crypto.getRandomValues`
+   * here.** The panel already has one generator (`Password::random`), and the
+   * rules the value has to satisfy (`Password::problems`) live beside it in
+   * PHP · a second generator in the browser would be a second thing to keep
+   * in step, and the way that failure shows up is a suggested password the
+   * server then refuses to accept — at the exact moment the user thought they
+   * were finished
+   *
+   * Every credential form in the panel now opens with one of these already
+   * filled in, so this button is for "give me a different one", not for
+   * "give me one" — a user who wants to type their own just types over it
+   */
+  events.registerAction('suggestPassword', async (event, element) => {
+    const field = document.getElementById(element.dataset.passwordTarget || '');
+
+    if (!field) return;
+
+    element.disabled = true;
+
+    try {
+      const result = await window.PhpcpApi.get('/password/suggest');
+
+      field.value = result.password || '';
+      // Just setting `value` fires no event at all per the DOM standard, and
+      // both the framework's validator and its value binding listen for `input`
+      field.dispatchEvent(new Event('input', {bubbles: true}));
+    } catch (error) {
+      window.NotificationManager.error(error.message);
+    } finally {
+      element.disabled = false;
+    }
+  });
+
+  /**
+   * Copies whatever a field currently holds
+   *
+   *   data-copy-target   the id of the field to read
+   *
+   * The framework's own `copyToClipboard` reads `data-copy-value`, a value
+   * fixed when the page was rendered · that works for the reveal dialog,
+   * where the secret is already final, but not beside an editable field
+   * whose contents the user may have just replaced — copying the stale
+   * attribute there hands over a password that was never saved
+   */
+  events.registerAction('copyField', async (event, element) => {
+    const field = document.getElementById(element.dataset.copyTarget || '');
+
+    if (!field) return;
+
+    try {
+      await navigator.clipboard.writeText(field.value || '');
+      window.NotificationManager.success(t('Copied'));
+    } catch (error) {
+      // A browser that refuses clipboard access (no HTTPS, or permission
+      // denied) must say so — silence looks exactly like a successful copy,
+      // and the user finds out when they paste nothing into their mail client
+      window.NotificationManager.error(t('Could not copy — select the text and copy it by hand'));
+    }
+  });
+
   /** Emits a signal so an ApiComponent with `data-refresh-event` set fetches a fresh round of data */
   events.registerAction('emit', (event, element) => {
     window.EventManager.emit(element.dataset.emitEvent || 'phpcp:reload', {trigger: element});
@@ -567,6 +635,149 @@
     if (element.dataset.go) {
       window.RouterManager.navigate(element.dataset.go);
     }
+  });
+
+  /**
+   * Follows a PHP install or removal while apt works
+   *
+   * ## Why the page polls at all
+   *
+   * `apt-get install php8.4-*` takes minutes and the agent answers within
+   * thirty seconds, so the request that starts the job cannot also report its
+   * result — the job runs under systemd and this reads back how it is getting
+   * on (see `Driver\Php\PhpPackageJob`).
+   *
+   * ## Why it asks "is anything running" and not "how is 8.4 doing"
+   *
+   * The endpoint takes no version. That way an admin who reloads the page mid
+   * install still sees it, and so does a second admin opening the page on
+   * another machine. Remembering the version in this tab would mean the job
+   * became invisible the moment the tab was closed — while still running as root.
+   *
+   * Starts on every visit to the PHP page (something may already be running
+   * from before), and keeps going until the job reports a finished state.
+   */
+  const phpJob = {
+    timer: null,
+    lastState: '',
+
+    stop() {
+      if (this.timer) {
+        window.clearTimeout(this.timer);
+        this.timer = null;
+      }
+    },
+
+    box() {
+      return document.getElementById('php-job');
+    },
+
+    async poll() {
+      const box = this.box();
+
+      // The page has been navigated away from — the element is gone, so stop
+      // asking · without this the timer outlives the page and keeps a request
+      // going every few seconds for the rest of the session
+      if (!box) {
+        this.stop();
+
+        return;
+      }
+
+      try {
+        const job = await window.PhpcpApi.get('/php-versions/job');
+
+        this.render(box, job);
+
+        if (job.running) {
+          this.timer = window.setTimeout(() => this.poll(), 4000);
+
+          return;
+        }
+
+        /*
+         * The moment it stops running, refresh the table underneath — the
+         * version that just finished installing has to appear as installed
+         * without the admin working out that they need to reload · only on
+         * the transition, never on every poll, or the table would redraw
+         * under the cursor every few seconds
+         */
+        if (this.lastState === 'running' && job.finished) {
+          window.TableManager.loadTableData('phpVersions', {force: true});
+
+          if (job.state === 'done') {
+            window.NotificationManager.success(t('The PHP package job finished'));
+          } else {
+            window.NotificationManager.error(t('The PHP package job failed — the output below says why'));
+          }
+        }
+
+        this.lastState = job.state;
+      } catch (error) {
+        // A failed poll is not worth a bar on screen every four seconds ·
+        // stopping is the honest response: the box keeps whatever it last
+        // showed, and Refresh starts it again
+        this.stop();
+      }
+    },
+
+    render(box, job) {
+      if (job.state === 'idle') {
+        box.hidden = true;
+
+        return;
+      }
+
+      box.hidden = false;
+      this.lastState = this.lastState || job.state;
+
+      const pill = document.getElementById('php-job-state');
+      const version = document.getElementById('php-job-version');
+      const log = document.getElementById('php-job-log');
+
+      if (pill) {
+        pill.textContent = job.label || '';
+        pill.className = 'pill pill-' + (job.tone || 'muted');
+      }
+
+      if (version) {
+        version.textContent = job.action
+          ? t(job.action === 'remove' ? 'Removing' : 'Installing') + ' PHP ' + job.version
+          : 'PHP ' + job.version;
+      }
+
+      // textContent, never innerHTML — this is apt's own output, which is to
+      // say text from the machine, and this file's rule (see the header) is
+      // that such text is only ever bound as text
+      if (log) log.textContent = job.log || '';
+    },
+
+    start() {
+      this.stop();
+      this.lastState = '';
+      this.poll();
+    }
+  };
+
+  /*
+   * Kick the poller whenever the PHP page is on screen
+   *
+   * `phpcp:reload` is the panel-wide "something changed, look again" signal,
+   * which the install/remove buttons already emit through `apiRefresh` — so
+   * pressing Install starts the watcher with no wiring of its own, and the
+   * Refresh button restarts a watcher that gave up on an error.
+   */
+  window.EventManager.on('phpcp:reload', () => {
+    if (document.getElementById('php-job')) phpJob.start();
+  });
+
+  window.EventManager.on('route:changed', () => {
+    phpJob.stop();
+
+    // The element only exists once the new page's template is in the DOM
+    window.setTimeout(() => {
+      if (document.getElementById('php-job')) phpJob.start();
+    }, 100);
   });
 
   /**

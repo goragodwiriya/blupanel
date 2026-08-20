@@ -528,7 +528,22 @@ abstract class ApiController extends Controller
         // array, or the JSON becomes an object the client iterates in an unpredictable order
         $versions = array_values($data['versions'] ?? []);
 
+        /*
+         * Installed first, then running, then newest
+         *
+         * The installed test leads because the list now includes versions that
+         * are merely installable ({@see \Phpcp\Agent\Capability\PhpList}) ·
+         * without it, a version nobody has installed would sort above an
+         * installed-but-stopped one purely for being a higher number, and the
+         * top of the table would be things the machine does not have
+         */
         usort($versions, static function (array $a, array $b): int {
+            $present = (int) (bool) ($b['installed'] ?? false) <=> (int) (bool) ($a['installed'] ?? false);
+
+            if ($present !== 0) {
+                return $present;
+            }
+
             $runnable = (int) (bool) ($b['fpm_running'] ?? false) <=> (int) (bool) ($a['fpm_running'] ?? false);
 
             return $runnable !== 0

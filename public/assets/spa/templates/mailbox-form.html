@@ -30,12 +30,23 @@
       <label data-i18n>Address</label>
       <p class="mono" data-text="address"></p>
     </div>
+    <!-- Prefilled on the create form, blank on the edit form — the server
+         decides which, because "blank means leave the password alone" is a rule
+         about mailboxes, not about this screen -->
     <div>
       <label for="mb_password" data-i18n>Password</label>
       <span class="form-control icon-lock">
-        <input type="text" id="mb_password" name="password" maxlength="128" autocomplete="off">
+        <input type="text" id="mb_password" name="password" maxlength="128"
+               autocomplete="off" spellcheck="false" data-attr="value:suggested_password">
       </span>
-      <div class="comment" data-i18n>Leave blank to have one generated. It is shown once and never stored.</div>
+      <div class="flex middle gap-4">
+        <button type="button" class="btn small icon-refresh" data-action="click.prevent:suggestPassword"
+                data-password-target="mb_password" data-i18n>Generate a new one</button>
+        <button type="button" class="btn small icon-copy" data-action="click.prevent:copyField"
+                data-copy-target="mb_password" data-i18n>Copy</button>
+      </div>
+      <div class="comment" data-show="id === 0" data-i18n>Copy it before saving — only a hash is stored, so it cannot be read back later</div>
+      <div class="comment" data-show="id > 0" data-i18n>Leave blank to keep the current password</div>
     </div>
     <div>
       <label for="mb_quota" data-i18n>Quota (MB)</label>

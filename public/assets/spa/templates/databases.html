@@ -53,6 +53,27 @@
           </table>
         </div>
       </div>
+
+      <!-- The page listed the databases and gave out a phpMyAdmin button, and
+           never said what an application should actually connect to · a guess
+           that is wrong fails with a connection error that reads exactly like
+           "the database was never created" -->
+      <div class="content-body" data-component="api" data-endpoint="/api/v2/databases/connection">
+        <h2 class="icon-link" data-i18n>Connecting from your website</h2>
+        <dl class="detail-list">
+          <dt data-i18n>Host</dt>
+          <dd class="mono selectable" data-text="host"></dd>
+          <dt data-i18n>Alternative host</dt>
+          <dd class="mono selectable" data-text="host_alt"></dd>
+          <dt data-i18n>Port</dt>
+          <dd class="mono selectable" data-text="port"></dd>
+          <dt data-show="has_prefix === true" data-i18n>Your prefix</dt>
+          <dd class="mono selectable" data-show="has_prefix === true" data-text="prefix"></dd>
+          <dt data-i18n>Username</dt>
+          <dd class="muted" data-i18n>Each database has its own user, shown once when the database was created</dd>
+        </dl>
+        <p class="muted" data-i18n>Connect with the database's own user, never with the phpMyAdmin login — that one can see every database on the account, and it ends up inside a file the web server serves.</p>
+      </div>
     </div>
   </main>
 </div>

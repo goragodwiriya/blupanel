@@ -9,7 +9,6 @@ use Phpcp\Agent\Context;
 use Phpcp\Agent\PermissionDenied;
 use Phpcp\Agent\ValidationError;
 use Phpcp\Agent\Capability\ServiceProbe;
-use Phpcp\Domain\ServiceCatalog;
 use Phpcp\Domain\Site;
 use Phpcp\Domain\SiteRepository;
 use Phpcp\Driver\Php\FpmManager;
@@ -162,16 +161,26 @@ abstract class SiteCapability implements Capability
         }
     }
 
-    /** Checks the PHP version is one the system recognizes */
+    /**
+     * Checks the PHP version is the right *shape* — nothing more
+     *
+     * This used to additionally require the version to appear in
+     * `ServiceCatalog::PHP_VERSIONS`, a list compiled into the panel. That made
+     * a version PHP had genuinely released, apt had genuinely installed, and
+     * php-fpm was genuinely running unusable until somebody edited a constant
+     * and shipped a release — the panel refusing a version the machine was
+     * already serving.
+     *
+     * Dropping it loses nothing, because **whether the version actually exists
+     * is checked where it can be checked properly**: both callers
+     * ({@see SiteCreate}, {@see SiteSetPhp}) ask `FpmManager::isVersionInstalled()`
+     * against the real machine before writing anything. A list of names was
+     * never that test — it only ever answered "did we know about this version
+     * when this code was written".
+     */
     protected static function assertPhpVersion(string $version): string
     {
-        $version = Validator::phpVersion($version);
-
-        if (!in_array($version, ServiceCatalog::PHP_VERSIONS, true)) {
-            throw new ValidationError("PHP version {$version} is not supported");
-        }
-
-        return $version;
+        return Validator::phpVersion($version);
     }
 
     /**

@@ -37,6 +37,14 @@
                      "condition": "${!is_self}",
                      "confirm": "Reset this account password? The current password stops working immediately."
                    },
+                   "email": {
+                     "title": "Email",
+                     "className": "btn icon-send",
+                     "method": "get",
+                     "navigate": false,
+                     "url": "/api/v2/users/{id}/email/form",
+                     "condition": "${!is_self}"
+                   },
                    "delete": {
                      "title": "Delete",
                      "className": "btn btn-danger icon-delete",

@@ -46,7 +46,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     '/domains': { template: 'domains.html', title: '{LNG_Domains}', permission: 'domain.view' },
     '/domain': { template: 'domain.html', title: '{LNG_DNS records}', permission: 'domain.view' },
     '/certificates': { template: 'certificates.html', title: '{LNG_SSL Certificates}', permission: 'ssl.view' },
-    '/php-versions': { template: 'php-versions.html', title: '{LNG_PHP}', permission: 'php.view' },
+    // **`php.manage`, not `php.view`** — this is an admin screen: FPM status,
+    // memory, per-version site counts across every customer, and the buttons
+    // that install and remove a version · a customer holds `php.view` only so
+    // their own site's version dropdown can be built, and the endpoint answers
+    // them a trimmed payload (see PhpVersionsController)
+    '/php-versions': { template: 'php-versions.html', title: '{LNG_PHP}', permission: 'php.manage' },
     '/databases': { template: 'databases.html', title: '{LNG_Databases}', permission: 'db.view' },
     // The file manager is a full-screen page that opens in its own tab (the
     // menu in ui.js sets target=_blank), so its template has no sidebar or

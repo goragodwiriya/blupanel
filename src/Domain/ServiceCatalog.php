@@ -24,20 +24,51 @@ final class ServiceCatalog
     public const KIND_MAIL = 'mail';
     public const KIND_ACCESS = 'access';
 
-    /** PHP versions the system recognizes, newest first */
+    /**
+     * PHP versions the **Services page** lists a unit for, newest first
+     *
+     * Narrower than it looks, and deliberately so. This is no longer the
+     * panel's idea of which versions exist — installed versions are scanned
+     * from the machine ({@see \Phpcp\Driver\Php\FpmManager::installedVersions()})
+     * and installable ones come from apt, so a release this list has never
+     * heard of still shows up, still gets chosen for a website, and still gets
+     * started and stopped from the Services page (which reads the units of the
+     * versions actually present, via `phpVersionFromUnit`).
+     *
+     * What it remains is the seed for {@see all()}: the units worth listing on
+     * a machine before anything has been discovered. Nothing breaks by leaving
+     * it alone as new versions appear.
+     *
+     * Whether a version is still getting security fixes is **not** here — that
+     * is a date, and dates live in {@see PhpSupport}. Two hand-written lists
+     * used to answer that question and they disagreed with each other.
+     */
     public const PHP_VERSIONS = ['8.5', '8.4', '8.3', '8.2', '8.1', '8.0', '7.4'];
 
     /**
-     * Versions whose security support has already ended — no more vulnerability patches
+     * The apt packages that make a PHP version usable for hosting
      *
-     * Still selectable, since a large number of older sites can't move versions
-     * right away, but the security score counts this as something that must be
-     * fixed, not just a warning.
+     * **One definition, used by both the installer and the panel.** `install.sh`
+     * used to carry its own copy of this list; the two drifted the first time
+     * one of them was edited, and the symptom was a version installed from the
+     * panel that was missing an extension every site set up by the installer had.
      *
-     * This list must be updated against php.net's own calendar whenever another
-     * version reaches end of life.
+     * `fpm` and `cli` are the two that make it a working hosting runtime; the
+     * rest are what a normal PHP application (WordPress and everything shaped
+     * like it) fails to start without. Kept to what is genuinely needed —
+     * every extra package is disk, attack surface, and another thing to update.
+     *
+     * @return list<string>
      */
-    public const PHP_EOL_VERSIONS = ['7.4', '8.0', '8.1'];
+    public static function phpPackages(string $version): array
+    {
+        $suffixes = [
+            'cli', 'fpm', 'mysql', 'sqlite3', 'mbstring', 'curl',
+            'zip', 'xml', 'gd', 'intl', 'opcache', 'bcmath',
+        ];
+
+        return array_map(static fn (string $suffix): string => 'php' . $version . '-' . $suffix, $suffixes);
+    }
 
     /**
      * @return array<string,array{label:string,kind:string,critical:bool}>

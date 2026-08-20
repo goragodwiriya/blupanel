@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace Phpcp\Http\V2;
 
 use Phpcp\Domain\MailboxRepository;
+use Phpcp\Domain\SettingsRepository;
 use Phpcp\Http\ApiController;
 use Phpcp\Http\ApiProblem;
 use Phpcp\Kernel\Request;
 use Phpcp\Kernel\Response;
+use Phpcp\Security\Password;
 use Phpcp\Security\Permissions;
 
 /**
@@ -76,6 +78,18 @@ final class MailboxesController extends ApiController
                 'local_part' => '',
                 'domain' => '',
                 'quota_mb' => 1024,
+                /*
+                 * A strong password, already filled in — the admin only has to
+                 * touch this field when they want a different one
+                 *
+                 * **Only on the create form.** The edit form leaves it blank on
+                 * purpose: an empty password there means "leave it as it is"
+                 * ({@see \Phpcp\Agent\Capability\MailBoxUpdate}), so prefilling
+                 * it would silently reset the customer's mailbox password every
+                 * time somebody edited the quota — and the customer would find
+                 * out when their phone stopped collecting mail.
+                 */
+                'suggested_password' => Password::random(PasswordsController::suggestedLength()),
                 'domains' => $this->repository()->selectableDomains($this->scopeOwner()),
             ],
             [],
@@ -99,6 +113,10 @@ final class MailboxesController extends ApiController
                 'local_part' => (string) $row['local_part'],
                 'domain' => (string) $row['domain'],
                 'quota_mb' => (int) $row['quota_mb'],
+                // Deliberately empty on the edit form — see form() · the key is
+                // still present so the field's binding has something to read
+                // rather than rendering the literal string "undefined"
+                'suggested_password' => '',
                 'domains' => [],
             ],
             [],
@@ -203,6 +221,69 @@ final class MailboxesController extends ApiController
             'failed' => (int) ($result['failed'] ?? 0),
             'domains' => (array) ($result['domains'] ?? []),
             'checks' => $rows,
+        ]);
+    }
+
+    /**
+     * How to connect a mail client — the half of this page a customer can act on
+     *
+     * The readiness table beside it is the machine's own business (certificate
+     * paths, PTR, whether the provider blocks port 25) and is gated on
+     * `settings.manage`. This is the opposite: nothing here is about the
+     * machine's internals, and every value is one the customer has to type into
+     * Outlook or their phone before mail works at all — until this existed, the
+     * panel let a customer create a mailbox and then told them nothing about
+     * where to collect its mail from.
+     *
+     * The DNS rows come from what the panel already wrote when mail was turned
+     * on for the domain, which matters most for a customer whose DNS is hosted
+     * somewhere else — they have to copy these by hand, and had no way to read them.
+     */
+    public function connection(Request $request): Response
+    {
+        $settings = new SettingsRepository($this->app->db());
+        $host = trim($settings->get('mail.hostname'));
+
+        // No mail hostname set = the machine has no name to hand out yet ·
+        // saying so plainly beats printing rows with an empty server name in them
+        $rows = $host === '' ? [] : [
+            ['service' => 'IMAP', 'host' => $host, 'port' => 993, 'security' => 'SSL/TLS',
+                'note' => $this->t('Recommended — keeps mail on the server')],
+            ['service' => 'IMAP', 'host' => $host, 'port' => 143, 'security' => 'STARTTLS', 'note' => ''],
+            ['service' => 'POP3', 'host' => $host, 'port' => 995, 'security' => 'SSL/TLS',
+                'note' => $this->t('Downloads and removes mail from the server')],
+            ['service' => 'SMTP', 'host' => $host, 'port' => 587, 'security' => 'STARTTLS',
+                'note' => $this->t('Sending — authentication required')],
+            ['service' => 'SMTP', 'host' => $host, 'port' => 465, 'security' => 'SSL/TLS',
+                'note' => $this->t('Sending — use this one if 587 is blocked')],
+        ];
+
+        $dns = array_map(
+            static fn (array $row): array => [
+                'domain' => (string) $row['domain'],
+                'type' => (string) $row['type'],
+                // A record's name is relative to its own zone — spelling out the
+                // full name is what a customer has to paste into somebody else's
+                // DNS panel, and "@" means nothing there
+                'name' => $row['name'] === '@'
+                    ? (string) $row['domain']
+                    : $row['name'] . '.' . $row['domain'],
+                'value' => $row['priority'] === null
+                    ? (string) $row['value']
+                    : $row['priority'] . ' ' . $row['value'],
+            ],
+            $this->repository()->mailDnsRecords($this->scopeOwner()),
+        );
+
+        return $this->ok([
+            'configured' => $host !== '',
+            'host' => $host,
+            'servers' => $rows,
+            'dns' => $dns,
+            // The "no domain has mail turned on yet" hint used to sit on the
+            // readiness card · that card is admin-only now, so the count travels
+            // here instead — the customer is exactly who needs to be told
+            'domains' => count($this->repository()->selectableDomains($this->scopeOwner())),
         ]);
     }
 

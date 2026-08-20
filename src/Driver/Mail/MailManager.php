@@ -384,17 +384,55 @@ final class MailManager
      */
     public function sendTest(Executor $executor, string $to, string $from): array
     {
+        return $this->sendMessage(
+            $executor,
+            $to,
+            $from,
+            'Outbound mail test from PHP Server Control Panel',
+            "If you received this message, the server's outbound mail is working\n\n"
+            . 'Sent at ' . date('d/m/Y H:i:s'),
+        );
+    }
+
+    /**
+     * One plain-text message out through the machine's own `sendmail`
+     *
+     * The same path `sendTest()` proves and a customer's website uses — a
+     * message the panel sends on an admin's behalf must not travel by some
+     * other route, or a working test would stop meaning anything.
+     *
+     * ## Every header value is checked, not just escaped
+     *
+     * The subject is folded into a header line. A newline inside it would let
+     * the caller append headers of their own — `Bcc:` being the obvious one —
+     * which turns any endpoint that reaches this into a way to mail strangers.
+     * Base64-encoding the subject (required by RFC 2047 for non-ASCII anyway)
+     * removes the character entirely rather than trusting a filter, and the
+     * addresses go through `assertEmail`, which rejects anything with a
+     * newline in it long before this point.
+     *
+     * @return array{to:string,queued:int}
+     */
+    public function sendMessage(Executor $executor, string $to, string $from, string $subject, string $body): array
+    {
         $to = self::assertEmail($to);
         $from = self::assertEmail($from);
+        $subject = trim($subject);
+
+        if ($subject === '') {
+            throw new ValidationError('The email subject must not be empty');
+        }
 
         $message = sprintf(
             "From: %s\r\nTo: %s\r\nSubject: =?UTF-8?B?%s?=\r\n"
             . "MIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s\r\n",
             $from,
             $to,
-            base64_encode('Outbound mail test from PHP Server Control Panel'),
-            "If you received this message, the server's outbound mail is working\n\n"
-            . 'Sent at ' . date('d/m/Y H:i:s'),
+            base64_encode($subject),
+            // Normalized to CRLF because SMTP says so · a body with bare
+            // newlines survives most of the way and then arrives as one long
+            // line at whichever hop is strict about it
+            str_replace(["\r\n", "\r", "\n"], ["\n", "\n", "\r\n"], $body),
         );
 
         $result = $executor->exec(
@@ -404,7 +442,7 @@ final class MailManager
         );
 
         if (!$result->ok()) {
-            throw new ExecutionFailed('Failed to send the test email: ' . trim($result->stderr ?: $result->stdout));
+            throw new ExecutionFailed('Failed to send the email: ' . trim($result->stderr ?: $result->stdout));
         }
 
         return [

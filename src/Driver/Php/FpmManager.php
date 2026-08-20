@@ -6,6 +6,7 @@ namespace Phpcp\Driver\Php;
 
 use Phpcp\Agent\ExecutionFailed;
 use Phpcp\Agent\Executor\Executor;
+use Phpcp\Domain\PhpSupport;
 use Phpcp\Domain\ServiceCatalog;
 use Phpcp\Domain\Site;
 use Phpcp\Driver\Template;
@@ -94,15 +95,79 @@ final class FpmManager
      */
     public function installedVersions(Executor $executor): array
     {
+        /*
+         * **Reads the directory, rather than checking a list of names**
+         *
+         * This used to walk `ServiceCatalog::PHP_VERSIONS` and ask whether each
+         * one existed, which meant a version genuinely installed on the machine
+         * was invisible to the panel until somebody added its number to that
+         * constant · the day PHP 8.6 reached the repository, an admin could
+         * `apt install php8.6-fpm`, watch systemd start it, and still be told by
+         * the panel that it was not there · scanning is also simply the truth:
+         * a version with an `fpm` directory under `/etc/php` is one php-fpm can
+         * actually serve, and nothing else is
+         */
         $found = [];
 
-        foreach (ServiceCatalog::PHP_VERSIONS as $version) {
-            if ($executor->exists($executor->path('/etc/php/' . $version . '/fpm'))) {
+        foreach (glob($executor->path('/etc/php') . '/*/fpm', GLOB_ONLYDIR) ?: [] as $dir) {
+            $version = basename(dirname($dir));
+
+            if (PhpSupport::isValid($version)) {
                 $found[] = $version;
             }
         }
 
-        return $found;
+        return PhpSupport::sortNewestFirst($found);
+    }
+
+    /**
+     * Versions this machine's apt repositories could install
+     *
+     * Asked of apt rather than kept as a list, for the same reason as above and
+     * one more: the answer differs per machine. A Debian box with the sury
+     * repository added offers a completely different set from an Ubuntu box
+     * without the PPA, and a list compiled into the panel would show an admin a
+     * version they cannot actually install, or hide one they can.
+     *
+     * Returns an empty list on any failure — a machine with no apt (or one
+     * whose repositories are briefly unreachable) can still see and use what is
+     * already installed, which is the part that matters. The caller falls back
+     * to {@see PhpSupport::known()} for display.
+     *
+     * @return list<string>
+     */
+    public function availableVersions(Executor $executor): array
+    {
+        $binary = $executor->path('/usr/bin/apt-cache');
+
+        if (!$executor->exists($binary)) {
+            return [];
+        }
+
+        /*
+         * `--names-only` with an anchored pattern, so this matches package
+         * *names* and never a description that happens to mention php-fpm ·
+         * `apt-cache` reads the local package index only, so this makes no
+         * network request and cannot hang on an unreachable mirror
+         */
+        $result = $executor->exec(
+            [$binary, 'search', '--names-only', '^php[0-9]+\.[0-9]+-fpm$'],
+            timeout: 20,
+        );
+
+        if (!$result->ok()) {
+            return [];
+        }
+
+        $found = [];
+
+        foreach (preg_split('/\R/', $result->stdout) ?: [] as $line) {
+            if (preg_match('/^php(\d\.\d{1,2})-fpm\s/', trim($line), $m) === 1) {
+                $found[] = $m[1];
+            }
+        }
+
+        return PhpSupport::sortNewestFirst(array_values(array_unique($found)));
     }
 
     public function isVersionInstalled(Executor $executor, string $version): bool
