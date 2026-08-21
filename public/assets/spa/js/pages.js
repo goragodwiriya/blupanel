@@ -268,13 +268,109 @@
     };
   }
 
+  function logLineKey(line, counts) {
+    const text = String(line.text || '');
+    const level = String(line.level || '');
+    const base = level + '\u0000' + text;
+    const count = (counts.get(base) || 0) + 1;
+    counts.set(base, count);
+
+    return base + '\u0000' + count;
+  }
+
+  const LOG_HIGHLIGHTS = [
+    {className: 'log-token-error', regex: /\b(?:error|failed|failure|fatal|panic|denied|invalid|exception|critical)\b/ig},
+    {className: 'log-token-warn', regex: /\b(?:warn|warning|timeout|retry|slow|deprecated|blocked)\b/ig},
+    {className: 'log-token-ok', regex: /\b(?:ok|success|successful|started|completed|accepted|enabled)\b/ig},
+    {className: 'log-token-status-danger', regex: /\b5\d{2}\b/g},
+    {className: 'log-token-status-warn', regex: /\b4\d{2}\b/g},
+    {className: 'log-token-status-ok', regex: /\b[23]\d{2}\b/g},
+    {className: 'log-token-ip', regex: /\b(?:\d{1,3}\.){3}\d{1,3}\b/g},
+    {className: 'log-token-time', regex: /\b\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b/g},
+    {className: 'log-token-time', regex: /\b[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\b/g},
+    {className: 'log-token-method', regex: /\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/g},
+    {className: 'log-token-path', regex: /(?:^|[\s"'(])(?:\/[^\s"')\]]+|\w+:\/\/[^\s"')\]]+)/g}
+  ];
+
+  function highlightedLogFragments(text) {
+    const value = String(text || '');
+    const ranges = [];
+
+    LOG_HIGHLIGHTS.forEach((rule) => {
+      rule.regex.lastIndex = 0;
+
+      let match;
+      while ((match = rule.regex.exec(value)) !== null) {
+        const raw = match[0];
+        const leading = raw.match(/^[\s"'(]/)?.[0] || '';
+        const start = match.index + leading.length;
+        const end = match.index + raw.length;
+
+        if (start >= end || ranges.some((range) => start < range.end && end > range.start)) continue;
+        ranges.push({start, end, className: rule.className});
+      }
+    });
+
+    ranges.sort((a, b) => a.start - b.start);
+
+    const fragments = [];
+    let cursor = 0;
+
+    ranges.forEach((range) => {
+      if (range.start > cursor) {
+        fragments.push({text: value.slice(cursor, range.start), className: ''});
+      }
+
+      fragments.push({text: value.slice(range.start, range.end), className: range.className});
+      cursor = range.end;
+    });
+
+    if (cursor < value.length) {
+      fragments.push({text: value.slice(cursor), className: ''});
+    }
+
+    return fragments.length > 0 ? fragments : [{text: value, className: ''}];
+  }
+
+  function paintLogMessage(container, text) {
+    const fragment = document.createDocumentFragment();
+
+    highlightedLogFragments(text).forEach((part) => {
+      const node = part.className ? el('span', part.className) : document.createTextNode('');
+      node.textContent = part.text;
+      fragment.appendChild(node);
+    });
+
+    container.replaceChildren(fragment);
+  }
+
+  function updateLogRow(row, line) {
+    const cells = row._logCells;
+    const label = line.level_label || line.level || 'line';
+    const tone = line.level_tone || 'muted';
+
+    cells.number.textContent = String(line.n || '');
+    cells.level.replaceChildren(pill(t(label), tone));
+    paintLogMessage(cells.message, line.text || '');
+
+    row.dataset.tone = tone;
+  }
+
+  function createLogRow(line) {
+    const row = el('div', 'log-tail-line');
+    const number = el('span', 'log-tail-number');
+    const level = el('span', 'log-tail-level');
+    const message = el('span', 'log-tail-message mono');
+
+    row._logCells = {number, level, message};
+    row.append(number, level, message);
+    updateLogRow(row, line);
+
+    return row;
+  }
+
   /**
-   * The Logs page — binds the "auto-refresh" dropdown to TableManager's own timer
-   *
-   * All the polling itself belongs to the framework
-   * (`data-refresh-interval` / `setRefreshInterval`) — only two things are
-   * left here that can't be declared with a data-attribute: reading the
-   * dropdown's value and forwarding it, and writing down when data last arrived
+   * The Logs page — a custom tail viewer instead of a TableManager table
    *
    * **Deliberately doesn't use SSE** — the panel's pool has `pm.max_children
    * = 4`, and a single stream holds one worker hostage until it times out ·
@@ -287,43 +383,180 @@
   window.pageLogs = function(root) {
     const picker = root.querySelector('[data-log-refresh]');
     const stamp = root.querySelector('[data-log-updated]');
+    const form = root.querySelector('[data-log-form]');
+    const viewer = root.querySelector('[data-log-tail]');
+    const linesEl = root.querySelector('[data-log-lines]');
+    const empty = root.querySelector('[data-log-empty]');
 
-    if (!picker) return () => {};
+    if (!picker || !form || !viewer || !linesEl) return () => {};
+
+    let timer = null;
+    let destroyed = false;
+    let loading = false;
+    let loadId = 0;
+    let lastSignature = '';
+    let searchTimer = null;
+
+    const selectedParams = () => {
+      const data = new FormData(form);
+      const params = {};
+      const source = String(data.get('source') || '').trim();
+      const pageSize = Number(data.get('pageSize')) || 20;
+      const search = String(data.get('q') || '').trim();
+
+      if (source) params.source = source;
+      params.pageSize = pageSize;
+      if (search) params.q = search;
+
+      return params;
+    };
+
+    const nearBottom = () => viewer.scrollHeight - viewer.scrollTop - viewer.clientHeight < 32;
+
+    const schedule = () => {
+      clearTimeout(timer);
+
+      const seconds = Number(picker.value) || 0;
+      if (destroyed || seconds <= 0) return;
+
+      timer = setTimeout(async () => {
+        await load({automatic: true});
+        schedule();
+      }, seconds * 1000);
+    };
+
+    const render = (rows) => {
+      const signature = rows.map((line) => [
+        line.n || '',
+        line.level || '',
+        line.level_tone || '',
+        line.level_label || '',
+        line.text || ''
+      ].join('\u0001')).join('\u0002');
+
+      if (signature === lastSignature) return false;
+
+      const shouldPinToBottom = nearBottom();
+      const oldRows = new Map();
+      const fragment = document.createDocumentFragment();
+      const counts = new Map();
+
+      Array.from(linesEl.children).forEach((row) => {
+        if (row.dataset.key) oldRows.set(row.dataset.key, row);
+      });
+
+      rows.forEach((line) => {
+        const key = logLineKey(line, counts);
+        const row = oldRows.get(key) || createLogRow(line);
+
+        row.dataset.key = key;
+        updateLogRow(row, line);
+
+        if (!oldRows.has(key)) {
+          row.classList.add('is-new');
+          window.setTimeout(() => row.classList.remove('is-new'), 650);
+        }
+
+        fragment.appendChild(row);
+      });
+
+      linesEl.replaceChildren(fragment);
+      lastSignature = signature;
+
+      if (empty) empty.hidden = rows.length > 0;
+      linesEl.hidden = rows.length === 0;
+
+      if (shouldPinToBottom) {
+        requestAnimationFrame(() => {
+          viewer.scrollTop = viewer.scrollHeight;
+        });
+      }
+
+      return true;
+    };
+
+    async function load(options = {}) {
+      if (loading && options.automatic) return;
+
+      const id = ++loadId;
+      loading = true;
+      linesEl.setAttribute('aria-busy', 'true');
+
+      try {
+        const result = await window.PhpcpApi.getFull('/logs', selectedParams());
+        if (destroyed || id !== loadId) return;
+
+        const rows = Array.isArray(result.data) ? result.data : [];
+        render(rows);
+
+        if (stamp) {
+          stamp.hidden = false;
+          stamp.textContent = t('Updated') + ' ' + new Date().toLocaleTimeString();
+        }
+      } catch (error) {
+        if (!destroyed && id === loadId) window.PhpcpUi.error(error);
+      } finally {
+        if (!destroyed && id === loadId) {
+          loading = false;
+          linesEl.setAttribute('aria-busy', 'false');
+        }
+      }
+    }
 
     const onChange = () => {
       const seconds = Number(picker.value) || 0;
-
-      window.TableManager.setRefreshInterval('logLines', seconds);
 
       // Turned off must also remove the timestamp, or a lingering one reads as though it's still refreshing
       if (stamp && seconds === 0) {
         stamp.hidden = true;
         stamp.textContent = '';
       }
+
+      schedule();
     };
 
-    // States when data genuinely arrived — without this line, "the log has
-    // no new lines" and "refreshing has died" look completely identical,
-    // which are two very different things while sitting there watching for whether anyone is hitting the site
+    const onFilterChange = () => {
+      lastSignature = '';
+      load();
+      schedule();
+    };
 
-    const onRefreshed = (event) => {
-      if (!stamp || event?.detail?.tableId !== 'logLines') return;
+    const onSearch = () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(onFilterChange, 250);
+    };
 
-      stamp.hidden = false;
-      stamp.textContent = t('Updated') + ' ' + new Date().toLocaleTimeString();
+    const onSubmit = (event) => {
+      event.preventDefault();
+      onFilterChange();
+    };
+
+    const onApiLoaded = (event) => {
+      const target = event.target;
+
+      if (target && root.contains(target)
+        && (target.matches?.('#log_source') || target.querySelector?.('#log_source'))) {
+        onFilterChange();
+      }
     };
 
     picker.addEventListener('change', onChange);
-    window.EventManager.on('table:refreshed', onRefreshed);
+    form.addEventListener('change', onFilterChange);
+    form.addEventListener('input', onSearch);
+    form.addEventListener('submit', onSubmit);
+    document.addEventListener('api:loaded', onApiLoaded);
+
+    load();
 
     return () => {
+      destroyed = true;
+      clearTimeout(timer);
+      clearTimeout(searchTimer);
       picker.removeEventListener('change', onChange);
-      window.EventManager.off('table:refreshed', onRefreshed);
-
-      // Leaving the page must never leave a trailing request behind · the
-      // framework's own destroyTable() already stops it, but the order
-      // between tearing down the page and tearing down the table isn't guaranteed
-      window.TableManager.setRefreshInterval('logLines', 0);
+      form.removeEventListener('change', onFilterChange);
+      form.removeEventListener('input', onSearch);
+      form.removeEventListener('submit', onSubmit);
+      document.removeEventListener('api:loaded', onApiLoaded);
     };
   };
 

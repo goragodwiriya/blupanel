@@ -25,7 +25,7 @@
       </header>
       <div class="content-body">
         <div class="tablebody">
-          <form data-table-filter="logLines" class="table_nav">
+          <form class="table_nav" data-log-form>
             <div>
               <label for="log_source" data-i18n>Source</label>
               <span class="form-control icon-list" data-component="api" data-endpoint="/api/v2/logs/sources">
@@ -39,7 +39,7 @@
             <div>
               <label for="pageSize" data-i18n>Lines</label>
               <span class="form-control">
-                <select name="pageSize">
+                <select id="pageSize" name="pageSize">
                   <option value="10" data-i18n>10 {LNG_entries}</option>
                   <option value="20" data-i18n>20 {LNG_entries}</option>
                   <option value="50" data-i18n>50 {LNG_entries}</option>
@@ -54,17 +54,15 @@
             </div>
             <input type="search" name="q" placeholder="{LNG_Search}...">
           </form>
-          <table class="table border fullwidth" data-table="logLines" data-source="/api/v2/logs">
-            <thead>
-              <tr>
-                <th data-field="n" data-cell-class="center" data-i18n>{LNG_Line}</th>
-                <th data-field="level" class="center" data-cell-class="center" data-template="<span class='pill pill-${level_tone}'>{LNG_${level_label}}</span>" data-i18n>
-                  {LNG_Level}</th>
-                <th data-field="text" data-cell-class="mono" data-i18n>{LNG_Message}</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
+          <div class="log-tail" data-log-tail>
+            <div class="log-tail-head" aria-hidden="true">
+              <span data-i18n>{LNG_Line}</span>
+              <span data-i18n>{LNG_Level}</span>
+              <span data-i18n>{LNG_Message}</span>
+            </div>
+            <div class="log-tail-lines" data-log-lines aria-busy="true"></div>
+            <p class="log-tail-empty text-muted" data-log-empty hidden data-i18n>No log lines found</p>
+          </div>
         </div>
       </div>
     </div>

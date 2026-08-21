@@ -516,6 +516,157 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
 }
+.log-tail {
+  max-height: 64vh;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--phpcp-radius);
+  background: var(--color-background);
+}
+.log-tail-head,
+.log-tail-line {
+  display: grid;
+  grid-template-columns: 4.5rem 6rem minmax(24rem, 1fr);
+  align-items: start;
+}
+.log-tail-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0.6rem 0.75rem;
+  background: var(--table-header-bg);
+  color: var(--table-header-color);
+  border-bottom: 1px solid var(--table-border-color);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.log-tail-lines {
+  min-width: 42rem;
+}
+.log-tail-line {
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid var(--color-divider);
+  transition: background-color 0.18s ease, opacity 0.24s ease;
+}
+.log-tail-line:nth-child(2n) {
+  background: var(--table-stripe-bg);
+}
+.log-tail-line:hover {
+  background: var(--table-hover-bg);
+}
+.log-tail-line.is-new {
+  animation: logTailIn 0.48s ease-out;
+}
+.log-tail-number {
+  color: var(--color-text-muted);
+  text-align: right;
+  padding-right: 1rem;
+  font-variant-numeric: tabular-nums;
+}
+.log-tail-level {
+  text-align: center;
+}
+.log-tail-message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.log-tail-empty {
+  margin: 0;
+  padding: 1rem;
+}
+/* เน้นสีคำสำคัญในบรรทัด log — จับคู่กับ LOG_HIGHLIGHTS ใน pages.js
+   ใช้สีตัวอักษรเป็นหลัก ไม่ใช่พื้นหลัง เพราะ log มักแน่นและตัดบรรทัด */
+.log-tail-message .log-token-error {
+  color: var(--color-error);
+  font-weight: 600;
+}
+.log-tail-message .log-token-warn {
+  color: var(--color-warning-hover);
+  font-weight: 600;
+}
+.log-tail-message .log-token-ok {
+  color: var(--color-success);
+  font-weight: 600;
+}
+/* รหัสสถานะ HTTP — ทำเป็นป้ายเล็กให้แยกจากตัวเลขอื่น */
+.log-tail-message .log-token-status-danger,
+.log-tail-message .log-token-status-warn,
+.log-tail-message .log-token-status-ok {
+  display: inline-block;
+  min-width: 2.2em;
+  padding: 0 0.3em;
+  border-radius: 4px;
+  font-size: 0.82em;
+  font-weight: 600;
+  text-align: center;
+}
+.log-tail-message .log-token-status-danger {
+  background: var(--color-error-light);
+  color: var(--color-error-hover);
+}
+.log-tail-message .log-token-status-warn {
+  background: var(--color-warning-light);
+  color: var(--color-warning-hover);
+}
+.log-tail-message .log-token-status-ok {
+  background: var(--color-success-light);
+  color: var(--color-success-hover);
+}
+.log-tail-message .log-token-ip {
+  color: var(--color-info);
+}
+.log-tail-message .log-token-time {
+  color: var(--color-text-muted);
+}
+.log-tail-message .log-token-method {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+.log-tail-message .log-token-path {
+  color: var(--color-info);
+}
+/* tint แถวตามระดับ — อ่อนกว่า hover เพื่อไม่ให้กลบสีของคำที่เน้น */
+.log-tail-line[data-tone="danger"] {
+  background: color-mix(in srgb, var(--color-error) 6%, transparent);
+}
+.log-tail-line[data-tone="danger"]:nth-child(2n) {
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+}
+.log-tail-line[data-tone="warn"] {
+  background: color-mix(in srgb, var(--color-warning) 6%, transparent);
+}
+.log-tail-line[data-tone="warn"]:nth-child(2n) {
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+}
+.log-tail-line[data-tone="danger"]:hover,
+.log-tail-line[data-tone="warn"]:hover {
+  background: var(--table-hover-bg);
+}
+@keyframes logTailIn {
+  from {
+    opacity: 0;
+    background: var(--color-surface-dark);
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (width <=760px) {
+  .log-tail-head,
+  .log-tail-line {
+    grid-template-columns: 3.5rem 5rem minmax(18rem, 1fr);
+  }
+  .log-tail-lines {
+    min-width: 32rem;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .log-tail-line,
+  .log-tail-line.is-new {
+    animation: none;
+    transition: none;
+  }
+}
 .tablebody {
   overflow-x: auto;
 }
@@ -718,7 +869,6 @@ textarea.config-file-editor {
   border-radius: var(--phpcp-radius);
 }
 /* ป้ายบอกสิทธิ์ในตาราง — "แก้ได้" ต้องเด่นกว่า "ดูได้อย่างเดียว" อย่างชัดเจน */
-
 /* --------------------------------------------------------------------------
    หน้าต่างค่าที่ดูได้ครั้งเดียว — รหัสผ่านที่ระบบสุ่มให้ (ApiController::revealed)
 
@@ -759,7 +909,6 @@ textarea.config-file-editor {
   justify-content: flex-end;
   margin-top: 1.25rem;
 }
-
 /* --------------------------------------------------------------------------
    รายการ "ค่าคู่ป้าย" บนหน้าเว็บ — ข้อมูลการเชื่อมต่อ SFTP / ฐานข้อมูล
 
@@ -791,7 +940,6 @@ textarea.config-file-editor {
   margin: 0;
   padding: 0.3rem 0.5rem;
 }
-
 /* หน้าจอแคบ — วางป้ายไว้เหนือค่า ไม่ใช่บีบสองคอลัมน์จนค่าอ่านไม่ออก */
 @media (max-width: 640px) {
   .detail-list {
@@ -802,7 +950,6 @@ textarea.config-file-editor {
     margin-bottom: 0.5rem;
   }
 }
-
 /* --------------------------------------------------------------------------
    ตัวอย่างอีเมลก่อนส่ง — อีเมลถึงลูกค้าเรียกคืนไม่ได้ ต้องอ่านของจริงก่อนกดส่ง
 
