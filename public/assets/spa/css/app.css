@@ -573,6 +573,7 @@ body {
 .log-tail-empty {
   margin: 0;
   padding: 1rem;
+  text-align: center;
 }
 /* เน้นสีคำสำคัญในบรรทัด log — จับคู่กับ LOG_HIGHLIGHTS ใน pages.js
    ใช้สีตัวอักษรเป็นหลัก ไม่ใช่พื้นหลัง เพราะ log มักแน่นและตัดบรรทัด */

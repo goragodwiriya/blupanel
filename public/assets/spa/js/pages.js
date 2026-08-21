@@ -423,13 +423,18 @@
     };
 
     const render = (rows) => {
-      const signature = rows.map((line) => [
-        line.n || '',
-        line.level || '',
-        line.level_tone || '',
-        line.level_label || '',
-        line.text || ''
-      ].join('\u0001')).join('\u0002');
+      // Empty rows has its own signature — must not match the '' that
+      // onFilterChange sets to force a re-render, or an empty result after
+      // a filter change would be skipped and the old rows would stay on screen
+      const signature = rows.length === 0
+        ? '\u0000empty'
+        : rows.map((line) => [
+          line.n || '',
+          line.level || '',
+          line.level_tone || '',
+          line.level_label || '',
+          line.text || ''
+        ].join('\u0001')).join('\u0002');
 
       if (signature === lastSignature) return false;
 
