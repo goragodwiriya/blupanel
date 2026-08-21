@@ -1464,15 +1464,23 @@ final class UsersController extends ApiController
 
         $this->audit($request, 'user.delete', (string) $user['username'], ['role' => $user['role']]);
 
-        // Responds 200 with `actions` instead of 204
-        //
-        // 204 has no response body, so the screen has nothing left to act on
-        // — the now-deleted row would stay sitting in the table until the
-        // user reloads the page themselves, which reads as "clicked delete
-        // and nothing happened" · instead, the server tells it to show a
-        // notification and reload the table right away, the same pattern
-        // used for creation and password reset.
-        return $this->completed(
+        /*
+         * Responds 200 with `actions` instead of 204
+         *
+         * 204 has no response body, so the screen has nothing left to act on
+         * — the now-deleted row would stay sitting in the table until the
+         * user reloads the page themselves, which reads as "clicked delete
+         * and nothing happened" · instead, the server tells it to show a
+         * notification and reload the table right away, the same pattern
+         * used for creation and password reset.
+         *
+         * `saved()`, not `completed()`: this request only ever arrives from
+         * the dialog `deleteForm()` opened — the username has to be typed in
+         * to send it · without the close command the dialog stays on screen
+         * asking again to delete a row that is already gone, and the table
+         * refreshes underneath where it can't be seen
+         */
+        return $this->saved(
             $this->t('Account {user} deleted', ['user' => (string) $user['username']]),
             'users',
             ['user_id' => $id, 'username' => (string) $user['username']],
@@ -1610,7 +1618,8 @@ final class UsersController extends ApiController
 
         $failed = is_array($result['databases_failed'] ?? null) ? $result['databases_failed'] : [];
 
-        return $this->completed(
+        // Same dialog, same reason as `destroy()`: close it before the refresh
+        return $this->saved(
             (string) ($result['message'] ?? $this->t('Account {user} deleted', ['user' => $username])),
             'users',
             $result,

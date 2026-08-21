@@ -308,10 +308,20 @@ test('ลบผู้ใช้ที่ยังเป็นเจ้าขอ�
     $deletedAdmin = $harness->request('DELETE', '/api/v2/users/' . $adminId);
 
     assertSame(200, $deletedAdmin->status, 'ลบบัญชีผู้ดูแลได้โดยไม่ต้องมี agent');
+
+    // ปิด Modal มาก่อนเสมอ — คำสั่งลบเข้ามาได้ทางเดียวคือฟอร์มใน Modal ที่
+    // `GET /users/{id}/delete/form` เปิดไว้ (ต้องพิมพ์ชื่อบัญชียืนยันถึงจะส่งได้)
+    // ถ้าไม่สั่งปิด ฟอร์มจะค้างบนจอถามลบแถวที่หายไปแล้วซ้ำอีกรอบ
+    // และตารางที่โหลดใหม่ก็อยู่ใต้ Modal ซึ่งมองไม่เห็นอยู่ดี
     assertSame(
-        ['notification', 'refresh'],
+        ['modal', 'notification', 'refresh'],
         array_column($deletedAdmin->json['actions'] ?? [], 'type'),
-        'ต้องสั่งหน้าจอแจ้งผลแล้วโหลดตารางใหม่',
+        'ต้องปิด Modal แจ้งผล แล้วโหลดตารางใหม่',
+    );
+    assertSame(
+        'close',
+        $deletedAdmin->json['actions'][0]['action'] ?? '',
+        'คำสั่ง modal ตัวแรกต้องเป็นการปิด',
     );
 });
 
