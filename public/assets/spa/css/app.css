@@ -517,8 +517,6 @@ body {
   word-break: break-word;
 }
 .log-tail {
-  max-height: 64vh;
-  overflow: auto;
   border: 1px solid var(--color-border);
   border-radius: var(--phpcp-radius);
   background: var(--color-background);
@@ -527,7 +525,7 @@ body {
 .log-tail-line {
   display: grid;
   grid-template-columns: 4.5rem 6rem minmax(24rem, 1fr);
-  align-items: start;
+  align-items: center;
 }
 .log-tail-head {
   position: sticky;
@@ -542,6 +540,8 @@ body {
 }
 .log-tail-lines {
   min-width: 42rem;
+  max-height: 73vh;
+  overflow: auto;
 }
 .log-tail-line {
   padding: 0.45rem 0.75rem;
@@ -588,32 +588,9 @@ body {
   color: var(--color-success);
   font-weight: 600;
 }
-/* รหัสสถานะ HTTP — ทำเป็นป้ายเล็กให้แยกจากตัวเลขอื่น */
-.log-tail-message .log-token-status-danger,
-.log-tail-message .log-token-status-warn,
-.log-tail-message .log-token-status-ok {
-  display: inline-block;
-  min-width: 2.2em;
-  padding: 0 0.3em;
-  border-radius: 4px;
-  font-size: 0.82em;
-  font-weight: 600;
-  text-align: center;
-}
-.log-tail-message .log-token-status-danger {
-  background: var(--color-error-light);
-  color: var(--color-error-hover);
-}
-.log-tail-message .log-token-status-warn {
-  background: var(--color-warning-light);
-  color: var(--color-warning-hover);
-}
-.log-tail-message .log-token-status-ok {
-  background: var(--color-success-light);
-  color: var(--color-success-hover);
-}
 .log-tail-message .log-token-ip {
   color: var(--color-info);
+  font-weight: 600;
 }
 .log-tail-message .log-token-time {
   color: var(--color-text-muted);
