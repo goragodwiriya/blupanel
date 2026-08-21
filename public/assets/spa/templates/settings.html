@@ -186,6 +186,20 @@
             </div>
             <div class="comment" data-i18n>Applies to accounts created from now on. Accounts that already have sites keep their current layout until you change it on their own page
               — that one moves real files.</div>
+            <!-- Lives on this form, not in config.php, because on a real install
+                 config.php is /etc/phpcp/config.php — root-owned and unreadable to
+                 the panel · leaving it there meant the two Domain Pointer fields
+                 stayed hidden on every form with nothing on screen saying why -->
+            <div>
+              <label for="sites_pointer_roots" data-i18n>Folders websites may be served from</label>
+              <span class="form-control icon-folder">
+                <input type="text" id="sites_pointer_roots" name="sites.pointer_roots" autocomplete="off" spellcheck="false"
+                       placeholder="/srv/projects, /mnt/work" data-attr="value:values['sites.pointer_roots']">
+              </span>
+            </div>
+            <div class="comment" data-i18n>Domain Pointer — separate several with a comma. Empty turns the feature off and hides the Document Root field on the website and user
+              forms. Name only folders that genuinely hold website code: never /, /etc, /home, or the folder this panel is installed in, since each one lets a website be pointed
+              at every file underneath it.</div>
           </fieldset>
           <fieldset class="submit">
             <button type="submit" class="btn btn-primary icon-save" data-i18n>Save</button>

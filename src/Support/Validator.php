@@ -197,15 +197,74 @@ final class Validator
     public static function domain(string $value): string
     {
         $value = strtolower(trim($value));
+
         if (mb_strlen($value) > 253) {
             throw new ValidationError('The domain name is too long');
         }
 
-        return self::pattern(
-            $value,
-            '/^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/',
-            'Invalid domain name format'
-        );
+        if (preg_match(self::DOMAIN_PATTERN, $value) === 1) {
+            return $value;
+        }
+
+        throw new ValidationError(self::domainFault($value));
+    }
+
+    /** A domain name per RFC 1123 — the one rule, kept in one place so the reason below can't drift from it */
+    private const DOMAIN_PATTERN = '/^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/';
+
+    /**
+     * **Why** a name was refused — never just "Invalid domain name format"
+     *
+     * That message was all this validator ever said, and it is unusable on the
+     * screen it is read from: the website form has a Domain box and an Aliases
+     * box, both of which land here, so the message named neither the box nor
+     * the value · an admin who pasted `http://gcms.test` was told their domain
+     * was invalid, looked at a box reading `gcms.test`, and had nothing to go on
+     * (seen on this machine, 2026-08-21).
+     *
+     * Every branch returns a **fixed sentence with no value spliced into it** —
+     * a message assembled with the value in it would never match a key in
+     * `th.json` and would go out in English, which is the one thing the
+     * catalogue exists to prevent · the reason itself is what makes the value
+     * obvious, and the value is already on screen in the box.
+     */
+    private static function domainFault(string $value): string
+    {
+        if ($value === '') {
+            return 'A domain name is required';
+        }
+
+        // Checked first, because it is the one that catches a pasted URL, a
+        // port number, a stray space, and an invisible character copied along
+        // with the name — by far the most common of these in practice
+        if (preg_match('/[^a-z0-9.-]/', $value) === 1) {
+            return 'A domain name may only contain the letters a-z, digits, - and . — a scheme like http://, '
+                . 'a port number, a path, a space or an invisible character copied along with it is not part of the name';
+        }
+
+        if (str_starts_with($value, '.') || str_ends_with($value, '.')) {
+            return 'A domain name must not start or end with a dot';
+        }
+
+        if (!str_contains($value, '.')) {
+            return 'A domain name needs at least one dot, for example example.com';
+        }
+
+        foreach (explode('.', $value) as $label) {
+            if ($label === '') {
+                return 'A domain name must not have two dots in a row';
+            }
+
+            if (mb_strlen($label) > 63) {
+                return 'Each part of a domain name must be 63 characters or fewer';
+            }
+
+            if (str_starts_with($label, '-') || str_ends_with($label, '-')) {
+                return 'Each part of a domain name must not start or end with -';
+            }
+        }
+
+        return 'Invalid domain name format';
     }
 
     /**
@@ -331,7 +390,7 @@ final class Validator
 
         throw new ValidationError(
             'The path '.$path.' is outside the allowed boundary — '.
-            'add the parent folder to sites.pointer_roots in the config file first'
+            'add the parent folder on the settings page first, under the folders websites may be served from'
         );
     }
 
@@ -400,15 +459,35 @@ final class Validator
         $roots = array_values(array_unique($roots));
 
         if ($roots === []) {
+            /*
+             * **Says where to set it, and says the one thing that bites**
+             *
+             * The old message named `sites.pointer_roots` in config.php — which on
+             * a real install is `/etc/phpcp/config.php`, root-owned and 0640, a
+             * file the panel cannot read, let alone offer to edit · so it pointed
+             * at the one place the reader could not go.
+             *
+             * The restart clause is not padding. `bin/phpcp-agentd` builds `Config`
+             * once and `Server` holds it for the daemon's whole life, while the web
+             * tier rebuilds it every request — so a value added to config.php while
+             * the agent is running makes the field **appear on the form** and then
+             * fail on save with this very message (seen on this machine,
+             * 2026-08-21) · the settings page has no such gap: `Server` re-reads
+             * the settings table on every single request, deliberately.
+             */
             throw new ValidationError(
-                'sites.pointer_roots has not been configured — a folder name alone is not enough'
+                'No folder has been set that a website may be served from — add one on the settings page, '
+                . 'under the folders websites may be served from · setting it in config.php instead also works, '
+                . 'but only takes effect once the agent is restarted'
             );
         }
 
         $pointerRoot = rtrim(trim($pointerRoot), '/');
         if ($pointerRoot !== '') {
             if (!in_array($pointerRoot, $roots, true)) {
-                throw new ValidationError('The selected parent folder is not in sites.pointer_roots');
+                throw new ValidationError(
+                    'The parent folder that was chosen is no longer one of the folders websites may be served from',
+                );
             }
             $base = $pointerRoot;
         } elseif (count($roots) === 1) {

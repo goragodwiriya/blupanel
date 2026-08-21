@@ -94,7 +94,12 @@
         </section>
       </div>
       <div class="content-body" data-if="sites && permissions['customer.manage']">
-        <h2 class="icon-link" data-i18n>Websites</h2>
+        <div class="flex middle fullwidth">
+          <h2 class="icon-link" data-i18n>Websites</h2>
+          <div>
+            <a class="btn btn-primary icon-plus" href="/app/site-create?owner={id}" data-i18n>Add website</a>
+          </div>
+        </div>
         <div class="tablebody">
           <form class="table_nav" data-form="userAttachSite" action="/api/v2/users/{id}/sites" method="post" data-ajax-submit="true" data-validate="true" data-reset="true">
             <div data-component="api" data-endpoint="/api/v2/sites">
@@ -272,12 +277,14 @@
             <div class="form-group">
               <div class="width33">
                 <label for="up_exec" data-i18n>Max execution time (seconds)</label>
-                <span class="form-control icon-clock"><input type="number" id="up_exec" name="max_execution_time" min="0" max="86400" data-attr="value:php.max_execution_time"></span>
+                <span class="form-control icon-clock"><input type="number" id="up_exec" name="max_execution_time" min="0" max="86400"
+                         data-attr="value:php.max_execution_time"></span>
                 <div class="comment">max_execution_time · 0 = <span data-i18n>no limit</span></div>
               </div>
               <div class="width33">
                 <label for="up_input_time" data-i18n>Max input time (seconds)</label>
-                <span class="form-control icon-clock"><input type="number" id="up_input_time" name="max_input_time" min="-1" max="86400" data-attr="value:php.max_input_time"></span>
+                <span class="form-control icon-clock"><input type="number" id="up_input_time" name="max_input_time" min="-1" max="86400"
+                         data-attr="value:php.max_input_time"></span>
                 <div class="comment">max_input_time · -1 = max_execution_time</div>
               </div>
               <div class="width33">
@@ -289,7 +296,8 @@
             <div class="form-group">
               <div class="width33">
                 <label for="up_input_vars" data-i18n>Max form fields</label>
-                <span class="form-control icon-number"><input type="number" id="up_input_vars" name="max_input_vars" min="100" max="1000000" data-attr="value:php.max_input_vars"></span>
+                <span class="form-control icon-number"><input type="number" id="up_input_vars" name="max_input_vars" min="100" max="1000000"
+                         data-attr="value:php.max_input_vars"></span>
                 <div class="comment">max_input_vars</div>
               </div>
               <div class="width33">
@@ -299,14 +307,16 @@
               </div>
               <div class="width33">
                 <label for="up_session" data-i18n>Session lifetime (seconds)</label>
-                <span class="form-control icon-clock"><input type="number" id="up_session" name="session_lifetime" min="60" max="604800" data-attr="value:php.session_lifetime"></span>
+                <span class="form-control icon-clock"><input type="number" id="up_session" name="session_lifetime" min="60" max="604800"
+                         data-attr="value:php.session_lifetime"></span>
                 <div class="comment">session.gc_maxlifetime</div>
               </div>
             </div>
             <div class="form-group">
               <div class="width33">
                 <label for="up_timezone" data-i18n>Timezone</label>
-                <span class="form-control icon-world"><input type="text" id="up_timezone" name="timezone" autocomplete="off" placeholder="Asia/Bangkok" data-attr="value:php.timezone"></span>
+                <span class="form-control icon-world"><input type="text" id="up_timezone" name="timezone" autocomplete="off" placeholder="Asia/Bangkok"
+                         data-attr="value:php.timezone"></span>
                 <div class="comment" data-i18n>Leave blank to follow the machine</div>
               </div>
               <!-- A select, not a checkbox: an unchecked checkbox is never sent
@@ -333,8 +343,8 @@
                 <div class="comment">allow_url_fopen</div>
               </div>
             </div>
-            <div class="comment" data-i18n>Saving rewrites the PHP pool of every website in this account and reloads it — sites stay up, but the next request uses the new
-              values.</div>
+            <div class="comment" data-i18n>Saving rewrites the PHP pool of every website in this account and reloads it — sites stay up, but the next request uses the new values.
+            </div>
           </fieldset>
           <fieldset class="submit">
             <button type="submit" class="btn btn-primary icon-save" data-loading-text="Saving..." data-i18n>Save</button>
@@ -362,6 +372,7 @@
         <fieldset class="notice notice-warning" data-if="sftp_available && (!sites || sites.length === 0)">
           <legend class="icon-warning" data-i18n>No website yet</legend>
           <p data-i18n>This account has no website yet, so its system account does not exist — create a website first, then SFTP can be enabled.</p>
+          <p><a class="btn icon-plus" href="/app/site-create?owner={id}" data-i18n>Add website</a></p>
         </fieldset>
         <div data-if="sftp_available && sites && sites.length > 0">
           <button type="button" class="btn btn-primary icon-lock" data-show="sftp_enabled === false" data-action="click.prevent:requestApi"

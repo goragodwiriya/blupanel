@@ -94,14 +94,32 @@ final class SitesController extends HostingController
             $aliases = array_values(array_filter(array_map(trim(...), preg_split('/[\s,]+/', $aliases) ?: [])));
         }
 
+        /*
+         * **Domain Pointer is an admin decision, never a customer's**
+         *
+         * It serves files from a folder outside the account's own home — the
+         * one boundary that keeps one customer's website out of another's
+         * files, and out of whatever else happens to sit under a configured
+         * pointer root · a customer holding `site.create` (they do, so they
+         * can use the domains their package sold them) would otherwise be able
+         * to point a vhost at any folder on that list, including one that is
+         * somebody else's project.
+         *
+         * Dropped rather than refused: these two fields are not on the form a
+         * customer is shown at all, so a value arriving with this role came
+         * from a hand-made request, and the website they asked for is still
+         * created — in the ordinary place it belongs.
+         */
+        $isCustomer = $this->ctx->role() === Permissions::WEBADMIN;
+
         $result = $this->agent()->data('site.create', [
             'domain' => trim($request->payloadString('domain')),
             'php_version' => $request->payloadString('php_version'),
             'aliases' => is_array($aliases) ? array_values($aliases) : [],
-            'docroot' => trim($request->payloadString('docroot')),
-            'pointer_root' => trim($request->payloadString('pointer_root')),
+            'docroot' => $isCustomer ? '' : trim($request->payloadString('docroot')),
+            'pointer_root' => $isCustomer ? '' : trim($request->payloadString('pointer_root')),
             // A customer can only create their own website — never allowed to name another owner
-            'owner_user_id' => $this->ctx->role() === Permissions::WEBADMIN
+            'owner_user_id' => $isCustomer
                 ? $this->ctx->userId()
                 : (int) $request->payload('owner_user_id', 0)
         ], $this->ctx->actor($request));
@@ -135,9 +153,15 @@ final class SitesController extends HostingController
         $id = $request->paramInt('id');
 
         if ($id === 0) {
+            // Never offered to a customer — `store()` refuses the two fields
+            // from that role, so showing them would be a form that reports
+            // success while quietly ignoring what was typed into it
             $pointerRoots = [];
-            foreach ($this->app->config->list('sites.pointer_roots') as $root) {
-                $pointerRoots[] = ['value' => $root, 'text' => $root];
+
+            if ($this->ctx->role() !== Permissions::WEBADMIN) {
+                foreach ($this->app->config->pointerRoots() as $root) {
+                    $pointerRoots[] = ['value' => $root, 'text' => $root];
+                }
             }
 
             // Must always answer 200 even if the agent is down — this page only holds
@@ -163,7 +187,7 @@ final class SitesController extends HostingController
             return $this->ok([
                 // The owner select's default — an admin can change it, a customer can't,
                 // because ownerOptions() returns only themselves as a choice
-                'owner_user_id' => $this->ctx->userId(),
+                'owner_user_id' => $this->defaultOwner($request),
                 'has_pointer_roots' => $pointerRoots !== [],
                 'options' => [
                     'php_version' => $phpVersions,
@@ -213,6 +237,35 @@ final class SitesController extends HostingController
                 'edit_config' => 'settings.manage'
             ])
         ]);
+    }
+
+    /**
+     * Which account the owner select opens on
+     *
+     * `?owner=<id>` is how the user page links here — an admin arriving from a
+     * customer who has no website should not have to find that same name again
+     * in a list of every hosting account on the machine.
+     *
+     * Only ever a **hosting account**, and only for a caller who can choose an
+     * owner at all · anything else falls back to the caller themselves, which
+     * is what this always used to be · a customer is never asked, since
+     * `ownerOptions()` offers them only themselves — echoing back an id they
+     * sent would put a name in the select that `store()` then overrides,
+     * showing one owner on screen and writing another.
+     */
+    private function defaultOwner(Request $request): int
+    {
+        $asked = $request->queryInt('owner');
+
+        if ($asked > 0 && $this->ctx->role() !== Permissions::WEBADMIN) {
+            $owner = (new UserRepository($this->app->db()))->find($asked);
+
+            if ($owner !== null && ($owner['role'] ?? '') === Permissions::WEBADMIN) {
+                return $asked;
+            }
+        }
+
+        return $this->ctx->userId();
     }
 
     /**

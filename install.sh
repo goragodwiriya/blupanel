@@ -46,7 +46,8 @@ SITES_DIR="/srv/phpcp/sites"
 # Since migration 0006 the uid and the disk quota belong to the user, not to the site
 USERS_DIR="/home"
 SHARED_OWNER="no"
-POINTER_ROOTS=""  # empty = derive from sites_dir automatically
+POINTER_ROOTS=""       # empty = the feature is off
+POINTER_ROOTS_GIVEN="no"  # was --pointer-root passed on this run at all? see section 5
 SANDBOX_DIR="/opt/phpcp-sandbox"
 PANEL_USER="phpcp-web"
 PANEL_GROUP="phpcp"
@@ -90,7 +91,7 @@ for arg in "$@"; do
     --sites-dir=*)    SITES_DIR="${arg#*=}" ;;
     --users-dir=*)    USERS_DIR="${arg#*=}" ;;
     --shared-owner)   SHARED_OWNER="yes" ;;
-    --pointer-root=*) POINTER_ROOTS="${POINTER_ROOTS}${POINTER_ROOTS:+,}${arg#*=}" ;;
+    --pointer-root=*) POINTER_ROOTS="${POINTER_ROOTS}${POINTER_ROOTS:+,}${arg#*=}"; POINTER_ROOTS_GIVEN="yes" ;;
     --no-postfix)     WITH_POSTFIX="no" ;;
     --no-logrotate)   WITH_LOGROTATE="no" ;;
     --no-check)       RUN_DOCTOR="no" ;;
@@ -173,6 +174,22 @@ if [ -n "$POINTER_ROOTS" ]; then
       /|/etc|/home|/root|/usr|/var|/bin|/sbin|/boot|/dev|/proc|/sys)
         die "--pointer-root=$_root would allow a vhost that serves system files over the web" ;;
     esac
+
+    # A root that CONTAINS the panel is the hole this list of names cannot cover,
+    # and it is the easy one to walk into: the checkout usually sits inside the
+    # folder that holds every project, so --pointer-root=/mnt/Server/htdocs hands
+    # a website the panel's own etc/config.php - the secret key in plain text -
+    # along with panel.db and every password hash in it.
+    for _own in "$SRC_DIR" "$INSTALL_DIR" "$CONF_DIR" "$DATA_DIR"; do
+      case "$_own/" in
+        "$_root"/*)
+          die "--pointer-root=$_root holds the control panel's own files ($_own) - a website served from there could read the secret key and panel.db; name the folder your project code is in instead" ;;
+      esac
+      case "$_root/" in
+        "$_own"/*)
+          die "--pointer-root=$_root is inside the control panel's own directory ($_own) - name the folder your project code is in instead" ;;
+      esac
+    done
   done
 fi
 
@@ -534,11 +551,25 @@ fi
     $s,
     1
   );
-  $roots = $argv[6] === "" ? [] : explode(",", $argv[6]);
-  $roots = array_values(array_filter(array_map(static fn ($r) => rtrim(trim($r), "/"), $roots)));
-  $s = $setInSites($s, "pointer_roots", var_export($roots, true));
+  /*
+   * pointer_roots is only written when --pointer-root was actually passed on THIS run.
+   *
+   * Every other setting here has a real default, so re-writing it with that default is
+   * harmless. This one does not: "not passed" is an empty list, which is also the value
+   * that means "the feature is off" - so a plain `sudo ./install.sh` to pick up new code
+   * silently erased whatever the admin had configured, and the only symptom is a
+   * Document Root box that disappears from the forms with nothing saying why.
+   *
+   * To clear it, set it to empty on the settings page - the settings table overrides this
+   * file and, unlike this file, the agent re-reads it on every request.
+   */
+  if ($argv[8] === "yes") {
+      $roots = $argv[6] === "" ? [] : explode(",", $argv[6]);
+      $roots = array_values(array_filter(array_map(static fn ($r) => rtrim(trim($r), "/"), $roots)));
+      $s = $setInSites($s, "pointer_roots", var_export($roots, true));
+  }
   file_put_contents($f, $s);
-' "$CONF_DIR/config.php" "$MODE" "$PORT" "$SITES_DIR" "$SHARED_OWNER" "$POINTER_ROOTS" "$USERS_DIR"
+' "$CONF_DIR/config.php" "$MODE" "$PORT" "$SITES_DIR" "$SHARED_OWNER" "$POINTER_ROOTS" "$USERS_DIR" "$POINTER_ROOTS_GIVEN"
 
 # What was just written has to parse, otherwise the panel will not start and the cause is hard to find
 "$PHP_BIN" -l "$CONF_DIR/config.php" >/dev/null || die "config.php is broken after being written - check --sites-dir/--pointer-root"

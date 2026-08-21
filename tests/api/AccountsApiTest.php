@@ -27,7 +27,9 @@ function accountsHarness(): ApiHarness
         return $harness;
     }
 
-    $harness = ApiHarness::boot();
+    // เปิด Domain Pointer ไว้ในชุดนี้ — ค่าเริ่มต้นคือรายการว่าง (ฟีเจอร์ปิด) ซึ่งจะทำให้
+    // เทสต์ของช่อง Document Root ในหน้าสร้างผู้ใช้ผ่านโดยไม่ได้ตรวจอะไรเลย
+    $harness = ApiHarness::boot(['sites' => ['pointer_roots' => ['/srv/pointer-test']]]);
     $harness->createUser('acctadmin', 'Accounts-Admin-Pass-11', Permissions::SUPERADMIN);
     $harness->createUser('acctbackup', 'Accounts-Backup-Pass-22', Permissions::SUPERADMIN);
     $harness->createUser('acctsys', 'Accounts-Sys-Pass-33', Permissions::SYSADMIN);
@@ -60,6 +62,61 @@ function accountsUserId(string $username): int
         0,
     );
 }
+
+test('หน้าสร้างผู้ใช้ต้องเสนอโฟลเดอร์แม่ให้เลือกเหมือนหน้าสร้างเว็บ', static function (): void {
+    /*
+     * **สองช่องนี้เคยมีอยู่แต่ใน site-create.html เท่านั้น**
+     *
+     * ฟอร์มสร้างผู้ใช้สร้างเว็บแรกให้ในคำขอเดียวกันอยู่แล้ว แต่บอกไม่ได้ว่าไฟล์ของเว็บนั้น
+     * อยู่ที่ไหน · เครื่องที่เก็บโปรเจกต์ไว้นอกบ้านของผู้ใช้ (เครื่องพัฒนาทุกเครื่อง)
+     * จึงต้องสร้างบัญชีก่อน แล้วไปสร้างเว็บซ้ำอีกหน้าหนึ่ง
+     */
+    $harness = accountsLogin('acctadmin', 'Accounts-Admin-Pass-11');
+
+    $response = $harness->request('GET', '/api/v2/users/0');
+
+    assertSame(200, $response->status, 'id=0 คือค่าเริ่มต้นของฟอร์ม ไม่ใช่ผู้ใช้ที่ไม่มีอยู่');
+    assertSame(true, $response->data('data')['has_pointer_roots'] ?? null, 'ชุดนี้ตั้ง pointer_roots ไว้ ต้องได้ช่องโฟลเดอร์แม่');
+    assertSame(
+        [['value' => '/srv/pointer-test', 'text' => '/srv/pointer-test']],
+        $response->data('options')['pointer_root'] ?? null,
+        'ตัวเลือกโฟลเดอร์แม่ต้องมาจาก sites.pointer_roots ตรง ๆ',
+    );
+});
+
+test('Document Root ที่ผิดต้องถูกปฏิเสธก่อนบัญชีจะถูกสร้าง', static function (): void {
+    /*
+     * ลำดับสำคัญกว่าตัวข้อความ · ขั้นตอนหลังจากสร้างบัญชีแล้ว (เว็บ ใบรับรอง ฐานข้อมูล
+     * อีเมล) ตั้งใจให้ล้มได้โดยไม่ล้มทั้งคำขอ เพราะบัญชีเป็นของจริงไปแล้ว — แต่พาธที่
+     * พิมพ์ผิดตั้งแต่ต้นไม่ใช่ "สำเร็จครึ่งหนึ่ง" มันคือ typo และต้องเด้งกลับเป็น 422
+     * ตอนที่ชื่อผู้ใช้ยังว่างอยู่ และรหัสผ่านที่สุ่มมายังไม่ถูกใช้ทิ้ง
+     */
+    $harness = accountsLogin('acctadmin', 'Accounts-Admin-Pass-11');
+
+    $outside = $harness->request('POST', '/api/v2/users', [
+        'username' => 'acctpointer',
+        'email' => 'pointer@example.com',
+        'password' => 'Accounts-Pointer-Pass-99',
+        'domain' => 'pointer.example.com',
+        'docroot' => '/etc',
+    ]);
+
+    assertSame(422, $outside->status, 'พาธนอกขอบเขตที่ตั้งไว้ต้องได้ 422');
+    assertSame(ApiProblem::ValidationError->value, $outside->errorCode(), 'ต้องเป็นรหัส VALIDATION_ERROR');
+    assertSame(0, accountsUserId('acctpointer'), 'ต้องยังไม่มีบัญชีไหนถูกสร้าง');
+
+    // Document Root โดยไม่มีโดเมน = ไม่มีอะไรจะเสิร์ฟโฟลเดอร์นั้น — บอกไปตรง ๆ
+    // ดีกว่าสร้างบัญชีแล้วทิ้งค่าที่พิมพ์มาอย่างเงียบ ๆ
+    $noDomain = $harness->request('POST', '/api/v2/users', [
+        'username' => 'acctpointer',
+        'email' => 'pointer@example.com',
+        'password' => 'Accounts-Pointer-Pass-99',
+        'docroot' => 'my-project',
+    ]);
+
+    assertSame(422, $noDomain->status, 'Document Root ที่ไม่มีโดเมนคู่กันต้องได้ 422');
+    assertSame(0, accountsUserId('acctpointer'), 'ต้องยังไม่มีบัญชีไหนถูกสร้าง');
+});
 
 test('สร้างผู้ใช้ได้รหัสผ่านสุ่มที่ต้องเปลี่ยนตอนล็อกอินแรก', static function (): void {
     $harness = accountsLogin('acctadmin', 'Accounts-Admin-Pass-11');

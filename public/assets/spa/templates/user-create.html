@@ -73,7 +73,8 @@
               <div class="width50">
                 <label for="nu_domain" data-i18n>Domain</label>
                 <span class="form-control icon-website">
-                  <input type="text" id="nu_domain" name="domain" maxlength="253" autocomplete="off" placeholder="example.com">
+                  <input type="text" id="nu_domain" name="domain" maxlength="253" autocomplete="off" placeholder="example.com"
+                         pattern="^[A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)+$" data-error-pattern="Use a name like example.com — letters, digits and -, with at least one dot, and nothing else (no http://, no port, no path)">
                 </span>
                 <div class="comment" data-i18n>Leave empty to create the account without a website</div>
               </div>
@@ -83,6 +84,28 @@
                   <select id="nu_php" name="php_version" data-options-key="php_version">
                   </select>
                 </span>
+              </div>
+            </div>
+            <!-- Domain Pointer — only shown on a machine whose config names a
+                 folder websites may be served from outside the users' homes
+                 (`sites.pointer_roots`) · the same two fields the website page
+                 has, on the form that actually creates the first website, so a
+                 project that already lives somewhere on disk can be handed a
+                 domain in one step instead of two -->
+            <div class="form-group" data-if="has_pointer_roots">
+              <div class="width50">
+                <label for="nu_pointer_root" data-i18n>Parent folder</label>
+                <span class="form-control icon-folder">
+                  <select id="nu_pointer_root" name="pointer_root" data-options-key="pointer_root">
+                  </select>
+                </span>
+              </div>
+              <div class="width50">
+                <label for="nu_docroot" data-i18n>Document Root</label>
+                <span class="form-control icon-folder">
+                  <input type="text" id="nu_docroot" name="docroot" maxlength="100" placeholder="my-project" autocomplete="off">
+                </span>
+                <div class="comment" data-i18n>Leave empty to keep the files under the account's own home</div>
               </div>
             </div>
             <!-- HTTPS chosen here, not left for a second visit to the

@@ -8,6 +8,8 @@ use Phpcp\Agent\Capability;
 use Phpcp\Agent\Context;
 use Phpcp\Agent\Executor\Executor;
 use Phpcp\Domain\Notifier;
+use Phpcp\Agent\SelfProtection;
+use Phpcp\Agent\ValidationError;
 use Phpcp\Domain\SettingsRepository;
 use Phpcp\Driver\Mail\MailManager;
 use Phpcp\Driver\Notify\TelegramNotifier;
@@ -100,7 +102,77 @@ final class SettingsSet implements Capability
             MailManager::assertPort((int) $out['mail.relay_port']);
         }
 
+        if (isset($out['sites.pointer_roots'])) {
+            $out['sites.pointer_roots'] = self::assertPointerRoots($out['sites.pointer_roots']);
+        }
+
         return ['values' => $out];
+    }
+
+    /**
+     * Domain Pointer roots — checked **while they are being typed**, not when a site is created
+     *
+     * `Config::docrootRoots()` silently drops an entry that isn't an absolute path,
+     * because it is read on every request and must never throw · that is right
+     * there and wrong here: an admin who types `srv/projects` would get a green
+     * "saved", then a Document Root field that still refuses everything, with
+     * nothing anywhere connecting the two.
+     *
+     * Three things are refused outright, all of them "serve the whole machine over
+     * HTTP" written in different ways:
+     *   - `/` — every file on the box, one folder name away
+     *   - anything inside the panel's own directories — `panel.db` holds every
+     *     password hash and every live session
+     *   - anything that **contains** them, which is the same hole approached from
+     *     above and the one that is easy to miss: `/usr/share` covers
+     *     `/usr/share/phpcp`, and on a development machine the folder holding every
+     *     project usually covers the panel's checkout too
+     *
+     * @throws ValidationError
+     */
+    private static function assertPointerRoots(string $value): string
+    {
+        $roots = [];
+
+        foreach (preg_split('/[,\r\n]+/', $value) ?: [] as $root) {
+            $root = trim($root);
+
+            // Checked before the trailing slash is stripped — `/` would otherwise
+            // become the empty string and be skipped as "nothing typed"
+            if ($root === '/') {
+                throw new ValidationError(
+                    '/ would let a website be pointed at every file on this machine — name a folder that holds website code',
+                );
+            }
+
+            $root = rtrim($root, '/');
+
+            if ($root === '') {
+                continue;
+            }
+
+            if (!str_starts_with($root, '/') || in_array('..', explode('/', $root), true)) {
+                throw new ValidationError(
+                    "A folder websites may be served from must be an absolute path with no .. — {$root}",
+                );
+            }
+
+            foreach (SelfProtection::protectedPaths() as $protected) {
+                if ($root === $protected
+                    || str_starts_with($root . '/', $protected . '/')
+                    || str_starts_with($protected . '/', $root . '/')
+                ) {
+                    throw new ValidationError(
+                        "{$root} holds the control panel's own files — a website served from there could read "
+                        . 'the password hashes and sessions in panel.db · name the folder your project code is in instead',
+                    );
+                }
+            }
+
+            $roots[] = $root;
+        }
+
+        return implode(', ', array_values(array_unique($roots)));
     }
 
     public function run(array $args, Executor $executor, Context $context): array

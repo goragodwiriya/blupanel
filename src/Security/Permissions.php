@@ -171,7 +171,31 @@ final class Permissions
              */
             self::WEBADMIN => [
                 'dashboard.view',
-                'site.view', 'site.edit',
+                /*
+                 * **`site.create` is deliberately here** — a customer adds
+                 * their own websites, the way cPanel's Addon Domains work
+                 *
+                 * Without it, an account created with no domain (the form
+                 * leaves it optional) had no way to ever get one: the
+                 * customer holds `domain.manage`, but that only adds a
+                 * subdomain or an alias *under a website that already
+                 * exists*, and they had none · so a package sold with
+                 * `quota_domains = 10` could deliver zero of them unless an
+                 * admin created the first site by hand.
+                 *
+                 * **What keeps this from being a hole:**
+                 *   - `SitesController::store()` overrides `owner_user_id`
+                 *     with the caller's own id for this role, so a customer
+                 *     can never create a website belonging to somebody else
+                 *   - the same method refuses `docroot`/`pointer_root` from
+                 *     this role — Domain Pointer serves files from outside
+                 *     the home, an admin-only decision
+                 *   - `SiteCreate::assertQuota()` checks `quota_domains`,
+                 *     the service status, and the disk quota, so "within the
+                 *     package" is enforced at the capability, not by the
+                 *     screen that happens to be showing the button
+                 */
+                'site.view', 'site.create', 'site.edit',
                 'domain.view', 'domain.manage',
                 'ssl.view', 'ssl.manage',
                 'php.view',

@@ -344,6 +344,32 @@ final class Config
     }
 
     /**
+     * The Domain Pointer roots actually in effect — **the screen's value wins over config.php**
+     *
+     * Same rule as `dnsNameservers()`: a value the admin set on the settings page
+     * overrides the file · that matters more here than it looks, because on a real
+     * install `config.php` is `/etc/phpcp/config.php`, which the panel runs as a
+     * user that cannot read, let alone write, it — so "edit the config file" is not
+     * something the panel can ever offer, and the feature would be reachable only
+     * over SSH.
+     *
+     * Accepts comma- **or** newline-separated, since the settings field is one line
+     * and a config file's array is not: both shapes end up here.
+     *
+     * @return list<string>
+     */
+    public function pointerRoots(): array
+    {
+        $stored = trim((string) (self::$stored['sites.pointer_roots'] ?? ''));
+
+        if ($stored !== '') {
+            return array_values(array_filter(array_map('trim', preg_split('/[,\r\n]+/', $stored) ?: [])));
+        }
+
+        return $this->list('sites.pointer_roots');
+    }
+
+    /**
      * Every location a website's docroot is allowed to point into
      *
      * Kept restricted, because a freely customisable docroot is the same as being
@@ -372,7 +398,7 @@ final class Config
          */
         $roots = [];
 
-        foreach ($this->list('sites.pointer_roots') as $root) {
+        foreach ($this->pointerRoots() as $root) {
             $root = rtrim(trim($root), '/');
             if ($root !== '' && str_starts_with($root, '/') && !in_array('..', explode('/', $root), true)) {
                 $roots[] = $root;

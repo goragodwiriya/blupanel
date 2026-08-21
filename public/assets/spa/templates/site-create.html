@@ -15,13 +15,18 @@
         </div>
       </header>
       <div class="content-body">
+        <!-- `data-load-query-params` forwards this page's own query string into
+             the defaults request, so `/app/site-create?owner=7` opens with that
+             account already chosen · that is the link the user page uses, and
+             without it an admin arriving from a customer with no website had to
+             find the right name again in a list of every hosting account -->
         <form data-form="siteCreate" data-validate="true" data-reset="true" action="/api/v2/sites" method="post" data-ajax-submit="true" data-load-api="/api/v2/sites/0"
-              autocomplete="off">
+              data-load-query-params="true" autocomplete="off">
           <fieldset>
             <div>
               <label for="new_owner_user_id" data-i18n>Owner</label>
               <span class="form-control icon-user">
-                <select id="new_owner_user_id" name="owner_user_id" data-options-key="owner_user_id">
+                <select id="new_owner_user_id" name="owner_user_id" data-options-key="owner_user_id" data-attr="value:owner_user_id">
                 </select>
               </span>
             </div>
@@ -29,7 +34,13 @@
               <div class="width50">
                 <label for="new_domain" data-i18n>Domain</label>
                 <span class="form-control icon-website">
-                  <input type="text" id="new_domain" name="domain" required maxlength="253" placeholder="example.com" autocomplete="off">
+                  <!-- The rule is stated here as well as at `Validator::domain()`, so a
+                       mistyped name is caught **in the box it was typed into** · both this
+                       field and Aliases below reach the same server-side validator, which
+                       answers with one message naming neither — an admin who pasted a URL
+                       was told "invalid domain" while looking at a box that read fine -->
+                  <input type="text" id="new_domain" name="domain" required maxlength="253" placeholder="example.com" autocomplete="off"
+                         pattern="^[A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)+$" data-error-pattern="Use a name like example.com — letters, digits and -, with at least one dot, and nothing else (no http://, no port, no path)">
                 </span>
               </div>
             </div>
@@ -60,7 +71,8 @@
               <div class="width50">
                 <label for="new_aliases" data-i18n>{LNG_Aliases}/{LNG_Domain Pointer}</label>
                 <span class="form-control icon-link">
-                  <input type="text" id="new_aliases" name="aliases" autocomplete="off" placeholder="www.example.com">
+                  <input type="text" id="new_aliases" name="aliases" autocomplete="off" placeholder="www.example.com"
+                         pattern="^\s*[A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)+([\s,]+[A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)+)*\s*$" data-error-pattern="Each name must look like www.example.com — separate several with a space or comma, and nothing else (no http://, no port, no path)">
                 </span>
                 <div class="comment" id="result_new_aliases" data-i18n>Separate multiple names with a space or comma</div>
               </div>

@@ -30,10 +30,18 @@ function sitesHarness(): ApiHarness
         return $harness;
     }
 
-    $harness = ApiHarness::boot();
+    /*
+     * เปิด Domain Pointer ไว้ในชุดนี้ชุดเดียว — ค่าเริ่มต้นของ `sites.pointer_roots`
+     * คือรายการว่าง ซึ่งแปลว่าฟีเจอร์ปิด · ถ้าไม่ตั้งไว้ เทสต์ที่ตรวจว่า "ลูกค้า
+     * ต้องไม่ได้รับตัวเลือกโฟลเดอร์แม่" จะผ่านเพราะไม่มีใครได้ตัวเลือกเลย ไม่ใช่
+     * เพราะการกันสิทธิ์ทำงาน
+     */
+    $harness = ApiHarness::boot(['sites' => ['pointer_roots' => ['/srv/pointer-test']]]);
     $harness->createUser('siteadmin', 'Sites-Admin-Password-11', Permissions::SUPERADMIN);
     $ownerId = $harness->createHostingUser('siteowner', 'Sites-Owner-Password-22', Permissions::WEBADMIN);
     $strangerId = $harness->createHostingUser('sitestranger', 'Sites-Other-Password-33', Permissions::WEBADMIN);
+    // ผู้ดูแลเซิร์ฟเวอร์: ดู Hosting ได้แต่ไม่มี site.create — ใช้ตรวจด่าน Authorize
+    $harness->createUser('sitesys', 'Sites-Sys-Password-44', Permissions::SYSADMIN);
 
     $db = $harness->app->db();
     $now = time();
@@ -190,9 +198,8 @@ test('ลูกค้าเห็นเฉพาะเว็บของตั�
 });
 
 test('ผู้ใช้ที่ไม่มีสิทธิ์สร้างเว็บไซต์ต้องได้ 403 จาก middleware', static function (): void {
-    // webadmin มี site.edit แต่ไม่มี site.create — ต้องถูกตัดที่ชั้น Authorize
-    // ก่อนถึง controller ด้วยซ้ำ
-    $harness = sitesLogin('siteowner', 'Sites-Owner-Password-22');
+    // sysadmin ดู Hosting ได้แต่แก้ไม่ได้ — ต้องถูกตัดที่ชั้น Authorize ก่อนถึง controller ด้วยซ้ำ
+    $harness = sitesLogin('sitesys', 'Sites-Sys-Password-44');
 
     $response = $harness->request('POST', '/api/v2/sites', [
         'domain' => 'newsite.example.com',
@@ -201,6 +208,34 @@ test('ผู้ใช้ที่ไม่มีสิทธิ์สร้า�
 
     assertSame(403, $response->status, 'ไม่มีสิทธิ์สร้างต้องได้ 403');
     assertSame(ApiProblem::Forbidden->value, $response->errorCode(), 'ต้องเป็นรหัส FORBIDDEN');
+});
+
+test('ลูกค้าเพิ่มเว็บของตัวเองได้ ไม่ถูกตัดที่ middleware อีกแล้ว', static function (): void {
+    /*
+     * **บัญชีที่สร้างมาโดยไม่ใส่โดเมน เดิมไม่มีทางได้โดเมนเลยสักทาง**
+     *
+     * ลูกค้าถือ `domain.manage` ก็จริง แต่นั่นเพิ่มได้แค่ subdomain/alias *ใต้เว็บ
+     * ที่มีอยู่แล้ว* ซึ่งบัญชีแบบนั้นไม่มี · แพ็กเกจที่ขาย `quota_domains = 10` ไว้
+     * จึงส่งมอบได้จริง 0 โดเมน จนกว่าผู้ดูแลจะไปสร้างเว็บแรกให้เอง
+     *
+     * ที่นี่ตรวจได้แค่ว่า **ผ่านด่าน Authorize แล้ว** — 503 คือ agent ไม่ได้รันในชุด
+     * ทดสอบ ซึ่งแปลว่าคำสั่งเดินไปถึง capability จริง · ตัวโควตาเองอยู่ที่
+     * `SiteCreate::assertQuota()` และมีเทสต์ของมันเองอยู่แล้ว
+     */
+    assertTrue(
+        Permissions::roleHas(Permissions::WEBADMIN, 'site.create'),
+        'ลูกค้าต้องมีสิทธิ์สร้างเว็บของตัวเอง (แบบเดียวกับ Addon Domain ของ cPanel)',
+    );
+
+    $harness = sitesLogin('siteowner', 'Sites-Owner-Password-22');
+
+    $response = $harness->request('POST', '/api/v2/sites', [
+        'domain' => 'newsite.example.com',
+        'php_version' => '8.4',
+    ]);
+
+    assertSame(503, $response->status, 'ต้องเดินไปถึง agent ไม่ใช่ถูกตัดที่ middleware');
+    assertSame(ApiProblem::AgentUnavailable->value, $response->errorCode(), 'ต้องเป็นรหัส AGENT_UNAVAILABLE');
 });
 
 test('เว็บไซต์เดียวคืนโดเมนของมันมาด้วย', static function (): void {
@@ -236,8 +271,12 @@ test('GET /sites/0 คืนค่าเริ่มต้นสำหรับ�
 
     assertSame(200, $response->status, 'id=0 เป็นค่าจอง ไม่ใช่เว็บไซต์ที่ไม่มีอยู่');
     assertTrue(is_int($response->data('owner_user_id')), 'ต้องมีเจ้าของโดยปริยายให้ฟอร์มกรอกไว้ล่วงหน้า');
-    assertTrue(is_bool($response->data('has_pointer_roots')), 'ต้องบอกได้ว่ามีโฟลเดอร์แม่ให้เลือกหรือไม่');
-    assertTrue(is_array($response->data('options')['pointer_root'] ?? null), 'ต้องมีตัวเลือกโฟลเดอร์แม่ให้ select (ว่างได้ถ้าไม่ได้ตั้งค่า)');
+    assertSame(true, $response->data('has_pointer_roots'), 'ชุดนี้ตั้ง sites.pointer_roots ไว้ ผู้ดูแลจึงต้องได้ช่องโฟลเดอร์แม่');
+    assertSame(
+        [['value' => '/srv/pointer-test', 'text' => '/srv/pointer-test']],
+        $response->data('options')['pointer_root'] ?? null,
+        'ตัวเลือกโฟลเดอร์แม่ต้องมาจาก sites.pointer_roots ตรง ๆ',
+    );
 
     $owners = $response->data('options')['owner_user_id'] ?? null;
     assertTrue(is_array($owners) && count($owners) >= 2, 'ผู้ดูแลต้องเห็นบัญชีโฮสติ้งทั้งหมดให้เลือกเป็นเจ้าของ');
@@ -256,6 +295,42 @@ test('GET /sites/0 — ลูกค้าเห็นตัวเลือกเ
     $owners = $response->data('options')['owner_user_id'] ?? null;
     assertTrue(is_array($owners) && count($owners) === 1, 'ลูกค้าต้องเลือกเจ้าของเป็นใครอื่นไม่ได้นอกจากตัวเอง');
     assertSame($response->data('owner_user_id'), $owners[0]['value'] ?? null, 'ตัวเลือกเดียวที่มีต้องตรงกับตัวเอง');
+
+    /*
+     * **Domain Pointer เป็นการตัดสินใจของผู้ดูแล ไม่ใช่ของลูกค้า**
+     *
+     * มันคือการเสิร์ฟไฟล์จากโฟลเดอร์นอกบ้านของบัญชี ซึ่งเป็นเส้นเดียวที่กันเว็บของ
+     * ลูกค้ารายหนึ่งออกจากไฟล์ของอีกราย · ลูกค้าที่ถือ `site.create` (ถือแล้ว เพื่อใช้
+     * โดเมนตามแพ็กเกจ) จะชี้ vhost เข้าโฟลเดอร์ใดก็ได้ในรายการนั้นถ้าไม่กันตรงนี้
+     */
+    assertSame(false, $response->data('has_pointer_roots'), 'ลูกค้าต้องไม่ได้รับตัวเลือกโฟลเดอร์แม่');
+    assertSame([], $response->data('options')['pointer_root'] ?? null, 'รายการโฟลเดอร์แม่ของลูกค้าต้องว่างเสมอ');
+});
+
+test('GET /sites/0?owner=<id> ต้องเปิดฟอร์มค้างไว้ที่บัญชีนั้น', static function (): void {
+    /*
+     * **หน้าบัญชีลิงก์มาที่นี่พร้อม `?owner=<id>`**
+     *
+     * บัญชีที่ยังไม่มีเว็บเลยเคยมีบนหน้าตัวเองแค่ช่อง "ผูกเว็บที่มีอยู่แล้ว" ซึ่งเป็น
+     * รายชื่อเว็บของคนอื่น · ผู้ดูแลที่กดมาจากบัญชีนั้นไม่ควรต้องไปหาชื่อเดิมซ้ำอีกครั้ง
+     * ในรายการบัญชีโฮสติ้งทั้งเครื่อง
+     */
+    $harness = sitesLogin('siteadmin', 'Sites-Admin-Password-11');
+    $ownerId = (int) $harness->app->db()->value("SELECT id FROM users WHERE username = 'sitestranger'", [], 0);
+
+    $response = $harness->request('GET', '/api/v2/sites/0', [], [], ['owner' => (string) $ownerId]);
+
+    assertSame(200, $response->status, 'ต้องยังเป็นค่าเริ่มต้นของฟอร์มเหมือนเดิม');
+    assertSame($ownerId, $response->data('owner_user_id'), 'ต้องเปิดค้างไว้ที่บัญชีที่ลิงก์มา');
+
+    // บัญชีผู้ดูแลไม่ใช่บัญชีโฮสติ้ง — เลือกเป็นเจ้าของเว็บไม่ได้ ต้องตกกลับเป็นตัวผู้เรียก
+    $adminId = (int) $harness->app->db()->value("SELECT id FROM users WHERE username = 'siteadmin'", [], 0);
+    $notHosting = $harness->request('GET', '/api/v2/sites/0', [], [], ['owner' => (string) $adminId]);
+
+    assertSame($adminId, $notHosting->data('owner_user_id'), 'ค่าที่ใช้ไม่ได้ต้องตกกลับเป็นตัวผู้เรียก ไม่ใช่ผ่านไปดื้อ ๆ');
+
+    $missing = $harness->request('GET', '/api/v2/sites/0', [], [], ['owner' => '999999']);
+    assertSame($adminId, $missing->data('owner_user_id'), 'id ที่ไม่มีอยู่ต้องตกกลับเป็นตัวผู้เรียกเช่นกัน');
 });
 
 test('ลบโดเมนหลักแยกไม่ได้ ต้องได้ 409 พร้อมเหตุผล', static function (): void {

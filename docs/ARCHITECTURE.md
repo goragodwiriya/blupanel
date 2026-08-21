@@ -642,6 +642,21 @@ CREATE INDEX idx_sessions_exp ON sessions(expires_at);
 
 เพิ่ม **ownership check** สำหรับ `webadmin`: ทุก capability ที่มี `site_id` ต้องผ่าน `assertOwns($actor, $siteId)` ไม่ใช่แค่เช็ค role — กัน IDOR
 
+**`webadmin` มี `site.create` ตั้งแต่ 2026-08-21** — เพิ่มเว็บของตัวเองได้ในโควตาที่แพ็กเกจ
+ให้ไว้ แบบเดียวกับ Addon Domain ของ cPanel · ก่อนหน้านี้บัญชีที่สร้างมาโดยไม่ใส่โดเมน
+(ช่องนั้นเป็นตัวเลือก) ไม่มีทางได้โดเมนเลยสักทาง เพราะ `domain.manage` ที่ลูกค้าถืออยู่
+เพิ่มได้แค่ subdomain/alias *ใต้เว็บที่มีอยู่แล้ว* ซึ่งบัญชีแบบนั้นไม่มี — แพ็กเกจที่ขาย
+`quota_domains = 10` ไว้จึงส่งมอบได้จริง 0 โดเมน
+
+สามอย่างที่กันไม่ให้กลายเป็นช่องโหว่:
+1. `SitesController::store()` ทับ `owner_user_id` ด้วย id ของผู้เรียกเมื่อ role เป็น `webadmin`
+   — สร้างเว็บให้คนอื่นไม่ได้
+2. เมธอดเดียวกันทิ้ง `docroot`/`pointer_root` ของ role นี้ — **Domain Pointer เป็นการ
+   ตัดสินใจของผู้ดูแล** เพราะมันเสิร์ฟไฟล์จากนอกบ้านของบัญชี ซึ่งเป็นเส้นที่กันไฟล์ของ
+   ลูกค้าแต่ละรายออกจากกัน · `GET /sites/0` จึงไม่ส่งตัวเลือกโฟลเดอร์แม่ให้ role นี้ด้วย
+3. `SiteCreate::assertQuota()` ตรวจ `quota_domains` + สถานะบริการ + โควตาดิสก์ ที่ชั้น
+   capability ไม่ใช่ที่หน้าจอ
+
 ---
 
 ## 9. Frontend — เบาจริง ไม่มี build step

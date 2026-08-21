@@ -1436,6 +1436,17 @@ paths:
                 sftp: { type: boolean, description: "เปิด SFTP พร้อมสร้างบัญชี (บัญชีโฮสติ้งเท่านั้น)" }
                 domain: { type: string, maxLength: 253, description: "สร้างเว็บแรกให้ด้วย · เว้นว่าง = ไม่สร้าง" }
                 php_version: { type: string, description: "เวอร์ชัน PHP ของเว็บแรก · ไม่ส่ง = เวอร์ชันที่เครื่องนี้แนะนำ" }
+                docroot:
+                  type: string
+                  maxLength: 4096
+                  description: >-
+                    Domain Pointer ของเว็บแรก — ชื่อโฟลเดอร์สั้น ๆ (`gcms.in.th`) หรือพาธเต็มก็ได้ ·
+                    ต้องอยู่ใน `sites.pointer_roots` และต้องส่ง `domain` มาด้วย ·
+                    เว้นว่าง = ไฟล์อยู่ใต้บ้านของบัญชีตามปกติ · ค่าที่ผิดได้ 422 ตั้งแต่ก่อนบัญชีถูกสร้าง
+                pointer_root:
+                  type: string
+                  maxLength: 4096
+                  description: "โฟลเดอร์แม่ที่ `docroot` แบบชื่อสั้นจะไปต่อท้าย · ไม่ต้องส่งถ้า `sites.pointer_roots` มีรายการเดียว"
                 ssl:
                   type: string
                   enum: [none, letsencrypt, self-signed]

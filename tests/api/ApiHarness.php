@@ -46,7 +46,11 @@ final class ApiHarness
      * /etc/phpcp/config.php เสมอ — ถ้าไม่ทำ เทสต์บนเครื่องที่ติดตั้ง panel จริงไว้แล้ว
      * จะไปอ่าน config ของระบบจริงและเขียนทับฐานข้อมูลของเครื่องนั้น
      */
-    public static function boot(): self
+    /**
+     * @param array<string,mixed> $config ค่าตั้งเพิ่มเติม ทับลงบนค่าตั้งพื้นฐานของชุดทดสอบ
+     *                                    (เช่น `sites.pointer_roots` ที่ปิดอยู่โดยปริยาย)
+     */
+    public static function boot(array $config = []): self
     {
         $root = sys_get_temp_dir() . '/phpcp-api-' . getmypid() . '-' . bin2hex(random_bytes(4));
 
@@ -62,14 +66,14 @@ final class ApiHarness
 
         file_put_contents($root . '/etc/config.php', sprintf(
             "<?php return %s;\n",
-            var_export([
+            var_export(array_replace_recursive([
                 'mode' => 'sandbox',
                 'layout' => 'portable',
                 'panel' => ['cookie_secure' => false],
                 'security' => ['secret_key' => Secret::generateKey(), 'password_min_length' => 12],
                 'log' => ['level' => 'error'],
                 'sandbox' => ['prefix' => $root . '/sandbox'],
-            ], true),
+            ], $config), true),
         ));
 
         putenv('PHPCP_CONFIG=' . $root . '/etc/config.php');

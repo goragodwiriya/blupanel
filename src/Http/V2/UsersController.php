@@ -20,6 +20,7 @@ use Phpcp\Kernel\Response;
 use Phpcp\Security\Password;
 use Phpcp\Security\Permissions;
 use Phpcp\Security\SessionStore;
+use Phpcp\Support\Validator;
 
 /**
  * Every user account — `/api/v2/users`
@@ -138,9 +139,31 @@ final class UsersController extends ApiController
                 }
             }
 
+            /*
+             * Domain Pointer — the same choice the website page offers, on the
+             * form that actually creates the first website
+             *
+             * Without it the only way to put an account's files anywhere but
+             * `<users_dir>/<user>` was to create the account, then go create
+             * the website a second time on its own page · the two fields were
+             * already on `site-create.html` and simply missing here, so the
+             * one form that claims to do the whole handover could not express
+             * the one thing a development machine always needs.
+             *
+             * Empty `sites.pointer_roots` = the feature is off and the screen
+             * doesn't show the fields at all — see `Config::docrootRoots()`
+             * for why nothing is ever added to that list automatically.
+             */
+            $pointerRoots = [];
+
+            foreach ($this->app->config->pointerRoots() as $root) {
+                $pointerRoots[] = ['value' => $root, 'text' => $root];
+            }
+
             $body = [
                 'data' => [
                     'id' => 0,
+                    'has_pointer_roots' => $pointerRoots !== [],
                     /*
                      * The create form opens with a strong password already in it
                      *
@@ -157,7 +180,8 @@ final class UsersController extends ApiController
                     'suggested_password' => Password::random(PasswordsController::suggestedLength()),
                 ],
                 'options' => [
-                    'php_version' => $phpVersions
+                    'php_version' => $phpVersions,
+                    'pointer_root' => $pointerRoots
                 ]
             ];
         } else {
@@ -251,6 +275,7 @@ final class UsersController extends ApiController
          * it is a typo, and a typo has to come back as a 422 while nothing has
          * been created yet and the form can still be corrected.
          */
+        $domain = trim($request->payloadString('domain'));
         $sslMethod = $request->payloadString('ssl') ?: 'none';
 
         if (!in_array($sslMethod, ['none', 'letsencrypt', 'self-signed'], true)) {
@@ -272,6 +297,43 @@ final class UsersController extends ApiController
                     'database' => $e->getMessage()
                 ]);
             }
+        }
+
+        /*
+         * Domain Pointer — **resolved here, before anything is created**
+         *
+         * `site.create` resolves it again at its own layer (it has to: the CLI
+         * and a bare API call reach it without passing through this form), but
+         * a folder name that was already wrong when it arrived must come back
+         * as a 422 while the username is still free · leaving it to the
+         * website step would create the account, fail the site, and leave the
+         * admin re-reading a path typo with a generated password already spent.
+         *
+         * What comes out is an absolute path already checked against
+         * `sites.pointer_roots`, so the capability's own check passes it
+         * through unchanged rather than resolving a relative name twice
+         * against a list that could differ between the two layers.
+         */
+        $pointerRoot = trim($request->payloadString('pointer_root'));
+        $docroot = trim($request->payloadString('docroot'));
+
+        if ($docroot !== '' && $domain === '') {
+            return $this->problem(ApiProblem::ValidationError, 'A document root needs a domain to serve', [
+                'domain' => 'Fill in the domain this folder should be served as, or clear the document root'
+            ]);
+        }
+
+        try {
+            $docroot = Validator::resolvePointerDocroot(
+                $docroot,
+                $this->app->config->docrootRoots(),
+                $this->app->config->pointerRoots(),
+                $pointerRoot,
+            );
+        } catch (\Throwable $e) {
+            return $this->problem(ApiProblem::ValidationError, 'Invalid document root', [
+                'docroot' => $e->getMessage()
+            ]);
         }
 
         $password = $request->payloadString('password');
@@ -305,7 +367,6 @@ final class UsersController extends ApiController
         $sftpUsername = null;
         $sftpError = '';
 
-        $domain = trim($request->payloadString('domain'));
         $createdSite = null;
         $siteError = '';
 
@@ -378,6 +439,11 @@ final class UsersController extends ApiController
                          * create its website, on a version that was never there
                          */
                         'php_version' => $request->payloadString('php_version') ?: $this->defaultPhpVersion($request),
+                        // Already an absolute path checked against the allowed
+                        // roots above — empty means "use the account's home",
+                        // which is what every machine that hasn't configured
+                        // `sites.pointer_roots` always gets
+                        'docroot' => $docroot,
                         'owner_user_id' => $id
                     ], $this->ctx->actor($request));
 

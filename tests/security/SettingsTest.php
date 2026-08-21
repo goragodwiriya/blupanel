@@ -11,6 +11,7 @@ declare(strict_types=1);
  *      ซึ่งกระทบทุกเว็บไซต์บนเครื่องเดียวกัน ไม่ใช่แค่เว็บที่ตั้งค่าผิด
  */
 
+use Phpcp\Agent\Capability\SettingsSet;
 use Phpcp\Agent\CapabilityRegistry;
 use Phpcp\Agent\ValidationError;
 use Phpcp\Domain\Notifier;
@@ -143,7 +144,23 @@ test('คีย์ที่ไม่อยู่ในรายการต้�
      * · ต่างจาก `sites.users_dir` ที่เป็นข้อความอิสระซึ่งถูกเอาไปประกอบเป็น open_basedir
      * และเส้นทางใน vhost ที่รันด้วยสิทธิ์ root — อันนั้นต้องอยู่ใน config.php ต่อไป
      */
-    $allowedEditableKeys = ['sites.layout'];
+    /*
+     * `sites.pointer_roots` เข้าข่ายเดียวกัน แต่ด้วยเหตุผลคนละข้อ — มันเป็น**ขอบเขต
+     * ไม่ใช่เส้นทาง** · ค่านี้ไม่เคยถูกเขียนลงไฟล์ค่าตั้งใด ๆ เลย สิ่งที่ลงไปใน vhost คือ
+     * `docroot_override` ซึ่งต้องผ่าน `Validator::resolvePointerDocroot()` แล้วถูกเทียบกับ
+     * รายการนี้อีกครั้งตอนสร้างเว็บ · ต่างจาก `sites.users_dir` ที่ตัวมันเองกลายเป็น
+     * open_basedir และเส้นทางใน vhost ตรง ๆ
+     *
+     * และ `SettingsSet::assertPointerRoots()` ตรวจตอนบันทึกเข้มกว่าที่ config.php ได้รับ:
+     * ต้องเป็นพาธสัมบูรณ์ ไม่มี `..` ไม่ใช่ `/` และห้ามทับกับโฟลเดอร์ของ panel เองทั้ง
+     * ขาเข้าและขาออก
+     *
+     * **ทำไมต้องแก้จากหน้าเว็บให้ได้:** บนเครื่องที่ติดตั้งจริง config.php คือ
+     * `/etc/phpcp/config.php` ซึ่งเป็นของ root สิทธิ์ 0640 — panel อ่านไม่ได้ด้วยซ้ำ
+     * ปล่อยไว้ในไฟล์แปลว่าเปิดฟีเจอร์นี้ได้ทางเดียวคือ SSH แล้วช่องกรอกทั้งสองช่องก็
+     * หายไปจากทุกฟอร์มโดยไม่มีอะไรบนจอบอกว่าทำไม
+     */
+    $allowedEditableKeys = ['sites.layout', 'sites.pointer_roots'];
 
     foreach (array_keys($keys) as $key) {
         if (in_array($key, $allowedKeys, true) || in_array($key, $allowedEditableKeys, true)) {
@@ -197,6 +214,47 @@ test('token และ chat id ที่ผิดรูปแบบถูกป�
     }
 
     assertSame('-1001234567890', TelegramNotifier::assertChatId('-1001234567890'), 'กลุ่มใช้เลขติดลบ');
+});
+
+test('โฟลเดอร์ Domain Pointer ต้องถูกตรวจตั้งแต่ตอนบันทึก', static function (): void {
+    /*
+     * **ต้องเด้งตอนพิมพ์ ไม่ใช่ตอนสร้างเว็บ** · `Config::docrootRoots()` ทิ้งค่าที่ไม่ใช่
+     * พาธสัมบูรณ์อย่างเงียบ ๆ ซึ่งถูกแล้วสำหรับที่นั่น (ถูกอ่านทุกคำขอ ห้าม throw) แต่
+     * ผิดที่นี่ — ผู้ดูแลที่พิมพ์ `srv/projects` จะได้แถบเขียวว่าบันทึกแล้ว ตามด้วยช่อง
+     * Document Root ที่ปฏิเสธทุกอย่าง โดยไม่มีอะไรเชื่อมสองเรื่องนี้เข้าด้วยกัน
+     */
+    $set = new SettingsSet();
+
+    // โฟลเดอร์ของ panel เอง — ทั้งขาเข้า (อยู่ใต้) และขาออก (ครอบมัน)
+    // `/usr/share` คือกรณีที่มองข้ามง่ายที่สุด เพราะมันครอบ `/usr/share/phpcp`
+    foreach (['/etc/phpcp', '/var/lib/phpcp/backups', '/usr/share', '/'] as $root) {
+        assertRejects(
+            ValidationError::class,
+            static fn () => $set->validate(['sites.pointer_roots' => $root]),
+            "โฟลเดอร์ '{$root}' ต้องถูกปฏิเสธ",
+        );
+    }
+
+    foreach (['srv/projects', '/srv/../etc'] as $root) {
+        assertRejects(
+            ValidationError::class,
+            static fn () => $set->validate(['sites.pointer_roots' => $root]),
+            "พาธ '{$root}' ต้องถูกปฏิเสธ",
+        );
+    }
+
+    // รูปแบบที่ยอมรับ: คั่นด้วยจุลภาค ตัด / ท้าย และตัดรายการซ้ำออก
+    assertSame(
+        ['sites.pointer_roots' => '/srv/projects, /mnt/work'],
+        $set->validate(['sites.pointer_roots' => '/srv/projects/, /mnt/work , /srv/projects'])['values'],
+        'ต้องเก็บเป็นรายการที่ล้างแล้ว ไม่ใช่ข้อความดิบ',
+    );
+
+    assertSame(
+        ['sites.pointer_roots' => ''],
+        $set->validate(['sites.pointer_roots' => ''])['values'],
+        'ค่าว่าง = ปิดฟีเจอร์ ต้องผ่าน',
+    );
 });
 
 test('ชื่อโฮสต์และพอร์ตของเมลต้องผ่านการตรวจ', static function (): void {

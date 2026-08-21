@@ -222,7 +222,7 @@ final class SiteCreate extends SiteCapability
         $docroot = Validator::resolvePointerDocroot(
             $args['docroot'],
             $context->config->docrootRoots(),
-            $context->config->list('sites.pointer_roots'),
+            $context->config->pointerRoots(),
             $args['pointer_root'] ?? '',
         );
 

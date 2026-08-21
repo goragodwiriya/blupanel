@@ -116,6 +116,29 @@ final class SettingsRepository
         'sites.layout' => 'string',
 
         /*
+         * Folders outside the users' homes that a website's DocumentRoot may point
+         * into — Domain Pointer (`sites.pointer_roots`)
+         *
+         * **Had to become settable from the screen**, for the same reason
+         * `dns.enabled` did: it lived only in `config.php`, which on a real install
+         * is `/etc/phpcp/config.php` — root-owned, 0640, and not reachable from the
+         * panel at all · an admin who keeps their projects somewhere other than
+         * `/home` therefore could not turn the feature on without an SSH session and
+         * an editor, and the two fields that depend on it stayed hidden on every
+         * form with nothing on screen saying why.
+         *
+         * Safe to store here, unlike `sites.users_dir`: it is not read at boot to
+         * build the panel's own paths, and it changes nothing that already exists —
+         * it only widens what a **new** docroot is allowed to be, and every value is
+         * still re-checked against this list at the moment a site is created
+         * ({@see \Phpcp\Support\Validator::resolvePointerDocroot}).
+         *
+         * Comma- or newline-separated absolute paths · empty = the feature is off,
+         * which stays the default on every machine.
+         */
+        'sites.pointer_roots' => 'string',
+
+        /*
          * Login brute-force protection for the panel itself — enforced through fail2ban
          *
          * **Not editable through the general settings form, same as `webserver.*`** —

@@ -314,6 +314,43 @@ test('ตัวติดตั้งเขียน config.php ได้คร�
     }
 });
 
+test('รันตัวติดตั้งซ้ำโดยไม่ใส่ --pointer-root ต้องไม่ลบค่าที่ตั้งไว้', static function (): void {
+    /*
+     * **กับดักที่เจอบนเครื่องนี้ 2026-08-21:** ค่าอื่นทุกตัวที่ตัวติดตั้งเขียนมีค่าเริ่มต้น
+     * จริง เขียนทับด้วยค่าเริ่มต้นจึงไม่เสียหาย · แต่ `pointer_roots` ไม่มี — "ไม่ได้ส่ง
+     * มา" คือรายการว่าง ซึ่งเป็นค่าเดียวกับ "ปิดฟีเจอร์" · `sudo ./install.sh` เปล่า ๆ
+     * เพื่ออัปเดตโค้ดจึงลบค่าที่ผู้ดูแลตั้งไว้ทิ้งเงียบ ๆ และอาการเดียวที่เห็นคือช่อง
+     * Document Root หายไปจากฟอร์มโดยไม่มีอะไรบอกว่าทำไม
+     */
+    $installer = (string) file_get_contents(PHPCP_ROOT . '/install.sh');
+
+    assertTrue(
+        str_contains($installer, 'POINTER_ROOTS_GIVEN'),
+        'ต้องแยก "ไม่ได้ส่ง --pointer-root มา" ออกจาก "ส่งมาเป็นค่าว่าง"',
+    );
+
+    assertTrue(
+        str_contains($installer, 'if ($argv[8] === "yes") {'),
+        'ต้องเขียน pointer_roots เฉพาะรอบที่ส่ง --pointer-root มาจริงเท่านั้น',
+    );
+
+    /*
+     * และโฟลเดอร์ที่**ครอบ** panel เองต้องถูกปฏิเสธ — รายชื่อพาธระบบที่มีอยู่เดิม
+     * (/etc /usr /var ...) ครอบไม่ถึง เพราะซอร์สของ panel มักอยู่ใต้โฟลเดอร์ที่เก็บ
+     * ทุกโปรเจกต์รวมกัน · `--pointer-root=/mnt/Server/htdocs` บนเครื่องนี้ยื่น
+     * `etc/config.php` ซึ่งมี secret key เป็นข้อความล้วน ให้เว็บไซต์อ่านได้ทันที
+     */
+    assertTrue(
+        str_contains($installer, 'holds the control panel\'s own files'),
+        'ต้องปฏิเสธโฟลเดอร์ที่ครอบไดเรกทอรีของ panel เอง',
+    );
+
+    assertTrue(
+        str_contains($installer, 'is inside the control panel\'s own directory'),
+        'ต้องปฏิเสธโฟลเดอร์ที่อยู่ใต้ไดเรกทอรีของ panel เอง',
+    );
+});
+
 test('บริการของ panel ต้องเข้าถึงบ้านลูกค้าได้ แต่ยังกัน /root', static function (): void {
     /*
      * **เจอบนเซิร์ฟเวอร์จริง (2026-08-14):** ทุก unit ตั้ง `ProtectHome=yes` ซึ่งทำให้

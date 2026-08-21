@@ -18,12 +18,15 @@ declare(strict_types=1);
 use Phpcp\Agent\Actor;
 use Phpcp\Agent\Capability\DnsZoneWrite;
 use Phpcp\Agent\Context;
+use Phpcp\Agent\ValidationError;
 use Phpcp\Agent\Executor\DryRunExecutor;
 use Phpcp\Domain\DnsRecord;
 use Phpcp\Driver\Dns\BindZoneManager;
 use Phpcp\Kernel\Config;
 use Phpcp\Kernel\Db;
 use Phpcp\Security\Permissions;
+use Phpcp\Support\Translator;
+use Phpcp\Support\Validator;
 
 group('DnsZone — เชื่อม BIND9 จริง (zone file, named-checkzone, capability)');
 
@@ -493,4 +496,51 @@ test('เจ้าของโดเมนเรียก dns.zone_write กั�
     $result = $capability->run(['domain_id' => $domain['id']], new DryRunExecutor(), $context);
 
     assertSame(false, $result['pushed'], 'dns.enabled ปิดอยู่ แต่คำสั่งเองต้องไม่ถูกปฏิเสธเพราะสิทธิ์');
+});
+
+test('ชื่อโดเมนที่ถูกปฏิเสธต้องบอกเหตุผล ไม่ใช่แค่ "รูปแบบไม่ถูกต้อง"', static function (): void {
+    /*
+     * **ของจริงที่เจอบนเครื่องนี้ 2026-08-21:** ผู้ดูแลกรอกเว็บใหม่แล้วได้
+     * `Invalid domain name format` · ฟอร์มสร้างเว็บมีทั้งช่อง Domain และช่อง Aliases
+     * ซึ่งวิ่งเข้า `Validator::domain()` ตัวเดียวกัน ข้อความจึงไม่ได้บอกทั้งช่องและค่า
+     * — มองไปที่ช่องก็เห็น `gcms.test` ซึ่งถูกต้องทุกประการ ไล่ต่อไม่ได้เลย
+     *
+     * เหตุผลแต่ละข้อเป็น**ประโยคตายตัวที่ไม่มีค่าแทรกอยู่** เพราะข้อความที่ประกอบจาก
+     * ตัวแปรจะไม่ตรงกับคีย์ใน th.json แล้วหลุดออกไปเป็นภาษาอังกฤษ ซึ่งเป็นสิ่งเดียวที่
+     * คลังคำมีไว้เพื่อกัน · ตัวเหตุผลเองบอกได้อยู่แล้วว่าค่าผิดตรงไหน
+     */
+    $reason = static function (string $domain): string {
+        try {
+            Validator::domain($domain);
+        } catch (ValidationError $e) {
+            return $e->getMessage();
+        }
+
+        return '';
+    };
+
+    assertSame('gcms.test', Validator::domain('gcms.test'), 'โดเมน .test ต้องผ่าน — เครื่องพัฒนาใช้กันทุกเครื่อง');
+    assertSame('gcms.test', Validator::domain('  GCMS.Test  '), 'ตัวพิมพ์ใหญ่และช่องว่างหัวท้ายต้องถูกจัดให้เอง');
+
+    // URL ที่วางมาทั้งดุ้น กับอักขระที่มองไม่เห็นที่ติดมาตอนคัดลอก — สองอันนี้พบบ่อยที่สุด
+    // และเป็นสองอันที่ "มองที่ช่องแล้วดูถูกต้อง" ทั้งคู่
+    foreach (['http://gcms.test', 'gcms.test:8443', 'gcms.test/', "\u{a0}gcms.test", 'gcms_test'] as $bad) {
+        assertTrue(
+            str_contains($reason($bad), 'may only contain'),
+            "'{$bad}' ต้องบอกว่าใช้ได้เฉพาะตัวอักษรไหน แต่ได้: " . $reason($bad),
+        );
+    }
+
+    assertSame('A domain name must not start or end with a dot', $reason('gcms.test.'), 'จุดท้ายต้องมีเหตุผลของตัวเอง');
+    assertSame('A domain name needs at least one dot, for example example.com', $reason('gcms'), 'ชื่อชั้นเดียวต้องบอกว่าขาดจุด');
+    assertSame('A domain name must not have two dots in a row', $reason('gcms..test'), 'จุดติดกันต้องมีเหตุผลของตัวเอง');
+    assertSame('Each part of a domain name must not start or end with -', $reason('-gcms.test'), 'ขีดนำหน้าต้องมีเหตุผลของตัวเอง');
+    assertSame('A domain name is required', $reason(''), 'ค่าว่างต้องบอกว่าต้องกรอก');
+
+    // ทุกเหตุผลต้องมีคำแปลไทย ไม่งั้นผู้ใช้ไทยเจออังกฤษกลางหน้าจอ ซึ่งคือสภาพเดิมที่แก้อยู่นี่เอง
+    $translator = Translator::load('th', PHPCP_ROOT . '/public/assets/spa/lang');
+
+    foreach (['http://gcms.test', 'gcms.test.', 'gcms', 'gcms..test', '-gcms.test', ''] as $bad) {
+        assertTrue($translator->has($reason($bad)), 'เหตุผลนี้ยังไม่มีคำแปลไทย: ' . $reason($bad));
+    }
 });
